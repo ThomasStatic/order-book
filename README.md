@@ -2,21 +2,70 @@
 
 A correctness-first C++ limit-order-book and matching-engine project.
 
-## Status
+## Repository layout
 
-Project scaffold complete. The first implementation milestone is limit orders, price-time priority, partial fills, cancellations, and trade events.
-
-## Layout
-
-- `include/` — public headers
-- `src/` — implementation
-- `tests/` — unit tests
-- `benchmarks/` — throughput and latency experiments
+- `include/` — public headers for the reusable library
+- `src/` — implementation for the reusable library
+- `apps/` — thin CLI entry points
+- `tests/` — lightweight infrastructure tests
+- `benchmarks/` — optional benchmark placeholders
 - `docs/` — design notes
 
 ## Build and test
 
+Use out-of-source builds.
+
+### Debug build
+
 ```bash
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-ctest --test-dir build --output-on-failure
+cmake -S . -B build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/debug
+ctest --test-dir build/debug --output-on-failure
+```
+
+### Release build
+
+```bash
+cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build/release
+```
+
+### Run the CLI
+
+```bash
+./build/debug/order_book_cli
+```
+
+### Enable benchmarks
+
+```bash
+cmake -S . -B build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DORDER_BOOK_BUILD_BENCHMARKS=ON
+cmake --build build/debug --target order_book_benchmarks
+./build/debug/order_book_benchmarks
+```
+
+### Enable sanitizers
+
+Sanitizer builds should normally use Debug or RelWithDebInfo.
+
+```bash
+cmake -S . -B build/sanitizers -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+  -DORDER_BOOK_ENABLE_ASAN=ON -DORDER_BOOK_ENABLE_UBSAN=ON
+cmake --build build/sanitizers
+```
+
+### Clean build from scratch
+
+```bash
+rm -rf build/debug build/release build/sanitizers
+cmake -S . -B build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/debug
+ctest --test-dir build/debug --output-on-failure
+```
+
+## Notes
+
+- The reusable library target is `order_book`.
+- The CLI target is `order_book_cli`.
+- The smoke-test target is `order_book_tests`.
+- Benchmarks are only built when `ORDER_BOOK_BUILD_BENCHMARKS` is enabled.

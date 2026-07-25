@@ -1,9 +1,11 @@
-#include <gtest/gtest.h>
+#include <cstdlib>
+#include <iostream>
 
 #include "order_book/order_book.hpp"
 
-TEST(OrderBook, CanBeConstructed) {
+int main() {
     const order_book::OrderBook book{};
     (void)book;
-    SUCCEED();
+    std::cout << "order_book smoke test passed" << std::endl;
+    return EXIT_SUCCESS;
 }
