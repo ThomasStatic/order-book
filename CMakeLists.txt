@@ -66,6 +66,7 @@ endfunction()
 
 add_library(order_book STATIC
     src/order_book.cpp
+    src/order.cpp
 )
 
 target_compile_features(order_book PUBLIC cxx_std_20)

@@ -69,3 +69,4 @@ ctest --test-dir build/debug --output-on-failure
 - The CLI target is `order_book_cli`.
 - The smoke-test target is `order_book_tests`.
 - Benchmarks are only built when `ORDER_BOOK_BUILD_BENCHMARKS` is enabled.
+- The current implementation assumes a fixed tick size of $0.01 for simplicity.
