@@ -99,6 +99,16 @@ if(BUILD_TESTING)
     order_book_enable_warnings(order_book_tests)
     order_book_enable_sanitizers(order_book_tests)
     add_test(NAME order_book_smoke COMMAND order_book_tests)
+
+    add_executable(order_tests
+        tests/order_test.cpp
+    )
+
+    target_compile_features(order_tests PRIVATE cxx_std_20)
+    target_link_libraries(order_tests PRIVATE order_book)
+    order_book_enable_warnings(order_tests)
+    order_book_enable_sanitizers(order_tests)
+    add_test(NAME order_tests COMMAND order_tests)
 endif()
 
 if(ORDER_BOOK_BUILD_BENCHMARKS)
