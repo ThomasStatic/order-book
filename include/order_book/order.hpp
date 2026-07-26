@@ -12,16 +12,17 @@ namespace order {
     enum class ExecutionLifeCycle {
         NONE,
         PARTIAL,
-        FULL
+        FILLED
     };
 
     class Order {
     private:
         unsigned int orderId;
-        unsigned int orderArrival;
+        unsigned int sequenceNum;
 
         unsigned int priceTick;
-        unsigned int quantity;
+        unsigned int initialQuant;
+        unsigned int remainingQuant;
 
         Side side;
         ExecutionLifeCycle execution;
@@ -30,14 +31,18 @@ namespace order {
         Order(unsigned int id, unsigned int tick, unsigned int quant, unsigned int arrival, Side s);
 
         unsigned int getOrderId() const;
-        unsigned int getOrderArrival() const;
+        unsigned int getSequenceNum() const;
+        void decrementSequence();
 
         unsigned int getPriceTick() const;
-        unsigned int getQuantity() const;
+        unsigned int getInitialQuantity() const;
+        unsigned int getRemainingQuantity() const;
+        unsigned int fillQuantity(unsigned int amt);
 
         Side getSide() const;
         ExecutionLifeCycle getExecutionLevel() const;
         void setExecutionLevel(ExecutionLifeCycle newLevel);
+        bool orderIsActive() const;
     };
 
 }

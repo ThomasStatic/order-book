@@ -2,7 +2,7 @@
 
 using namespace order; 
 
-Order::Order(unsigned int id, unsigned int tick, unsigned int quant, unsigned int arrival, Side s): side(s) {
+Order::Order(unsigned int id, unsigned int tick, unsigned int quant, unsigned int seq, Side s): sequenceNum(seq), side(s) {
     if (id == 0) {
         throw std::invalid_argument("Non-positive order ID error.");
     }
@@ -15,14 +15,14 @@ Order::Order(unsigned int id, unsigned int tick, unsigned int quant, unsigned in
         throw std::invalid_argument("Non-positive quantity error.");
     }
 
-    if(arrival == 0) {
-        throw std::invalid_argument("Non-positive arrival number error.");;
+    if(seq == 0) {
+        throw std::invalid_argument("Non-positive sequence number error.");
     }
 
     orderId = id;
     priceTick = tick;
-    quantity = quant;
-    orderArrival = arrival;
+    initialQuant = quant;
+    remainingQuant = quant;
     execution = ExecutionLifeCycle::NONE;
 }
 
@@ -30,16 +30,51 @@ unsigned int Order::getOrderId() const{
     return orderId;
 }
 
-unsigned int Order::getOrderArrival() const {
-    return orderArrival;
+unsigned int Order::getSequenceNum() const {
+    return sequenceNum;
+}
+
+void Order::decrementSequence() {
+    if (sequenceNum == 0) {
+        throw std::runtime_error("Decreasing 0 sequence number error.");
+    }
+
+    sequenceNum--;
 }
 
 unsigned int Order::getPriceTick() const {
     return priceTick;
 }
 
-unsigned int Order::getQuantity() const {
-    return quantity;
+unsigned int Order::getInitialQuantity() const {
+    return initialQuant;
+}
+
+unsigned int Order::getRemainingQuantity() const {
+    return remainingQuant;
+}
+
+unsigned int Order::fillQuantity(unsigned int amt) {
+    if(amt == 0) {
+        throw std::invalid_argument("Fill amount 0 error.");
+    }
+
+    if(execution == ExecutionLifeCycle::FILLED) {
+        throw std::runtime_error("Filling inactive order error.");
+    }
+    
+    unsigned int remainingAmt = amt;
+    if(amt >= remainingQuant) {
+        remainingAmt = amt - remainingQuant;
+        remainingQuant = 0;
+        execution = ExecutionLifeCycle::FILLED;
+    }
+    else {
+        remainingAmt = 0;
+        remainingQuant = remainingQuant - amt;
+        execution = ExecutionLifeCycle::PARTIAL;
+    }
+    return remainingAmt;
 }
 
 Side Order::getSide() const {
@@ -52,5 +87,9 @@ ExecutionLifeCycle Order::getExecutionLevel() const {
 
 void Order::setExecutionLevel(ExecutionLifeCycle newLevel) {
     execution = newLevel;
+}
+
+bool Order::orderIsActive() const{
+    return execution == ExecutionLifeCycle::FILLED ? false : true;
 }
 
