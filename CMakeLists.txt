@@ -112,6 +112,16 @@ if(BUILD_TESTING)
     order_book_enable_warnings(order_tests)
     order_book_enable_sanitizers(order_tests)
     add_test(NAME order_tests COMMAND order_tests)
+
+    add_executable(result_type_tests
+        tests/result_types_test.cpp
+    )
+
+    target_compile_features(result_type_tests PRIVATE cxx_std_20)
+    target_link_libraries(result_type_tests PRIVATE order_book)
+    order_book_enable_warnings(result_type_tests)
+    order_book_enable_sanitizers(result_type_tests)
+    add_test(NAME result_type_tests COMMAND result_type_tests)
 endif()
 
 if(ORDER_BOOK_BUILD_BENCHMARKS)
