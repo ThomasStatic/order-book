@@ -10,7 +10,7 @@ namespace order_book {
         REJECTED
     };
 
-    class CancellationResult {
+    class CancellationResults {
     private:
         unsigned int targetedOrder;
         unsigned int remainingQuantity;
@@ -19,7 +19,7 @@ namespace order_book {
         CancellationStatus status;
 
     public:
-        CancellationResult(unsigned int tOrder);
+        CancellationResults(unsigned int tOrder);
     
         unsigned int getTargetedOrder() const;
         unsigned int getRemainingQuantity() const;

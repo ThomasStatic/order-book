@@ -1,7 +1,7 @@
 #include "order_book/cancellation_results.hpp"
 
 namespace order_book {
-    CancellationResult::CancellationResult(unsigned int tOrder) {
+    CancellationResults::CancellationResults(unsigned int tOrder) {
         if (tOrder == 0) {
             throw std::invalid_argument("Non-positive target order ID error.");
         }
@@ -12,19 +12,19 @@ namespace order_book {
         status = CancellationStatus::CANCELLED;
     }
     
-    unsigned int CancellationResult::getTargetedOrder() const {
+    unsigned int CancellationResults::getTargetedOrder() const {
         return targetedOrder;
     }
 
-    unsigned int CancellationResult::getRemainingQuantity() const {
+    unsigned int CancellationResults::getRemainingQuantity() const {
         return remainingQuantity;
     }
     
-    RejectionReason CancellationResult::getRejectionReason() const {
+    RejectionReason CancellationResults::getRejectionReason() const {
         return rejectionReason;
     }
 
-    CancellationStatus CancellationResult::getStatus() const {
+    CancellationStatus CancellationResults::getStatus() const {
         return status;
     }
 
