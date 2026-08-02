@@ -3,23 +3,23 @@
 namespace order_book {
     Trade::Trade(unsigned int tId, unsigned int rId, unsigned int iId, unsigned int execTick, unsigned int execQuant, Side iSide): incomingSide(iSide) {
         if (tId == 0) {
-        throw std::invalid_argument("Non-positive trade ID error.");
+            throw std::invalid_argument("Non-positive trade ID error.");
         }
 
         if (rId == 0) {
-        throw std::invalid_argument("Non-positive resting ID error.");
+            throw std::invalid_argument("Non-positive resting ID error.");
         }
 
         if (iId == 0) {
-        throw std::invalid_argument("Non-positive incoming ID error.");
+            throw std::invalid_argument("Non-positive incoming ID error.");
         }
 
         if (execTick == 0) {
-        throw std::invalid_argument("Non-positive execution price error.");
+            throw std::invalid_argument("Non-positive execution price error.");
         }
 
         if (execQuant == 0) {
-        throw std::invalid_argument("Non-positive execution quantity error.");
+            throw std::invalid_argument("Non-positive execution quantity error.");
         }
 
         tradeId = tId;
