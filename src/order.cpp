@@ -23,7 +23,7 @@ Order::Order(unsigned int id, unsigned int tick, unsigned int quant, unsigned in
     priceTick = tick;
     initialQuant = quant;
     remainingQuant = quant;
-    execution = ExecutionLifeCycle::NONE;
+    execution = FillStatus::NONE;
 }
 
 unsigned int Order::getOrderId() const{
@@ -59,7 +59,7 @@ unsigned int Order::fillQuantity(unsigned int amt) {
         throw std::invalid_argument("Fill amount 0 error.");
     }
 
-    if(execution == ExecutionLifeCycle::FILLED) {
+    if(execution == FillStatus::FILLED) {
         throw std::runtime_error("Filling inactive order error.");
     }
     
@@ -67,12 +67,12 @@ unsigned int Order::fillQuantity(unsigned int amt) {
     if(amt >= remainingQuant) {
         remainingAmt = amt - remainingQuant;
         remainingQuant = 0;
-        execution = ExecutionLifeCycle::FILLED;
+        execution = FillStatus::FILLED;
     }
     else {
         remainingAmt = 0;
         remainingQuant = remainingQuant - amt;
-        execution = ExecutionLifeCycle::PARTIAL;
+        execution = FillStatus::PARTIAL;
     }
     return remainingAmt;
 }
@@ -81,16 +81,16 @@ Side Order::getSide() const {
     return side;
 }
 
-ExecutionLifeCycle Order::getExecutionLevel() const {
+FillStatus Order::getExecutionLevel() const {
     return execution;
 }
 
-void Order::setExecutionLevel(ExecutionLifeCycle newLevel) {
+void Order::setExecutionLevel(FillStatus newLevel) {
     execution = newLevel;
 }
 
 bool Order::orderIsActive() const{
-    return execution == ExecutionLifeCycle::FILLED ? false : true;
+    return execution == FillStatus::FILLED ? false : true;
 }
 
 }  // namespace order_book

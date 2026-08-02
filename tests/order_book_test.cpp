@@ -34,7 +34,7 @@ int main() {
     (void)book;
     std::cout << "order_book smoke test passed" << std::endl;
 
-    using order_book::ExecutionLifeCycle;
+    using order_book::FillStatus;
     using order_book::Order;
     using order_book::Side;
 
@@ -45,17 +45,17 @@ int main() {
     expect(baseOrder.getInitialQuantity() == 10, "initial quantity should be preserved");
     expect(baseOrder.getRemainingQuantity() == 10, "remaining quantity should start at the initial quantity");
     expect(baseOrder.getSide() == Side::BUY, "buy side should be preserved");
-    expect(baseOrder.getExecutionLevel() == ExecutionLifeCycle::NONE, "new order should start with no execution lifecycle");
+    expect(baseOrder.getExecutionLevel() == FillStatus::NONE, "new order should start with no execution lifecycle");
     expect(baseOrder.orderIsActive(), "new order should be active");
 
     expect(baseOrder.fillQuantity(3) == 0, "partial fill should not return excess quantity");
     expect(baseOrder.getRemainingQuantity() == 7, "remaining quantity should decrease after a partial fill");
-    expect(baseOrder.getExecutionLevel() == ExecutionLifeCycle::PARTIAL, "partial fill should set the execution lifecycle to PARTIAL");
+    expect(baseOrder.getExecutionLevel() == FillStatus::PARTIAL, "partial fill should set the execution lifecycle to PARTIAL");
     expect(baseOrder.orderIsActive(), "partially filled order should stay active");
 
     expect(baseOrder.fillQuantity(7) == 0, "full fill should not return excess quantity");
     expect(baseOrder.getRemainingQuantity() == 0, "remaining quantity should reach zero after a full fill");
-    expect(baseOrder.getExecutionLevel() == ExecutionLifeCycle::FILLED, "full fill should set the execution lifecycle to FILLED");
+    expect(baseOrder.getExecutionLevel() == FillStatus::FILLED, "full fill should set the execution lifecycle to FILLED");
     expect(!baseOrder.orderIsActive(), "fully filled order should no longer be active");
 
     Order sequenceOrder(2, 100, 5, 1, Side::SELL);

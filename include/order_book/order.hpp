@@ -9,7 +9,7 @@ namespace order_book {
         SELL
     };
 
-    enum class ExecutionLifeCycle {
+    enum class FillStatus {
         NONE,
         PARTIAL,
         FILLED
@@ -25,7 +25,7 @@ namespace order_book {
         unsigned int remainingQuant;
 
         Side side;
-        ExecutionLifeCycle execution;
+        FillStatus execution;
 
     public:
         Order(unsigned int id, unsigned int tick, unsigned int quant, unsigned int arrival, Side s);
@@ -40,8 +40,8 @@ namespace order_book {
         unsigned int fillQuantity(unsigned int amt);
 
         Side getSide() const;
-        ExecutionLifeCycle getExecutionLevel() const;
-        void setExecutionLevel(ExecutionLifeCycle newLevel);
+        FillStatus getExecutionLevel() const;
+        void setExecutionLevel(FillStatus newLevel);
         bool orderIsActive() const;
     };
 
