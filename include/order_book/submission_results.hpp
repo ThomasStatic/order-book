@@ -30,7 +30,7 @@ namespace order_book {
 
         unsigned int getSubmissionId() const;
 
-        std::vector<Trade> getGeneratedTrades() const;
+        const std::vector<Trade>& getGeneratedTrades() const;
         unsigned int getRemainingQuantity() const;
 
         FillStatus getFillStatus() const;

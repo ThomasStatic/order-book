@@ -18,7 +18,7 @@ namespace order_book {
         return submissionId;
     }
 
-    std::vector<Trade> SubmissionResults::getGeneratedTrades() const {
+    const std::vector<Trade>& SubmissionResults::getGeneratedTrades() const {
         return generatedTrades;
     }
 
