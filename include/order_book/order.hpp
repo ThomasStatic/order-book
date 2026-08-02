@@ -2,8 +2,8 @@
 
 #include <stdexcept>
 
-namespace order {
-    
+namespace order_book {
+
     enum class Side {
         BUY,
         SELL
@@ -45,4 +45,4 @@ namespace order {
         bool orderIsActive() const;
     };
 
-}
+}  // namespace order_book

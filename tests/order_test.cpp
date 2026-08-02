@@ -34,9 +34,9 @@ int main() {
     (void)book;
     std::cout << "order_book smoke test passed" << std::endl;
 
-    using order::ExecutionLifeCycle;
-    using order::Order;
-    using order::Side;
+    using order_book::ExecutionLifeCycle;
+    using order_book::Order;
+    using order_book::Side;
 
     Order baseOrder(1, 100, 10, 3, Side::BUY);
     expect(baseOrder.getOrderId() == 1, "order ID should be preserved");

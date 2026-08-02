@@ -1,6 +1,6 @@
 #include "order_book/order.hpp"
 
-using namespace order; 
+namespace order_book {
 
 Order::Order(unsigned int id, unsigned int tick, unsigned int quant, unsigned int seq, Side s): sequenceNum(seq), side(s) {
     if (id == 0) {
@@ -92,4 +92,6 @@ void Order::setExecutionLevel(ExecutionLifeCycle newLevel) {
 bool Order::orderIsActive() const{
     return execution == ExecutionLifeCycle::FILLED ? false : true;
 }
+
+}  // namespace order_book
 
