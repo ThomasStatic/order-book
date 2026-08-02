@@ -69,6 +69,7 @@ add_library(order_book STATIC
     src/order.cpp
     src/trade.cpp
     src/submission_results.cpp
+    src/cancellation_results.cpp
 )
 
 target_compile_features(order_book PUBLIC cxx_std_20)
