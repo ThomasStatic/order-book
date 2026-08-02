@@ -1,19 +1,10 @@
 #pragma once
 
 #include <stdexcept>
+#include "fill_status.hpp"
+#include "side.hpp"
 
 namespace order_book {
-
-    enum class Side {
-        BUY,
-        SELL
-    };
-
-    enum class FillStatus {
-        NONE,
-        PARTIAL,
-        FILLED
-    };
 
     class Order {
     private:
