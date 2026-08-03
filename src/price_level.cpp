@@ -38,6 +38,10 @@ namespace order_book {
     }
 
     QuantityConsumtionStatus PriceLevel::consumeQuantity(unsigned int fillQuant) {
+        if(fillQuant == 0) {
+            return QuantityConsumtionStatus::INVALID_REQUEST;
+        }
+
         while (fillQuant > 0 && quantity > 0) {
             unsigned int oldQuant = quantity;
             fillOldestOrder(fillQuant);
