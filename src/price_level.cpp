@@ -56,6 +56,8 @@ namespace order_book {
     }
 
     void PriceLevel::removeOrder(std::list<Order>::iterator itr) {
+        Order targetOrder = *itr;
+        quantity -= targetOrder.getRemainingQuantity();
         orders.erase(itr);
     }
 
