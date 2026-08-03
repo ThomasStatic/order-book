@@ -3,18 +3,7 @@
 #include "order_book/price_level.hpp"
 
 namespace order_book {
-    PriceLevel::PriceLevel(unsigned int price, Side s, Order firstOrder): tickPrice(price), side(s) {
-        if (price == 0 ) {
-            throw std::invalid_argument("Non-positive price error");
-        }
-
-        if(firstOrder.getPriceTick() != price) {
-            throw std::invalid_argument("Order doesn't match supplied price error");
-        }
-
-        orders.push_back(firstOrder);
-        quantity = firstOrder.getRemainingQuantity();
-    }
+    PriceLevel::PriceLevel(unsigned int price, Side s): tickPrice(price), side(s) {}
 
     OrderLocation PriceLevel::addOrder(Order newOrder) {
         std::list<Order>::iterator itr = orders.insert(orders.end(), newOrder);

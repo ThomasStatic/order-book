@@ -27,7 +27,7 @@ namespace order_book {
         void fillOldestOrder(unsigned int fillQuant);
 
     public:
-        PriceLevel(unsigned int price, Side s, Order firstOrder);
+        PriceLevel(unsigned int price, Side s);
 
         OrderLocation addOrder(Order newOrder);
         const Order& getOldestOrder() const;

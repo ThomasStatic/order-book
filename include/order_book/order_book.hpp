@@ -11,10 +11,11 @@
 namespace order_book {
     
     using Price = unsigned int;
+    using OrderId = unsigned int;
 
     class OrderBook final {
     private:
-        std::unordered_map<Price, OrderLocation> orderIndex;
+        std::unordered_map<OrderId, OrderLocation> orderIndex;
 
         std::map<Price, PriceLevel, std::greater<Price>> bids;
         std::map<Price, PriceLevel, std::less<Price>> asks;
@@ -23,7 +24,9 @@ namespace order_book {
         const Order& getBestAsk() const;
 
         bool hasBids() const;
-        bool hasAsks() const;        
+        bool hasAsks() const;
+        
+        void addOrder(Order order);
 
     public:
         OrderBook() = default;

@@ -18,4 +18,34 @@ namespace order_book {
     bool OrderBook::hasAsks() const {
         return !asks.empty();
     }
+
+    void OrderBook::addOrder(Order order) {
+        PriceLevel* level = nullptr;
+        if(order.getSide() == Side::BUY) {
+            auto itr = bids.find(order.getPriceTick());
+
+            if(itr != bids.end()) {
+                level = &itr->second;
+                
+            }
+            else {
+                level = new PriceLevel(order.getPriceTick(), order.getSide());
+                bids.emplace(order.getPriceTick(), level);
+            }
+        }
+        else {
+            auto itr = asks.find(order.getPriceTick());
+
+            if(itr != asks.end()) {
+                level = &itr->second;;
+            }
+            else {
+                level = new PriceLevel(order.getPriceTick(), order.getSide());
+                asks.emplace(order.getPriceTick(), level);
+            }
+        }
+
+        OrderLocation location = level->addOrder(order);
+        orderIndex.insert({order.getOrderId(), location});
+    }
 }
