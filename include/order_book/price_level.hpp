@@ -10,7 +10,7 @@
 
 namespace order_book {
 
-    enum class QuantityConsumtionStatus {
+    enum class QuantityConsumptionStatus {
         SATISFIED,
         LEVEL_EXHAUSTED,
         INVALID_REQUEST
@@ -32,7 +32,7 @@ namespace order_book {
         OrderLocation addOrder(Order newOrder);
         const Order& getOldestOrder() const;
 
-        QuantityConsumtionStatus consumeQuantity(unsigned int fillQuant);
+        QuantityConsumptionStatus consumeQuantity(unsigned int fillQuant);
 
         void removeOrder(std::list<Order>::iterator itr);
 

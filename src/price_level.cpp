@@ -37,9 +37,9 @@ namespace order_book {
         }
     }
 
-    QuantityConsumtionStatus PriceLevel::consumeQuantity(unsigned int fillQuant) {
+    QuantityConsumptionStatus PriceLevel::consumeQuantity(unsigned int fillQuant) {
         if(fillQuant == 0) {
-            return QuantityConsumtionStatus::INVALID_REQUEST;
+            return QuantityConsumptionStatus::INVALID_REQUEST;
         }
 
         while (fillQuant > 0 && quantity > 0) {
@@ -49,14 +49,14 @@ namespace order_book {
         }
 
         if(quantity > 0) {
-            return QuantityConsumtionStatus::LEVEL_EXHAUSTED;
+            return QuantityConsumptionStatus::LEVEL_EXHAUSTED;
         }
 
         if(quantity == 0) {
-            return QuantityConsumtionStatus::SATISFIED;
+            return QuantityConsumptionStatus::SATISFIED;
         }
 
-        return QuantityConsumtionStatus::INVALID_REQUEST;
+        return QuantityConsumptionStatus::INVALID_REQUEST;
     }
 
     void PriceLevel::removeOrder(std::list<Order>::iterator itr) {
