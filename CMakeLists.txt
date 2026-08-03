@@ -123,6 +123,16 @@ if(BUILD_TESTING)
     order_book_enable_warnings(result_type_tests)
     order_book_enable_sanitizers(result_type_tests)
     add_test(NAME result_type_tests COMMAND result_type_tests)
+
+    add_executable(price_level_tests
+        tests/price_level_test.cpp
+    )
+
+    target_compile_features(price_level_tests PRIVATE cxx_std_20)
+    target_link_libraries(price_level_tests PRIVATE order_book)
+    order_book_enable_warnings(price_level_tests)
+    order_book_enable_sanitizers(price_level_tests)
+    add_test(NAME price_level_tests COMMAND price_level_tests)
 endif()
 
 if(ORDER_BOOK_BUILD_BENCHMARKS)

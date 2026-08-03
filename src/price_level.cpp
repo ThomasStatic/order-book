@@ -1,3 +1,5 @@
+#include <algorithm>
+
 #include "order_book/price_level.hpp"
 
 namespace order_book {
@@ -28,11 +30,13 @@ namespace order_book {
 
     void PriceLevel::fillOldestOrder(unsigned int fillQuant) {
         Order& oldestOrder = orders.front();
-        
-        int remainingQuant = oldestOrder.fillQuantity(fillQuant);
-        quantity = quantity - (fillQuant - remainingQuant);
-        
-        if(remainingQuant == 0) {
+
+        const unsigned int availableQuant = oldestOrder.getRemainingQuantity();
+        const unsigned int fillAmount = std::min(fillQuant, availableQuant);
+        oldestOrder.fillQuantity(fillAmount);
+        quantity -= fillAmount;
+
+        if (oldestOrder.getRemainingQuantity() == 0) {
             orders.pop_front();
         }
     }
