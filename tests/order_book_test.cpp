@@ -3,8 +3,10 @@
 #include <stdexcept>
 #include <string>
 
+#define private public
 #include "order_book/order.hpp"
 #include "order_book/order_book.hpp"
+#undef private
 
 namespace {
 
@@ -36,7 +38,23 @@ int main() {
 
     using order_book::FillStatus;
     using order_book::Order;
+    using order_book::OrderBook;
+    using order_book::PriceLevel;
     using order_book::Side;
+
+    OrderBook bookWithLevels{};
+    expect(!bookWithLevels.hasBids(), "empty order book should not report bids");
+    expect(!bookWithLevels.hasAsks(), "empty order book should not report asks");
+
+    Order bidOrder(1, 100, 10, 3, Side::BUY);
+    Order askOrder(2, 101, 5, 4, Side::SELL);
+    bookWithLevels.bids.emplace(100, PriceLevel(100, Side::BUY, bidOrder));
+    bookWithLevels.asks.emplace(101, PriceLevel(101, Side::SELL, askOrder));
+
+    expect(bookWithLevels.hasBids(), "book should report the presence of bids");
+    expect(bookWithLevels.hasAsks(), "book should report the presence of asks");
+    expect(bookWithLevels.getBestBid().getOrderId() == 1, "best bid should return the earliest order from the best bid level");
+    expect(bookWithLevels.getBestAsk().getOrderId() == 2, "best ask should return the earliest order from the best ask level");
 
     Order baseOrder(1, 100, 10, 3, Side::BUY);
     expect(baseOrder.getOrderId() == 1, "order ID should be preserved");
