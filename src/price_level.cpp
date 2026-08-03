@@ -27,12 +27,12 @@ namespace order_book {
     }
 
     void PriceLevel::fillOldestOrder(unsigned int fillQuant) {
-        Order oldestOrder = getOldestOrder();
+        Order& oldestOrder = orders.front();
         
         int remainingQuant = oldestOrder.fillQuantity(fillQuant);
         quantity = quantity - (fillQuant - remainingQuant);
         
-        if(fillQuant == 0) {
+        if(remainingQuant == 0) {
             orders.pop_front();
         }
     }
