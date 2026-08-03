@@ -22,7 +22,7 @@ namespace order_book {
         return location;
     }
 
-    Order PriceLevel::getOldestOrder() const{
+    const Order& PriceLevel::getOldestOrder() const{
         return orders.front();
     }
 

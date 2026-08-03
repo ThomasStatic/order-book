@@ -30,7 +30,7 @@ namespace order_book {
         PriceLevel(unsigned int price, Side s, Order firstOrder);
 
         OrderLocation addOrder(Order newOrder);
-        Order getOldestOrder() const;
+        const Order& getOldestOrder() const;
 
         QuantityConsumtionStatus consumeQuantity(unsigned int fillQuant);
 
