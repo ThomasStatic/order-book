@@ -2,8 +2,11 @@
 
 #include <list>
 #include <stdexcept>
+#include <iterator>
+
 #include "order.hpp"
 #include "side.hpp"
+#include "order_location.hpp"
 
 namespace order_book {
 
@@ -26,10 +29,12 @@ namespace order_book {
     public:
         PriceLevel(unsigned int price, Side s, Order firstOrder);
 
-        void addOrder(Order newOrder);
+        OrderLocation addOrder(Order newOrder);
         Order getOldestOrder() const;
 
         QuantityConsumtionStatus consumeQuantity(unsigned int fillQuant);
+
+        void removeOrder(std::list<Order>::iterator itr);
 
 
     };

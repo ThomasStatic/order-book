@@ -14,9 +14,12 @@ namespace order_book {
         quantity = firstOrder.getRemainingQuantity();
     }
 
-    void PriceLevel::addOrder(Order newOrder) {
-        orders.push_back(newOrder);
+    OrderLocation PriceLevel::addOrder(Order newOrder) {
+        std::list<Order>::iterator itr = orders.insert(orders.end(), newOrder);
         quantity += newOrder.getRemainingQuantity();
+        
+        OrderLocation location(tickPrice, side, itr);
+        return location;
     }
 
     Order PriceLevel::getOldestOrder() const{
@@ -50,5 +53,9 @@ namespace order_book {
         }
 
         return QuantityConsumtionStatus::INVALID_REQUEST;
+    }
+
+    void PriceLevel::removeOrder(std::list<Order>::iterator itr) {
+        orders.erase(itr);
     }
 }
