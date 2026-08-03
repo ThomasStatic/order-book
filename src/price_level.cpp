@@ -58,4 +58,8 @@ namespace order_book {
     void PriceLevel::removeOrder(std::list<Order>::iterator itr) {
         orders.erase(itr);
     }
+
+    bool PriceLevel::isEmpty() const{
+        return orders.empty();
+    }
 }

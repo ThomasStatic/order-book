@@ -36,6 +36,8 @@ namespace order_book {
 
         void removeOrder(std::list<Order>::iterator itr);
 
+        bool isEmpty() const;
+
 
     };
 }
