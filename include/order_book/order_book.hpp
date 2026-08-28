@@ -4,6 +4,7 @@
 #include <map>
 #include <compare>
 #include <stdexcept>
+#include <vector>
 
 #include "order_location.hpp"
 #include "price_level.hpp"
@@ -14,6 +15,18 @@ namespace order_book {
     using Price = unsigned int;
     using OrderId = unsigned int;
 
+    struct PriceLevelSummary {
+        Price price;
+        unsigned int totalQuantity;
+        unsigned int orderQuantity;
+    };
+
+    struct BookSnapshot {
+        std::vector<PriceLevelSummary> bids;
+        std::vector<PriceLevelSummary> asks;
+        unsigned int totalActiveVisibleOrders;
+    };
+
     class OrderBook final {
     private:
         std::unordered_map<OrderId, OrderLocation> orderIndex;
@@ -22,6 +35,8 @@ namespace order_book {
         std::map<Price, PriceLevel, std::less<Price>> asks;
 
     public:
+        OrderBook() = default;
+
         const Order& getBestBid() const;
         const Order& getBestAsk() const;
 
@@ -34,8 +49,8 @@ namespace order_book {
 
         void removeOrder(OrderId orderId);
 
-    public:
-        OrderBook() = default;
+        BookSnapshot snapshot(unsigned int depth = 5) const;
+
     };
     
 }  // namespace order_book

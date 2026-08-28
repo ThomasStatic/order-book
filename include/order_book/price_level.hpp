@@ -39,6 +39,9 @@ namespace order_book {
 
         bool isEmpty() const;
 
+        unsigned int getAggregateQuantity() const;
+        unsigned int getOrdersQuantity() const;
+
 
     };
 }

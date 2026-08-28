@@ -101,4 +101,38 @@ namespace order_book {
 
         throw std::invalid_argument("order id not found in order index error");
     }
+
+    BookSnapshot OrderBook::snapshot(unsigned int depth) const {
+        unsigned int totalActiveOrders = 0;
+        
+        unsigned int bidsCount = 0;
+        std::vector<PriceLevelSummary> bestBids;
+        for(auto itr = bids.begin(); itr != bids.end() && bidsCount < depth; ++itr, ++bidsCount) {
+            PriceLevelSummary topBid;
+            topBid.price = itr->first;
+            unsigned int ordersQuantity = itr->second.getOrdersQuantity();
+            topBid.orderQuantity = ordersQuantity;
+            totalActiveOrders += ordersQuantity;
+            topBid.totalQuantity = itr->second.getAggregateQuantity();
+            bestBids.push_back(topBid);
+        }
+
+        unsigned int asksCount = 0;
+        std::vector<PriceLevelSummary> bestAsks;
+        for(auto itr = asks.begin(); itr != asks.end() && asksCount < depth; ++itr, ++asksCount) {
+            PriceLevelSummary topAsk;
+            topAsk.price = itr->first;
+            unsigned int ordersQuantity = itr->second.getOrdersQuantity();
+            topAsk.orderQuantity = ordersQuantity;
+            totalActiveOrders += ordersQuantity;
+            topAsk.totalQuantity = itr->second.getAggregateQuantity();
+            bestAsks.push_back(topAsk);
+        }
+
+        BookSnapshot snapshot;
+        snapshot.asks = bestAsks;
+        snapshot.bids = bestBids;
+        snapshot.totalActiveVisibleOrders = totalActiveOrders;
+        return snapshot;
+    }
 }

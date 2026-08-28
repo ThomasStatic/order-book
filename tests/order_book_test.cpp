@@ -57,6 +57,39 @@ int main() {
     expect(bookWithLevels.getBestBid().getOrderId() == 1, "best bid should return the earliest order from the best bid level");
     expect(bookWithLevels.getBestAsk().getOrderId() == 2, "best ask should return the earliest order from the best ask level");
 
+    OrderBook snapshotBook{};
+    snapshotBook.addOrder(Order(20, 105, 4, 1, Side::BUY));
+    snapshotBook.addOrder(Order(21, 104, 3, 2, Side::BUY));
+    snapshotBook.addOrder(Order(22, 104, 2, 3, Side::BUY));
+    snapshotBook.addOrder(Order(23, 103, 1, 4, Side::BUY));
+    snapshotBook.addOrder(Order(24, 101, 6, 5, Side::SELL));
+    snapshotBook.addOrder(Order(25, 102, 5, 6, Side::SELL));
+    snapshotBook.addOrder(Order(26, 102, 4, 7, Side::SELL));
+    snapshotBook.addOrder(Order(27, 103, 2, 8, Side::SELL));
+
+    const auto snapshot = snapshotBook.snapshot(2);
+    expect(snapshot.bids.size() == 2, "snapshot should include only the requested number of bid levels");
+    expect(snapshot.bids[0].price == 105, "snapshot bids should be ordered from highest price");
+    expect(snapshot.bids[0].totalQuantity == 4, "snapshot should report the bid level aggregate quantity");
+    expect(snapshot.bids[0].orderQuantity == 1, "snapshot should report the bid level order count");
+    expect(snapshot.bids[1].price == 104, "snapshot should include the second-best bid level");
+    expect(snapshot.bids[1].totalQuantity == 5, "snapshot should aggregate quantities at one bid price");
+    expect(snapshot.bids[1].orderQuantity == 2, "snapshot should count orders at one bid price");
+
+    expect(snapshot.asks.size() == 2, "snapshot should include only the requested number of ask levels");
+    expect(snapshot.asks[0].price == 101, "snapshot asks should be ordered from lowest price");
+    expect(snapshot.asks[0].totalQuantity == 6, "snapshot should report the ask level aggregate quantity");
+    expect(snapshot.asks[0].orderQuantity == 1, "snapshot should report the ask level order count");
+    expect(snapshot.asks[1].price == 102, "snapshot should include the second-best ask level");
+    expect(snapshot.asks[1].totalQuantity == 9, "snapshot should aggregate quantities at one ask price");
+    expect(snapshot.asks[1].orderQuantity == 2, "snapshot should count orders at one ask price");
+    expect(snapshot.totalActiveVisibleOrders == 6,
+           "snapshot should count orders only in the visible bid and ask levels");
+
+    const auto defaultSnapshot = snapshotBook.snapshot();
+    expect(defaultSnapshot.bids.size() == 3, "snapshot should use its default depth when none is provided");
+    expect(defaultSnapshot.asks.size() == 3, "snapshot should use its default depth for asks when none is provided");
+
         OrderBook orderBook{};
         orderBook.addOrder(Order(10, 200, 4, 1, Side::BUY));
         orderBook.addOrder(Order(11, 200, 6, 2, Side::BUY));

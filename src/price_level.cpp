@@ -65,4 +65,11 @@ namespace order_book {
     bool PriceLevel::isEmpty() const{
         return orders.empty();
     }
+
+    unsigned int PriceLevel::getAggregateQuantity() const {
+        return quantity;
+    }
+    unsigned int PriceLevel::getOrdersQuantity() const {
+        return orders.size();
+    }
 }

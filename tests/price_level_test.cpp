@@ -29,8 +29,12 @@ int main() {
     level.addOrder(second);
 
     expect(!level.isEmpty(), "newly initialized price level should not be empty");
+       expect(level.getAggregateQuantity() == 8, "price level should report aggregate remaining quantity");
+       expect(level.getOrdersQuantity() == 2, "price level should report the number of active orders");
     expect(level.consumeQuantity(5) == QuantityConsumptionStatus::LEVEL_EXHAUSTED,
            "consuming the full quantity of the oldest order should leave the next order behind");
+       expect(level.getAggregateQuantity() == 3, "price level aggregate should decrease after consumption");
+       expect(level.getOrdersQuantity() == 1, "price level order count should exclude fully consumed orders");
     expect(level.getOldestOrder().getOrderId() == 2,
            "FIFO should advance to the next order once the oldest one is fully consumed");
     expect(level.getOldestOrder().getRemainingQuantity() == 3,
@@ -39,6 +43,8 @@ int main() {
     expect(level.consumeQuantity(3) == QuantityConsumptionStatus::SATISFIED,
            "consuming the remaining quantity should fully satisfy the level");
     expect(level.isEmpty(), "the level should become empty once all quantity has been consumed");
+    expect(level.getAggregateQuantity() == 0, "an empty price level should report zero aggregate quantity");
+    expect(level.getOrdersQuantity() == 0, "an empty price level should report zero active orders");
 
     PriceLevel aggregateLevel(100, Side::BUY, Order(3, 100, 4, 3, Side::BUY));
     aggregateLevel.addOrder(Order(4, 100, 6, 4, Side::BUY));
