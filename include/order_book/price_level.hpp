@@ -22,12 +22,13 @@ namespace order_book {
         const Side side;
         
         std::list<Order> orders;
-        unsigned int quantity; // aggregate of all orders
+        unsigned int quantity = 0; // aggregate of all orders
 
         void fillOldestOrder(unsigned int fillQuant);
 
     public:
         PriceLevel(unsigned int price, Side s);
+        PriceLevel(unsigned int price, Side s, Order initialOrder);
 
         OrderLocation addOrder(Order newOrder);
         const Order& getOldestOrder() const;

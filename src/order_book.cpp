@@ -26,11 +26,12 @@ namespace order_book {
 
             if(itr != bids.end()) {
                 level = &itr->second;
-                
+
             }
             else {
-                level = new PriceLevel(order.getPriceTick(), order.getSide());
-                bids.emplace(order.getPriceTick(), level);
+                auto levelItr = bids.try_emplace(
+                    order.getPriceTick(), order.getPriceTick(), order.getSide()).first;
+                level = &levelItr->second;
             }
         }
         else {
@@ -40,12 +41,64 @@ namespace order_book {
                 level = &itr->second;;
             }
             else {
-                level = new PriceLevel(order.getPriceTick(), order.getSide());
-                asks.emplace(order.getPriceTick(), level);
+                auto levelItr = asks.try_emplace(
+                    order.getPriceTick(), order.getPriceTick(), order.getSide()).first;
+                level = &levelItr->second;
             }
         }
 
         OrderLocation location = level->addOrder(order);
         orderIndex.insert({order.getOrderId(), location});
+    }
+
+    OrderLocation OrderBook::findActiveOrder(OrderId orderId) const {
+        auto orderItr = orderIndex.find(orderId);
+
+        if(orderItr != orderIndex.end()) {
+            return orderItr->second;
+        }
+
+        throw std::invalid_argument("order id not found in order index error");
+
+    }
+
+    void OrderBook::removeOrder(OrderId orderId) {
+        auto orderItr = orderIndex.find(orderId);
+
+        if(orderItr != orderIndex.end()) {
+            OrderLocation location = orderItr->second;
+
+            if(location.side == Side::BUY) {
+                auto bidsItr = bids.find(location.tickPrice);
+
+                if(bidsItr != bids.end()) {
+                    bidsItr->second.removeOrder(location.itr);
+                    if(bidsItr->second.isEmpty()) {
+                        bids.erase(bidsItr->first);
+                    }
+                }
+                else {
+                    throw std::invalid_argument("price level not found in bids error");
+                }
+            }
+            else if(location.side == Side::SELL) {
+                auto asksItr = asks.find(location.tickPrice);
+
+                if(asksItr != asks.end()) {
+                    asksItr->second.removeOrder(location.itr);
+                    if(asksItr->second.isEmpty()) {
+                        asks.erase(asksItr->first);
+                    }
+                }
+                else {
+                    throw std::invalid_argument("price level not found in asks error");
+                }
+            }
+
+            orderIndex.erase(orderItr);
+            return;
+        }
+
+        throw std::invalid_argument("order id not found in order index error");
     }
 }

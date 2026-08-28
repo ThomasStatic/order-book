@@ -5,6 +5,10 @@
 namespace order_book {
     PriceLevel::PriceLevel(unsigned int price, Side s): tickPrice(price), side(s) {}
 
+    PriceLevel::PriceLevel(unsigned int price, Side s, Order initialOrder): PriceLevel(price, s) {
+        addOrder(initialOrder);
+    }
+
     OrderLocation PriceLevel::addOrder(Order newOrder) {
         std::list<Order>::iterator itr = orders.insert(orders.end(), newOrder);
         quantity += newOrder.getRemainingQuantity();

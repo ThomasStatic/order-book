@@ -39,6 +39,7 @@ int main() {
     using order_book::FillStatus;
     using order_book::Order;
     using order_book::OrderBook;
+    using order_book::OrderLocation;
     using order_book::PriceLevel;
     using order_book::Side;
 
@@ -55,6 +56,39 @@ int main() {
     expect(bookWithLevels.hasAsks(), "book should report the presence of asks");
     expect(bookWithLevels.getBestBid().getOrderId() == 1, "best bid should return the earliest order from the best bid level");
     expect(bookWithLevels.getBestAsk().getOrderId() == 2, "best ask should return the earliest order from the best ask level");
+
+        OrderBook orderBook{};
+        orderBook.addOrder(Order(10, 200, 4, 1, Side::BUY));
+        orderBook.addOrder(Order(11, 200, 6, 2, Side::BUY));
+        orderBook.addOrder(Order(12, 201, 3, 3, Side::SELL));
+
+        OrderLocation bidLocation = orderBook.findActiveOrder(10);
+        expect(bidLocation.tickPrice == 200, "active bid lookup should return the order price");
+        expect(bidLocation.side == Side::BUY, "active bid lookup should return the order side");
+        expect(bidLocation.itr->getOrderId() == 10, "active bid lookup should return the matching order iterator");
+
+        OrderLocation askLocation = orderBook.findActiveOrder(12);
+        expect(askLocation.tickPrice == 201, "active ask lookup should return the order price");
+        expect(askLocation.side == Side::SELL, "active ask lookup should return the order side");
+        expect(askLocation.itr->getOrderId() == 12, "active ask lookup should return the matching order iterator");
+
+        expectThrows([&orderBook] { orderBook.findActiveOrder(99); },
+               "active order lookup should reject an unknown order ID");
+
+        orderBook.removeOrder(10);
+        expectThrows([&orderBook] { orderBook.findActiveOrder(10); },
+               "removed order should no longer be indexed");
+        expect(orderBook.getBestBid().getOrderId() == 11,
+            "removing one order should preserve the next order at the price level");
+        expect(orderBook.hasBids(), "a price level should remain while it still contains an order");
+
+        orderBook.removeOrder(11);
+        expect(!orderBook.hasBids(), "removing the last bid should remove the bid price level");
+
+        orderBook.removeOrder(12);
+        expect(!orderBook.hasAsks(), "removing the last ask should remove the ask price level");
+        expectThrows([&orderBook] { orderBook.removeOrder(99); },
+               "removing an unknown order ID should throw");
 
     Order baseOrder(1, 100, 10, 3, Side::BUY);
     expect(baseOrder.getOrderId() == 1, "order ID should be preserved");

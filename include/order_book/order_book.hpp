@@ -3,6 +3,7 @@
 #include <unordered_map>
 #include <map>
 #include <compare>
+#include <stdexcept>
 
 #include "order_location.hpp"
 #include "price_level.hpp"
@@ -20,13 +21,18 @@ namespace order_book {
         std::map<Price, PriceLevel, std::greater<Price>> bids;
         std::map<Price, PriceLevel, std::less<Price>> asks;
 
+    public:
         const Order& getBestBid() const;
         const Order& getBestAsk() const;
 
         bool hasBids() const;
         bool hasAsks() const;
-        
+
         void addOrder(Order order);
+
+        OrderLocation findActiveOrder(OrderId orderId) const;
+
+        void removeOrder(OrderId orderId);
 
     public:
         OrderBook() = default;
