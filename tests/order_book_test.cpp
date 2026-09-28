@@ -123,6 +123,34 @@ int main() {
         expectThrows([&orderBook] { orderBook.removeOrder(99); },
                "removing an unknown order ID should throw");
 
+        OrderBook consumeBook{};
+        consumeBook.addOrder(Order(30, 300, 5, 1, Side::SELL));
+        consumeBook.addOrder(Order(31, 300, 5, 2, Side::SELL));
+
+        const auto consumed = consumeBook.consumeLevel(Side::SELL, 300, 7);
+        expect(consumed.unfilledQuantity == 0, "consuming within level quantity should leave nothing unfilled");
+        expectThrows([&consumeBook] { consumeBook.findActiveOrder(30); },
+               "a fully filled order should no longer be indexed");
+        expectThrows([&consumeBook] { consumeBook.removeOrder(30); },
+               "cancelling a fully filled order should throw instead of using a stale iterator");
+        expect(consumeBook.findActiveOrder(31).itr->getRemainingQuantity() == 3,
+            "a partially filled order should stay indexed with its reduced quantity");
+        expect(consumeBook.getBestAsk().getOrderId() == 31, "the partially filled order should remain at the level");
+
+        const auto drained = consumeBook.consumeLevel(Side::SELL, 300, 10);
+        expect(drained.unfilledQuantity == 7, "consuming past the level should report the unfilled remainder");
+        expect(!consumeBook.hasAsks(), "a fully consumed level should be removed from the book");
+        expectThrows([&consumeBook] { consumeBook.findActiveOrder(31); },
+               "the last filled order should no longer be indexed");
+        expectThrows([&consumeBook] { consumeBook.consumeLevel(Side::SELL, 300, 1); },
+               "consuming from a missing price level should throw");
+
+        consumeBook.addOrder(Order(32, 299, 2, 3, Side::BUY));
+        consumeBook.consumeLevel(Side::BUY, 299, 2);
+        expect(!consumeBook.hasBids(), "a fully consumed bid level should be removed from the book");
+        expectThrows([&consumeBook] { consumeBook.findActiveOrder(32); },
+               "a fully filled bid should no longer be indexed");
+
     Order baseOrder(1, 100, 10, 3, Side::BUY);
     expect(baseOrder.getOrderId() == 1, "order ID should be preserved");
     expect(baseOrder.getSequenceNum() == 3, "sequence number should be preserved");

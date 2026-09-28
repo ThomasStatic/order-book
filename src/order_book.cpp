@@ -102,6 +102,39 @@ namespace order_book {
         throw std::invalid_argument("order id not found in order index error");
     }
 
+    ConsumptionResult OrderBook::consumeLevel(Side side, Price price, unsigned int quantity) {
+        ConsumptionResult result;
+        if(side == Side::BUY) {
+            auto bidsItr = bids.find(price);
+            if(bidsItr == bids.end()) {
+                throw std::invalid_argument("price level not found in bids error");
+            }
+
+            result = bidsItr->second.consumeQuantity(quantity);
+            if(bidsItr->second.isEmpty()) {
+                bids.erase(bidsItr);
+            }
+        }
+        else {
+            auto asksItr = asks.find(price);
+            if(asksItr == asks.end()) {
+                throw std::invalid_argument("price level not found in asks error");
+            }
+
+            result = asksItr->second.consumeQuantity(quantity);
+            if(asksItr->second.isEmpty()) {
+                asks.erase(asksItr);
+            }
+        }
+
+        for(const OrderFill& fill : result.fills) {
+            if(fill.fullyFilled) {
+                orderIndex.erase(fill.orderId);
+            }
+        }
+        return result;
+    }
+
     BookSnapshot OrderBook::snapshot(unsigned int depth) const {
         unsigned int totalActiveOrders = 0;
         

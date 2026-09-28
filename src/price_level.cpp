@@ -21,7 +21,7 @@ namespace order_book {
         return orders.front();
     }
 
-    void PriceLevel::fillOldestOrder(unsigned int fillQuant) {
+    OrderFill PriceLevel::fillOldestOrder(unsigned int fillQuant) {
         Order& oldestOrder = orders.front();
 
         const unsigned int availableQuant = oldestOrder.getRemainingQuantity();
@@ -29,31 +29,29 @@ namespace order_book {
         oldestOrder.fillQuantity(fillAmount);
         quantity -= fillAmount;
 
+        OrderFill fill{oldestOrder.getOrderId(), fillAmount, false};
         if (oldestOrder.getRemainingQuantity() == 0) {
+            fill.fullyFilled = true;
             orders.pop_front();
         }
+        return fill;
     }
 
-    QuantityConsumptionStatus PriceLevel::consumeQuantity(unsigned int fillQuant) {
+    ConsumptionResult PriceLevel::consumeQuantity(unsigned int fillQuant) {
+        ConsumptionResult result{QuantityConsumptionStatus::INVALID_REQUEST, fillQuant, {}};
         if(fillQuant == 0) {
-            return QuantityConsumptionStatus::INVALID_REQUEST;
+            return result;
         }
 
-        while (fillQuant > 0 && quantity > 0) {
-            unsigned int oldQuant = quantity;
-            fillOldestOrder(fillQuant);
-            fillQuant = fillQuant - (oldQuant - quantity);
+        while (result.unfilledQuantity > 0 && quantity > 0) {
+            OrderFill fill = fillOldestOrder(result.unfilledQuantity);
+            result.unfilledQuantity -= fill.filledQuantity;
+            result.fills.push_back(fill);
         }
 
-        if(quantity > 0) {
-            return QuantityConsumptionStatus::LEVEL_EXHAUSTED;
-        }
-
-        if(quantity == 0) {
-            return QuantityConsumptionStatus::SATISFIED;
-        }
-
-        return QuantityConsumptionStatus::INVALID_REQUEST;
+        result.status = quantity > 0 ? QuantityConsumptionStatus::LEVEL_EXHAUSTED
+                                     : QuantityConsumptionStatus::SATISFIED;
+        return result;
     }
 
     void PriceLevel::removeOrder(std::list<Order>::iterator itr) {

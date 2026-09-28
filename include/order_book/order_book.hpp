@@ -49,6 +49,10 @@ namespace order_book {
 
         void removeOrder(OrderId orderId);
 
+        // Fills resting orders at one price level in FIFO order, unindexing fully
+        // filled orders and erasing the level once it is empty.
+        ConsumptionResult consumeLevel(Side side, Price price, unsigned int quantity);
+
         BookSnapshot snapshot(unsigned int depth = 5) const;
 
     };

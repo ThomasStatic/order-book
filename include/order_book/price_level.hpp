@@ -3,6 +3,7 @@
 #include <list>
 #include <stdexcept>
 #include <iterator>
+#include <vector>
 
 #include "order.hpp"
 #include "side.hpp"
@@ -16,6 +17,18 @@ namespace order_book {
         INVALID_REQUEST
     };
 
+    struct OrderFill {
+        unsigned int orderId;
+        unsigned int filledQuantity;
+        bool fullyFilled; // order was removed from the level
+    };
+
+    struct ConsumptionResult {
+        QuantityConsumptionStatus status;
+        unsigned int unfilledQuantity; // requested quantity the level could not supply
+        std::vector<OrderFill> fills;  // in FIFO order
+    };
+
     class PriceLevel {
     private:
         const unsigned int tickPrice;
@@ -24,7 +37,7 @@ namespace order_book {
         std::list<Order> orders;
         unsigned int quantity = 0; // aggregate of all orders
 
-        void fillOldestOrder(unsigned int fillQuant);
+        OrderFill fillOldestOrder(unsigned int fillQuant);
 
     public:
         PriceLevel(unsigned int price, Side s);
@@ -33,7 +46,7 @@ namespace order_book {
         OrderLocation addOrder(Order newOrder);
         const Order& getOldestOrder() const;
 
-        QuantityConsumptionStatus consumeQuantity(unsigned int fillQuant);
+        ConsumptionResult consumeQuantity(unsigned int fillQuant);
 
         void removeOrder(std::list<Order>::iterator itr);
 
