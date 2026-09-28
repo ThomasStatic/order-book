@@ -151,6 +151,64 @@ int main() {
         expectThrows([&consumeBook] { consumeBook.findActiveOrder(32); },
                "a fully filled bid should no longer be indexed");
 
+    OrderBook matchBook{};
+    matchBook.addOrder(Order(40, 101, 3, 1, Side::SELL));
+    matchBook.addOrder(Order(41, 101, 4, 2, Side::SELL));
+    matchBook.addOrder(Order(42, 102, 5, 3, Side::SELL));
+    matchBook.addOrder(Order(43, 104, 5, 4, Side::SELL));
+
+    const auto buyTrades = matchBook.submitOrder(Order(50, 102, 10, 5, Side::BUY));
+    expect(buyTrades.size() == 3, "a crossing buy should trade against each resting order it fills");
+    expect(buyTrades[0].getRestingId() == 40 && buyTrades[1].getRestingId() == 41,
+           "orders at the same price should match in arrival order");
+    expect(buyTrades[2].getRestingId() == 42, "matching should move to the next ask level once the best is exhausted");
+    expect(buyTrades[0].getExecutionPrice() == 101 && buyTrades[2].getExecutionPrice() == 102,
+           "trades should execute at the resting order's price");
+    expect(buyTrades[2].getExecutionQuantity() == 3, "the last trade should fill only the incoming remainder");
+    expect(buyTrades[0].getIncomingId() == 50 && buyTrades[0].getIncomingSide() == Side::BUY,
+           "trades should record the incoming order and side");
+    expect(buyTrades[0].getTradeId() == 1 && buyTrades[2].getTradeId() == 3, "trade IDs should increase from one");
+    expectThrows([&matchBook] { matchBook.findActiveOrder(50); },
+           "a fully filled incoming order should never be indexed");
+    expect(!matchBook.hasBids(), "a fully filled incoming order should not rest");
+    expect(matchBook.getBestAsk().getOrderId() == 42 && matchBook.getBestAsk().getRemainingQuantity() == 2,
+           "a partially filled resting ask should keep its place with reduced quantity");
+
+    const auto restingBuyTrades = matchBook.submitOrder(Order(51, 103, 6, 6, Side::BUY));
+    expect(restingBuyTrades.size() == 1, "a buy should stop matching when the best ask no longer crosses");
+    expect(restingBuyTrades[0].getExecutionQuantity() == 2, "the buy should fill what crosses before resting");
+    expect(matchBook.getBestBid().getOrderId() == 51 && matchBook.getBestBid().getRemainingQuantity() == 4,
+           "the unfilled remainder should rest at its limit price");
+    expect(matchBook.findActiveOrder(51).tickPrice == 103, "a resting remainder should be indexed");
+    expect(matchBook.getBestBid().getExecutionLevel() == FillStatus::PARTIAL,
+           "a resting remainder should be marked partially filled");
+    expect(matchBook.getBestAsk().getOrderId() == 43, "a non-crossing ask should be left untouched");
+
+    const auto passiveTrades = matchBook.submitOrder(Order(52, 104, 1, 7, Side::SELL));
+    expect(passiveTrades.empty(), "a sell above the best bid should not trade");
+    expect(matchBook.findActiveOrder(52).itr->getRemainingQuantity() == 1, "a non-crossing sell should rest in full");
+    expect(matchBook.getBestAsk().getOrderId() == 43, "a new order at an existing price should queue behind older orders");
+
+    matchBook.addOrder(Order(53, 103, 2, 8, Side::BUY));
+    matchBook.addOrder(Order(54, 102, 5, 9, Side::BUY));
+    const auto sellTrades = matchBook.submitOrder(Order(55, 102, 8, 10, Side::SELL));
+    expect(sellTrades.size() == 3, "a crossing sell should trade down through the bid levels");
+    expect(sellTrades[0].getRestingId() == 51 && sellTrades[1].getRestingId() == 53,
+           "a sell should match the highest bid first, then FIFO within the level");
+    expect(sellTrades[2].getRestingId() == 54 && sellTrades[2].getExecutionPrice() == 102,
+           "a sell priced equal to the best bid should cross");
+    expect(sellTrades[2].getExecutionQuantity() == 2, "the sell should take only its remaining quantity");
+    expect(sellTrades[0].getTradeId() == 5, "trade IDs should keep increasing across submissions");
+    expectThrows([&matchBook] { matchBook.findActiveOrder(51); }, "fully filled resting bids should be unindexed");
+    expect(matchBook.getBestBid().getOrderId() == 54 && matchBook.getBestBid().getRemainingQuantity() == 3,
+           "the partially filled bid should remain best");
+
+    OrderBook emptyBook{};
+    expect(emptyBook.submitOrder(Order(60, 100, 5, 1, Side::SELL)).empty(),
+           "an order into an empty opposing side should not trade");
+    expect(emptyBook.hasAsks() && emptyBook.findActiveOrder(60).side == Side::SELL,
+           "an order into an empty opposing side should rest");
+
     Order baseOrder(1, 100, 10, 3, Side::BUY);
     expect(baseOrder.getOrderId() == 1, "order ID should be preserved");
     expect(baseOrder.getSequenceNum() == 3, "sequence number should be preserved");

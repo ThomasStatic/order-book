@@ -9,11 +9,13 @@
 #include "order_location.hpp"
 #include "price_level.hpp"
 #include "order.hpp"
+#include "trade.hpp"
 
 namespace order_book {
     
     using Price = unsigned int;
     using OrderId = unsigned int;
+    using TradeId = unsigned int;
 
     struct PriceLevelSummary {
         Price price;
@@ -34,6 +36,12 @@ namespace order_book {
         std::map<Price, PriceLevel, std::greater<Price>> bids;
         std::map<Price, PriceLevel, std::less<Price>> asks;
 
+        TradeId nextTradeId = 1;
+
+        bool crossesBestOpposing(const Order& incoming) const;
+
+        std::vector<Trade> matchOrder(Order& incoming);
+
     public:
         OrderBook() = default;
 
@@ -44,6 +52,8 @@ namespace order_book {
         bool hasAsks() const;
 
         void addOrder(Order order);
+
+        std::vector<Trade> submitOrder(Order incoming);
 
         OrderLocation findActiveOrder(OrderId orderId) const;
 

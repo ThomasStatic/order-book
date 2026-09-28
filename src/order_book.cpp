@@ -51,6 +51,40 @@ namespace order_book {
         orderIndex.insert({order.getOrderId(), location});
     }
 
+    bool OrderBook::crossesBestOpposing(const Order& incoming) const {
+        if(incoming.getSide() == Side::BUY) {
+            return hasAsks() && incoming.getPriceTick() >= asks.begin()->first;
+        }
+        return hasBids() && incoming.getPriceTick() <= bids.begin()->first;
+    }
+
+    std::vector<Trade> OrderBook::matchOrder(Order& incoming) {
+        std::vector<Trade> trades;
+        const Side restingSide = incoming.getSide() == Side::BUY ? Side::SELL : Side::BUY;
+
+        while(incoming.getRemainingQuantity() > 0 && crossesBestOpposing(incoming)) {
+            const Price levelPrice = restingSide == Side::SELL ? asks.begin()->first
+                                                               : bids.begin()->first;
+            const unsigned int requested = incoming.getRemainingQuantity();
+
+            ConsumptionResult result = consumeLevel(restingSide, levelPrice, requested);
+            for(const OrderFill& fill : result.fills) {
+                trades.emplace_back(nextTradeId++, fill.orderId, incoming.getOrderId(),
+                                    levelPrice, fill.filledQuantity, incoming.getSide());
+            }
+            incoming.fillQuantity(requested - result.unfilledQuantity);
+        }
+        return trades;
+    }
+
+    std::vector<Trade> OrderBook::submitOrder(Order incoming) {
+        std::vector<Trade> trades = matchOrder(incoming);
+        if(incoming.getRemainingQuantity() > 0) {
+            addOrder(incoming);
+        }
+        return trades;
+    }
+
     OrderLocation OrderBook::findActiveOrder(OrderId orderId) const {
         auto orderItr = orderIndex.find(orderId);
 
