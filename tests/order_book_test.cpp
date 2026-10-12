@@ -208,6 +208,45 @@ int main() {
     expect(emptyBook.hasAsks() && emptyBook.findActiveOrder(60).getSide() == Side::SELL,
            "an order into an empty opposing side should rest");
 
+    OrderBook validationBook{};
+    validationBook.addOrder(Order(70, 100, 5, 1, Side::SELL));
+
+    expectThrows([&validationBook] { validationBook.addOrder(Order(70, 100, 3, 2, Side::SELL)); },
+           "adding a duplicate active order ID at the same price should throw");
+    expectThrows([&validationBook] { validationBook.addOrder(Order(70, 105, 3, 3, Side::BUY)); },
+           "adding a duplicate active order ID at another price and side should throw");
+    expect(validationBook.asks.at(100).getOrdersQuantity() == 1 && validationBook.asks.at(100).getAggregateQuantity() == 5,
+           "a rejected duplicate should not join the existing level");
+    expect(!validationBook.hasBids() && validationBook.asks.size() == 1,
+           "a rejected duplicate should not create a price level");
+    expect(validationBook.orderIndex.size() == 1 && validationBook.findActiveOrder(70).getRemainingQuantity() == 5,
+           "a rejected duplicate should leave the original order's index entry in place");
+
+    expectThrows([&validationBook] { validationBook.submitOrder(Order(70, 100, 2, 4, Side::BUY)); },
+           "submitting a duplicate active order ID should throw before matching");
+    expect(validationBook.findActiveOrder(70).getRemainingQuantity() == 5 && validationBook.nextTradeId == 1,
+           "a rejected duplicate submission should not trade");
+
+    Order filledOrder(71, 99, 5, 5, Side::BUY);
+    filledOrder.setExecutionLevel(FillStatus::FILLED);
+    expectThrows([&validationBook, &filledOrder] { validationBook.addOrder(filledOrder); },
+           "adding an order marked FILLED should throw");
+    expectThrows([&validationBook, &filledOrder] { validationBook.submitOrder(filledOrder); },
+           "submitting an order marked FILLED should throw rather than rest it");
+
+    Order emptiedOrder(72, 99, 5, 6, Side::BUY);
+    emptiedOrder.fillQuantity(5);
+    emptiedOrder.setExecutionLevel(FillStatus::NONE);
+    expectThrows([&validationBook, &emptiedOrder] { validationBook.addOrder(emptiedOrder); },
+           "adding an order with no remaining quantity should throw even if not marked FILLED");
+    expect(!validationBook.hasBids() && validationBook.orderIndex.size() == 1,
+           "rejected inactive orders should not create a level or an index entry");
+
+    validationBook.removeOrder(70);
+    validationBook.addOrder(Order(70, 101, 4, 7, Side::SELL));
+    expect(validationBook.findActiveOrder(70).getPriceTick() == 101,
+           "an ID may be reused once its earlier order is no longer resting");
+
     Order baseOrder(1, 100, 10, 3, Side::BUY);
     expect(baseOrder.getOrderId() == 1, "order ID should be preserved");
     expect(baseOrder.getSequenceNum() == 3, "sequence number should be preserved");

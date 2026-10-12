@@ -41,6 +41,10 @@ namespace order_book {
 
         TradeId nextTradeId = 1;
 
+        // Throws std::invalid_argument, before anything is mutated, unless the order
+        // still has quantity, is not FILLED, and its ID is not already resting here.
+        void validateNewOrder(const Order& order) const;
+
         bool crossesBestOpposing(const Order& incoming) const;
 
         Trade executeOnce(Order& incoming);

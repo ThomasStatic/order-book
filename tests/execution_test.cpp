@@ -20,6 +20,8 @@ struct OrderBookTestAccess {
     static const auto& bids(const OrderBook& book) { return book.bids; }
     static const auto& asks(const OrderBook& book) { return book.asks; }
     static TradeId nextTradeId(const OrderBook& book) { return book.nextTradeId; }
+    // Bypasses the read-only findActiveOrder to corrupt a resting order on purpose.
+    static Order& restingOrder(OrderBook& book, OrderId orderId) { return *book.orderIndex.at(orderId).itr; }
 
     static const std::list<Order>& orders(const PriceLevel& level) { return level.orders; }
     static OrderFill fillOldestOrder(PriceLevel& level, unsigned int quantity) {
@@ -362,16 +364,13 @@ void testRejectedExecutionLeavesBookUntouched() {
                  "rejected execution: submitting an inactive incoming order should throw");
     expectUntouched(book, inactiveIncoming, "rejected submission (inactive incoming)");
 
-    // setExecutionLevel is public and addOrder does not check it, so an order can be
-    // rested already marked FILLED while still holding quantity.
-    OrderBook inactiveRestingBook{};
-    Order inactiveResting(1, 100, 5, 1, Side::SELL);
-    inactiveResting.setExecutionLevel(FillStatus::FILLED);
-    inactiveRestingBook.addOrder(inactiveResting);
+    // The public API can no longer rest an inactive order (addOrder rejects one and
+    // findActiveOrder is read-only), so corrupt one directly to exercise the guard.
+    Access::restingOrder(book, 1).setExecutionLevel(FillStatus::FILLED);
     Order incoming(3, 100, 5, 3, Side::BUY);
-    expectThrows([&inactiveRestingBook, &incoming] { Access::executeOnce(inactiveRestingBook, incoming); },
+    expectThrows([&book, &incoming] { Access::executeOnce(book, incoming); },
                  "rejected execution: an inactive resting order should throw");
-    expectUntouched(inactiveRestingBook, incoming, "rejected execution (inactive resting)");
+    expectUntouched(book, incoming, "rejected execution (inactive resting)");
 }
 
 void testFillOldestOrderGuards() {

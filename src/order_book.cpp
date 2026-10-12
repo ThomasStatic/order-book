@@ -21,7 +21,18 @@ namespace order_book {
         return !asks.empty();
     }
 
+    void OrderBook::validateNewOrder(const Order& order) const {
+        if(order.getRemainingQuantity() == 0 || !order.orderIsActive()) {
+            throw std::invalid_argument("adding an inactive order error");
+        }
+        if(orderIndex.find(order.getOrderId()) != orderIndex.end()) {
+            throw std::invalid_argument("duplicate active order id error");
+        }
+    }
+
     void OrderBook::addOrder(Order order) {
+        validateNewOrder(order);
+
         PriceLevel* level = nullptr;
         if(order.getSide() == Side::BUY) {
             auto itr = bids.find(order.getPriceTick());
@@ -116,6 +127,10 @@ namespace order_book {
     }
 
     std::vector<Trade> OrderBook::submitOrder(Order incoming) {
+        // Reject before matching: failing only when the remainder rests would leave
+        // trades executed for a submission that then throws.
+        validateNewOrder(incoming);
+
         std::vector<Trade> trades = matchOrder(incoming);
         if(incoming.getRemainingQuantity() > 0) {
             addOrder(incoming);
