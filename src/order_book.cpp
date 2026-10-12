@@ -4,14 +4,18 @@
 #include "order_book/order_book.hpp"
 
 namespace order_book {
-    const Order& OrderBook::getBestBid() const{
-        const PriceLevel& bestBidLevel = bids.begin()->second;
-        return bestBidLevel.getOldestOrder();
+    Order OrderBook::getBestBid() const {
+        if(bids.empty()) {
+            throw std::runtime_error("best bid requested from an empty bid side error");
+        }
+        return bids.begin()->second.getOldestOrder();
     }
 
-    const Order& OrderBook::getBestAsk() const{
-        const PriceLevel& bestAskLevel = asks.begin()->second;
-        return bestAskLevel.getOldestOrder();
+    Order OrderBook::getBestAsk() const {
+        if(asks.empty()) {
+            throw std::runtime_error("best ask requested from an empty ask side error");
+        }
+        return asks.begin()->second.getOldestOrder();
     }
 
     bool OrderBook::hasBids() const {
@@ -147,7 +151,7 @@ namespace order_book {
         return trades;
     }
 
-    const Order& OrderBook::findActiveOrder(OrderId orderId) const {
+    Order OrderBook::findActiveOrder(OrderId orderId) const {
         auto orderItr = orderIndex.find(orderId);
 
         if(orderItr != orderIndex.end()) {

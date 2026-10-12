@@ -54,6 +54,14 @@ cmake -S . -B build/sanitizers -G Ninja -DCMAKE_BUILD_TYPE=Debug \
 cmake --build build/sanitizers
 ```
 
+With MSVC only AddressSanitizer is available (`ORDER_BOOK_ENABLE_UBSAN` is ignored with a warning). The ASan runtime DLL is copied next to each executable, so tests run from any shell:
+
+```bash
+cmake -S . -B build/asan -G "Visual Studio 17 2022" -DORDER_BOOK_ENABLE_ASAN=ON
+cmake --build build/asan --config Debug
+ctest --test-dir build/asan -C Debug --output-on-failure
+```
+
 ### Clean build from scratch
 
 ```bash

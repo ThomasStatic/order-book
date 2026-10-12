@@ -2,6 +2,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 
 #define private public
 #include "order_book/order.hpp"
@@ -45,6 +46,13 @@ int main() {
     OrderBook bookWithLevels{};
     expect(!bookWithLevels.hasBids(), "empty order book should not report bids");
     expect(!bookWithLevels.hasAsks(), "empty order book should not report asks");
+    expectThrows([&bookWithLevels] { bookWithLevels.getBestBid(); }, "best bid of an empty side should throw");
+    expectThrows([&bookWithLevels] { bookWithLevels.getBestAsk(); }, "best ask of an empty side should throw");
+
+    static_assert(!std::is_copy_constructible_v<OrderBook> && !std::is_copy_assignable_v<OrderBook>,
+                  "copying a book would share index iterators with the original");
+    static_assert(std::is_move_constructible_v<OrderBook> && std::is_move_assignable_v<OrderBook>,
+                  "a book should stay movable");
 
     Order bidOrder(1, 100, 10, 3, Side::BUY);
     Order askOrder(2, 101, 5, 4, Side::SELL);
@@ -94,12 +102,12 @@ int main() {
         orderBook.addOrder(Order(11, 200, 6, 2, Side::BUY));
         orderBook.addOrder(Order(12, 201, 3, 3, Side::SELL));
 
-        const Order& activeBid = orderBook.findActiveOrder(10);
+        const Order activeBid = orderBook.findActiveOrder(10);
         expect(activeBid.getPriceTick() == 200, "active bid lookup should return the order price");
         expect(activeBid.getSide() == Side::BUY, "active bid lookup should return the order side");
         expect(activeBid.getOrderId() == 10, "active bid lookup should return the matching order");
 
-        const Order& activeAsk = orderBook.findActiveOrder(12);
+        const Order activeAsk = orderBook.findActiveOrder(12);
         expect(activeAsk.getPriceTick() == 201, "active ask lookup should return the order price");
         expect(activeAsk.getSide() == Side::SELL, "active ask lookup should return the order side");
         expect(activeAsk.getOrderId() == 12, "active ask lookup should return the matching order");
@@ -116,6 +124,8 @@ int main() {
 
         orderBook.removeOrder(11);
         expect(!orderBook.hasBids(), "removing the last bid should remove the bid price level");
+        expectThrows([&orderBook] { orderBook.getBestBid(); },
+               "best bid should throw once removals have emptied the bid side");
 
         orderBook.removeOrder(12);
         expect(!orderBook.hasAsks(), "removing the last ask should remove the ask price level");

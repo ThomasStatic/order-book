@@ -16,6 +16,20 @@ option(ORDER_BOOK_ENABLE_ASAN "Enable AddressSanitizer for project-owned targets
 option(ORDER_BOOK_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer for project-owned targets" OFF)
 option(ORDER_BOOK_WARNINGS_AS_ERRORS "Treat warnings as errors" OFF)
 
+if(MSVC AND ORDER_BOOK_ENABLE_ASAN)
+    # /RTC1 (in CMake's default MSVC Debug flags) cannot be combined with /fsanitize=address,
+    # and the linker ignores /INCREMENTAL for ASan objects (LNK4300), so turn both off.
+    string(REGEX REPLACE "/RTC[1csu]*" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
+    foreach(config DEBUG RELWITHDEBINFO)
+        string(REGEX REPLACE "/INCREMENTAL(:YES|:NO)?" "" linker_flags "${CMAKE_EXE_LINKER_FLAGS_${config}}")
+        set(CMAKE_EXE_LINKER_FLAGS_${config} "${linker_flags} /INCREMENTAL:NO")
+    endforeach()
+endif()
+
+if(MSVC AND ORDER_BOOK_ENABLE_UBSAN)
+    message(WARNING "UndefinedBehaviorSanitizer is not available with MSVC; ORDER_BOOK_ENABLE_UBSAN is ignored.")
+endif()
+
 function(order_book_enable_warnings target_name)
     if(MSVC)
         target_compile_options(${target_name} PRIVATE /W4)
@@ -44,7 +58,29 @@ function(order_book_enable_sanitizers target_name)
     endif()
 
     if(MSVC)
-        message(WARNING "Sanitizers are not configured for MSVC in this project.")
+        if(ORDER_BOOK_ENABLE_ASAN)
+            # /Zi keeps ASan reports symbolized in every configuration.
+            target_compile_options(${target_name} PRIVATE /fsanitize=address /Zi)
+
+            # Executables load the ASan runtime DLL that ships beside cl.exe; copy it next
+            # to them so they also run outside a Visual Studio developer prompt.
+            get_target_property(target_type ${target_name} TYPE)
+            if(target_type STREQUAL "EXECUTABLE")
+                get_filename_component(compiler_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+                if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+                    set(asan_runtime "${compiler_dir}/clang_rt.asan_dynamic-x86_64.dll")
+                else()
+                    set(asan_runtime "${compiler_dir}/clang_rt.asan_dynamic-i386.dll")
+                endif()
+
+                if(EXISTS "${asan_runtime}")
+                    add_custom_command(TARGET ${target_name} POST_BUILD
+                        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${asan_runtime}" "$<TARGET_FILE_DIR:${target_name}>")
+                else()
+                    message(WARNING "ASan runtime not found at ${asan_runtime}; put its directory on PATH to run ${target_name}.")
+                endif()
+            endif()
+        endif()
         return()
     endif()
 

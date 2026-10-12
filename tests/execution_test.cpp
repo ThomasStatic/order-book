@@ -5,6 +5,7 @@
 #include <list>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "order_book/order.hpp"
 #include "order_book/order_book.hpp"
@@ -20,6 +21,8 @@ struct OrderBookTestAccess {
     static const auto& bids(const OrderBook& book) { return book.bids; }
     static const auto& asks(const OrderBook& book) { return book.asks; }
     static TradeId nextTradeId(const OrderBook& book) { return book.nextTradeId; }
+    // The resting order itself (findActiveOrder only returns a copy), to check identity.
+    static const Order& indexedOrder(const OrderBook& book, OrderId orderId) { return *book.orderIndex.at(orderId).itr; }
     // Bypasses the read-only findActiveOrder to corrupt a resting order on purpose.
     static Order& restingOrder(OrderBook& book, OrderId orderId) { return *book.orderIndex.at(orderId).itr; }
 
@@ -172,8 +175,8 @@ void testPartialRestingFill(Side incomingSide) {
     OrderBook book{};
     book.addOrder(Order(1, 100, 10, 1, restingSide));
     book.addOrder(Order(3, 100, 5, 2, restingSide));
-    const Order* restingBefore = &book.findActiveOrder(1);
-    const Order* behindBefore = &book.findActiveOrder(3);
+    const Order* restingBefore = &Access::indexedOrder(book, 1);
+    const Order* behindBefore = &Access::indexedOrder(book, 3);
     Order incoming(2, 100, 4, 3, incomingSide);
 
     const Trade trade = Access::executeOnce(book, incoming);
@@ -182,14 +185,14 @@ void testPartialRestingFill(Side incomingSide) {
     expect(incoming.getRemainingQuantity() == 0, context + ": incoming should be fully executed");
     expect(incoming.getExecutionLevel() == FillStatus::FILLED, context + ": incoming should be FILLED");
 
-    const Order& resting = book.findActiveOrder(1);
+    const Order& resting = Access::indexedOrder(book, 1);
     expect(&resting == restingBefore, context + ": the resting order should keep its original index entry");
     expect(resting.getRemainingQuantity() == 6, context + ": the resting order should drop to 6");
     expect(resting.getExecutionLevel() == FillStatus::PARTIAL, context + ": the resting order should be PARTIAL");
 
     const PriceLevel& level = levelAt(book, restingSide, 100);
     expect(level.getOldestOrder().getOrderId() == 1, context + ": the resting order should keep its FIFO position");
-    expect(&book.findActiveOrder(3) == behindBefore, context + ": orders behind should keep their entries");
+    expect(&Access::indexedOrder(book, 3) == behindBefore, context + ": orders behind should keep their entries");
     expect(level.getAggregateQuantity() == 11, context + ": level aggregate should drop from 15 to 11");
     expect(level.getOrdersQuantity() == 2, context + ": no order should leave the level");
     expectIndexConsistent(book, context);
@@ -295,7 +298,7 @@ void testActiveIndexCleanup() {
     book.addOrder(Order(3, 100, 3, 2, Side::SELL));
     book.addOrder(Order(5, 100, 4, 3, Side::SELL));
     book.addOrder(Order(7, 90, 4, 4, Side::BUY));
-    const Order* thirdBefore = &book.findActiveOrder(5);
+    const Order* thirdBefore = &Access::indexedOrder(book, 5);
 
     Order incoming(2, 100, 6, 5, Side::BUY);
     Access::executeOnce(book, incoming);  // fills 1 fully
@@ -308,7 +311,7 @@ void testActiveIndexCleanup() {
     Access::executeOnce(book, incoming);  // partially fills 5 (1 of 4)
     expect(!isIndexed(book, 3), "cleanup: the second fully filled order should be unindexed");
     expect(isIndexed(book, 5), "cleanup: a partially filled order should stay indexed");
-    expect(&book.findActiveOrder(5) == thirdBefore,
+    expect(&Access::indexedOrder(book, 5) == thirdBefore,
            "cleanup: popping orders ahead should not invalidate a later order's iterator");
     expect(isIndexed(book, 7), "cleanup: orders on the other side should be untouched");
     expect(!isIndexed(book, 2), "cleanup: an executing incoming order should never be indexed");
@@ -388,6 +391,32 @@ void testConsumeLevelUnindexesEachOrderAsItIsFilled() {
     expectIndexConsistent(book, "consumeLevel after a throw");
 }
 
+void testMovedBookKeepsValidIndex() {
+    OrderBook original{};
+    original.addOrder(Order(1, 100, 5, 1, Side::SELL));
+    original.addOrder(Order(2, 100, 5, 2, Side::SELL));
+    original.addOrder(Order(3, 99, 5, 3, Side::BUY));
+    const Order* firstBefore = &Access::indexedOrder(original, 1);
+
+    OrderBook moved(std::move(original));
+    expect(&Access::indexedOrder(moved, 1) == firstBefore, "move: index entries should still point at the same orders");
+    expectIndexConsistent(moved, "move construction");
+
+    moved.removeOrder(1);
+    Order incoming(4, 100, 2, 4, Side::BUY);
+    Access::executeOnce(moved, incoming);
+    expectIndexConsistent(moved, "move construction then mutation");
+
+    OrderBook assigned{};
+    assigned.addOrder(Order(9, 50, 1, 5, Side::BUY));
+    assigned = std::move(moved);
+    expect(!isIndexed(assigned, 9), "move assignment: the target's previous orders should be gone");
+    assigned.removeOrder(2);
+    assigned.removeOrder(3);
+    expect(!assigned.hasBids() && !assigned.hasAsks(), "move assignment: the moved index should still cancel every order");
+    expectIndexConsistent(assigned, "move assignment then removal");
+}
+
 void testFillOldestOrderGuards() {
     PriceLevel level(100, Side::SELL, Order(1, 100, 5, 1, Side::SELL));
     expectThrows([&level] { Access::fillOldestOrder(level, 0); },
@@ -418,6 +447,7 @@ int main() {
     testRejectedExecutionLeavesBookUntouched();
     testFillOldestOrderGuards();
     testConsumeLevelUnindexesEachOrderAsItIsFilled();
+    testMovedBookKeepsValidIndex();
 
     std::cout << "execution tests passed" << std::endl;
     return EXIT_SUCCESS;

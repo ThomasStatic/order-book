@@ -54,8 +54,18 @@ namespace order_book {
     public:
         OrderBook() = default;
 
-        const Order& getBestBid() const;
-        const Order& getBestAsk() const;
+        // Move-only: orderIndex holds iterators into this book's own level lists, so a
+        // copy would point back into the original. Moving keeps those list nodes, and
+        // with them the iterators, valid.
+        OrderBook(const OrderBook&) = delete;
+        OrderBook& operator=(const OrderBook&) = delete;
+        OrderBook(OrderBook&&) = default;
+        OrderBook& operator=(OrderBook&&) = default;
+
+        // Copy of the oldest order at the best price; throws std::runtime_error if that
+        // side is empty. A copy cannot dangle once the order is filled or removed.
+        Order getBestBid() const;
+        Order getBestAsk() const;
 
         bool hasBids() const;
         bool hasAsks() const;
@@ -64,8 +74,9 @@ namespace order_book {
 
         std::vector<Trade> submitOrder(Order incoming);
 
-        // Read-only view of a resting order, valid until it is filled or removed.
-        const Order& findActiveOrder(OrderId orderId) const;
+        // Copy of a resting order as it is now (later fills are not reflected); throws
+        // std::invalid_argument if no order with that ID is resting.
+        Order findActiveOrder(OrderId orderId) const;
 
         void removeOrder(OrderId orderId);
 
