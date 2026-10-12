@@ -61,8 +61,10 @@ namespace order_book {
     }
 
     Trade OrderBook::executeOnce(Order& incoming) {
-        if(incoming.getRemainingQuantity() == 0) {
-            throw std::runtime_error("executing an incoming order with no remaining quantity error");
+        // Every check runs and the trade is built before anything is mutated, so a throw
+        // leaves the book, its index, and the incoming order untouched.
+        if(incoming.getRemainingQuantity() == 0 || !incoming.orderIsActive()) {
+            throw std::runtime_error("executing an inactive incoming order error");
         }
         if(!crossesBestOpposing(incoming)) {
             throw std::runtime_error("executing an incoming order that does not cross error");
@@ -72,13 +74,23 @@ namespace order_book {
         const Price restingPrice = restingIsAsk ? asks.begin()->first : bids.begin()->first;
         PriceLevel& level = restingIsAsk ? asks.begin()->second : bids.begin()->second;
 
+        // Copy what the trade needs before filling: a fully filled resting order is
+        // popped from the level, invalidating both this reference and its indexed iterator.
         const Order& resting = level.getOldestOrder();
+        if(!resting.orderIsActive()) {
+            throw std::runtime_error("executing against an inactive resting order error");
+        }
         const OrderId restingId = resting.getOrderId();
         const unsigned int execQuantity = std::min(incoming.getRemainingQuantity(),
                                                    resting.getRemainingQuantity());
+        const Trade trade(nextTradeId, restingId, incoming.getOrderId(),
+                          restingPrice, execQuantity, incoming.getSide());
 
+        // Nothing below can throw: both orders are active and execQuantity is positive
+        // and no larger than either remaining quantity.
         const OrderFill fill = level.fillOldestOrder(execQuantity);
         incoming.fillQuantity(execQuantity);
+        ++nextTradeId;
 
         if(fill.fullyFilled) {
             orderIndex.erase(restingId);
@@ -92,8 +104,7 @@ namespace order_book {
             }
         }
 
-        return Trade(nextTradeId++, restingId, incoming.getOrderId(),
-                     restingPrice, execQuantity, incoming.getSide());
+        return trade;
     }
 
     std::vector<Trade> OrderBook::matchOrder(Order& incoming) {
