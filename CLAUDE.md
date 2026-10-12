@@ -23,7 +23,7 @@ cmake --build build --config Debug
 ctest --test-dir build -C Debug --output-on-failure
 ```
 
-Run a single test by CTest name with `-R` (names: `order_book_smoke`, `order_tests`, `result_type_tests`, `price_level_tests`), e.g. `ctest --test-dir build -C Debug -R price_level_tests --output-on-failure`, or build and run one target directly (`cmake --build build --config Debug --target price_level_tests`).
+Run a single test by CTest name with `-R` (names: `order_book_smoke`, `order_tests`, `result_type_tests`, `price_level_tests`, `execution_tests`), e.g. `ctest --test-dir build -C Debug -R price_level_tests --output-on-failure`, or build and run one target directly (`cmake --build build --config Debug --target price_level_tests`).
 
 CMake options: `ORDER_BOOK_BUILD_BENCHMARKS`, `ORDER_BOOK_ENABLE_ASAN`, `ORDER_BOOK_ENABLE_UBSAN` (GCC/Clang only; ignored with a warning on MSVC), `ORDER_BOOK_WARNINGS_AS_ERRORS`. Warnings are high (`/W4`, or `-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), so watch for sign/narrowing conversions.
 
@@ -31,7 +31,7 @@ CMake options: `ORDER_BOOK_BUILD_BENCHMARKS`, `ORDER_BOOK_ENABLE_ASAN`, `ORDER_B
 
 - No test framework: each `tests/*.cpp` is its own executable with a `main()` using local `expect(cond, msg)` / `expectThrows(fn, msg)` helpers that print `FAILED:` and `exit(EXIT_FAILURE)`.
 - Each test file needs its own `add_executable` + `order_book_enable_warnings` + `order_book_enable_sanitizers` + `add_test` block in `CMakeLists.txt`. New library `.cpp` files must be added to the `order_book` target source list.
-- `tests/order_book_test.cpp` uses `#define private public` around includes to seed `OrderBook::bids`/`asks` directly — keep that in mind when renaming private members.
+- `tests/order_book_test.cpp` uses `#define private public` around includes to seed `OrderBook::bids`/`asks` directly — keep that in mind when renaming private members. The hack only works for private **data members** on MSVC: access level is part of MSVC's mangled function names, so calling a private member function this way fails to link (LNK2019). To test private member functions, use the `OrderBookTestAccess` friend (declared in `OrderBook` and `PriceLevel`, defined in `tests/execution_test.cpp`) and don't combine it with the `#define` hack in the same file.
 
 ## Architecture
 
