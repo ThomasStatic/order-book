@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <cstdlib>
+#include <initializer_list>
 #include <iostream>
 #include <list>
 #include <stdexcept>
@@ -21,6 +22,9 @@ struct OrderBookTestAccess {
     static TradeId nextTradeId(const OrderBook& book) { return book.nextTradeId; }
 
     static const std::list<Order>& orders(const PriceLevel& level) { return level.orders; }
+    static OrderFill fillOldestOrder(PriceLevel& level, unsigned int quantity) {
+        return level.fillOldestOrder(quantity);
+    }
 };
 
 }  // namespace order_book
@@ -93,69 +97,100 @@ bool isIndexed(const OrderBook& book, unsigned int orderId) {
     return Access::index(book).find(orderId) != Access::index(book).end();
 }
 
-void testExactFill() {
-    OrderBook book{};
-    book.addOrder(Order(1, 100, 10, 1, Side::SELL));
-    Order incoming(2, 100, 10, 2, Side::BUY);
-
-    const Trade trade = Access::executeOnce(book, incoming);
-
-    expect(trade.getExecutionQuantity() == 10, "exact fill: execution quantity should equal both quantities");
-    expect(trade.getExecutionPrice() == 100, "exact fill: trade should execute at the resting price");
-    expect(incoming.getRemainingQuantity() == 0, "exact fill: incoming order should have nothing left");
-    expect(incoming.getExecutionLevel() == FillStatus::FILLED, "exact fill: incoming order should be FILLED");
-    expect(!isIndexed(book, 1), "exact fill: the fully filled resting order should be unindexed");
-    expect(!book.hasAsks(), "exact fill: the emptied price level should be erased");
-    expectIndexConsistent(book, "exact fill");
+Side opposite(Side side) {
+    return side == Side::BUY ? Side::SELL : Side::BUY;
 }
 
-void testPartialIncomingFill() {
+std::string sideName(Side side) {
+    return side == Side::BUY ? "buy" : "sell";
+}
+
+// Fill tests rest liquidity at 100 and run once per incoming side; this limit price
+// crosses that level with room to spare.
+unsigned int crossingPrice(Side incomingSide) {
+    return incomingSide == Side::BUY ? 101 : 99;
+}
+
+bool hasSide(const OrderBook& book, Side side) {
+    return side == Side::BUY ? book.hasBids() : book.hasAsks();
+}
+
+const PriceLevel& levelAt(const OrderBook& book, Side side, unsigned int price) {
+    return side == Side::BUY ? Access::bids(book).at(price) : Access::asks(book).at(price);
+}
+
+void testExactFill(Side incomingSide) {
+    const std::string context = "exact fill (incoming " + sideName(incomingSide) + ")";
+    const Side restingSide = opposite(incomingSide);
     OrderBook book{};
-    book.addOrder(Order(1, 100, 4, 1, Side::SELL));
-    book.addOrder(Order(3, 100, 6, 2, Side::SELL));
-    Order incoming(2, 101, 10, 3, Side::BUY);
+    book.addOrder(Order(1, 100, 10, 1, restingSide));
+    Order incoming(2, 100, 10, 2, incomingSide);
 
     const Trade trade = Access::executeOnce(book, incoming);
 
-    expect(trade.getExecutionQuantity() == 4, "partial incoming: execution should be capped by the resting order");
-    expect(trade.getRestingId() == 1, "partial incoming: execution should hit the oldest resting order");
-    expect(incoming.getRemainingQuantity() == 6, "partial incoming: incoming should keep the unexecuted quantity");
-    expect(incoming.getExecutionLevel() == FillStatus::PARTIAL, "partial incoming: incoming should be PARTIAL");
-    expect(!isIndexed(book, 1), "partial incoming: the filled resting order should be unindexed");
+    expect(trade.getExecutionQuantity() == 10, context + ": execution quantity should equal both quantities");
+    expect(trade.getExecutionPrice() == 100, context + ": trade should execute at the resting price");
+    expect(incoming.getRemainingQuantity() == 0, context + ": incoming order should have nothing left");
+    expect(incoming.getExecutionLevel() == FillStatus::FILLED, context + ": incoming order should be FILLED");
+    expect(!isIndexed(book, 1), context + ": the fully filled resting order should be unindexed");
+    expect(!hasSide(book, restingSide), context + ": the emptied price level should be erased");
+    expectIndexConsistent(book, context);
+}
+
+void testPartialIncomingFill(Side incomingSide) {
+    const std::string context = "partial incoming (incoming " + sideName(incomingSide) + ")";
+    const Side restingSide = opposite(incomingSide);
+    OrderBook book{};
+    book.addOrder(Order(1, 100, 4, 1, restingSide));
+    book.addOrder(Order(3, 100, 6, 2, restingSide));
+    Order incoming(2, crossingPrice(incomingSide), 10, 3, incomingSide);
+
+    const Trade trade = Access::executeOnce(book, incoming);
+
+    expect(trade.getExecutionQuantity() == 4, context + ": execution should be capped by the resting order");
+    expect(trade.getRestingId() == 1, context + ": execution should hit the oldest resting order");
+    expect(incoming.getRemainingQuantity() == 6, context + ": incoming should keep the unexecuted quantity");
+    expect(incoming.getExecutionLevel() == FillStatus::PARTIAL, context + ": incoming should be PARTIAL");
+    expect(!isIndexed(book, 1), context + ": the filled resting order should be unindexed");
 
     // One execution touches exactly one resting order.
-    const Order& next = Access::asks(book).at(100).getOldestOrder();
-    expect(next.getOrderId() == 3, "partial incoming: the next order should now be at the front of the level");
+    const PriceLevel& level = levelAt(book, restingSide, 100);
+    const Order& next = level.getOldestOrder();
+    expect(next.getOrderId() == 3, context + ": the next order should now be at the front of the level");
     expect(next.getRemainingQuantity() == 6 && next.getExecutionLevel() == FillStatus::NONE,
-           "partial incoming: one execution should not touch the next resting order");
-    expect(Access::asks(book).at(100).getAggregateQuantity() == 6, "partial incoming: level aggregate should drop by 4");
-    expect(Access::asks(book).at(100).getOrdersQuantity() == 1, "partial incoming: level should hold one order");
-    expectIndexConsistent(book, "partial incoming");
+           context + ": one execution should not touch the next resting order");
+    expect(level.getAggregateQuantity() == 6, context + ": level aggregate should drop by 4");
+    expect(level.getOrdersQuantity() == 1, context + ": level should hold one order");
+    expectIndexConsistent(book, context);
 }
 
-void testPartialRestingFill() {
+void testPartialRestingFill(Side incomingSide) {
+    const std::string context = "partial resting (incoming " + sideName(incomingSide) + ")";
+    const Side restingSide = opposite(incomingSide);
     OrderBook book{};
-    book.addOrder(Order(1, 100, 10, 1, Side::SELL));
-    book.addOrder(Order(3, 100, 5, 2, Side::SELL));
+    book.addOrder(Order(1, 100, 10, 1, restingSide));
+    book.addOrder(Order(3, 100, 5, 2, restingSide));
     const Order* restingBefore = &*book.findActiveOrder(1).itr;
     const Order* behindBefore = &*book.findActiveOrder(3).itr;
-    Order incoming(2, 100, 4, 3, Side::BUY);
+    Order incoming(2, 100, 4, 3, incomingSide);
 
     const Trade trade = Access::executeOnce(book, incoming);
 
-    expect(trade.getExecutionQuantity() == 4, "partial resting: execution should be capped by the incoming order");
-    expect(incoming.getRemainingQuantity() == 0, "partial resting: incoming should be fully executed");
-    expect(incoming.getExecutionLevel() == FillStatus::FILLED, "partial resting: incoming should be FILLED");
+    expect(trade.getExecutionQuantity() == 4, context + ": execution should be capped by the incoming order");
+    expect(incoming.getRemainingQuantity() == 0, context + ": incoming should be fully executed");
+    expect(incoming.getExecutionLevel() == FillStatus::FILLED, context + ": incoming should be FILLED");
 
     const auto location = book.findActiveOrder(1);
-    expect(&*location.itr == restingBefore, "partial resting: the resting order should keep its original index entry");
-    expect(location.itr->getRemainingQuantity() == 6, "partial resting: the resting order should drop to 6");
-    expect(location.itr->getExecutionLevel() == FillStatus::PARTIAL, "partial resting: the resting order should be PARTIAL");
-    expect(book.getBestAsk().getOrderId() == 1, "partial resting: the resting order should keep its FIFO position");
-    expect(&*book.findActiveOrder(3).itr == behindBefore, "partial resting: orders behind should keep their entries");
-    expect(Access::asks(book).at(100).getAggregateQuantity() == 11, "partial resting: level aggregate should drop from 15 to 11");
-    expect(Access::asks(book).at(100).getOrdersQuantity() == 2, "partial resting: no order should leave the level");
-    expectIndexConsistent(book, "partial resting");
+    expect(&*location.itr == restingBefore, context + ": the resting order should keep its original index entry");
+    expect(location.itr->getRemainingQuantity() == 6, context + ": the resting order should drop to 6");
+    expect(location.itr->getExecutionLevel() == FillStatus::PARTIAL, context + ": the resting order should be PARTIAL");
+
+    const PriceLevel& level = levelAt(book, restingSide, 100);
+    expect(level.getOldestOrder().getOrderId() == 1, context + ": the resting order should keep its FIFO position");
+    expect(&*book.findActiveOrder(3).itr == behindBefore, context + ": orders behind should keep their entries");
+    expect(level.getAggregateQuantity() == 11, context + ": level aggregate should drop from 15 to 11");
+    expect(level.getOrdersQuantity() == 2, context + ": no order should leave the level");
+    expectIndexConsistent(book, context);
 }
 
 void testTradePrice() {
@@ -299,18 +334,72 @@ void testExecutionPreconditions() {
     expectIndexConsistent(book, "preconditions");
 }
 
+// A throw from inside an execution must leave the book exactly as it was: no order
+// filled or popped, no dangling index entry, no empty level, no trade ID consumed.
+// Checks that never dereference an index iterator run first, so a dangling entry is
+// reported as a failure rather than tripping the debug-iterator assertion.
+void expectUntouched(const OrderBook& book, const Order& incoming, const std::string& context) {
+    expect(incoming.getRemainingQuantity() == 5, context + ": the incoming order should not be filled");
+    expect(Access::nextTradeId(book) == 1, context + ": no trade ID should be consumed");
+    expect(levelAt(book, Side::SELL, 100).getAggregateQuantity() == 5, context + ": the level aggregate should not change");
+    expectIndexConsistent(book, context);
+    expect(isIndexed(book, 1), context + ": the resting order should stay indexed");
+    expect(book.findActiveOrder(1).itr->getRemainingQuantity() == 5, context + ": the resting order should not be filled");
+}
+
+void testRejectedExecutionLeavesBookUntouched() {
+    OrderBook book{};
+    book.addOrder(Order(1, 100, 5, 1, Side::SELL));
+
+    // An order marked FILLED while still holding quantity: filling it would throw.
+    Order inactiveIncoming(2, 100, 5, 2, Side::BUY);
+    inactiveIncoming.setExecutionLevel(FillStatus::FILLED);
+    expectThrows([&book, &inactiveIncoming] { Access::executeOnce(book, inactiveIncoming); },
+                 "rejected execution: an inactive incoming order should throw");
+    expectUntouched(book, inactiveIncoming, "rejected execution (inactive incoming)");
+
+    expectThrows([&book, &inactiveIncoming] { book.submitOrder(inactiveIncoming); },
+                 "rejected execution: submitting an inactive incoming order should throw");
+    expectUntouched(book, inactiveIncoming, "rejected submission (inactive incoming)");
+
+    // findActiveOrder hands out a mutable iterator, so a resting order can be marked
+    // inactive from outside the book.
+    book.findActiveOrder(1).itr->setExecutionLevel(FillStatus::FILLED);
+    Order incoming(3, 100, 5, 3, Side::BUY);
+    expectThrows([&book, &incoming] { Access::executeOnce(book, incoming); },
+                 "rejected execution: an inactive resting order should throw");
+    expectUntouched(book, incoming, "rejected execution (inactive resting)");
+}
+
+void testFillOldestOrderGuards() {
+    PriceLevel level(100, Side::SELL, Order(1, 100, 5, 1, Side::SELL));
+    expectThrows([&level] { Access::fillOldestOrder(level, 0); },
+                 "fill guards: filling zero quantity should throw");
+    expect(level.getAggregateQuantity() == 5 && level.getOldestOrder().getRemainingQuantity() == 5,
+           "fill guards: a rejected zero fill should not change the level");
+
+    Access::fillOldestOrder(level, 5);
+    expect(level.isEmpty(), "fill guards: a full fill should pop the only order");
+    expectThrows([&level] { Access::fillOldestOrder(level, 1); },
+                 "fill guards: filling an empty level should throw");
+}
+
 }  // namespace
 
 int main() {
-    testExactFill();
-    testPartialIncomingFill();
-    testPartialRestingFill();
+    for (const Side incomingSide : {Side::BUY, Side::SELL}) {
+        testExactFill(incomingSide);
+        testPartialIncomingFill(incomingSide);
+        testPartialRestingFill(incomingSide);
+    }
     testTradePrice();
     testTradeQuantity();
     testMakerAndTakerIds();
     testAggregateQuantityUpdates();
     testActiveIndexCleanup();
     testExecutionPreconditions();
+    testRejectedExecutionLeavesBookUntouched();
+    testFillOldestOrderGuards();
 
     std::cout << "execution tests passed" << std::endl;
     return EXIT_SUCCESS;
