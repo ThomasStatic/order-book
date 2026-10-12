@@ -277,11 +277,6 @@ int main() {
     expect(baseOrder.getExecutionLevel() == FillStatus::FILLED, "full fill should set the execution lifecycle to FILLED");
     expect(!baseOrder.orderIsActive(), "fully filled order should no longer be active");
 
-    Order sequenceOrder(2, 100, 5, 1, Side::SELL);
-    sequenceOrder.decrementSequence();
-    expect(sequenceOrder.getSequenceNum() == 0, "sequence number should decrease as expected");
-    expectThrows([&sequenceOrder] { sequenceOrder.decrementSequence(); }, "sequence number should not decrease below zero");
-
     expectThrows([] { Order invalidId(0, 100, 5, 1, Side::BUY); }, "constructor should reject a non-positive ID");
     expectThrows([] { Order invalidTick(1, 0, 5, 1, Side::BUY); }, "constructor should reject a non-positive tick");
     expectThrows([] { Order invalidQuantity(1, 100, 0, 1, Side::BUY); }, "constructor should reject a non-positive quantity");

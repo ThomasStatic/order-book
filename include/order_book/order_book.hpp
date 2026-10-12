@@ -16,6 +16,7 @@ namespace order_book {
     using Price = unsigned int;
     using OrderId = unsigned int;
     using TradeId = unsigned int;
+    using SequenceNum = unsigned int;
 
     struct PriceLevelSummary {
         Price price;
@@ -40,10 +41,21 @@ namespace order_book {
         std::map<Price, PriceLevel, std::less<Price>> asks;
 
         TradeId nextTradeId = 1;
+        // Assigned to each order as the book accepts it, so it records acceptance order
+        // and fixes time priority within a level.
+        SequenceNum nextSequenceNum = 1;
 
         // Throws std::invalid_argument, before anything is mutated, unless the order
         // still has quantity, is not FILLED, and its ID is not already resting here.
         void validateNewOrder(const Order& order) const;
+
+        // Moves to the next sequence number, wrapping from the maximum back to 1 (zero is
+        // invalid), so numbers are silently reused once the counter overflows.
+        void advanceSequenceNum();
+
+        // Appends an already accepted order to the back of its price level and indexes
+        // it, leaving the book unchanged if that throws.
+        void restOrder(const Order& order);
 
         bool crossesBestOpposing(const Order& incoming) const;
 
@@ -70,6 +82,11 @@ namespace order_book {
         bool hasBids() const;
         bool hasAsks() const;
 
+        // Both accept the order with the book's next sequence number, replacing the one it
+        // was constructed with. addOrder rests it without matching and consumes no number
+        // if it throws. submitOrder matches it by price-time priority, returning trades in
+        // execution order, and rests any remainder at its own limit price; its number is
+        // consumed once validation passes, even if matching later throws.
         void addOrder(Order order);
 
         std::vector<Trade> submitOrder(Order incoming);

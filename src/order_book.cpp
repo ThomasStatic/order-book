@@ -37,7 +37,20 @@ namespace order_book {
 
     void OrderBook::addOrder(Order order) {
         validateNewOrder(order);
+        order.assignSequenceNum(nextSequenceNum);
+        restOrder(order);
+        // Consumed only once the order rests, so a rejected or rolled-back add leaves no gap.
+        advanceSequenceNum();
+    }
 
+    void OrderBook::advanceSequenceNum() {
+        ++nextSequenceNum;
+        if(nextSequenceNum == 0) {
+            nextSequenceNum = 1;
+        }
+    }
+
+    void OrderBook::restOrder(const Order& order) {
         auto rest = [this, &order](auto& levels) {
             const auto levelItr = levels.try_emplace(
                 order.getPriceTick(), order.getPriceTick(), order.getSide()).first;
@@ -140,13 +153,20 @@ namespace order_book {
         // trades executed for a submission that then throws.
         validateNewOrder(incoming);
 
+        // Accepted: numbered once, before matching, and the remainder rests with this same
+        // number. Consumed even if matching throws, since executions may already stand.
+        incoming.assignSequenceNum(nextSequenceNum);
+        advanceSequenceNum();
+
         // Not atomic: if an allocation fails mid-match or while resting the remainder,
         // executions already made stay made and their trades are lost with the exception.
         // The book itself is left consistent.
 
         std::vector<Trade> trades = matchOrder(incoming);
         if(incoming.getRemainingQuantity() > 0) {
-            addOrder(incoming);
+            // Rests at the incoming limit price (fills never change it), not at the price
+            // of its last execution. Validation already passed, so it cannot be rejected now.
+            restOrder(incoming);
         }
         return trades;
     }

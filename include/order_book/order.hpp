@@ -8,6 +8,9 @@ namespace order_book {
 
     class Order {
     private:
+        // OrderBook alone assigns the sequence number, once, when it accepts the order.
+        friend class OrderBook;
+
         unsigned int orderId;
         unsigned int sequenceNum;
 
@@ -18,12 +21,15 @@ namespace order_book {
         Side side;
         FillStatus execution;
 
+        // Replaces the sequence number given at construction; throws
+        // std::invalid_argument on zero, leaving the order unchanged.
+        void assignSequenceNum(unsigned int seq);
+
     public:
         Order(unsigned int id, unsigned int tick, unsigned int quant, unsigned int arrival, Side s);
 
         unsigned int getOrderId() const;
         unsigned int getSequenceNum() const;
-        void decrementSequence();
 
         unsigned int getPriceTick() const;
         unsigned int getInitialQuantity() const;

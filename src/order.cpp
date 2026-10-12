@@ -34,12 +34,12 @@ unsigned int Order::getSequenceNum() const {
     return sequenceNum;
 }
 
-void Order::decrementSequence() {
-    if (sequenceNum == 0) {
-        throw std::runtime_error("Decreasing 0 sequence number error.");
+void Order::assignSequenceNum(unsigned int seq) {
+    if (seq == 0) {
+        throw std::invalid_argument("Non-positive sequence number error.");
     }
 
-    sequenceNum--;
+    sequenceNum = seq;
 }
 
 unsigned int Order::getPriceTick() const {

@@ -180,6 +180,16 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(execution_tests)
     add_test(NAME execution_tests COMMAND execution_tests)
 
+    add_executable(matching_tests
+        tests/matching_test.cpp
+    )
+
+    target_compile_features(matching_tests PRIVATE cxx_std_20)
+    target_link_libraries(matching_tests PRIVATE order_book)
+    order_book_enable_warnings(matching_tests)
+    order_book_enable_sanitizers(matching_tests)
+    add_test(NAME matching_tests COMMAND matching_tests)
+
     add_executable(allocation_failure_tests
         tests/allocation_failure_test.cpp
     )

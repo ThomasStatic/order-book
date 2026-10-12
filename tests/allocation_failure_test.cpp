@@ -55,6 +55,7 @@ struct OrderBookTestAccess {
     static const auto& bids(const OrderBook& book) { return book.bids; }
     static const auto& asks(const OrderBook& book) { return book.asks; }
     static TradeId nextTradeId(const OrderBook& book) { return book.nextTradeId; }
+    static SequenceNum nextSequenceNum(const OrderBook& book) { return book.nextSequenceNum; }
 
     static const std::list<Order>& orders(const PriceLevel& level) { return level.orders; }
 };
@@ -143,6 +144,7 @@ void testAddOrderToNewLevelRollsBack() {
         [](const OrderBook& book, const std::string& context) {
             expect(Access::asks(book).size() == 1, context + ": a failed add should not leave a new level behind");
             expect(Access::index(book).size() == 1, context + ": a failed add should not leave an index entry");
+            expect(Access::nextSequenceNum(book) == 2, context + ": a failed add should not consume a sequence number");
         },
         "addOrder (new level)");
     expect(failures > 0, "addOrder (new level): at least one allocation failure should have been injected");
@@ -157,6 +159,7 @@ void testAddOrderToExistingLevelRollsBack() {
             expect(level.getOrdersQuantity() == 1 && level.getAggregateQuantity() == 5,
                    context + ": a failed add should leave the existing level as it was");
             expect(Access::index(book).size() == 1, context + ": a failed add should not leave an index entry");
+            expect(Access::nextSequenceNum(book) == 2, context + ": a failed add should not consume a sequence number");
         },
         "addOrder (existing level)");
     expect(failures > 0, "addOrder (existing level): at least one allocation failure should have been injected");
@@ -177,6 +180,8 @@ void testSubmitOrderStaysConsistent() {
             const unsigned int executions = Access::nextTradeId(book) - 1;
             expect(Access::index(book).size() == 2 - executions,
                    context + ": every execution made should have filled exactly one resting order");
+            expect(Access::nextSequenceNum(book) == 4,
+                   context + ": a submission accepted before failing should still have consumed its number");
         },
         "submitOrder");
     expect(failures > 0, "submitOrder: at least one allocation failure should have been injected");
