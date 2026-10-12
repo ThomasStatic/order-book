@@ -1,3 +1,5 @@
+#include <algorithm>
+
 #include "order_book/order_book.hpp"
 
 namespace order_book {
@@ -58,21 +60,46 @@ namespace order_book {
         return hasBids() && incoming.getPriceTick() <= bids.begin()->first;
     }
 
+    Trade OrderBook::executeOnce(Order& incoming) {
+        if(incoming.getRemainingQuantity() == 0) {
+            throw std::runtime_error("executing an incoming order with no remaining quantity error");
+        }
+        if(!crossesBestOpposing(incoming)) {
+            throw std::runtime_error("executing an incoming order that does not cross error");
+        }
+
+        const bool restingIsAsk = incoming.getSide() == Side::BUY;
+        const Price restingPrice = restingIsAsk ? asks.begin()->first : bids.begin()->first;
+        PriceLevel& level = restingIsAsk ? asks.begin()->second : bids.begin()->second;
+
+        const Order& resting = level.getOldestOrder();
+        const OrderId restingId = resting.getOrderId();
+        const unsigned int execQuantity = std::min(incoming.getRemainingQuantity(),
+                                                   resting.getRemainingQuantity());
+
+        const OrderFill fill = level.fillOldestOrder(execQuantity);
+        incoming.fillQuantity(execQuantity);
+
+        if(fill.fullyFilled) {
+            orderIndex.erase(restingId);
+        }
+        if(level.isEmpty()) {
+            if(restingIsAsk) {
+                asks.erase(asks.begin());
+            }
+            else {
+                bids.erase(bids.begin());
+            }
+        }
+
+        return Trade(nextTradeId++, restingId, incoming.getOrderId(),
+                     restingPrice, execQuantity, incoming.getSide());
+    }
+
     std::vector<Trade> OrderBook::matchOrder(Order& incoming) {
         std::vector<Trade> trades;
-        const Side restingSide = incoming.getSide() == Side::BUY ? Side::SELL : Side::BUY;
-
         while(incoming.getRemainingQuantity() > 0 && crossesBestOpposing(incoming)) {
-            const Price levelPrice = restingSide == Side::SELL ? asks.begin()->first
-                                                               : bids.begin()->first;
-            const unsigned int requested = incoming.getRemainingQuantity();
-
-            ConsumptionResult result = consumeLevel(restingSide, levelPrice, requested);
-            for(const OrderFill& fill : result.fills) {
-                trades.emplace_back(nextTradeId++, fill.orderId, incoming.getOrderId(),
-                                    levelPrice, fill.filledQuantity, incoming.getSide());
-            }
-            incoming.fillQuantity(requested - result.unfilledQuantity);
+            trades.push_back(executeOnce(incoming));
         }
         return trades;
     }

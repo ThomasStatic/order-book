@@ -27,6 +27,9 @@ namespace order_book {
         unsigned int getExecutionQuantity() const;
 
         Side getIncomingSide() const;
+
+        unsigned int getBuyOrderId() const;
+        unsigned int getSellOrderId() const;
     };
 
 }  // namespace order_book

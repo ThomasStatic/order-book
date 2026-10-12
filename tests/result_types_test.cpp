@@ -63,6 +63,11 @@ int main() {
     expect(trade.getExecutionPrice() == 100, "execution price should be preserved");
     expect(trade.getExecutionQuantity() == 5, "execution quantity should be preserved");
     expect(trade.getIncomingSide() == Side::BUY, "incoming side should be preserved");
+    expect(trade.getBuyOrderId() == 3 && trade.getSellOrderId() == 2,
+           "an incoming buy should be the buy order and the resting order the sell order");
+    Trade sellTrade(2, 4, 5, 100, 5, Side::SELL);
+    expect(sellTrade.getBuyOrderId() == 4 && sellTrade.getSellOrderId() == 5,
+           "an incoming sell should be the sell order and the resting order the buy order");
     expectThrows([] { Trade invalidTradeId(0, 2, 3, 100, 5, Side::BUY); }, "trade constructor should reject a non-positive trade ID");
     expectThrows([] { Trade invalidRestingId(1, 0, 3, 100, 5, Side::BUY); }, "trade constructor should reject a non-positive resting ID");
     expectThrows([] { Trade invalidIncomingId(1, 2, 0, 100, 5, Side::BUY); }, "trade constructor should reject a non-positive incoming ID");

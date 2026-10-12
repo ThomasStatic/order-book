@@ -52,4 +52,12 @@ namespace order_book {
     Side Trade::getIncomingSide() const {
         return incomingSide;
     }
+
+    unsigned int Trade::getBuyOrderId() const {
+        return incomingSide == Side::BUY ? incomingId : restingId;
+    }
+
+    unsigned int Trade::getSellOrderId() const {
+        return incomingSide == Side::SELL ? incomingId : restingId;
+    }
 }

@@ -31,6 +31,9 @@ namespace order_book {
 
     class OrderBook final {
     private:
+        // Test-only access to internals; defined in tests, never in the library.
+        friend struct OrderBookTestAccess;
+
         std::unordered_map<OrderId, OrderLocation> orderIndex;
 
         std::map<Price, PriceLevel, std::greater<Price>> bids;
@@ -39,6 +42,8 @@ namespace order_book {
         TradeId nextTradeId = 1;
 
         bool crossesBestOpposing(const Order& incoming) const;
+
+        Trade executeOnce(Order& incoming);
 
         std::vector<Trade> matchOrder(Order& incoming);
 

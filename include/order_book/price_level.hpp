@@ -31,13 +31,14 @@ namespace order_book {
 
     class PriceLevel {
     private:
+        // Test-only access to internals; defined in tests, never in the library.
+        friend struct OrderBookTestAccess;
+
         const unsigned int tickPrice;
         const Side side;
         
         std::list<Order> orders;
         unsigned int quantity = 0; // aggregate of all orders
-
-        OrderFill fillOldestOrder(unsigned int fillQuant);
 
     public:
         PriceLevel(unsigned int price, Side s);
@@ -45,6 +46,8 @@ namespace order_book {
 
         OrderLocation addOrder(Order newOrder);
         const Order& getOldestOrder() const;
+
+        OrderFill fillOldestOrder(unsigned int fillQuant);
 
         ConsumptionResult consumeQuantity(unsigned int fillQuant);
 

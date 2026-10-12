@@ -22,6 +22,10 @@ namespace order_book {
     }
 
     OrderFill PriceLevel::fillOldestOrder(unsigned int fillQuant) {
+        if(orders.empty()) {
+            throw std::runtime_error("filling an empty price level error");
+        }
+
         Order& oldestOrder = orders.front();
 
         const unsigned int availableQuant = oldestOrder.getRemainingQuantity();
