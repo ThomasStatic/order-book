@@ -31,6 +31,9 @@ namespace order_book {
 
     class PriceLevel {
     private:
+        // OrderBook alone may fill a single order, since it must also unindex the order
+        // and erase the level once empty.
+        friend class OrderBook;
         // Test-only access to internals; defined in tests, never in the library.
         friend struct OrderBookTestAccess;
 
@@ -40,14 +43,15 @@ namespace order_book {
         std::list<Order> orders;
         unsigned int quantity = 0; // aggregate of all orders
 
+        // Fills up to fillQuant from the oldest order only, popping it if fully filled.
+        OrderFill fillOldestOrder(unsigned int fillQuant);
+
     public:
         PriceLevel(unsigned int price, Side s);
         PriceLevel(unsigned int price, Side s, Order initialOrder);
 
         OrderLocation addOrder(Order newOrder);
         const Order& getOldestOrder() const;
-
-        OrderFill fillOldestOrder(unsigned int fillQuant);
 
         ConsumptionResult consumeQuantity(unsigned int fillQuant);
 

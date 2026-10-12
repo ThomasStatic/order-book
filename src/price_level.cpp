@@ -22,6 +22,9 @@ namespace order_book {
     }
 
     OrderFill PriceLevel::fillOldestOrder(unsigned int fillQuant) {
+        if(fillQuant == 0) {
+            throw std::invalid_argument("filling zero quantity from a price level error");
+        }
         if(orders.empty()) {
             throw std::runtime_error("filling an empty price level error");
         }
