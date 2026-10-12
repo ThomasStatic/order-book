@@ -60,7 +60,8 @@ namespace order_book {
 
         std::vector<Trade> submitOrder(Order incoming);
 
-        OrderLocation findActiveOrder(OrderId orderId) const;
+        // Read-only view of a resting order, valid until it is filled or removed.
+        const Order& findActiveOrder(OrderId orderId) const;
 
         void removeOrder(OrderId orderId);
 

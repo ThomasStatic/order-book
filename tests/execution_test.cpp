@@ -170,8 +170,8 @@ void testPartialRestingFill(Side incomingSide) {
     OrderBook book{};
     book.addOrder(Order(1, 100, 10, 1, restingSide));
     book.addOrder(Order(3, 100, 5, 2, restingSide));
-    const Order* restingBefore = &*book.findActiveOrder(1).itr;
-    const Order* behindBefore = &*book.findActiveOrder(3).itr;
+    const Order* restingBefore = &book.findActiveOrder(1);
+    const Order* behindBefore = &book.findActiveOrder(3);
     Order incoming(2, 100, 4, 3, incomingSide);
 
     const Trade trade = Access::executeOnce(book, incoming);
@@ -180,14 +180,14 @@ void testPartialRestingFill(Side incomingSide) {
     expect(incoming.getRemainingQuantity() == 0, context + ": incoming should be fully executed");
     expect(incoming.getExecutionLevel() == FillStatus::FILLED, context + ": incoming should be FILLED");
 
-    const auto location = book.findActiveOrder(1);
-    expect(&*location.itr == restingBefore, context + ": the resting order should keep its original index entry");
-    expect(location.itr->getRemainingQuantity() == 6, context + ": the resting order should drop to 6");
-    expect(location.itr->getExecutionLevel() == FillStatus::PARTIAL, context + ": the resting order should be PARTIAL");
+    const Order& resting = book.findActiveOrder(1);
+    expect(&resting == restingBefore, context + ": the resting order should keep its original index entry");
+    expect(resting.getRemainingQuantity() == 6, context + ": the resting order should drop to 6");
+    expect(resting.getExecutionLevel() == FillStatus::PARTIAL, context + ": the resting order should be PARTIAL");
 
     const PriceLevel& level = levelAt(book, restingSide, 100);
     expect(level.getOldestOrder().getOrderId() == 1, context + ": the resting order should keep its FIFO position");
-    expect(&*book.findActiveOrder(3).itr == behindBefore, context + ": orders behind should keep their entries");
+    expect(&book.findActiveOrder(3) == behindBefore, context + ": orders behind should keep their entries");
     expect(level.getAggregateQuantity() == 11, context + ": level aggregate should drop from 15 to 11");
     expect(level.getOrdersQuantity() == 2, context + ": no order should leave the level");
     expectIndexConsistent(book, context);
@@ -293,7 +293,7 @@ void testActiveIndexCleanup() {
     book.addOrder(Order(3, 100, 3, 2, Side::SELL));
     book.addOrder(Order(5, 100, 4, 3, Side::SELL));
     book.addOrder(Order(7, 90, 4, 4, Side::BUY));
-    const Order* thirdBefore = &*book.findActiveOrder(5).itr;
+    const Order* thirdBefore = &book.findActiveOrder(5);
 
     Order incoming(2, 100, 6, 5, Side::BUY);
     Access::executeOnce(book, incoming);  // fills 1 fully
@@ -306,7 +306,7 @@ void testActiveIndexCleanup() {
     Access::executeOnce(book, incoming);  // partially fills 5 (1 of 4)
     expect(!isIndexed(book, 3), "cleanup: the second fully filled order should be unindexed");
     expect(isIndexed(book, 5), "cleanup: a partially filled order should stay indexed");
-    expect(&*book.findActiveOrder(5).itr == thirdBefore,
+    expect(&book.findActiveOrder(5) == thirdBefore,
            "cleanup: popping orders ahead should not invalidate a later order's iterator");
     expect(isIndexed(book, 7), "cleanup: orders on the other side should be untouched");
     expect(!isIndexed(book, 2), "cleanup: an executing incoming order should never be indexed");
@@ -336,15 +336,15 @@ void testExecutionPreconditions() {
 
 // A throw from inside an execution must leave the book exactly as it was: no order
 // filled or popped, no dangling index entry, no empty level, no trade ID consumed.
-// Checks that never dereference an index iterator run first, so a dangling entry is
-// reported as a failure rather than tripping the debug-iterator assertion.
+// Checks that never follow an index entry run first, so a dangling entry is reported
+// as a failure rather than tripping the debug-iterator assertion.
 void expectUntouched(const OrderBook& book, const Order& incoming, const std::string& context) {
     expect(incoming.getRemainingQuantity() == 5, context + ": the incoming order should not be filled");
     expect(Access::nextTradeId(book) == 1, context + ": no trade ID should be consumed");
     expect(levelAt(book, Side::SELL, 100).getAggregateQuantity() == 5, context + ": the level aggregate should not change");
     expectIndexConsistent(book, context);
     expect(isIndexed(book, 1), context + ": the resting order should stay indexed");
-    expect(book.findActiveOrder(1).itr->getRemainingQuantity() == 5, context + ": the resting order should not be filled");
+    expect(book.findActiveOrder(1).getRemainingQuantity() == 5, context + ": the resting order should not be filled");
 }
 
 void testRejectedExecutionLeavesBookUntouched() {
@@ -362,13 +362,16 @@ void testRejectedExecutionLeavesBookUntouched() {
                  "rejected execution: submitting an inactive incoming order should throw");
     expectUntouched(book, inactiveIncoming, "rejected submission (inactive incoming)");
 
-    // findActiveOrder hands out a mutable iterator, so a resting order can be marked
-    // inactive from outside the book.
-    book.findActiveOrder(1).itr->setExecutionLevel(FillStatus::FILLED);
+    // setExecutionLevel is public and addOrder does not check it, so an order can be
+    // rested already marked FILLED while still holding quantity.
+    OrderBook inactiveRestingBook{};
+    Order inactiveResting(1, 100, 5, 1, Side::SELL);
+    inactiveResting.setExecutionLevel(FillStatus::FILLED);
+    inactiveRestingBook.addOrder(inactiveResting);
     Order incoming(3, 100, 5, 3, Side::BUY);
-    expectThrows([&book, &incoming] { Access::executeOnce(book, incoming); },
+    expectThrows([&inactiveRestingBook, &incoming] { Access::executeOnce(inactiveRestingBook, incoming); },
                  "rejected execution: an inactive resting order should throw");
-    expectUntouched(book, incoming, "rejected execution (inactive resting)");
+    expectUntouched(inactiveRestingBook, incoming, "rejected execution (inactive resting)");
 }
 
 void testFillOldestOrderGuards() {

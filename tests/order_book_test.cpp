@@ -39,7 +39,6 @@ int main() {
     using order_book::FillStatus;
     using order_book::Order;
     using order_book::OrderBook;
-    using order_book::OrderLocation;
     using order_book::PriceLevel;
     using order_book::Side;
 
@@ -95,15 +94,15 @@ int main() {
         orderBook.addOrder(Order(11, 200, 6, 2, Side::BUY));
         orderBook.addOrder(Order(12, 201, 3, 3, Side::SELL));
 
-        OrderLocation bidLocation = orderBook.findActiveOrder(10);
-        expect(bidLocation.tickPrice == 200, "active bid lookup should return the order price");
-        expect(bidLocation.side == Side::BUY, "active bid lookup should return the order side");
-        expect(bidLocation.itr->getOrderId() == 10, "active bid lookup should return the matching order iterator");
+        const Order& activeBid = orderBook.findActiveOrder(10);
+        expect(activeBid.getPriceTick() == 200, "active bid lookup should return the order price");
+        expect(activeBid.getSide() == Side::BUY, "active bid lookup should return the order side");
+        expect(activeBid.getOrderId() == 10, "active bid lookup should return the matching order");
 
-        OrderLocation askLocation = orderBook.findActiveOrder(12);
-        expect(askLocation.tickPrice == 201, "active ask lookup should return the order price");
-        expect(askLocation.side == Side::SELL, "active ask lookup should return the order side");
-        expect(askLocation.itr->getOrderId() == 12, "active ask lookup should return the matching order iterator");
+        const Order& activeAsk = orderBook.findActiveOrder(12);
+        expect(activeAsk.getPriceTick() == 201, "active ask lookup should return the order price");
+        expect(activeAsk.getSide() == Side::SELL, "active ask lookup should return the order side");
+        expect(activeAsk.getOrderId() == 12, "active ask lookup should return the matching order");
 
         expectThrows([&orderBook] { orderBook.findActiveOrder(99); },
                "active order lookup should reject an unknown order ID");
@@ -133,7 +132,7 @@ int main() {
                "a fully filled order should no longer be indexed");
         expectThrows([&consumeBook] { consumeBook.removeOrder(30); },
                "cancelling a fully filled order should throw instead of using a stale iterator");
-        expect(consumeBook.findActiveOrder(31).itr->getRemainingQuantity() == 3,
+        expect(consumeBook.findActiveOrder(31).getRemainingQuantity() == 3,
             "a partially filled order should stay indexed with its reduced quantity");
         expect(consumeBook.getBestAsk().getOrderId() == 31, "the partially filled order should remain at the level");
 
@@ -179,14 +178,14 @@ int main() {
     expect(restingBuyTrades[0].getExecutionQuantity() == 2, "the buy should fill what crosses before resting");
     expect(matchBook.getBestBid().getOrderId() == 51 && matchBook.getBestBid().getRemainingQuantity() == 4,
            "the unfilled remainder should rest at its limit price");
-    expect(matchBook.findActiveOrder(51).tickPrice == 103, "a resting remainder should be indexed");
+    expect(matchBook.findActiveOrder(51).getPriceTick() == 103, "a resting remainder should be indexed");
     expect(matchBook.getBestBid().getExecutionLevel() == FillStatus::PARTIAL,
            "a resting remainder should be marked partially filled");
     expect(matchBook.getBestAsk().getOrderId() == 43, "a non-crossing ask should be left untouched");
 
     const auto passiveTrades = matchBook.submitOrder(Order(52, 104, 1, 7, Side::SELL));
     expect(passiveTrades.empty(), "a sell above the best bid should not trade");
-    expect(matchBook.findActiveOrder(52).itr->getRemainingQuantity() == 1, "a non-crossing sell should rest in full");
+    expect(matchBook.findActiveOrder(52).getRemainingQuantity() == 1, "a non-crossing sell should rest in full");
     expect(matchBook.getBestAsk().getOrderId() == 43, "a new order at an existing price should queue behind older orders");
 
     matchBook.addOrder(Order(53, 103, 2, 8, Side::BUY));
@@ -206,7 +205,7 @@ int main() {
     OrderBook emptyBook{};
     expect(emptyBook.submitOrder(Order(60, 100, 5, 1, Side::SELL)).empty(),
            "an order into an empty opposing side should not trade");
-    expect(emptyBook.hasAsks() && emptyBook.findActiveOrder(60).side == Side::SELL,
+    expect(emptyBook.hasAsks() && emptyBook.findActiveOrder(60).getSide() == Side::SELL,
            "an order into an empty opposing side should rest");
 
     Order baseOrder(1, 100, 10, 3, Side::BUY);

@@ -123,11 +123,11 @@ namespace order_book {
         return trades;
     }
 
-    OrderLocation OrderBook::findActiveOrder(OrderId orderId) const {
+    const Order& OrderBook::findActiveOrder(OrderId orderId) const {
         auto orderItr = orderIndex.find(orderId);
 
         if(orderItr != orderIndex.end()) {
-            return orderItr->second;
+            return *orderItr->second.itr;
         }
 
         throw std::invalid_argument("order id not found in order index error");
