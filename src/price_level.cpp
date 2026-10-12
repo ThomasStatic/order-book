@@ -49,6 +49,8 @@ namespace order_book {
         if(fillQuant == 0) {
             return result;
         }
+        // At most one fill per order, so recording a fill can never throw mid-consumption.
+        result.fills.reserve(orders.size());
 
         while (result.unfilledQuantity > 0 && quantity > 0) {
             OrderFill fill = fillOldestOrder(result.unfilledQuantity);

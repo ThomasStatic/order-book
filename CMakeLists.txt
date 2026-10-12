@@ -143,6 +143,17 @@ if(BUILD_TESTING)
     order_book_enable_warnings(execution_tests)
     order_book_enable_sanitizers(execution_tests)
     add_test(NAME execution_tests COMMAND execution_tests)
+
+    add_executable(allocation_failure_tests
+        tests/allocation_failure_test.cpp
+    )
+
+    target_compile_features(allocation_failure_tests PRIVATE cxx_std_20)
+    target_link_libraries(allocation_failure_tests PRIVATE order_book)
+    order_book_enable_warnings(allocation_failure_tests)
+    order_book_enable_sanitizers(allocation_failure_tests)
+    add_test(NAME allocation_failure_tests COMMAND allocation_failure_tests)
+    set_tests_properties(allocation_failure_tests PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 if(ORDER_BOOK_BUILD_BENCHMARKS)

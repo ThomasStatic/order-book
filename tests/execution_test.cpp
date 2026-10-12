@@ -373,6 +373,21 @@ void testRejectedExecutionLeavesBookUntouched() {
     expectUntouched(book, incoming, "rejected execution (inactive resting)");
 }
 
+void testConsumeLevelUnindexesEachOrderAsItIsFilled() {
+    OrderBook book{};
+    book.addOrder(Order(1, 100, 5, 1, Side::SELL));
+    book.addOrder(Order(2, 100, 5, 2, Side::SELL));
+    // Corrupt the second order so its fill throws after the first has left the level.
+    Access::restingOrder(book, 2).setExecutionLevel(FillStatus::FILLED);
+
+    expectThrows([&book] { book.consumeLevel(Side::SELL, 100, 10); },
+                 "consumeLevel: filling a corrupted order should throw");
+    expect(!isIndexed(book, 1), "consumeLevel: an order filled before the throw should already be unindexed");
+    expect(isIndexed(book, 2) && levelAt(book, Side::SELL, 100).getOrdersQuantity() == 1,
+           "consumeLevel: the order that threw should remain resting and indexed");
+    expectIndexConsistent(book, "consumeLevel after a throw");
+}
+
 void testFillOldestOrderGuards() {
     PriceLevel level(100, Side::SELL, Order(1, 100, 5, 1, Side::SELL));
     expectThrows([&level] { Access::fillOldestOrder(level, 0); },
@@ -402,6 +417,7 @@ int main() {
     testExecutionPreconditions();
     testRejectedExecutionLeavesBookUntouched();
     testFillOldestOrderGuards();
+    testConsumeLevelUnindexesEachOrderAsItIsFilled();
 
     std::cout << "execution tests passed" << std::endl;
     return EXIT_SUCCESS;

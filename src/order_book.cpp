@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <optional>
 
 #include "order_book/order_book.hpp"
 
@@ -33,35 +34,34 @@ namespace order_book {
     void OrderBook::addOrder(Order order) {
         validateNewOrder(order);
 
-        PriceLevel* level = nullptr;
+        auto rest = [this, &order](auto& levels) {
+            const auto levelItr = levels.try_emplace(
+                order.getPriceTick(), order.getPriceTick(), order.getSide()).first;
+            PriceLevel& level = levelItr->second;
+
+            std::optional<OrderLocation> location;
+            try {
+                location = level.addOrder(order);
+                orderIndex.emplace(order.getOrderId(), *location);
+            }
+            catch(...) {
+                // Unwind so a failed allocation leaves no unindexed order and no empty level.
+                if(location) {
+                    level.removeOrder(location->itr);
+                }
+                if(level.isEmpty()) {
+                    levels.erase(levelItr);
+                }
+                throw;
+            }
+        };
+
         if(order.getSide() == Side::BUY) {
-            auto itr = bids.find(order.getPriceTick());
-
-            if(itr != bids.end()) {
-                level = &itr->second;
-
-            }
-            else {
-                auto levelItr = bids.try_emplace(
-                    order.getPriceTick(), order.getPriceTick(), order.getSide()).first;
-                level = &levelItr->second;
-            }
+            rest(bids);
         }
         else {
-            auto itr = asks.find(order.getPriceTick());
-
-            if(itr != asks.end()) {
-                level = &itr->second;;
-            }
-            else {
-                auto levelItr = asks.try_emplace(
-                    order.getPriceTick(), order.getPriceTick(), order.getSide()).first;
-                level = &levelItr->second;
-            }
+            rest(asks);
         }
-
-        OrderLocation location = level->addOrder(order);
-        orderIndex.insert({order.getOrderId(), location});
     }
 
     bool OrderBook::crossesBestOpposing(const Order& incoming) const {
@@ -121,6 +121,11 @@ namespace order_book {
     std::vector<Trade> OrderBook::matchOrder(Order& incoming) {
         std::vector<Trade> trades;
         while(incoming.getRemainingQuantity() > 0 && crossesBestOpposing(incoming)) {
+            // Make room first: once executeOnce has changed the book, recording its trade
+            // must not be able to throw. Doubling keeps push_back amortized O(1).
+            if(trades.size() == trades.capacity()) {
+                trades.reserve(trades.empty() ? 4 : trades.capacity() * 2);
+            }
             trades.push_back(executeOnce(incoming));
         }
         return trades;
@@ -130,6 +135,10 @@ namespace order_book {
         // Reject before matching: failing only when the remainder rests would leave
         // trades executed for a submission that then throws.
         validateNewOrder(incoming);
+
+        // Not atomic: if an allocation fails mid-match or while resting the remainder,
+        // executions already made stay made and their trades are lost with the exception.
+        // The book itself is left consistent.
 
         std::vector<Trade> trades = matchOrder(incoming);
         if(incoming.getRemainingQuantity() > 0) {
@@ -161,7 +170,7 @@ namespace order_book {
                 if(bidsItr != bids.end()) {
                     bidsItr->second.removeOrder(location.itr);
                     if(bidsItr->second.isEmpty()) {
-                        bids.erase(bidsItr->first);
+                        bids.erase(bidsItr);
                     }
                 }
                 else {
@@ -174,7 +183,7 @@ namespace order_book {
                 if(asksItr != asks.end()) {
                     asksItr->second.removeOrder(location.itr);
                     if(asksItr->second.isEmpty()) {
-                        asks.erase(asksItr->first);
+                        asks.erase(asksItr);
                     }
                 }
                 else {
@@ -190,36 +199,44 @@ namespace order_book {
     }
 
     ConsumptionResult OrderBook::consumeLevel(Side side, Price price, unsigned int quantity) {
-        ConsumptionResult result;
-        if(side == Side::BUY) {
-            auto bidsItr = bids.find(price);
-            if(bidsItr == bids.end()) {
-                throw std::invalid_argument("price level not found in bids error");
+        auto consume = [this, side, price, quantity](auto& levels) {
+            const auto levelItr = levels.find(price);
+            if(levelItr == levels.end()) {
+                throw std::invalid_argument(side == Side::BUY ? "price level not found in bids error"
+                                                              : "price level not found in asks error");
+            }
+            PriceLevel& level = levelItr->second;
+
+            ConsumptionResult result{QuantityConsumptionStatus::INVALID_REQUEST, quantity, {}};
+            if(quantity == 0) {
+                return result;
+            }
+            // At most one fill per resting order, so recording a fill can never throw
+            // after the level has changed.
+            result.fills.reserve(level.getOrdersQuantity());
+
+            // Unindex each fully filled order as soon as it leaves the level, so a throw
+            // partway through cannot strand an index entry pointing at a popped order.
+            while(result.unfilledQuantity > 0 && !level.isEmpty()) {
+                const OrderFill fill = level.fillOldestOrder(result.unfilledQuantity);
+                if(fill.fullyFilled) {
+                    orderIndex.erase(fill.orderId);
+                }
+                result.unfilledQuantity -= fill.filledQuantity;
+                result.fills.push_back(fill);
             }
 
-            result = bidsItr->second.consumeQuantity(quantity);
-            if(bidsItr->second.isEmpty()) {
-                bids.erase(bidsItr);
+            if(level.isEmpty()) {
+                result.status = QuantityConsumptionStatus::SATISFIED;
+                levels.erase(levelItr);
             }
-        }
-        else {
-            auto asksItr = asks.find(price);
-            if(asksItr == asks.end()) {
-                throw std::invalid_argument("price level not found in asks error");
+            else {
+                result.status = QuantityConsumptionStatus::LEVEL_EXHAUSTED;
             }
+            return result;
+        };
 
-            result = asksItr->second.consumeQuantity(quantity);
-            if(asksItr->second.isEmpty()) {
-                asks.erase(asksItr);
-            }
-        }
-
-        for(const OrderFill& fill : result.fills) {
-            if(fill.fullyFilled) {
-                orderIndex.erase(fill.orderId);
-            }
-        }
-        return result;
+        return side == Side::BUY ? consume(bids) : consume(asks);
     }
 
     BookSnapshot OrderBook::snapshot(unsigned int depth) const {
