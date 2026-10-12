@@ -20,6 +20,7 @@ struct OrderBookTestAccess {
     static const auto& bids(const OrderBook& book) { return book.bids; }
     static const auto& asks(const OrderBook& book) { return book.asks; }
     static TradeId nextTradeId(const OrderBook& book) { return book.nextTradeId; }
+    static void setNextTradeId(OrderBook& book, TradeId next) { book.nextTradeId = next; }
     static SequenceNum nextSequenceNum(const OrderBook& book) { return book.nextSequenceNum; }
     static void setNextSequenceNum(OrderBook& book, SequenceNum next) { book.nextSequenceNum = next; }
     // The resting order itself (findActiveOrder only returns a copy), to check identity.
@@ -446,6 +447,26 @@ void testSequenceNumberWraps() {
     expectTrades(book.submitOrder(incoming), incoming, 1, {{1, 100, 5}, {2, 100, 1}}, context);
 }
 
+void testTradeIdWraps() {
+    const std::string context = "trade ID wrap";
+    constexpr unsigned int maxTradeId = std::numeric_limits<unsigned int>::max();
+    OrderBook book{};
+    book.addOrder(Order(1, 100, 2, 1, Side::SELL));
+    book.addOrder(Order(2, 101, 3, 1, Side::SELL));
+    Access::setNextTradeId(book, maxTradeId);
+
+    // Matching keeps working across the wrap rather than rejecting every crossing order.
+    const std::vector<Trade> trades = book.submitOrder(Order(3, 101, 5, 1, Side::BUY));
+    expect(trades.size() == 2, context + ": both resting orders should be filled");
+    expect(trades[0].getTradeId() == maxTradeId && trades[0].getRestingId() == 1,
+           context + ": the first execution should use the last trade ID");
+    expect(trades[1].getTradeId() == 1 && trades[1].getRestingId() == 2,
+           context + ": the next execution should wrap past zero back to 1");
+    expect(Access::nextTradeId(book) == 2, context + ": numbering should carry on from 1");
+    expect(!book.hasBids() && !book.hasAsks(), context + ": the book should be empty");
+    expectBookConsistent(book, context);
+}
+
 struct Submission {
     unsigned int id;
     Side side;
@@ -546,6 +567,7 @@ int main() {
     }
     testSequenceNumbers();
     testSequenceNumberWraps();
+    testTradeIdWraps();
     testDeterministicEventOrdering();
 
     std::cout << "matching tests passed" << std::endl;

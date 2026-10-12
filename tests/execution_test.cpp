@@ -16,6 +16,9 @@ namespace order_book {
 // inspect internals without widening the public API.
 struct OrderBookTestAccess {
     static Trade executeOnce(OrderBook& book, Order& incoming) { return book.executeOnce(incoming); }
+    static void restOrder(OrderBook& book, const Order& order) { book.restOrder(order); }
+    // Plants an empty level, which no public operation leaves behind, to exercise the guard.
+    static void insertEmptyAsk(OrderBook& book, Price price) { book.asks.try_emplace(price, price, Side::SELL); }
 
     static const auto& index(const OrderBook& book) { return book.orderIndex; }
     static const auto& bids(const OrderBook& book) { return book.bids; }
@@ -376,6 +379,38 @@ void testRejectedExecutionLeavesBookUntouched() {
     expectUntouched(book, incoming, "rejected execution (inactive resting)");
 }
 
+void testRestOrderRejectsIndexedId() {
+    OrderBook book{};
+    book.addOrder(Order(1, 100, 5, 1, Side::SELL));
+
+    // restOrder skips validation, so it must still refuse to rest an order it cannot index.
+    expectThrows([&book] { Access::restOrder(book, Order(1, 100, 7, 2, Side::SELL)); },
+                 "restOrder: an already indexed ID at an existing level should throw");
+    const PriceLevel& level = levelAt(book, Side::SELL, 100);
+    expect(level.getOrdersQuantity() == 1 && level.getAggregateQuantity() == 5,
+           "restOrder: the existing level should be left as it was");
+    expect(book.findActiveOrder(1).getRemainingQuantity() == 5, "restOrder: the original entry should be kept");
+    expectIndexConsistent(book, "restOrder (existing level)");
+
+    expectThrows([&book] { Access::restOrder(book, Order(1, 101, 7, 2, Side::SELL)); },
+                 "restOrder: an already indexed ID at a new level should throw");
+    expect(Access::asks(book).find(101) == Access::asks(book).end(), "restOrder: no new level should be left behind");
+    expectIndexConsistent(book, "restOrder (new level)");
+}
+
+void testEmptyBestLevelIsRejected() {
+    OrderBook book{};
+    book.addOrder(Order(1, 101, 5, 1, Side::SELL));
+    Access::insertEmptyAsk(book, 100);
+    Order incoming(2, 101, 5, 2, Side::BUY);
+
+    expectThrows([&book, &incoming] { Access::executeOnce(book, incoming); },
+                 "empty level: executing against an empty best level should throw");
+    expect(incoming.getRemainingQuantity() == 5, "empty level: the incoming order should not be filled");
+    expect(Access::nextTradeId(book) == 1, "empty level: no trade ID should be consumed");
+    expect(book.findActiveOrder(1).getRemainingQuantity() == 5, "empty level: the order behind should not be filled");
+}
+
 void testConsumeLevelUnindexesEachOrderAsItIsFilled() {
     OrderBook book{};
     book.addOrder(Order(1, 100, 5, 1, Side::SELL));
@@ -446,6 +481,8 @@ int main() {
     testExecutionPreconditions();
     testRejectedExecutionLeavesBookUntouched();
     testFillOldestOrderGuards();
+    testRestOrderRejectsIndexedId();
+    testEmptyBestLevelIsRejected();
     testConsumeLevelUnindexesEachOrderAsItIsFilled();
     testMovedBookKeepsValidIndex();
 

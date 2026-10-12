@@ -50,6 +50,13 @@ namespace order_book {
         }
     }
 
+    void OrderBook::advanceTradeId() {
+        ++nextTradeId;
+        if(nextTradeId == 0) {
+            nextTradeId = 1;
+        }
+    }
+
     void OrderBook::restOrder(const Order& order) {
         auto rest = [this, &order](auto& levels) {
             const auto levelItr = levels.try_emplace(
@@ -59,7 +66,11 @@ namespace order_book {
             std::optional<OrderLocation> location;
             try {
                 location = level.addOrder(order);
-                orderIndex.emplace(order.getOrderId(), *location);
+                if(!orderIndex.emplace(order.getOrderId(), *location).second) {
+                    // emplace keeps the existing entry, which would leave this order resting
+                    // unindexed; throwing here unwinds it like a failed allocation.
+                    throw std::runtime_error("resting an order whose id is already indexed error");
+                }
             }
             catch(...) {
                 // Unwind so a failed allocation leaves no unindexed order and no empty level.
@@ -102,6 +113,12 @@ namespace order_book {
         const Price restingPrice = restingIsAsk ? asks.begin()->first : bids.begin()->first;
         PriceLevel& level = restingIsAsk ? asks.begin()->second : bids.begin()->second;
 
+        // Every level in the book should hold an order, but reading the front of an empty
+        // one is undefined, so check rather than assume.
+        if(level.isEmpty()) {
+            throw std::runtime_error("executing against an empty price level error");
+        }
+
         // Copy what the trade needs before filling: a fully filled resting order is
         // popped from the level, invalidating both this reference and its indexed iterator.
         const Order& resting = level.getOldestOrder();
@@ -117,12 +134,13 @@ namespace order_book {
         // Nothing below can throw: both orders are active and execQuantity is positive
         // and no larger than either remaining quantity.
         const OrderFill fill = level.fillOldestOrder(execQuantity);
-        incoming.fillQuantity(execQuantity);
-        ++nextTradeId;
-
+        // Unindex a popped order at once, so its entry never outlives its list element.
         if(fill.fullyFilled) {
             orderIndex.erase(restingId);
         }
+        incoming.fillQuantity(execQuantity);
+        advanceTradeId();
+
         if(level.isEmpty()) {
             if(restingIsAsk) {
                 asks.erase(asks.begin());

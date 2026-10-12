@@ -49,12 +49,14 @@ namespace order_book {
         // still has quantity, is not FILLED, and its ID is not already resting here.
         void validateNewOrder(const Order& order) const;
 
-        // Moves to the next sequence number, wrapping from the maximum back to 1 (zero is
-        // invalid), so numbers are silently reused once the counter overflows.
+        // Move to the next number, wrapping from the maximum back to 1 (zero is invalid),
+        // so numbers are silently reused once a counter overflows.
         void advanceSequenceNum();
+        void advanceTradeId();
 
         // Appends an already accepted order to the back of its price level and indexes
-        // it, leaving the book unchanged if that throws.
+        // it, leaving the book unchanged if that throws. Throws std::runtime_error if its
+        // ID is already indexed: callers must validate first.
         void restOrder(const Order& order);
 
         bool crossesBestOpposing(const Order& incoming) const;
