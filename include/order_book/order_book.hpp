@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include "cancellation_results.hpp"
 #include "order_location.hpp"
 #include "price_level.hpp"
 #include "order.hpp"
@@ -97,6 +98,15 @@ namespace order_book {
         // std::invalid_argument if no order with that ID is resting.
         Order findActiveOrder(OrderId orderId) const;
 
+        // Removes a resting order by ID, taking its remaining quantity off its level's
+        // aggregate, unindexing it, and erasing the level once empty. Other orders keep
+        // their FIFO positions and indexed iterators, and no sequence number or trade ID
+        // is consumed. An ID that is not resting (unknown, already cancelled, fully filled,
+        // or an incoming order that never rested) is rejected with ORDER_NOT_FOUND, leaving
+        // the book unchanged.
+        CancellationResult cancelOrder(OrderId orderId);
+
+        // cancelOrder, but throws std::invalid_argument if the ID is not resting.
         void removeOrder(OrderId orderId);
 
         // Fills resting orders at one price level in FIFO order, unindexing fully

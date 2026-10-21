@@ -64,8 +64,10 @@ namespace order_book {
     }
 
     void PriceLevel::removeOrder(std::list<Order>::iterator itr) {
-        Order targetOrder = *itr;
-        quantity -= targetOrder.getRemainingQuantity();
+        // Read the remaining quantity first: erasing invalidates itr. It is the remaining
+        // quantity, not the initial one, that the aggregate holds for this order.
+        const unsigned int remaining = itr->getRemainingQuantity();
+        quantity -= remaining;
         orders.erase(itr);
     }
 

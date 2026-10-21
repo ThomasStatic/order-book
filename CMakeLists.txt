@@ -190,6 +190,16 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(matching_tests)
     add_test(NAME matching_tests COMMAND matching_tests)
 
+    add_executable(cancellation_tests
+        tests/cancellation_test.cpp
+    )
+
+    target_compile_features(cancellation_tests PRIVATE cxx_std_20)
+    target_link_libraries(cancellation_tests PRIVATE order_book)
+    order_book_enable_warnings(cancellation_tests)
+    order_book_enable_sanitizers(cancellation_tests)
+    add_test(NAME cancellation_tests COMMAND cancellation_tests)
+
     add_executable(allocation_failure_tests
         tests/allocation_failure_test.cpp
     )

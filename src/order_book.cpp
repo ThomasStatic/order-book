@@ -200,44 +200,44 @@ namespace order_book {
 
     }
 
-    void OrderBook::removeOrder(OrderId orderId) {
-        auto orderItr = orderIndex.find(orderId);
-
-        if(orderItr != orderIndex.end()) {
-            OrderLocation location = orderItr->second;
-
-            if(location.side == Side::BUY) {
-                auto bidsItr = bids.find(location.tickPrice);
-
-                if(bidsItr != bids.end()) {
-                    bidsItr->second.removeOrder(location.itr);
-                    if(bidsItr->second.isEmpty()) {
-                        bids.erase(bidsItr);
-                    }
-                }
-                else {
-                    throw std::invalid_argument("price level not found in bids error");
-                }
-            }
-            else if(location.side == Side::SELL) {
-                auto asksItr = asks.find(location.tickPrice);
-
-                if(asksItr != asks.end()) {
-                    asksItr->second.removeOrder(location.itr);
-                    if(asksItr->second.isEmpty()) {
-                        asks.erase(asksItr);
-                    }
-                }
-                else {
-                    throw std::invalid_argument("price level not found in asks error");
-                }
-            }
-
-            orderIndex.erase(orderItr);
-            return;
+    CancellationResult OrderBook::cancelOrder(OrderId orderId) {
+        const auto indexItr = orderIndex.find(orderId);
+        if(indexItr == orderIndex.end()) {
+            return {false, RejectionReason::ORDER_NOT_FOUND};
         }
+        const OrderLocation location = indexItr->second;
 
-        throw std::invalid_argument("order id not found in order index error");
+        auto cancel = [this, indexItr, &location](auto& levels) {
+            const auto levelItr = levels.find(location.tickPrice);
+            // An indexed order always has its level; if not, fail before mutating anything.
+            if(levelItr == levels.end()) {
+                throw std::runtime_error(location.side == Side::BUY ? "indexed order's level not found in bids error"
+                                                                    : "indexed order's level not found in asks error");
+            }
+            PriceLevel& level = levelItr->second;
+
+            // Nothing below can throw. Unindex straight after erasing, so the entry never
+            // holds the erased element's dangling iterator.
+            level.removeOrder(location.itr);
+            orderIndex.erase(indexItr);
+            if(level.isEmpty()) {
+                levels.erase(levelItr);
+            }
+        };
+
+        if(location.side == Side::BUY) {
+            cancel(bids);
+        }
+        else {
+            cancel(asks);
+        }
+        return {true, std::nullopt};
+    }
+
+    void OrderBook::removeOrder(OrderId orderId) {
+        if(!cancelOrder(orderId).success) {
+            throw std::invalid_argument("order id not found in order index error");
+        }
     }
 
     ConsumptionResult OrderBook::consumeLevel(Side side, Price price, unsigned int quantity) {
