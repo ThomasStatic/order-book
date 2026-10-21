@@ -446,14 +446,6 @@ void testIndexBookConsistencyThroughout() {
     expect(Access::index(book).empty(), "consistency: the index should be empty");
 }
 
-void testRemoveOrderStillThrowsOnUnknownId() {
-    OrderBook book{};
-    book.addOrder(Order(1, 100, 10, 1, Side::BUY));
-    book.removeOrder(1);
-    expect(!book.hasBids(), "removeOrder: removing should still cancel the order");
-    expectThrows([&book] { book.removeOrder(1); }, "removeOrder: removing an unknown id should throw");
-}
-
 }  // namespace
 
 int main() {
@@ -472,7 +464,6 @@ int main() {
     testCancelTwice();
     testCancelledIdCanBeReused();
     testIndexBookConsistencyThroughout();
-    testRemoveOrderStillThrowsOnUnknownId();
 
     std::cout << "cancellation tests passed" << std::endl;
     return EXIT_SUCCESS;

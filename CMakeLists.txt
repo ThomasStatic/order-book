@@ -105,7 +105,6 @@ add_library(order_book STATIC
     src/order.cpp
     src/trade.cpp
     src/submission_results.cpp
-    src/cancellation_results.cpp
     src/price_level.cpp
 )
 

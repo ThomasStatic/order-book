@@ -234,12 +234,6 @@ namespace order_book {
         return {true, std::nullopt};
     }
 
-    void OrderBook::removeOrder(OrderId orderId) {
-        if(!cancelOrder(orderId).success) {
-            throw std::invalid_argument("order id not found in order index error");
-        }
-    }
-
     ConsumptionResult OrderBook::consumeLevel(Side side, Price price, unsigned int quantity) {
         auto consume = [this, side, price, quantity](auto& levels) {
             const auto levelItr = levels.find(price);

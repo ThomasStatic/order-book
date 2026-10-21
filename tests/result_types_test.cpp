@@ -3,7 +3,6 @@
 #include <stdexcept>
 #include <string>
 
-#include "order_book/cancellation_results.hpp"
 #include "order_book/submission_results.hpp"
 #include "order_book/trade.hpp"
 
@@ -31,21 +30,12 @@ void expectThrows(Callable&& callable, const std::string& message) {
 }  // namespace
 
 int main() {
-    using order_book::CancellationResults;
-    using order_book::CancellationStatus;
     using order_book::RejectionReason;
     using order_book::SubmissionResults;
     using order_book::SubmissionStatus;
     using order_book::Trade;
     using order_book::FillStatus;
     using order_book::Side;
-
-    CancellationResults cancellation(7);
-    expect(cancellation.getTargetedOrder() == 7, "cancellation should preserve the targeted order ID");
-    expect(cancellation.getRemainingQuantity() == 0, "new cancellation result should start with zero remaining quantity");
-    expect(cancellation.getRejectionReason() == RejectionReason::NONE, "new cancellation result should have no rejection reason");
-    expect(cancellation.getStatus() == CancellationStatus::CANCELLED, "new cancellation result should be marked cancelled");
-    expectThrows([] { CancellationResults invalidCancellation(0); }, "cancellation constructor should reject a non-positive target order ID");
 
     SubmissionResults submission(11);
     expect(submission.getSubmissionId() == 11, "submission should preserve the submission ID");

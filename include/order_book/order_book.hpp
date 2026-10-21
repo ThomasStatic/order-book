@@ -106,9 +106,6 @@ namespace order_book {
         // the book unchanged.
         CancellationResult cancelOrder(OrderId orderId);
 
-        // cancelOrder, but throws std::invalid_argument if the ID is not resting.
-        void removeOrder(OrderId orderId);
-
         // Fills resting orders at one price level in FIFO order, unindexing fully
         // filled orders and erasing the level once it is empty.
         ConsumptionResult consumeLevel(Side side, Price price, unsigned int quantity);
