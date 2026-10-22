@@ -191,17 +191,27 @@ void testRefusedCancellationsEmitOnlyCancelRejected() {
            "cancelling an already cancelled order should emit exactly one CancelRejected");
 }
 
-// A command is either a submission or a cancellation by ID.
-using Command = std::variant<Order, order_book::OrderId>;
+// An order added straight to the book, without matching.
+struct Add {
+    Order order;
+};
+
+// A command is a submission, an add, or a cancellation by ID.
+using Command = std::variant<Order, Add, order_book::OrderId>;
 
 // Runs commands in order on a fresh book, concatenating each command's events.
 Events replay(const std::vector<Command>& commands) {
     OrderBook book;
     Events stream;
     for (const Command& command : commands) {
-        const Events events = std::holds_alternative<Order>(command)
-                                  ? book.submitOrder(std::get<Order>(command)).getEvents()
-                                  : book.cancelOrder(std::get<order_book::OrderId>(command)).getEvents();
+        Events events;
+        if (std::holds_alternative<Order>(command)) {
+            events = book.submitOrder(std::get<Order>(command)).getEvents();
+        } else if (std::holds_alternative<Add>(command)) {
+            events = book.addOrder(std::get<Add>(command).order).getEvents();
+        } else {
+            events = book.cancelOrder(std::get<order_book::OrderId>(command)).getEvents();
+        }
         stream.insert(stream.end(), events.begin(), events.end());
     }
     return stream;
@@ -214,17 +224,19 @@ void testScriptedReplayIsDeterministic() {
         Order(1, 101, 5, 1, Side::SELL),
         Order(2, 100, 3, 1, Side::SELL),
         Order(3, 99, 4, 1, Side::BUY),
+        Add{Order(6, 98, 2, 1, Side::BUY)},
         Order(2, 99, 1, 1, Side::BUY),    // 2 is still resting
         Order(4, 101, 6, 1, Side::BUY),   // takes all of 2, then 3 of 1
         order_book::OrderId{1},           // 2 of 1 left
         order_book::OrderId{2},           // already filled
-        Order(5, 98, 10, 1, Side::SELL),  // takes all of 3, rests 6
+        Order(5, 98, 10, 1, Side::SELL),  // takes all of 3, then all of 6, rests 4
         order_book::OrderId{5},
     };
     const Events expected{
         OrderAccepted{1, Side::SELL, 101, 5},
         OrderAccepted{2, Side::SELL, 100, 3},
         OrderAccepted{3, Side::BUY, 99, 4},
+        OrderAccepted{6, Side::BUY, 98, 2},
         OrderRejected{2, RejectionReason::DUPLICATE_ORDER_ID},
         OrderAccepted{4, Side::BUY, 101, 6},
         TradeExecuted{4, 2, 100, 3},
@@ -233,7 +245,8 @@ void testScriptedReplayIsDeterministic() {
         CancelRejected{2, RejectionReason::ORDER_NOT_FOUND},
         OrderAccepted{5, Side::SELL, 98, 10},
         TradeExecuted{5, 3, 99, 4},
-        OrderCancelled{5, 6},
+        TradeExecuted{5, 6, 98, 2},
+        OrderCancelled{5, 4},
     };
 
     const Events first = replay(script);

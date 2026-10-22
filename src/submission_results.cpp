@@ -18,6 +18,9 @@ namespace order_book {
 
     SubmissionResults SubmissionResults::accepted(const OrderAccepted& acceptance, std::vector<Trade> trades,
                                                   unsigned int remaining) {
+        if (acceptance.quantity == 0 || acceptance.price == 0) {
+            throw std::invalid_argument("accepted result with no quantity or a zero price error");
+        }
         // Summed wide so a bad set of trades cannot wrap around to look consistent.
         unsigned long long accounted = remaining;
         for (const Trade& trade : trades) {

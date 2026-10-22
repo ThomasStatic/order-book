@@ -58,6 +58,10 @@ int main() {
     expectThrows([] { SubmissionResults::accepted({0, Side::BUY, 100, 5}, {}, 5); }, "an accepted result should reject a non-positive submission ID");
 
     // The acceptance, trades, and remainder must describe one consistent submission.
+    expectThrows([] { SubmissionResults::accepted({5, Side::BUY, 100, 0}, {}, 0); },
+                 "an accepted result should reject an acceptance with no quantity");
+    expectThrows([] { SubmissionResults::accepted({5, Side::BUY, 0, 5}, {}, 5); },
+                 "an accepted result should reject an acceptance with a zero price");
     expectThrows([] { SubmissionResults::accepted({12, Side::BUY, 100, 8}, {Trade(1, 2, 99, 100, 5, Side::BUY)}, 3); },
                  "an accepted result should reject a trade for a different incoming order");
     expectThrows([] { SubmissionResults::accepted({12, Side::BUY, 100, 8}, {Trade(1, 2, 12, 100, 5, Side::SELL)}, 3); },
