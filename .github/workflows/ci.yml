@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "Linux GCC Debug",                 os: ubuntu-24.04, cxx: g++,     config: Debug }
+          - { name: "Linux GCC Release",               os: ubuntu-24.04, cxx: g++,     config: Release }
+          - { name: "Linux Clang Debug",               os: ubuntu-24.04, cxx: clang++, config: Debug }
+          - { name: "Linux Clang Release",             os: ubuntu-24.04, cxx: clang++, config: Release }
+          - { name: "Linux GCC ASan+UBSan Debug",      os: ubuntu-24.04, cxx: g++,     config: Debug,          sanitizers: true }
+          - { name: "Linux Clang ASan+UBSan Debug",    os: ubuntu-24.04, cxx: clang++, config: Debug,          sanitizers: true }
+          - { name: "Linux Clang ASan+UBSan Optimized", os: ubuntu-24.04, cxx: clang++, config: RelWithDebInfo, sanitizers: true }
+          - { name: "Windows MSVC Debug",              os: windows-2022, config: Debug }
+          - { name: "Windows MSVC Release",            os: windows-2022, config: Release }
+          # MSVC has no UBSan. Release is where allocation_failure_tests runs (it skips under
+          # Debug's checked iterators).
+          - { name: "Windows MSVC ASan Debug",         os: windows-2022, config: Debug,   sanitizers: true }
+          - { name: "Windows MSVC ASan Release",       os: windows-2022, config: Release, sanitizers: true }
+
+    env:
+      ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1
+      UBSAN_OPTIONS: print_stacktrace=1
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Ninja
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: |
+          args=(-DORDER_BOOK_WARNINGS_AS_ERRORS=ON -DORDER_BOOK_BUILD_BENCHMARKS=ON)
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            args+=(-G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx }})
+          fi
+          if [ "${{ matrix.sanitizers }}" = "true" ]; then
+            args+=(-DORDER_BOOK_ENABLE_ASAN=ON)
+            if [ "${{ runner.os }}" = "Linux" ]; then
+              args+=(-DORDER_BOOK_ENABLE_UBSAN=ON)
+            fi
+          fi
+          cmake -S . -B build "${args[@]}"
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.config }} --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C ${{ matrix.config }} --output-on-failure --parallel 4
+
+      - name: Run the CLI
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            ./build/${{ matrix.config }}/order_book_cli.exe
+          else
+            ./build/order_book_cli
+          fi

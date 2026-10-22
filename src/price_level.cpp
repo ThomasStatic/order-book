@@ -79,6 +79,8 @@ namespace order_book {
         return quantity;
     }
     unsigned int PriceLevel::getOrdersQuantity() const {
-        return orders.size();
+        // Live orders have distinct nonzero OrderIds, so a level never holds more than an
+        // unsigned int can count.
+        return static_cast<unsigned int>(orders.size());
     }
 }
