@@ -276,6 +276,50 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(scenario_tests)
     add_test(NAME scenario_tests COMMAND scenario_tests)
 
+    # Randomized command testing: seeded streams of submissions and cancellations, each command
+    # checked against the book's invariants and a reference model. The harness is a library so
+    # its own tests can drive it.
+    add_library(order_book_randomized STATIC
+        tests/randomized/abort_reporter.cpp
+        tests/randomized/command.cpp
+        tests/randomized/command_generator.cpp
+        tests/randomized/command_replayer.cpp
+        tests/randomized/failure_report.cpp
+        tests/randomized/reference_book.cpp
+        tests/randomized/shrink.cpp
+    )
+
+    target_compile_features(order_book_randomized PUBLIC cxx_std_20)
+    target_include_directories(order_book_randomized PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/randomized)
+    target_link_libraries(order_book_randomized PUBLIC order_book)
+    order_book_enable_warnings(order_book_randomized)
+    order_book_enable_sanitizers(order_book_randomized)
+
+    add_executable(randomized_tests
+        tests/randomized/randomized_main.cpp
+    )
+
+    target_compile_features(randomized_tests PRIVATE cxx_std_20)
+    target_link_libraries(randomized_tests PRIVATE order_book_randomized)
+    order_book_enable_warnings(randomized_tests)
+    order_book_enable_sanitizers(randomized_tests)
+    # The committed seeds, then every saved stream in tests/randomized/regressions/.
+    add_test(NAME randomized_seeds
+        COMMAND randomized_tests --out-dir ${CMAKE_CURRENT_BINARY_DIR}/randomized-failures)
+    add_test(NAME randomized_regressions
+        COMMAND randomized_tests --regressions ${CMAKE_CURRENT_SOURCE_DIR}/tests/randomized/regressions
+                --out-dir ${CMAKE_CURRENT_BINARY_DIR}/randomized-failures)
+
+    add_executable(randomized_harness_tests
+        tests/randomized/harness_test.cpp
+    )
+
+    target_compile_features(randomized_harness_tests PRIVATE cxx_std_20)
+    target_link_libraries(randomized_harness_tests PRIVATE order_book_randomized)
+    order_book_enable_warnings(randomized_harness_tests)
+    order_book_enable_sanitizers(randomized_harness_tests)
+    add_test(NAME randomized_harness_tests COMMAND randomized_harness_tests)
+
     # Each run breaks the book, then runs one command, which should abort naming itself and
     # the violation. Pass/fail is decided by that output, since the program aborts either way.
     add_executable(invariant_boundary_tests
