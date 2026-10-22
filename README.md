@@ -72,6 +72,23 @@ cmake --build build/invariants
 ctest --test-dir build/invariants --output-on-failure
 ```
 
+### Randomized command tests
+
+`randomized_tests` generates long, deterministic streams of submissions and cancellations, valid and intentionally invalid, from a seed and a workload profile. It runs each stream against the book beside an independent reference model, and after every command checks the book's invariants, the exact result and events, and every level and FIFO queue. This is seeded pseudorandom testing, not coverage-guided fuzzing. CTest runs the committed seeds (`randomized_seeds`) and replays the saved streams in `tests/randomized/regressions/` (`randomized_regressions`).
+
+```bash
+./build/release/randomized_tests                                   # the committed seeds
+./build/release/randomized_tests --list-profiles
+./build/release/randomized_tests --seed 12345 --profile balanced --commands 20000
+./build/release/randomized_tests --explore 50                      # 50 fresh seeds, each printed before it runs
+./build/release/randomized_tests --replay path/to/stream.txt      # exact replay of a saved stream
+./build/release/randomized_tests --seed 12345 --profile queue --write stream.txt   # save without running
+```
+
+On the first failure it stops and prints the seed, profile and generator version, command index, command, the invariant or expectation broken, the book and model state, and the commands leading up to it. It then saves the executed prefix and a minimized stream to `--out-dir` (default `randomized-failures`) and prints the lines that replay them. To keep a failure as a permanent regression, copy the minimized stream into `tests/randomized/regressions/`.
+
+Use a Release build (or `ORDER_BOOK_INVARIANT_CHECKS=OFF`) for exploration. With automatic invariant checks on, the engine aborts at its own boundary before the harness can report. The harness then prints only the seed, the command, and a line to reproduce the failure.
+
 ### Clean build from scratch
 
 ```bash
