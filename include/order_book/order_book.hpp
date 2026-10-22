@@ -50,9 +50,9 @@ namespace order_book {
         SequenceNum nextSequenceNum = 1;
 
         // Why the book must refuse this order, or nothing if it may be accepted; reads only,
-        // so it runs before anything is mutated. Malformed fields are reported first (the
-        // Order constructor refuses them too, but an order may be changed after it), then
-        // a FILLED order, then an ID already resting here (DUPLICATE_ORDER_ID).
+        // so it runs before anything is mutated. Malformed fields are reported first, via
+        // Order::malformedReason (checked again here because an order may be changed after
+        // construction), then a FILLED order, then an ID already resting here.
         std::optional<RejectionReason> validateNewOrder(const Order& order) const;
 
         // Move to the next number, wrapping from the maximum back to 1 (zero is invalid),

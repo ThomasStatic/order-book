@@ -28,20 +28,8 @@ namespace order_book {
     }
 
     std::optional<RejectionReason> OrderBook::validateNewOrder(const Order& order) const {
-        if(order.getOrderId() == 0) {
-            return RejectionReason::INVALID_ORDER_ID;
-        }
-        if(order.getPriceTick() == 0) {
-            return RejectionReason::INVALID_PRICE;
-        }
-        if(order.getRemainingQuantity() == 0) {
-            return RejectionReason::INVALID_QUANTITY;
-        }
-        if(!isValidSide(order.getSide())) {
-            return RejectionReason::INVALID_SIDE;
-        }
-        if(!isSupportedOrderType(order.getOrderType())) {
-            return RejectionReason::UNSUPPORTED_ORDER_TYPE;
+        if(const std::optional<RejectionReason> reason = order.malformedReason()) {
+            return reason;
         }
         if(!order.orderIsActive()) {
             return RejectionReason::ORDER_NOT_ACTIVE;
@@ -54,9 +42,7 @@ namespace order_book {
 
     void OrderBook::addOrder(Order order) {
         if(const std::optional<RejectionReason> reason = validateNewOrder(order)) {
-            throw std::invalid_argument(*reason == RejectionReason::DUPLICATE_ORDER_ID
-                                            ? "duplicate active order id error"
-                                            : "adding a malformed or inactive order error");
+            throw std::invalid_argument(rejectionMessage(*reason));
         }
         order.assignSequenceNum(nextSequenceNum);
         restOrder(order);

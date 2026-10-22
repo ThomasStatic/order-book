@@ -2,6 +2,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 
 #include "order_book/submission_results.hpp"
 #include "order_book/trade.hpp"
@@ -37,14 +38,34 @@ int main() {
     using order_book::FillStatus;
     using order_book::Side;
 
-    SubmissionResults submission(11);
-    expect(submission.getSubmissionId() == 11, "submission should preserve the submission ID");
-    expect(submission.getGeneratedTrades().empty(), "new submission result should start with no generated trades");
-    expect(submission.getRemainingQuantity() == 0, "new submission result should start with zero remaining quantity");
-    expect(submission.getFillStatus() == FillStatus::NONE, "new submission result should start with no fill status");
-    expect(submission.getStatus() == SubmissionStatus::ACCEPTED, "new submission result should be accepted by default");
-    expect(submission.getRejectionReason() == RejectionReason::NONE, "new submission result should have no rejection reason");
-    expectThrows([] { SubmissionResults invalidSubmission(0); }, "submission constructor should reject a non-positive submission ID");
+    // Results are built only through accepted() and rejected(), so none can be half-formed.
+    static_assert(!std::is_constructible_v<SubmissionResults, unsigned int>,
+                  "SubmissionResults should not be constructible from a bare submission ID");
+
+    const SubmissionResults resting = SubmissionResults::accepted(11, {}, 5);
+    expect(resting.getSubmissionId() == 11, "an accepted result should preserve the submission ID");
+    expect(resting.getGeneratedTrades().empty(), "an accepted result with no trades should report none");
+    expect(resting.getRemainingQuantity() == 5, "an accepted result should preserve the remaining quantity");
+    expect(resting.getFillStatus() == FillStatus::NONE, "an accepted result with no trades should report no fill");
+    expect(resting.getStatus() == SubmissionStatus::ACCEPTED, "an accepted result should be accepted");
+    expect(resting.getRejectionReason() == RejectionReason::NONE, "an accepted result should have no rejection reason");
+    expect(SubmissionResults::accepted(12, {Trade(1, 2, 12, 100, 5, Side::BUY)}, 3).getFillStatus() == FillStatus::PARTIAL,
+           "an accepted result with trades and quantity left should be partially filled");
+    expect(SubmissionResults::accepted(13, {Trade(1, 2, 13, 100, 5, Side::BUY)}, 0).getFillStatus() == FillStatus::FILLED,
+           "an accepted result with trades and nothing left should be filled");
+    expectThrows([] { SubmissionResults::accepted(0, {}, 5); }, "an accepted result should reject a non-positive submission ID");
+
+    const SubmissionResults refused = SubmissionResults::rejected(14, 5, RejectionReason::DUPLICATE_ORDER_ID);
+    expect(refused.getSubmissionId() == 14, "a rejected result should preserve the submission ID");
+    expect(refused.getStatus() == SubmissionStatus::REJECTED, "a rejected result should be rejected");
+    expect(refused.getRejectionReason() == RejectionReason::DUPLICATE_ORDER_ID, "a rejected result should keep its reason");
+    expect(refused.getGeneratedTrades().empty() && refused.getFillStatus() == FillStatus::NONE,
+           "a rejected result should report no execution");
+    expect(refused.getRemainingQuantity() == 5, "a rejected result should report the submitted quantity as unexecuted");
+    expect(SubmissionResults::rejected(0, 5, RejectionReason::INVALID_ORDER_ID).getSubmissionId() == 0,
+           "a rejected result may echo the reserved ID 0");
+    expectThrows([] { SubmissionResults::rejected(15, 5, RejectionReason::NONE); },
+                 "a rejected result should require a rejection reason");
 
     Trade trade(1, 2, 3, 100, 5, Side::BUY);
     expect(trade.getTradeId() == 1, "trade ID should be preserved");

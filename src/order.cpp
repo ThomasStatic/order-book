@@ -3,36 +3,40 @@
 namespace order_book {
 
 Order::Order(unsigned int id, unsigned int tick, unsigned int quant, unsigned int seq, Side s, OrderType t)
-    : sequenceNum(seq), side(s), type(t) {
-    if (id == 0) {
-        throw std::invalid_argument("Non-positive order ID error.");
-    }
-
-    if (tick == 0) {
-        throw std::invalid_argument("Non-positive price tick error.");
-    }
-
-    if(quant == 0) {
-        throw std::invalid_argument("Non-positive quantity error.");
-    }
-
+    : orderId(id),
+      sequenceNum(seq),
+      priceTick(tick),
+      initialQuant(quant),
+      remainingQuant(quant),
+      side(s),
+      type(t),
+      execution(FillStatus::NONE) {
     if(seq == 0) {
         throw std::invalid_argument("Non-positive sequence number error.");
     }
 
-    if(!isValidSide(s)) {
-        throw std::invalid_argument("Invalid order side error.");
+    if(const std::optional<RejectionReason> reason = malformedReason()) {
+        throw std::invalid_argument(rejectionMessage(*reason));
     }
+}
 
-    if(!isSupportedOrderType(t)) {
-        throw std::invalid_argument("Unsupported order type error.");
+std::optional<RejectionReason> Order::malformedReason() const {
+    if(orderId == 0) {
+        return RejectionReason::INVALID_ORDER_ID;
     }
-
-    orderId = id;
-    priceTick = tick;
-    initialQuant = quant;
-    remainingQuant = quant;
-    execution = FillStatus::NONE;
+    if(priceTick == 0) {
+        return RejectionReason::INVALID_PRICE;
+    }
+    if(remainingQuant == 0) {
+        return RejectionReason::INVALID_QUANTITY;
+    }
+    if(!isValidSide(side)) {
+        return RejectionReason::INVALID_SIDE;
+    }
+    if(!isSupportedOrderType(type)) {
+        return RejectionReason::UNSUPPORTED_ORDER_TYPE;
+    }
+    return std::nullopt;
 }
 
 unsigned int Order::getOrderId() const{

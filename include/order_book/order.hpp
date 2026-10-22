@@ -1,8 +1,10 @@
 #pragma once
 
+#include <optional>
 #include <stdexcept>
 #include "fill_status.hpp"
 #include "order_type.hpp"
+#include "rejection_reason.hpp"
 #include "side.hpp"
 
 namespace order_book {
@@ -29,9 +31,14 @@ namespace order_book {
         // std::invalid_argument on zero, leaving the order unchanged.
         void assignSequenceNum(unsigned int seq);
 
+        // The one home for field checks, shared by the constructor and the book: a zero
+        // ID, price, or remaining quantity, a side other than BUY or SELL, or an
+        // unsupported type, in that order; nothing if every field is well formed.
+        std::optional<RejectionReason> malformedReason() const;
+
     public:
-        // Throws std::invalid_argument on a zero ID, price, quantity, or sequence number,
-        // a side other than BUY or SELL, or an unsupported order type.
+        // Throws std::invalid_argument on a zero sequence number, or on any field
+        // malformedReason() refuses, with that reason's rejectionMessage.
         Order(unsigned int id, unsigned int tick, unsigned int quant, unsigned int arrival, Side s,
               OrderType t = OrderType::LIMIT);
 

@@ -4,6 +4,8 @@
 #include <initializer_list>
 #include <iostream>
 #include <list>
+#include <set>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -467,6 +469,42 @@ void testActiveOrderCountThroughEvents() {
     step(2, "an add");
 }
 
+// addOrder refuses the same orders submitOrder rejects, but by throwing; its message
+// should name the specific reason rather than lump the malformed cases together.
+void testAddOrderNamesEachRejection() {
+    const std::string context = "addOrder rejection message";
+    OrderBook book = restingBook();
+
+    std::vector<Order> refused;
+    refused.push_back(crossingBuy());
+    Access::setOrderId(refused.back(), 0);
+    refused.push_back(crossingBuy());
+    Access::setPrice(refused.back(), 0);
+    refused.push_back(crossingBuy());
+    Access::setQuantity(refused.back(), 0);
+    refused.push_back(crossingBuy());
+    Access::setSide(refused.back(), static_cast<Side>(2));
+    refused.push_back(crossingBuy());
+    Access::setOrderType(refused.back(), static_cast<OrderType>(1));
+    refused.push_back(crossingBuy());
+    refused.back().setExecutionLevel(FillStatus::FILLED);
+    refused.push_back(crossingBuy(4));
+
+    std::set<std::string> messages;
+    for (const Order& order : refused) {
+        const BookState before = capture(book);
+        std::string message;
+        try {
+            book.addOrder(order);
+        } catch (const std::invalid_argument& error) {
+            message = error.what();
+        }
+        expect(!message.empty(), context + ": addOrder should throw std::invalid_argument with a message");
+        expect(messages.insert(message).second, context + ": each rejection should have its own message, got a repeat: " + message);
+        expect(capture(book) == before, context + ": a refused add should leave the book exactly as it was");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -477,6 +515,7 @@ int main() {
     testPartiallyFilledIncomingRestsIndexed();
     testMultipleLevelSweep();
     testActiveOrderCountThroughEvents();
+    testAddOrderNamesEachRejection();
     for (Side side : {Side::BUY, Side::SELL}) {
         testFullyFilledIncomingIsNotIndexed(side);
     }
