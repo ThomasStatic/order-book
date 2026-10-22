@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
@@ -11,7 +12,7 @@ namespace order_book {
 
 // Befriended by OrderBook and PriceLevel so this test can break the book on purpose.
 struct OrderBookTestAccess {
-    static unsigned int& aggregate(OrderBook& book, Price askPrice) { return book.asks.at(askPrice).quantity; }
+    static std::uint64_t& aggregate(OrderBook& book, Price askPrice) { return book.asks.at(askPrice).quantity; }
     static Price& indexedPrice(OrderBook& book, OrderId orderId) { return book.orderIndex.at(orderId).tickPrice; }
 };
 

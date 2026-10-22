@@ -75,7 +75,7 @@ namespace order_book {
         return orders.empty();
     }
 
-    unsigned int PriceLevel::getAggregateQuantity() const {
+    std::uint64_t PriceLevel::getAggregateQuantity() const {
         return quantity;
     }
     unsigned int PriceLevel::getOrdersQuantity() const {

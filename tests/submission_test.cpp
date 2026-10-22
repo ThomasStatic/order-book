@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
 #include <iostream>
@@ -131,7 +132,7 @@ struct OrderState {
 
 struct LevelState {
     Price price;
-    unsigned int aggregateQuantity;
+    std::uint64_t aggregateQuantity;
     std::vector<OrderState> orders;
 
     bool operator==(const LevelState&) const = default;

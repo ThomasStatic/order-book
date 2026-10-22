@@ -266,6 +266,16 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(invariant_tests)
     add_test(NAME invariant_tests COMMAND invariant_tests)
 
+    add_executable(scenario_tests
+        tests/scenario_test.cpp
+    )
+
+    target_compile_features(scenario_tests PRIVATE cxx_std_20)
+    target_link_libraries(scenario_tests PRIVATE order_book)
+    order_book_enable_warnings(scenario_tests)
+    order_book_enable_sanitizers(scenario_tests)
+    add_test(NAME scenario_tests COMMAND scenario_tests)
+
     # Each run breaks the book, then runs one command, which should abort naming itself and
     # the violation. Pass/fail is decided by that output, since the program aborts either way.
     add_executable(invariant_boundary_tests

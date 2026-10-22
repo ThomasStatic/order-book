@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
 #include <iostream>
@@ -28,7 +29,7 @@ struct OrderBookTestAccess {
         return side == Side::BUY ? book.bids.at(price) : book.asks.at(price);
     }
     static std::list<Order>& orders(PriceLevel& level) { return level.orders; }
-    static unsigned int& aggregate(PriceLevel& level) { return level.quantity; }
+    static std::uint64_t& aggregate(PriceLevel& level) { return level.quantity; }
 
     // The resting order itself, through its index entry.
     static Order& indexedOrder(OrderBook& book, OrderId orderId) { return *book.orderIndex.at(orderId).itr; }

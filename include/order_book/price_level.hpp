@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <list>
 #include <stdexcept>
 #include <iterator>
@@ -41,7 +42,9 @@ namespace order_book {
         const Side side;
         
         std::list<Order> orders;
-        unsigned int quantity = 0; // aggregate of all orders
+        // Aggregate of all orders' remaining quantities. Wider than a Quantity, so it wraps only
+        // past about 2^32 orders of the maximum quantity at one price.
+        std::uint64_t quantity = 0;
 
         // Fills up to fillQuant from the oldest order only, popping it if fully filled.
         OrderFill fillOldestOrder(unsigned int fillQuant);
@@ -59,7 +62,7 @@ namespace order_book {
 
         bool isEmpty() const;
 
-        unsigned int getAggregateQuantity() const;
+        std::uint64_t getAggregateQuantity() const;
         unsigned int getOrdersQuantity() const;
 
 

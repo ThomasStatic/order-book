@@ -22,7 +22,7 @@ namespace order_book {
 
     struct PriceLevelSummary {
         Price price;
-        unsigned int totalQuantity;
+        std::uint64_t totalQuantity;  // the level's aggregate, which can exceed one Quantity
         unsigned int orderQuantity;
     };
 
