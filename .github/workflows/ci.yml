@@ -35,7 +35,8 @@ jobs:
           - { name: "Windows MSVC ASan Release",       os: windows-2022, config: Release, sanitizers: true }
 
     env:
-      ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1
+      # Linux only: MSVC's ASan runtime refuses to start when asked for leak detection.
+      ASAN_OPTIONS: ${{ startsWith(matrix.os, 'ubuntu') && 'detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1' || '' }}
       UBSAN_OPTIONS: print_stacktrace=1
 
     defaults:
@@ -63,8 +64,14 @@ jobs:
           fi
           cmake -S . -B build "${args[@]}"
 
+      # Ninja keeps going past a failed target (-k 0), so one run reports every warning.
       - name: Build
-        run: cmake --build build --config ${{ matrix.config }} --parallel
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            cmake --build build --parallel -- -k 0
+          else
+            cmake --build build --config ${{ matrix.config }} --parallel
+          fi
 
       - name: Test
         run: ctest --test-dir build -C ${{ matrix.config }} --output-on-failure --parallel 4

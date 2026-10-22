@@ -65,12 +65,12 @@ namespace order_book {
     // What OrderBook::checkInvariants found: no violation if the book is sound, otherwise
     // the first one and where it is. Fields that do not apply to a violation stay empty.
     struct InvariantResult {
-        std::optional<InvariantViolation> violation;
+        std::optional<InvariantViolation> violation{};
         // The side and price of the offending level (CROSSED_BOOK has neither), and the
         // offending order's ID or index key.
-        std::optional<Side> side;
-        std::optional<Price> price;
-        std::optional<OrderId> orderId;
+        std::optional<Side> side{};
+        std::optional<Price> price{};
+        std::optional<OrderId> orderId{};
         // The value the invariant requires and the one found, where a number tells them apart:
         // the previous level's price and this one's for the orderings; the slot's and the
         // level's price for MISPLACED_LEVEL; the level's and the order's price for
@@ -79,8 +79,8 @@ namespace order_book {
         // AGGREGATE_QUANTITY_MISMATCH; the level's and the recorded price, or the resting
         // order count and the index size, for INVALID_INDEX_ENTRY; the best ask and the best
         // bid for CROSSED_BOOK.
-        std::optional<std::uint64_t> expected;
-        std::optional<std::uint64_t> actual;
+        std::optional<std::uint64_t> expected{};
+        std::optional<std::uint64_t> actual{};
         // Which check failed, in words. A string literal, so building a result never allocates.
         const char* detail = "";
 

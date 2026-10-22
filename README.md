@@ -54,6 +54,8 @@ cmake -S . -B build/sanitizers -G Ninja -DCMAKE_BUILD_TYPE=Debug \
 cmake --build build/sanitizers
 ```
 
+UBSan is built with `-fno-sanitize-recover`, so any finding fails the test that hit it.
+
 With MSVC only AddressSanitizer is available (`ORDER_BOOK_ENABLE_UBSAN` is ignored with a warning). The ASan runtime DLL is copied next to each executable, so tests run from any shell:
 
 ```bash
@@ -88,6 +90,10 @@ ctest --test-dir build/invariants --output-on-failure
 On the first failure it stops and prints the seed, profile and generator version, command index, command, the invariant or expectation broken, the book and model state, and the commands leading up to it. It then saves the executed prefix and a minimized stream to `--out-dir` (default `randomized-failures`) and prints the lines that replay them. To keep a failure as a permanent regression, copy the minimized stream into `tests/randomized/regressions/`.
 
 Use a Release build (or `ORDER_BOOK_INVARIANT_CHECKS=OFF`) for exploration. With automatic invariant checks on, the engine aborts at its own boundary before the harness can report. The harness then prints only the seed, the command, and a line to reproduce the failure.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` builds and runs every test on each push and pull request, with warnings as errors and benchmarks enabled: GCC and Clang Debug and Release, GCC and Clang ASan+UBSan Debug, Clang ASan+UBSan RelWithDebInfo, and MSVC Debug, Release, and ASan Debug and Release. MSVC ASan Release is the job that runs `allocation_failure_tests`, which skips under Debug's checked iterators.
 
 ### Clean build from scratch
 
