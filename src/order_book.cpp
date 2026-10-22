@@ -40,14 +40,19 @@ namespace order_book {
         return std::nullopt;
     }
 
-    void OrderBook::addOrder(Order order) {
+    SubmissionResults OrderBook::addOrder(Order order) {
         if(const std::optional<RejectionReason> reason = validateNewOrder(order)) {
             throw std::invalid_argument(rejectionMessage(*reason));
         }
         order.assignSequenceNum(nextSequenceNum);
+        // Built before the order rests, so a failed allocation leaves the book untouched.
+        SubmissionResults result = SubmissionResults::accepted(
+            {order.getOrderId(), order.getSide(), order.getPriceTick(), order.getRemainingQuantity()}, {},
+            order.getRemainingQuantity());
         restOrder(order);
         // Consumed only once the order rests, so a rejected or rolled-back add leaves no gap.
         advanceSequenceNum();
+        return result;
     }
 
     void OrderBook::advanceSequenceNum() {
@@ -225,12 +230,12 @@ namespace order_book {
     CancellationResult OrderBook::cancelOrder(OrderId orderId) {
         const auto indexItr = orderIndex.find(orderId);
         if(indexItr == orderIndex.end()) {
-            return {false, RejectionReason::ORDER_NOT_FOUND, {CancelRejected{orderId, RejectionReason::ORDER_NOT_FOUND}}};
+            return CancellationResult::rejected(orderId, RejectionReason::ORDER_NOT_FOUND);
         }
         const OrderLocation location = indexItr->second;
         // Built before anything is mutated: recording the event allocates, and once the
         // order is removed nothing may throw.
-        CancellationResult result{true, std::nullopt, {OrderCancelled{orderId, location.itr->getRemainingQuantity()}}};
+        CancellationResult result = CancellationResult::cancelled(orderId, location.itr->getRemainingQuantity());
 
         auto cancel = [this, indexItr, &location](auto& levels) {
             const auto levelItr = levels.find(location.tickPrice);

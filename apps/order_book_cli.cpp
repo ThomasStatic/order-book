@@ -25,8 +25,8 @@ int main() {
     printEvents(book.submitOrder(Order(2, 100, 3, 1, Side::SELL)).getEvents());
     printEvents(book.submitOrder(Order(2, 99, 1, 1, Side::BUY)).getEvents());
     printEvents(book.submitOrder(Order(3, 101, 6, 1, Side::BUY)).getEvents());
-    printEvents(book.cancelOrder(1).events);
-    printEvents(book.cancelOrder(1).events);
+    printEvents(book.cancelOrder(1).getEvents());
+    printEvents(book.cancelOrder(1).getEvents());
 
     return 0;
 }

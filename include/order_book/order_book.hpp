@@ -90,8 +90,10 @@ namespace order_book {
         // was constructed with. addOrder rests it without matching and consumes no number
         // if it throws. submitOrder matches it by price-time priority, reporting trades in
         // execution order, and rests any remainder at its own limit price; its number is
-        // consumed once validation passes, even if matching later throws.
-        void addOrder(Order order);
+        // consumed once validation passes, even if matching later throws. Both return the
+        // submission's events; addOrder's are only its OrderAccepted, and it throws
+        // std::invalid_argument on a rejection rather than returning one.
+        SubmissionResults addOrder(Order order);
 
         SubmissionResults submitOrder(Order incoming);
 

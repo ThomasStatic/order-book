@@ -307,7 +307,7 @@ void testActiveIndexCleanup() {
     Order incoming(2, 100, 6, 5, Side::BUY);
     Access::executeOnce(book, incoming);  // fills 1 fully
     expect(!isIndexed(book, 1), "cleanup: a fully filled resting order should be unindexed");
-    expect(book.cancelOrder(1).rejectionReason == RejectionReason::ORDER_NOT_FOUND,
+    expect(book.cancelOrder(1).getRejectionReason() == RejectionReason::ORDER_NOT_FOUND,
            "cleanup: cancelling a fully filled order should be rejected rather than use a stale iterator");
     expectIndexConsistent(book, "cleanup after first fill");
 
@@ -321,7 +321,7 @@ void testActiveIndexCleanup() {
     expect(!isIndexed(book, 2), "cleanup: an executing incoming order should never be indexed");
     expectIndexConsistent(book, "cleanup after partial fill");
 
-    expect(book.cancelOrder(5).success, "cleanup: cancelling the partially filled order should succeed");
+    expect(book.cancelOrder(5).isSuccess(), "cleanup: cancelling the partially filled order should succeed");
     expect(!book.hasAsks(), "cleanup: the partially filled order should still be cancellable via its entry");
     expectIndexConsistent(book, "cleanup after cancel");
 }
@@ -438,7 +438,7 @@ void testMovedBookKeepsValidIndex() {
     expect(&Access::indexedOrder(moved, 1) == firstBefore, "move: index entries should still point at the same orders");
     expectIndexConsistent(moved, "move construction");
 
-    expect(moved.cancelOrder(1).success, "move: the moved index should cancel an order");
+    expect(moved.cancelOrder(1).isSuccess(), "move: the moved index should cancel an order");
     Order incoming(4, 100, 2, 4, Side::BUY);
     Access::executeOnce(moved, incoming);
     expectIndexConsistent(moved, "move construction then mutation");
@@ -447,7 +447,7 @@ void testMovedBookKeepsValidIndex() {
     assigned.addOrder(Order(9, 50, 1, 5, Side::BUY));
     assigned = std::move(moved);
     expect(!isIndexed(assigned, 9), "move assignment: the target's previous orders should be gone");
-    expect(assigned.cancelOrder(2).success && assigned.cancelOrder(3).success,
+    expect(assigned.cancelOrder(2).isSuccess() && assigned.cancelOrder(3).isSuccess(),
            "move assignment: cancelling each moved order should succeed");
     expect(!assigned.hasBids() && !assigned.hasAsks(), "move assignment: the moved index should still cancel every order");
     expectIndexConsistent(assigned, "move assignment then removal");

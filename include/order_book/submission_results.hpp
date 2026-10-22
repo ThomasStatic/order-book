@@ -39,7 +39,8 @@ namespace order_book {
         // follows from the trades and what is left: NONE if nothing traded, FILLED if
         // nothing is left, PARTIAL otherwise. Its events are the acceptance, then one
         // TradeExecuted per trade, in the trades' order. Throws std::invalid_argument on a
-        // zero ID.
+        // zero ID, or unless every trade is for this order, on its side, and within its limit
+        // price, and the traded quantities plus what is left sum to the accepted quantity.
         static SubmissionResults accepted(const OrderAccepted& acceptance, std::vector<Trade> trades,
                                           unsigned int remaining);
 

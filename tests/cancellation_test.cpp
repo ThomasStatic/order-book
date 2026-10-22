@@ -195,13 +195,13 @@ Price worsePrice(Side side) {
 }
 
 void expectCancelled(const CancellationResult& result, const std::string& context) {
-    expect(result.success, context + ": the cancellation should succeed");
-    expect(!result.rejectionReason.has_value(), context + ": a successful cancellation should carry no rejection reason");
+    expect(result.isSuccess(), context + ": the cancellation should succeed");
+    expect(!result.getRejectionReason().has_value(), context + ": a successful cancellation should carry no rejection reason");
 }
 
 void expectNotFound(const CancellationResult& result, const std::string& context) {
-    expect(!result.success, context + ": the cancellation should be rejected");
-    expect(result.rejectionReason == RejectionReason::ORDER_NOT_FOUND,
+    expect(!result.isSuccess(), context + ": the cancellation should be rejected");
+    expect(result.getRejectionReason() == RejectionReason::ORDER_NOT_FOUND,
            context + ": the rejection reason should be ORDER_NOT_FOUND");
 }
 

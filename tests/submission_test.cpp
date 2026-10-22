@@ -249,14 +249,14 @@ void testDuplicateActiveIdIsRejected() {
 void testReusedCancelledIdIsAccepted() {
     const std::string context = "reused cancelled id";
     OrderBook book = restingBook();
-    expect(book.cancelOrder(4).success, context + ": cancelling the resting order should succeed");
+    expect(book.cancelOrder(4).isSuccess(), context + ": cancelling the resting order should succeed");
 
     const SubmissionResults crossing = book.submitOrder(Order(4, 101, 1, 1, Side::BUY));
     expectAccepted(crossing, 4, 1, 0, FillStatus::FILLED, context + " crossing");
     expect(crossing.getGeneratedTrades()[0].getRestingId() == 5,
            context + ": the reused id should trade against the remaining order at 101");
 
-    expect(book.cancelOrder(1).success, context + ": cancelling the resting bid should succeed");
+    expect(book.cancelOrder(1).isSuccess(), context + ": cancelling the resting bid should succeed");
     const SubmissionResults resting = book.submitOrder(Order(1, 97, 3, 1, Side::BUY));
     expectAccepted(resting, 1, 0, 3, FillStatus::NONE, context + " resting");
     expect(isIndexed(book, 1) && book.findActiveOrder(1).getPriceTick() == 97,

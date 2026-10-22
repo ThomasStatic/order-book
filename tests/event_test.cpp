@@ -139,6 +139,15 @@ void testPartiallyFilledSubmissionEmitsNoRestingEvent(Side side) {
     expect(book.findActiveOrder(9).getRemainingQuantity() == 7, context + ": the remainder should still rest");
 }
 
+// Adding rests without matching, so it reports only its acceptance, even when it would cross.
+void testAddOrderEmitsOnlyOrderAccepted() {
+    OrderBook book;
+    expect(book.addOrder(Order(1, 100, 5, 1, Side::SELL)).getEvents() == Events{OrderAccepted{1, Side::SELL, 100, 5}},
+           "adding an order should emit exactly one OrderAccepted with its ID, side, price, and quantity");
+    expect(book.addOrder(Order(2, 101, 3, 1, Side::BUY)).getEvents() == Events{OrderAccepted{2, Side::BUY, 101, 3}},
+           "adding a crossing order should still emit only its OrderAccepted, since add never matches");
+}
+
 // Cancelling reports what was still resting, not what was originally submitted.
 void testCancellingPartiallyFilledOrderEmitsRemainingQuantity(Side side) {
     const std::string context = sideName(side) + " cancel after partial fill";
@@ -147,8 +156,8 @@ void testCancellingPartiallyFilledOrderEmitsRemainingQuantity(Side side) {
     book.submitOrder(Order(6, 100, 70, 1, opposite(side)));
 
     const order_book::CancellationResult result = book.cancelOrder(5);
-    expect(result.success, context + ": the cancellation should succeed");
-    expect(result.events == Events{OrderCancelled{5, 30}},
+    expect(result.isSuccess(), context + ": the cancellation should succeed");
+    expect(result.getEvents() == Events{OrderCancelled{5, 30}},
            context + ": should emit exactly one OrderCancelled with the 30 units left of 100");
 }
 
@@ -156,7 +165,7 @@ void testCancellingUntouchedOrderEmitsFullQuantity() {
     OrderBook book;
     book.submitOrder(Order(5, 100, 12, 1, Side::SELL));
 
-    expect(book.cancelOrder(5).events == Events{OrderCancelled{5, 12}},
+    expect(book.cancelOrder(5).getEvents() == Events{OrderCancelled{5, 12}},
            "cancelling an unfilled order should emit one OrderCancelled with its whole quantity");
 }
 
@@ -167,17 +176,17 @@ void testRefusedCancellationsEmitOnlyCancelRejected() {
     book.submitOrder(Order(6, 100, 4, 1, Side::BUY));
     book.submitOrder(Order(7, 100, 8, 1, Side::BUY));  // fills the rest of 5
 
-    const Events unknown = book.cancelOrder(42).events;
+    const Events unknown = book.cancelOrder(42).getEvents();
     expect(unknown == Events{CancelRejected{42, RejectionReason::ORDER_NOT_FOUND}},
            "cancelling an unknown ID should emit exactly one CancelRejected with ORDER_NOT_FOUND");
 
-    const Events filled = book.cancelOrder(5).events;
+    const Events filled = book.cancelOrder(5).getEvents();
     expect(filled == Events{CancelRejected{5, RejectionReason::ORDER_NOT_FOUND}},
            "cancelling a fully filled order should emit exactly one CancelRejected");
 
     book.submitOrder(Order(8, 101, 3, 1, Side::SELL));
     book.cancelOrder(8);
-    const Events repeated = book.cancelOrder(8).events;
+    const Events repeated = book.cancelOrder(8).getEvents();
     expect(repeated == Events{CancelRejected{8, RejectionReason::ORDER_NOT_FOUND}},
            "cancelling an already cancelled order should emit exactly one CancelRejected");
 }
@@ -192,7 +201,7 @@ Events replay(const std::vector<Command>& commands) {
     for (const Command& command : commands) {
         const Events events = std::holds_alternative<Order>(command)
                                   ? book.submitOrder(std::get<Order>(command)).getEvents()
-                                  : book.cancelOrder(std::get<order_book::OrderId>(command)).events;
+                                  : book.cancelOrder(std::get<order_book::OrderId>(command)).getEvents();
         stream.insert(stream.end(), events.begin(), events.end());
     }
     return stream;
@@ -243,6 +252,7 @@ int main() {
         testPartiallyFilledSubmissionEmitsNoRestingEvent(side);
         testCancellingPartiallyFilledOrderEmitsRemainingQuantity(side);
     }
+    testAddOrderEmitsOnlyOrderAccepted();
     testCancellingUntouchedOrderEmitsFullQuantity();
     testRefusedCancellationsEmitOnlyCancelRejected();
     testScriptedReplayIsDeterministic();

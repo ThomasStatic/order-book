@@ -3,7 +3,9 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <vector>
 
+#include "order_book/cancellation_results.hpp"
 #include "order_book/submission_results.hpp"
 #include "order_book/trade.hpp"
 
@@ -55,6 +57,29 @@ int main() {
            "an accepted result with trades and nothing left should be filled");
     expectThrows([] { SubmissionResults::accepted({0, Side::BUY, 100, 5}, {}, 5); }, "an accepted result should reject a non-positive submission ID");
 
+    // The acceptance, trades, and remainder must describe one consistent submission.
+    expectThrows([] { SubmissionResults::accepted({12, Side::BUY, 100, 8}, {Trade(1, 2, 99, 100, 5, Side::BUY)}, 3); },
+                 "an accepted result should reject a trade for a different incoming order");
+    expectThrows([] { SubmissionResults::accepted({12, Side::BUY, 100, 8}, {Trade(1, 2, 12, 100, 5, Side::SELL)}, 3); },
+                 "an accepted result should reject a trade on the other side");
+    expectThrows([] { SubmissionResults::accepted({12, Side::BUY, 100, 8}, {Trade(1, 2, 12, 100, 5, Side::BUY)}, 4); },
+                 "an accepted result should reject trades and a remainder exceeding the accepted quantity");
+    expectThrows([] { SubmissionResults::accepted({12, Side::BUY, 100, 8}, {Trade(1, 2, 12, 100, 5, Side::BUY)}, 2); },
+                 "an accepted result should reject trades and a remainder short of the accepted quantity");
+    expectThrows([] { SubmissionResults::accepted({11, Side::BUY, 100, 5}, {}, 4); },
+                 "an accepted result with no trades should leave the whole accepted quantity");
+    expectThrows([] { SubmissionResults::accepted({12, Side::BUY, 100, 8}, {Trade(1, 2, 12, 101, 5, Side::BUY)}, 3); },
+                 "an accepted buy should reject a trade above its limit price");
+    expectThrows([] { SubmissionResults::accepted({12, Side::SELL, 100, 8}, {Trade(1, 2, 12, 99, 5, Side::SELL)}, 3); },
+                 "an accepted sell should reject a trade below its limit price");
+    expect(SubmissionResults::accepted({12, Side::BUY, 100, 8},
+                                       {Trade(1, 2, 12, 99, 5, Side::BUY), Trade(2, 3, 12, 100, 3, Side::BUY)}, 0)
+                   .getFillStatus() == FillStatus::FILLED,
+           "an accepted buy may trade at or better than its limit across several trades");
+    expect(SubmissionResults::accepted({12, Side::SELL, 100, 8}, {Trade(1, 2, 12, 101, 5, Side::SELL)}, 3)
+                   .getFillStatus() == FillStatus::PARTIAL,
+           "an accepted sell may trade above its limit");
+
     const SubmissionResults refused = SubmissionResults::rejected(14, 5, RejectionReason::DUPLICATE_ORDER_ID);
     expect(refused.getSubmissionId() == 14, "a rejected result should preserve the submission ID");
     expect(refused.getStatus() == SubmissionStatus::REJECTED, "a rejected result should be rejected");
@@ -66,6 +91,36 @@ int main() {
            "a rejected result may echo the reserved ID 0");
     expectThrows([] { SubmissionResults::rejected(15, 5, RejectionReason::NONE); },
                  "a rejected result should require a rejection reason");
+
+    using order_book::BookEvent;
+    using order_book::CancellationResult;
+
+    // Cancellation results too are built only through their factories.
+    static_assert(!std::is_default_constructible_v<CancellationResult>,
+                  "CancellationResult should not be default constructible");
+    static_assert(!std::is_aggregate_v<CancellationResult>,
+                  "CancellationResult should not be an aggregate whose fields could disagree");
+
+    const CancellationResult cancelled = CancellationResult::cancelled(7, 30);
+    expect(cancelled.isSuccess(), "a cancelled result should report success");
+    expect(!cancelled.getRejectionReason().has_value(), "a cancelled result should carry no rejection reason");
+    expect(cancelled.getEvents() == std::vector<BookEvent>{order_book::OrderCancelled{7, 30}},
+           "a cancelled result should hold exactly one OrderCancelled with the ID and cancelled quantity");
+    expectThrows([] { CancellationResult::cancelled(0, 30); }, "a cancelled result should reject the reserved ID 0");
+    expectThrows([] { CancellationResult::cancelled(7, 0); }, "a cancelled result should reject a zero cancelled quantity");
+
+    const CancellationResult refusedCancel = CancellationResult::rejected(8, RejectionReason::ORDER_NOT_FOUND);
+    expect(!refusedCancel.isSuccess(), "a rejected cancellation should report failure");
+    expect(refusedCancel.getRejectionReason() == RejectionReason::ORDER_NOT_FOUND,
+           "a rejected cancellation should keep its reason");
+    expect(refusedCancel.getEvents()
+               == std::vector<BookEvent>{order_book::CancelRejected{8, RejectionReason::ORDER_NOT_FOUND}},
+           "a rejected cancellation should hold exactly one CancelRejected with the ID and reason");
+    expect(CancellationResult::rejected(0, RejectionReason::ORDER_NOT_FOUND).getEvents()
+               == std::vector<BookEvent>{order_book::CancelRejected{0, RejectionReason::ORDER_NOT_FOUND}},
+           "a rejected cancellation may echo the reserved ID 0");
+    expectThrows([] { CancellationResult::rejected(8, RejectionReason::NONE); },
+                 "a rejected cancellation should require a rejection reason");
 
     Trade trade(1, 2, 3, 100, 5, Side::BUY);
     expect(trade.getTradeId() == 1, "trade ID should be preserved");

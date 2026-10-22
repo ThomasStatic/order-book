@@ -18,6 +18,23 @@ namespace order_book {
 
     SubmissionResults SubmissionResults::accepted(const OrderAccepted& acceptance, std::vector<Trade> trades,
                                                   unsigned int remaining) {
+        // Summed wide so a bad set of trades cannot wrap around to look consistent.
+        unsigned long long accounted = remaining;
+        for (const Trade& trade : trades) {
+            if (trade.getIncomingId() != acceptance.orderId || trade.getIncomingSide() != acceptance.side) {
+                throw std::invalid_argument("accepted result with a trade for another incoming order error");
+            }
+            const bool withinLimit = acceptance.side == Side::BUY ? trade.getExecutionPrice() <= acceptance.price
+                                                                  : trade.getExecutionPrice() >= acceptance.price;
+            if (!withinLimit) {
+                throw std::invalid_argument("accepted result with a trade beyond the order's limit price error");
+            }
+            accounted += trade.getExecutionQuantity();
+        }
+        if (accounted != acceptance.quantity) {
+            throw std::invalid_argument("accepted result whose trades and remainder do not sum to its quantity error");
+        }
+
         SubmissionResults result(acceptance.orderId);
         result.events.reserve(1 + trades.size());
         result.events.push_back(acceptance);

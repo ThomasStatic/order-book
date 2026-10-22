@@ -116,21 +116,21 @@ int main() {
         expectThrows([&orderBook] { orderBook.findActiveOrder(99); },
                "active order lookup should reject an unknown order ID");
 
-        expect(orderBook.cancelOrder(10).success, "cancelling a resting bid should succeed");
+        expect(orderBook.cancelOrder(10).isSuccess(), "cancelling a resting bid should succeed");
         expectThrows([&orderBook] { orderBook.findActiveOrder(10); },
                "removed order should no longer be indexed");
         expect(orderBook.getBestBid().getOrderId() == 11,
             "removing one order should preserve the next order at the price level");
         expect(orderBook.hasBids(), "a price level should remain while it still contains an order");
 
-        expect(orderBook.cancelOrder(11).success, "cancelling the last bid should succeed");
+        expect(orderBook.cancelOrder(11).isSuccess(), "cancelling the last bid should succeed");
         expect(!orderBook.hasBids(), "removing the last bid should remove the bid price level");
         expectThrows([&orderBook] { orderBook.getBestBid(); },
                "best bid should throw once removals have emptied the bid side");
 
-        expect(orderBook.cancelOrder(12).success, "cancelling the last ask should succeed");
+        expect(orderBook.cancelOrder(12).isSuccess(), "cancelling the last ask should succeed");
         expect(!orderBook.hasAsks(), "removing the last ask should remove the ask price level");
-        expect(orderBook.cancelOrder(99).rejectionReason == RejectionReason::ORDER_NOT_FOUND,
+        expect(orderBook.cancelOrder(99).getRejectionReason() == RejectionReason::ORDER_NOT_FOUND,
                "cancelling an unknown order ID should be rejected as not found");
 
         OrderBook consumeBook{};
@@ -141,7 +141,7 @@ int main() {
         expect(consumed.unfilledQuantity == 0, "consuming within level quantity should leave nothing unfilled");
         expectThrows([&consumeBook] { consumeBook.findActiveOrder(30); },
                "a fully filled order should no longer be indexed");
-        expect(consumeBook.cancelOrder(30).rejectionReason == RejectionReason::ORDER_NOT_FOUND,
+        expect(consumeBook.cancelOrder(30).getRejectionReason() == RejectionReason::ORDER_NOT_FOUND,
                "cancelling a fully filled order should be rejected instead of using a stale iterator");
         expect(consumeBook.findActiveOrder(31).getRemainingQuantity() == 3,
             "a partially filled order should stay indexed with its reduced quantity");
@@ -254,7 +254,7 @@ int main() {
     expect(!validationBook.hasBids() && validationBook.orderIndex.size() == 1,
            "rejected inactive orders should not create a level or an index entry");
 
-    expect(validationBook.cancelOrder(70).success, "cancelling a resting order should succeed");
+    expect(validationBook.cancelOrder(70).isSuccess(), "cancelling a resting order should succeed");
     validationBook.addOrder(Order(70, 101, 4, 7, Side::SELL));
     expect(validationBook.findActiveOrder(70).getPriceTick() == 101,
            "an ID may be reused once its earlier order is no longer resting");
