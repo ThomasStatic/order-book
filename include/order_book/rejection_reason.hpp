@@ -12,7 +12,8 @@ namespace order_book {
         INVALID_QUANTITY,       // no remaining quantity
         INVALID_SIDE,           // neither BUY nor SELL
         UNSUPPORTED_ORDER_TYPE,
-        ORDER_NOT_ACTIVE        // marked FILLED
+        ORDER_NOT_ACTIVE,       // marked FILLED
+        WOULD_CROSS_BOOK        // addOrder only: it rests without matching, so it refuses to cross
     };
 
     // The enumerator's name, for printing reasons as identifiers.
@@ -28,6 +29,7 @@ namespace order_book {
             case RejectionReason::INVALID_SIDE: return "INVALID_SIDE";
             case RejectionReason::UNSUPPORTED_ORDER_TYPE: return "UNSUPPORTED_ORDER_TYPE";
             case RejectionReason::ORDER_NOT_ACTIVE: return "ORDER_NOT_ACTIVE";
+            case RejectionReason::WOULD_CROSS_BOOK: return "WOULD_CROSS_BOOK";
         }
         return "UNKNOWN";
     }
@@ -45,6 +47,7 @@ namespace order_book {
             case RejectionReason::INVALID_SIDE: return "order side neither BUY nor SELL error";
             case RejectionReason::UNSUPPORTED_ORDER_TYPE: return "unsupported order type error";
             case RejectionReason::ORDER_NOT_ACTIVE: return "order marked FILLED error";
+            case RejectionReason::WOULD_CROSS_BOOK: return "added order would cross the book error";
         }
         return "unknown rejection reason error";
     }

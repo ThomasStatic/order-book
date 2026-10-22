@@ -105,6 +105,10 @@ void expectIndexConsistent(const OrderBook& book, const std::string& context) {
     expectSideConsistent(book, Access::asks(book), Side::SELL, liveOrders, context);
     expect(Access::index(book).size() == liveOrders,
            context + ": the index should hold exactly one entry per live resting order");
+    // The library's checker should agree with these hand-written checks.
+    const order_book::InvariantResult invariants = book.checkInvariants();
+    expect(invariants.isValid(),
+           context + ": the book should pass its invariant check, got " + order_book::formatInvariantResult(invariants));
 }
 
 // Runs `operation` on a freshly set-up book with its Nth allocation failing, for

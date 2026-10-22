@@ -15,6 +15,12 @@ option(ORDER_BOOK_BUILD_BENCHMARKS "Build the benchmark executable" OFF)
 option(ORDER_BOOK_ENABLE_ASAN "Enable AddressSanitizer for project-owned targets" OFF)
 option(ORDER_BOOK_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer for project-owned targets" OFF)
 option(ORDER_BOOK_WARNINGS_AS_ERRORS "Treat warnings as errors" OFF)
+set(ORDER_BOOK_INVARIANT_CHECKS AUTO CACHE STRING
+    "Check the whole book after every public command: AUTO (only where NDEBUG is undefined, i.e. Debug), ON, or OFF")
+set_property(CACHE ORDER_BOOK_INVARIANT_CHECKS PROPERTY STRINGS AUTO ON OFF)
+if(NOT ORDER_BOOK_INVARIANT_CHECKS MATCHES "^(AUTO|ON|OFF)$")
+    message(FATAL_ERROR "ORDER_BOOK_INVARIANT_CHECKS must be AUTO, ON, or OFF, not '${ORDER_BOOK_INVARIANT_CHECKS}'")
+endif()
 
 if(MSVC AND ORDER_BOOK_ENABLE_ASAN)
     # /RTC1 (in CMake's default MSVC Debug flags) cannot be combined with /fsanitize=address,
@@ -102,6 +108,7 @@ endfunction()
 
 add_library(order_book STATIC
     src/order_book.cpp
+    src/order_book_invariants.cpp
     src/order.cpp
     src/trade.cpp
     src/submission_results.cpp
@@ -118,6 +125,13 @@ target_include_directories(order_book
 )
 order_book_enable_warnings(order_book)
 order_book_enable_sanitizers(order_book)
+# PUBLIC, so tests and other users of the library see the same setting it was built with.
+# AUTO defines nothing and leaves the choice to NDEBUG (see invariants.hpp).
+if(ORDER_BOOK_INVARIANT_CHECKS STREQUAL "ON")
+    target_compile_definitions(order_book PUBLIC ORDER_BOOK_INVARIANT_CHECKS=1)
+elseif(ORDER_BOOK_INVARIANT_CHECKS STREQUAL "OFF")
+    target_compile_definitions(order_book PUBLIC ORDER_BOOK_INVARIANT_CHECKS=0)
+endif()
 
 add_executable(order_book_cli
     apps/order_book_cli.cpp
@@ -241,6 +255,40 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(allocation_failure_tests)
     add_test(NAME allocation_failure_tests COMMAND allocation_failure_tests)
     set_tests_properties(allocation_failure_tests PROPERTIES SKIP_RETURN_CODE 77)
+
+    add_executable(invariant_tests
+        tests/invariant_test.cpp
+    )
+
+    target_compile_features(invariant_tests PRIVATE cxx_std_20)
+    target_link_libraries(invariant_tests PRIVATE order_book)
+    order_book_enable_warnings(invariant_tests)
+    order_book_enable_sanitizers(invariant_tests)
+    add_test(NAME invariant_tests COMMAND invariant_tests)
+
+    # Each run breaks the book, then runs one command, which should abort naming itself and
+    # the violation. Pass/fail is decided by that output, since the program aborts either way.
+    add_executable(invariant_boundary_tests
+        tests/invariant_boundary_test.cpp
+    )
+
+    target_compile_features(invariant_boundary_tests PRIVATE cxx_std_20)
+    target_link_libraries(invariant_boundary_tests PRIVATE order_book)
+    order_book_enable_warnings(invariant_boundary_tests)
+    order_book_enable_sanitizers(invariant_boundary_tests)
+    foreach(command addOrder submitOrder cancelOrder consumeLevel)
+        add_test(NAME invariant_boundary_${command} COMMAND invariant_boundary_tests ${command})
+        set_tests_properties(invariant_boundary_${command} PROPERTIES
+            PASS_REGULAR_EXPRESSION "order book invariant violated after ${command}: AGGREGATE_QUANTITY_MISMATCH side=SELL price=100 expected=5 actual=6"
+            FAIL_REGULAR_EXPRESSION "FAILED"
+            SKIP_REGULAR_EXPRESSION "SKIPPED")
+    endforeach()
+    # A command that throws is checked too, as its exception unwinds through the boundary.
+    add_test(NAME invariant_boundary_cancelOrderThrows COMMAND invariant_boundary_tests cancelOrderThrows)
+    set_tests_properties(invariant_boundary_cancelOrderThrows PROPERTIES
+        PASS_REGULAR_EXPRESSION "order book invariant violated after cancelOrder: INVALID_INDEX_ENTRY side=BUY price=90 order=2 expected=90 actual=91"
+        FAIL_REGULAR_EXPRESSION "FAILED"
+        SKIP_REGULAR_EXPRESSION "SKIPPED")
 endif()
 
 if(ORDER_BOOK_BUILD_BENCHMARKS)

@@ -5,10 +5,12 @@
 #include <optional>
 #include <compare>
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <vector>
 
 #include "cancellation_results.hpp"
+#include "invariants.hpp"
 #include "order_location.hpp"
 #include "price_level.hpp"
 #include "order.hpp"
@@ -67,6 +69,48 @@ namespace order_book {
 
         std::vector<Trade> matchOrder(Order& incoming);
 
+        // Placed at the top of each public command that can change the book, so the whole
+        // book is checked once the command has finished, whether it returns or throws. That
+        // is the invariant boundary: steps inside a command may leave the structures out of
+        // step with each other for a moment. Does nothing unless invariantChecksAfterCommands.
+        class InvariantBoundary {
+        public:
+            InvariantBoundary(const OrderBook& checkedBook, const char* commandName)
+                : book(checkedBook), command(commandName) {}
+            InvariantBoundary(const InvariantBoundary&) = delete;
+            InvariantBoundary& operator=(const InvariantBoundary&) = delete;
+            ~InvariantBoundary() {
+                if constexpr(invariantChecksAfterCommands) {
+                    book.enforceInvariants(command);
+                }
+            }
+
+        private:
+            const OrderBook& book;
+            const char* command;
+        };
+
+        // Runs checkInvariants and, on a violation, prints it with the command's name to
+        // stderr and calls std::abort: a broken invariant is an engine bug, not an error a
+        // caller could handle.
+        void enforceInvariants(const char* command) const noexcept;
+
+        // The steps of checkInvariants, each returning the first violation it finds.
+        // checkLevels covers one side's levels and orders on their own, counting the orders;
+        // checkIndexedLevels then checks each of that side's orders against the index.
+        template <typename Levels>
+        InvariantResult checkLevels(const Levels& levels, Side side, std::size_t& restingOrders) const noexcept;
+        template <typename Levels>
+        InvariantResult checkIndexedLevels(const Levels& levels, Side side) const noexcept;
+        // Finds an index entry that refers to no resting order; called once the index is known
+        // to hold more entries than there are resting orders.
+        InvariantResult findStaleIndexEntry(std::size_t restingOrders) const noexcept;
+        // Whether a resting order other than `order` has its ID.
+        bool idRestsElsewhere(const Order& order) const noexcept;
+        // How many numbers ago this one was issued, counting back from nextSequenceNum, so an
+        // order accepted later has a smaller age even across a wrap of the counter.
+        std::uint64_t sequenceAge(SequenceNum sequenceNum) const noexcept;
+
     public:
         OrderBook() = default;
 
@@ -92,7 +136,14 @@ namespace order_book {
         // execution order, and rests any remainder at its own limit price; its number is
         // consumed once validation passes, even if matching later throws. Both return the
         // submission's events; addOrder's are only its OrderAccepted, and it throws
-        // std::invalid_argument on a rejection rather than returning one.
+        // std::invalid_argument on a rejection rather than returning one. Since addOrder
+        // never matches, it also refuses an order that would cross the best opposing price
+        // (WOULD_CROSS_BOOK), so the book is never left crossed.
+        //
+        // With invariantChecksAfterCommands set, every command below that can change the book
+        // also checks it when it returns or throws, and aborts on a broken invariant. So an
+        // exception caused by the book being internally inconsistent (not a failed allocation,
+        // which leaves it sound) aborts there instead of reaching the caller.
         SubmissionResults addOrder(Order order);
 
         SubmissionResults submitOrder(Order incoming);
@@ -109,7 +160,8 @@ namespace order_book {
         // their FIFO positions and indexed iterators, and no sequence number or trade ID
         // is consumed. An ID that is not resting (unknown, already cancelled, fully filled,
         // or an incoming order that never rested) is rejected with ORDER_NOT_FOUND, leaving
-        // the book unchanged.
+        // the book unchanged. Throws std::runtime_error, before changing anything, if an
+        // indexed order's level is missing.
         CancellationResult cancelOrder(OrderId orderId);
 
         // Fills resting orders at one price level in FIFO order, unindexing fully
@@ -117,6 +169,27 @@ namespace order_book {
         ConsumptionResult consumeLevel(Side side, Price price, unsigned int quantity);
 
         BookSnapshot snapshot(unsigned int depth = 5) const;
+
+        // Checks the whole book in one O(N + L) pass over its N resting orders and L levels,
+        // stopping at the first broken invariant: each side's levels ordered best price
+        // first, non-empty, and holding their own price and side; each resting order well
+        // formed, with quantity left, at its level's price and side, and queued in
+        // acceptance order; each level's aggregate equal to its orders' remaining sum;
+        // exactly one index entry per resting order, recording its side, price, and list
+        // position, with no ID resting twice; and best bid strictly below best ask.
+        //
+        // Never allocates or throws, and never dereferences an index entry's iterator. It
+        // compares that iterator with the list's own only after the entry has named the
+        // right side and price. An entry left behind by a removed order is found by its
+        // key alone. So a stale entry is detected safely, while an entry for a resting ID
+        // that holds an iterator to an erased element is still undefined to compare (MSVC's
+        // checked iterators stop the program there). Sequence numbers are compared relative
+        // to the counter, so a level queued across a wrap still passes. That holds as long
+        // as no order rests through a full cycle of 2^32 - 1 acceptances.
+        //
+        // Callable in every build. Public commands also run it on return when
+        // invariantChecksAfterCommands is set (see invariants.hpp).
+        InvariantResult checkInvariants() const noexcept;
 
     };
     

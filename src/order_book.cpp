@@ -41,8 +41,13 @@ namespace order_book {
     }
 
     SubmissionResults OrderBook::addOrder(Order order) {
+        const InvariantBoundary boundary(*this, "addOrder");
         if(const std::optional<RejectionReason> reason = validateNewOrder(order)) {
             throw std::invalid_argument(rejectionMessage(*reason));
+        }
+        // Adding never matches, so resting a crossing order would leave the book crossed.
+        if(crossesBestOpposing(order)) {
+            throw std::invalid_argument(rejectionMessage(RejectionReason::WOULD_CROSS_BOOK));
         }
         order.assignSequenceNum(nextSequenceNum);
         // Built before the order rests, so a failed allocation leaves the book untouched.
@@ -179,6 +184,7 @@ namespace order_book {
     }
 
     SubmissionResults OrderBook::submitOrder(Order incoming) {
+        const InvariantBoundary boundary(*this, "submitOrder");
         // Reject before matching: failing only when the remainder rests would leave
         // trades executed for a submission that is then refused.
         if(const std::optional<RejectionReason> reason = validateNewOrder(incoming)) {
@@ -228,6 +234,7 @@ namespace order_book {
     }
 
     CancellationResult OrderBook::cancelOrder(OrderId orderId) {
+        const InvariantBoundary boundary(*this, "cancelOrder");
         const auto indexItr = orderIndex.find(orderId);
         if(indexItr == orderIndex.end()) {
             return CancellationResult::rejected(orderId, RejectionReason::ORDER_NOT_FOUND);
@@ -265,6 +272,7 @@ namespace order_book {
     }
 
     ConsumptionResult OrderBook::consumeLevel(Side side, Price price, unsigned int quantity) {
+        const InvariantBoundary boundary(*this, "consumeLevel");
         auto consume = [this, side, price, quantity](auto& levels) {
             const auto levelItr = levels.find(price);
             if(levelItr == levels.end()) {

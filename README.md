@@ -62,6 +62,16 @@ cmake --build build/asan --config Debug
 ctest --test-dir build/asan -C Debug --output-on-failure
 ```
 
+### Invariant checks
+
+`OrderBook::checkInvariants()` validates the whole book (levels, aggregates, FIFO order, the order index, and an uncrossed top of book) and reports the first violation it finds. By default (`ORDER_BOOK_INVARIANT_CHECKS=AUTO`), Debug builds also run it after every public command that can change the book and abort on a violation. `ON` keeps that in optimized builds too, and `OFF` drops it from Debug builds; `checkInvariants()` stays callable either way.
+
+```bash
+cmake -S . -B build/invariants -G Ninja -DCMAKE_BUILD_TYPE=Release -DORDER_BOOK_INVARIANT_CHECKS=ON
+cmake --build build/invariants
+ctest --test-dir build/invariants --output-on-failure
+```
+
 ### Clean build from scratch
 
 ```bash

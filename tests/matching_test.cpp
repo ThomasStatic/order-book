@@ -108,6 +108,10 @@ void expectBookConsistent(const OrderBook& book, const std::string& context) {
         expect(book.getBestBid().getPriceTick() < book.getBestAsk().getPriceTick(),
                context + ": the book should never be left crossed");
     }
+    // The library's checker should agree with these hand-written checks.
+    const order_book::InvariantResult invariants = book.checkInvariants();
+    expect(invariants.isValid(),
+           context + ": the book should pass its invariant check, got " + order_book::formatInvariantResult(invariants));
 }
 
 bool isIndexed(const OrderBook& book, unsigned int orderId) {

@@ -92,6 +92,10 @@ void expectBookConsistent(const OrderBook& book, const std::string& context) {
            context + ": the index should hold exactly one entry per resting order");
     expect(book.activeOrderCount() == restingOrders,
            context + ": the active-order count should equal the number of resting orders");
+    // The library's checker should agree with these hand-written checks.
+    const order_book::InvariantResult invariants = book.checkInvariants();
+    expect(invariants.isValid(),
+           context + ": the book should pass its invariant check, got " + order_book::formatInvariantResult(invariants));
 }
 
 bool isIndexed(const OrderBook& book, OrderId orderId) {
@@ -489,6 +493,7 @@ void testAddOrderNamesEachRejection() {
     refused.push_back(crossingBuy());
     refused.back().setExecutionLevel(FillStatus::FILLED);
     refused.push_back(crossingBuy(4));
+    refused.push_back(crossingBuy());
 
     std::set<std::string> messages;
     for (const Order& order : refused) {
@@ -505,6 +510,39 @@ void testAddOrderNamesEachRejection() {
     }
 }
 
+// addOrder never matches, so it refuses an order at or through the best opposing price,
+// which would leave the book crossed, and changes nothing. submitOrder matches the same order.
+void testAddOrderRefusesToCross() {
+    const std::string context = "addOrder crossing";
+    OrderBook book = restingBook();
+    const Order refused[] = {
+        Order(9, 101, 1, 1, Side::BUY),   // at the best ask
+        Order(9, 105, 1, 1, Side::BUY),   // through every ask
+        Order(9, 99, 1, 1, Side::SELL),   // at the best bid
+        Order(9, 90, 1, 1, Side::SELL),   // through every bid
+    };
+    for (const Order& order : refused) {
+        const std::string orderContext = context + " (" + sideName(order.getSide()) + " at " +
+                                         std::to_string(order.getPriceTick()) + ")";
+        const BookState before = capture(book);
+        std::string message;
+        try {
+            book.addOrder(order);
+        } catch (const std::invalid_argument& error) {
+            message = error.what();
+        }
+        expect(message == order_book::rejectionMessage(RejectionReason::WOULD_CROSS_BOOK),
+               orderContext + ": addOrder should throw the WOULD_CROSS_BOOK message, got: " + message);
+        expect(capture(book) == before, orderContext + ": a refused add should leave the book exactly as it was");
+        expectBookConsistent(book, orderContext);
+    }
+
+    // Inside the spread it may still be added, and then it is the best bid.
+    book.addOrder(Order(9, 100, 1, 1, Side::BUY));
+    expect(book.getBestBid().getOrderId() == 9, context + ": an order inside the spread should be added");
+    expectBookConsistent(book, context + " inside the spread");
+}
+
 }  // namespace
 
 int main() {
@@ -516,6 +554,7 @@ int main() {
     testMultipleLevelSweep();
     testActiveOrderCountThroughEvents();
     testAddOrderNamesEachRejection();
+    testAddOrderRefusesToCross();
     for (Side side : {Side::BUY, Side::SELL}) {
         testFullyFilledIncomingIsNotIndexed(side);
     }

@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <variant>
@@ -40,6 +41,18 @@ void expect(bool condition, const std::string& message) {
         std::cerr << "FAILED: " << message << std::endl;
         std::exit(EXIT_FAILURE);
     }
+}
+
+template <typename Callable>
+void expectThrows(Callable&& callable, const std::string& message) {
+    try {
+        callable();
+    } catch (const std::exception&) {
+        return;
+    }
+
+    std::cerr << "FAILED: " << message << std::endl;
+    std::exit(EXIT_FAILURE);
 }
 
 std::string sideName(Side side) {
@@ -139,13 +152,16 @@ void testPartiallyFilledSubmissionEmitsNoRestingEvent(Side side) {
     expect(book.findActiveOrder(9).getRemainingQuantity() == 7, context + ": the remainder should still rest");
 }
 
-// Adding rests without matching, so it reports only its acceptance, even when it would cross.
+// Adding rests without matching, so it reports only its acceptance, and it refuses an order
+// that would cross by throwing, so it emits nothing for one.
 void testAddOrderEmitsOnlyOrderAccepted() {
     OrderBook book;
     expect(book.addOrder(Order(1, 100, 5, 1, Side::SELL)).getEvents() == Events{OrderAccepted{1, Side::SELL, 100, 5}},
            "adding an order should emit exactly one OrderAccepted with its ID, side, price, and quantity");
-    expect(book.addOrder(Order(2, 101, 3, 1, Side::BUY)).getEvents() == Events{OrderAccepted{2, Side::BUY, 101, 3}},
-           "adding a crossing order should still emit only its OrderAccepted, since add never matches");
+    expect(book.addOrder(Order(2, 99, 3, 1, Side::BUY)).getEvents() == Events{OrderAccepted{2, Side::BUY, 99, 3}},
+           "adding an order on the other side should emit only its OrderAccepted");
+    expectThrows([&book] { book.addOrder(Order(3, 100, 1, 1, Side::BUY)); },
+                 "adding an order that would cross should throw rather than emit anything");
 }
 
 // Cancelling reports what was still resting, not what was originally submitted.

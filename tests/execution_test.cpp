@@ -100,6 +100,10 @@ void expectIndexConsistent(const OrderBook& book, const std::string& context) {
     expectSideConsistent(book, Access::asks(book), Side::SELL, liveOrders, context);
     expect(Access::index(book).size() == liveOrders,
            context + ": the index should hold exactly one entry per live resting order");
+    // The library's checker should agree with these hand-written checks.
+    const order_book::InvariantResult invariants = book.checkInvariants();
+    expect(invariants.isValid(),
+           context + ": the book should pass its invariant check, got " + order_book::formatInvariantResult(invariants));
 }
 
 bool isIndexed(const OrderBook& book, unsigned int orderId) {
@@ -377,6 +381,8 @@ void testRejectedExecutionLeavesBookUntouched() {
     Order incoming(3, 100, 5, 3, Side::BUY);
     expectThrows([&book, &incoming] { Access::executeOnce(book, incoming); },
                  "rejected execution: an inactive resting order should throw");
+    // Undo the corruption so the consistency checks judge only what the execution did.
+    Access::restingOrder(book, 1).setExecutionLevel(FillStatus::NONE);
     expectUntouched(book, incoming, "rejected execution (inactive resting)");
 }
 
@@ -412,19 +418,26 @@ void testEmptyBestLevelIsRejected() {
     expect(book.findActiveOrder(1).getRemainingQuantity() == 5, "empty level: the order behind should not be filled");
 }
 
+// Only a corrupted order makes a fill throw partway through, and the order is still corrupted
+// when consumeLevel returns. With automatic invariant checks on, its boundary rightly aborts
+// there, so this runs only in builds without them (e.g. Release).
 void testConsumeLevelUnindexesEachOrderAsItIsFilled() {
-    OrderBook book{};
-    book.addOrder(Order(1, 100, 5, 1, Side::SELL));
-    book.addOrder(Order(2, 100, 5, 2, Side::SELL));
-    // Corrupt the second order so its fill throws after the first has left the level.
-    Access::restingOrder(book, 2).setExecutionLevel(FillStatus::FILLED);
+    if constexpr (!order_book::invariantChecksAfterCommands) {
+        OrderBook book{};
+        book.addOrder(Order(1, 100, 5, 1, Side::SELL));
+        book.addOrder(Order(2, 100, 5, 2, Side::SELL));
+        // Corrupt the second order so its fill throws after the first has left the level.
+        Access::restingOrder(book, 2).setExecutionLevel(FillStatus::FILLED);
 
-    expectThrows([&book] { book.consumeLevel(Side::SELL, 100, 10); },
-                 "consumeLevel: filling a corrupted order should throw");
-    expect(!isIndexed(book, 1), "consumeLevel: an order filled before the throw should already be unindexed");
-    expect(isIndexed(book, 2) && levelAt(book, Side::SELL, 100).getOrdersQuantity() == 1,
-           "consumeLevel: the order that threw should remain resting and indexed");
-    expectIndexConsistent(book, "consumeLevel after a throw");
+        expectThrows([&book] { book.consumeLevel(Side::SELL, 100, 10); },
+                     "consumeLevel: filling a corrupted order should throw");
+        expect(!isIndexed(book, 1), "consumeLevel: an order filled before the throw should already be unindexed");
+        expect(isIndexed(book, 2) && levelAt(book, Side::SELL, 100).getOrdersQuantity() == 1,
+               "consumeLevel: the order that threw should remain resting and indexed");
+        // Undo the corruption: the throw should have left everything else sound.
+        Access::restingOrder(book, 2).setExecutionLevel(FillStatus::NONE);
+        expectIndexConsistent(book, "consumeLevel after a throw");
+    }
 }
 
 void testMovedBookKeepsValidIndex() {
