@@ -4,12 +4,24 @@
 #include <string>
 #include <type_traits>
 
-#define private public
 #include "order_book/order.hpp"
 #include "order_book/order_book.hpp"
-#undef private
+
+namespace order_book {
+
+// Befriended by OrderBook so this test can seed levels directly and inspect internals.
+struct OrderBookTestAccess {
+    static auto& bids(OrderBook& book) { return book.bids; }
+    static auto& asks(OrderBook& book) { return book.asks; }
+    static const auto& index(const OrderBook& book) { return book.orderIndex; }
+    static TradeId nextTradeId(const OrderBook& book) { return book.nextTradeId; }
+};
+
+}  // namespace order_book
 
 namespace {
+
+using Access = order_book::OrderBookTestAccess;
 
 void expect(bool condition, const std::string& message) {
     if (!condition) {
@@ -57,8 +69,8 @@ int main() {
 
     Order bidOrder(1, 100, 10, 3, Side::BUY);
     Order askOrder(2, 101, 5, 4, Side::SELL);
-    bookWithLevels.bids.emplace(100, PriceLevel(100, Side::BUY, bidOrder));
-    bookWithLevels.asks.emplace(101, PriceLevel(101, Side::SELL, askOrder));
+    Access::bids(bookWithLevels).emplace(100, PriceLevel(100, Side::BUY, bidOrder));
+    Access::asks(bookWithLevels).emplace(101, PriceLevel(101, Side::SELL, askOrder));
 
     expect(bookWithLevels.hasBids(), "book should report the presence of bids");
     expect(bookWithLevels.hasAsks(), "book should report the presence of asks");
@@ -226,17 +238,17 @@ int main() {
            "adding a duplicate active order ID at the same price should throw");
     expectThrows([&validationBook] { validationBook.addOrder(Order(70, 105, 3, 3, Side::BUY)); },
            "adding a duplicate active order ID at another price and side should throw");
-    expect(validationBook.asks.at(100).getOrdersQuantity() == 1 && validationBook.asks.at(100).getAggregateQuantity() == 5,
+    expect(Access::asks(validationBook).at(100).getOrdersQuantity() == 1 && Access::asks(validationBook).at(100).getAggregateQuantity() == 5,
            "a rejected duplicate should not join the existing level");
-    expect(!validationBook.hasBids() && validationBook.asks.size() == 1,
+    expect(!validationBook.hasBids() && Access::asks(validationBook).size() == 1,
            "a rejected duplicate should not create a price level");
-    expect(validationBook.orderIndex.size() == 1 && validationBook.findActiveOrder(70).getRemainingQuantity() == 5,
+    expect(Access::index(validationBook).size() == 1 && validationBook.findActiveOrder(70).getRemainingQuantity() == 5,
            "a rejected duplicate should leave the original order's index entry in place");
 
     expect(validationBook.submitOrder(Order(70, 100, 2, 4, Side::BUY)).getRejectionReason() ==
                RejectionReason::DUPLICATE_ORDER_ID,
            "submitting a duplicate active order ID should be rejected before matching");
-    expect(validationBook.findActiveOrder(70).getRemainingQuantity() == 5 && validationBook.nextTradeId == 1,
+    expect(validationBook.findActiveOrder(70).getRemainingQuantity() == 5 && Access::nextTradeId(validationBook) == 1,
            "a rejected duplicate submission should not trade");
 
     Order filledOrder(71, 99, 5, 5, Side::BUY);
@@ -251,7 +263,7 @@ int main() {
     emptiedOrder.setExecutionLevel(FillStatus::NONE);
     expectThrows([&validationBook, &emptiedOrder] { validationBook.addOrder(emptiedOrder); },
            "adding an order with no remaining quantity should throw even if not marked FILLED");
-    expect(!validationBook.hasBids() && validationBook.orderIndex.size() == 1,
+    expect(!validationBook.hasBids() && Access::index(validationBook).size() == 1,
            "rejected inactive orders should not create a level or an index entry");
 
     expect(validationBook.cancelOrder(70).isSuccess(), "cancelling a resting order should succeed");

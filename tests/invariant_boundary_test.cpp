@@ -1,3 +1,4 @@
+#include <csignal>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
@@ -29,7 +30,8 @@ using order_book::Side;
 // should abort at its invariant boundary, printing
 //   order book invariant violated after <command>: <violation> ...
 // which CTest matches; nothing else this program prints contains that line.
-int run(const std::string& command) {
+// Unused when automatic checks are off, since main then skips.
+[[maybe_unused]] int run(const std::string& command) {
     using Access = order_book::OrderBookTestAccess;
     OrderBook book;
     book.addOrder(Order(1, 100, 5, 1, Side::SELL));
@@ -83,6 +85,9 @@ int main(int argc, char** argv) {
         // The abort is expected: skip the debug CRT's message box and crash report.
         _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
+        // CTest fails any test killed by a signal, whatever it printed, so turn the expected
+        // abort into a normal exit and let the output alone decide.
+        std::signal(SIGABRT, [](int) { std::_Exit(EXIT_SUCCESS); });
         return run(argv[1]);
     }
 }
