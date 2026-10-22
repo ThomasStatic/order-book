@@ -93,7 +93,9 @@ Use a Release build (or `ORDER_BOOK_INVARIANT_CHECKS=OFF`) for exploration. With
 
 ### Continuous integration
 
-`.github/workflows/ci.yml` builds and runs every test on each push and pull request, with warnings as errors and benchmarks enabled: GCC and Clang Debug and Release, GCC and Clang ASan+UBSan Debug, Clang ASan+UBSan RelWithDebInfo, and MSVC Debug, Release, and ASan Debug and Release. MSVC ASan Release is the job that runs `allocation_failure_tests`, which skips under Debug's checked iterators.
+`.github/workflows/ci.yml` builds and tests every push and pull request, with warnings as errors and benchmarks enabled: GCC and Clang Debug and Release, GCC and Clang ASan+UBSan Debug, Clang ASan+UBSan RelWithDebInfo, and MSVC Debug, Release, and ASan Debug and Release. A new push to a pull request cancels that pull request's run still in progress; push runs are never cancelled.
+
+Every test runs in at least one job, but some skip by design in others: the `invariant_boundary_*` tests in Release and RelWithDebInfo, which have no automatic invariant checks, and `allocation_failure_tests` in MSVC Debug, whose checked iterators allocate inside `noexcept` members.
 
 ### Clean build from scratch
 
