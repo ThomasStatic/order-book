@@ -65,13 +65,16 @@ function(order_book_enable_sanitizers target_name)
 
     if(MSVC)
         if(ORDER_BOOK_ENABLE_ASAN)
-            # /Zi keeps ASan reports symbolized in every configuration.
+            # /Zi (with /DEBUG below) keeps ASan reports symbolized in every configuration.
             target_compile_options(${target_name} PRIVATE /fsanitize=address /Zi)
 
             # Executables load the ASan runtime DLL that ships beside cl.exe; copy it next
             # to them so they also run outside a Visual Studio developer prompt.
             get_target_property(target_type ${target_name} TYPE)
             if(target_type STREQUAL "EXECUTABLE")
+                # Release links without /DEBUG by default, which drops the /Zi symbols (LNK4302).
+                target_link_options(${target_name} PRIVATE /DEBUG)
+
                 get_filename_component(compiler_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
                 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
                     set(asan_runtime "${compiler_dir}/clang_rt.asan_dynamic-x86_64.dll")
@@ -91,15 +94,21 @@ function(order_book_enable_sanitizers target_name)
     endif()
 
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        if(ORDER_BOOK_ENABLE_ASAN AND ORDER_BOOK_ENABLE_UBSAN)
-            target_compile_options(${target_name} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
-            target_link_options(${target_name} PRIVATE -fsanitize=address,undefined)
-        elseif(ORDER_BOOK_ENABLE_ASAN)
-            target_compile_options(${target_name} PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-            target_link_options(${target_name} PRIVATE -fsanitize=address)
-        elseif(ORDER_BOOK_ENABLE_UBSAN)
-            target_compile_options(${target_name} PRIVATE -fsanitize=undefined -fno-omit-frame-pointer)
-            target_link_options(${target_name} PRIVATE -fsanitize=undefined)
+        set(sanitizers)
+        if(ORDER_BOOK_ENABLE_ASAN)
+            list(APPEND sanitizers address)
+        endif()
+        if(ORDER_BOOK_ENABLE_UBSAN)
+            list(APPEND sanitizers undefined)
+        endif()
+        list(JOIN sanitizers "," sanitizer_list)
+
+        target_compile_options(${target_name} PRIVATE -fsanitize=${sanitizer_list} -fno-omit-frame-pointer)
+        target_link_options(${target_name} PRIVATE -fsanitize=${sanitizer_list})
+        if(ORDER_BOOK_ENABLE_UBSAN)
+            # UBSan otherwise prints a report and carries on, so the test would still pass.
+            target_compile_options(${target_name} PRIVATE -fno-sanitize-recover=undefined)
+            target_link_options(${target_name} PRIVATE -fno-sanitize-recover=undefined)
         endif()
     else()
         message(WARNING "Sanitizers were requested, but the compiler '${CMAKE_CXX_COMPILER_ID}' is not supported by this CMake setup.")
