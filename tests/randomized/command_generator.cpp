@@ -167,7 +167,11 @@ Command RandomCommandGenerator::nextSubmit(const ReferenceBook& model, bool inva
     const CommandIntent fault = faults[below(choices)];
 
     const Side side = chance(config.buyPercent) ? Side::BUY : Side::SELL;
-    Command command = Command::submit(0, side, pickPrice(model, side), pickQuantity(), fault);
+    // Drawn in separate statements: as two arguments of one call their order would be up to
+    // the compiler. Quantity first is the order the pinned fingerprints were recorded in.
+    const Quantity quantity = pickQuantity();
+    const Price price = pickPrice(model, side);
+    Command command = Command::submit(0, side, price, quantity, fault);
     switch (fault) {
         case CommandIntent::ZERO_ORDER_ID:
             break;
