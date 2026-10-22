@@ -202,6 +202,22 @@ void testConsumeLevelFailsBeforeFilling() {
     expect(failures > 0, "consumeLevel: at least one allocation failure should have been injected");
 }
 
+void testCancelOrderFailsBeforeRemoving() {
+    // Recording the cancellation event allocates, so it must happen before the order is removed.
+    const long failures = failEachAllocationInTurn(
+        [](OrderBook& book) {
+            book.addOrder(Order(1, 100, 5, 1, Side::SELL));
+            book.addOrder(Order(2, 100, 5, 2, Side::SELL));
+        },
+        [](OrderBook& book) { book.cancelOrder(1); },
+        [](const OrderBook& book, const std::string& context) {
+            expect(Access::asks(book).at(100).getAggregateQuantity() == 10 && Access::index(book).size() == 2,
+                   context + ": cancelOrder should only fail before the order is removed");
+        },
+        "cancelOrder");
+    expect(failures > 0, "cancelOrder: at least one allocation failure should have been injected");
+}
+
 }  // namespace
 
 int main() {
@@ -213,6 +229,7 @@ int main() {
         testAddOrderToExistingLevelRollsBack();
         testSubmitOrderStaysConsistent();
         testConsumeLevelFailsBeforeFilling();
+        testCancelOrderFailsBeforeRemoving();
 
         std::cout << "allocation failure tests passed" << std::endl;
         return EXIT_SUCCESS;

@@ -42,18 +42,18 @@ int main() {
     static_assert(!std::is_constructible_v<SubmissionResults, unsigned int>,
                   "SubmissionResults should not be constructible from a bare submission ID");
 
-    const SubmissionResults resting = SubmissionResults::accepted(11, {}, 5);
+    const SubmissionResults resting = SubmissionResults::accepted({11, Side::BUY, 100, 5}, {}, 5);
     expect(resting.getSubmissionId() == 11, "an accepted result should preserve the submission ID");
     expect(resting.getGeneratedTrades().empty(), "an accepted result with no trades should report none");
     expect(resting.getRemainingQuantity() == 5, "an accepted result should preserve the remaining quantity");
     expect(resting.getFillStatus() == FillStatus::NONE, "an accepted result with no trades should report no fill");
     expect(resting.getStatus() == SubmissionStatus::ACCEPTED, "an accepted result should be accepted");
     expect(resting.getRejectionReason() == RejectionReason::NONE, "an accepted result should have no rejection reason");
-    expect(SubmissionResults::accepted(12, {Trade(1, 2, 12, 100, 5, Side::BUY)}, 3).getFillStatus() == FillStatus::PARTIAL,
+    expect(SubmissionResults::accepted({12, Side::BUY, 100, 8}, {Trade(1, 2, 12, 100, 5, Side::BUY)}, 3).getFillStatus() == FillStatus::PARTIAL,
            "an accepted result with trades and quantity left should be partially filled");
-    expect(SubmissionResults::accepted(13, {Trade(1, 2, 13, 100, 5, Side::BUY)}, 0).getFillStatus() == FillStatus::FILLED,
+    expect(SubmissionResults::accepted({13, Side::BUY, 100, 5}, {Trade(1, 2, 13, 100, 5, Side::BUY)}, 0).getFillStatus() == FillStatus::FILLED,
            "an accepted result with trades and nothing left should be filled");
-    expectThrows([] { SubmissionResults::accepted(0, {}, 5); }, "an accepted result should reject a non-positive submission ID");
+    expectThrows([] { SubmissionResults::accepted({0, Side::BUY, 100, 5}, {}, 5); }, "an accepted result should reject a non-positive submission ID");
 
     const SubmissionResults refused = SubmissionResults::rejected(14, 5, RejectionReason::DUPLICATE_ORDER_ID);
     expect(refused.getSubmissionId() == 14, "a rejected result should preserve the submission ID");

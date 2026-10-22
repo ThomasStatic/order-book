@@ -16,9 +16,15 @@ namespace order_book {
         rejectionReason = RejectionReason::NONE; 
     }
 
-    SubmissionResults SubmissionResults::accepted(unsigned int orderId, std::vector<Trade> trades,
+    SubmissionResults SubmissionResults::accepted(const OrderAccepted& acceptance, std::vector<Trade> trades,
                                                   unsigned int remaining) {
-        SubmissionResults result(orderId);
+        SubmissionResults result(acceptance.orderId);
+        result.events.reserve(1 + trades.size());
+        result.events.push_back(acceptance);
+        for (const Trade& trade : trades) {
+            result.events.push_back(TradeExecuted{trade.getIncomingId(), trade.getRestingId(),
+                                                  trade.getExecutionPrice(), trade.getExecutionQuantity()});
+        }
         result.fillStatus = trades.empty() ? FillStatus::NONE
                           : remaining == 0 ? FillStatus::FILLED
                                            : FillStatus::PARTIAL;
@@ -32,7 +38,8 @@ namespace order_book {
           remainingQuantity(remaining),
           fillStatus(FillStatus::NONE),
           status(SubmissionStatus::REJECTED),
-          rejectionReason(reason) {}
+          rejectionReason(reason),
+          events{OrderRejected{sId, reason}} {}
 
     SubmissionResults SubmissionResults::rejected(unsigned int orderId, unsigned int remaining,
                                                   RejectionReason reason) {
@@ -64,5 +71,9 @@ namespace order_book {
 
     RejectionReason SubmissionResults::getRejectionReason() const {
         return rejectionReason;
+    }
+
+    const std::vector<BookEvent>& SubmissionResults::getEvents() const {
+        return events;
     }
 }

@@ -106,6 +106,7 @@ add_library(order_book STATIC
     src/trade.cpp
     src/submission_results.cpp
     src/price_level.cpp
+    src/event_format.cpp
 )
 
 target_compile_features(order_book PUBLIC cxx_std_20)
@@ -208,6 +209,26 @@ if(BUILD_TESTING)
     order_book_enable_warnings(submission_tests)
     order_book_enable_sanitizers(submission_tests)
     add_test(NAME submission_tests COMMAND submission_tests)
+
+    add_executable(event_tests
+        tests/event_test.cpp
+    )
+
+    target_compile_features(event_tests PRIVATE cxx_std_20)
+    target_link_libraries(event_tests PRIVATE order_book)
+    order_book_enable_warnings(event_tests)
+    order_book_enable_sanitizers(event_tests)
+    add_test(NAME event_tests COMMAND event_tests)
+
+    add_executable(event_format_tests
+        tests/event_format_test.cpp
+    )
+
+    target_compile_features(event_format_tests PRIVATE cxx_std_20)
+    target_link_libraries(event_format_tests PRIVATE order_book)
+    order_book_enable_warnings(event_format_tests)
+    order_book_enable_sanitizers(event_format_tests)
+    add_test(NAME event_format_tests COMMAND event_format_tests)
 
     add_executable(allocation_failure_tests
         tests/allocation_failure_test.cpp

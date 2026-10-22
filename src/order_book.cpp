@@ -184,18 +184,27 @@ namespace order_book {
         // number. Consumed even if matching throws, since executions may already stand.
         incoming.assignSequenceNum(nextSequenceNum);
         advanceSequenceNum();
+        // Captured before matching, so it reports the quantity as submitted.
+        const OrderAccepted acceptance{incoming.getOrderId(), incoming.getSide(), incoming.getPriceTick(),
+                                       incoming.getRemainingQuantity()};
 
-        // Not atomic: if an allocation fails mid-match or while resting the remainder,
-        // executions already made stay made and their trades are lost with the exception.
+        // Not atomic: if an allocation fails mid-match, while building the result, or while
+        // resting the remainder,
+        // executions already made stay made and their trades and events are lost with the
+        // exception.
         // The book itself is left consistent.
 
+        // The result, events included, is built before the remainder rests, so resting is
+        // the last step that can fail: a remainder is never left resting behind a throw.
         std::vector<Trade> trades = matchOrder(incoming);
+        SubmissionResults result = SubmissionResults::accepted(acceptance, std::move(trades),
+                                                               incoming.getRemainingQuantity());
         if(incoming.getRemainingQuantity() > 0) {
             // Rests at the incoming limit price (fills never change it), not at the price
             // of its last execution. Validation already passed, so it cannot be rejected now.
             restOrder(incoming);
         }
-        return SubmissionResults::accepted(incoming.getOrderId(), std::move(trades), incoming.getRemainingQuantity());
+        return result;
     }
 
     std::size_t OrderBook::activeOrderCount() const {
@@ -216,9 +225,12 @@ namespace order_book {
     CancellationResult OrderBook::cancelOrder(OrderId orderId) {
         const auto indexItr = orderIndex.find(orderId);
         if(indexItr == orderIndex.end()) {
-            return {false, RejectionReason::ORDER_NOT_FOUND};
+            return {false, RejectionReason::ORDER_NOT_FOUND, {CancelRejected{orderId, RejectionReason::ORDER_NOT_FOUND}}};
         }
         const OrderLocation location = indexItr->second;
+        // Built before anything is mutated: recording the event allocates, and once the
+        // order is removed nothing may throw.
+        CancellationResult result{true, std::nullopt, {OrderCancelled{orderId, location.itr->getRemainingQuantity()}}};
 
         auto cancel = [this, indexItr, &location](auto& levels) {
             const auto levelItr = levels.find(location.tickPrice);
@@ -244,7 +256,7 @@ namespace order_book {
         else {
             cancel(asks);
         }
-        return {true, std::nullopt};
+        return result;
     }
 
     ConsumptionResult OrderBook::consumeLevel(Side side, Price price, unsigned int quantity) {

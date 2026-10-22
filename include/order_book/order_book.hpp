@@ -14,13 +14,9 @@
 #include "order.hpp"
 #include "submission_results.hpp"
 #include "trade.hpp"
+#include "types.hpp"
 
 namespace order_book {
-    
-    using Price = unsigned int;
-    using OrderId = unsigned int;
-    using TradeId = unsigned int;
-    using SequenceNum = unsigned int;
 
     struct PriceLevelSummary {
         Price price;
