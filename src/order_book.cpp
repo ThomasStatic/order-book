@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <optional>
+#include <utility>
 
 #include "order_book/order_book.hpp"
 
@@ -26,17 +27,37 @@ namespace order_book {
         return !asks.empty();
     }
 
-    void OrderBook::validateNewOrder(const Order& order) const {
-        if(order.getRemainingQuantity() == 0 || !order.orderIsActive()) {
-            throw std::invalid_argument("adding an inactive order error");
+    std::optional<RejectionReason> OrderBook::validateNewOrder(const Order& order) const {
+        if(order.getOrderId() == 0) {
+            return RejectionReason::INVALID_ORDER_ID;
+        }
+        if(order.getPriceTick() == 0) {
+            return RejectionReason::INVALID_PRICE;
+        }
+        if(order.getRemainingQuantity() == 0) {
+            return RejectionReason::INVALID_QUANTITY;
+        }
+        if(!isValidSide(order.getSide())) {
+            return RejectionReason::INVALID_SIDE;
+        }
+        if(!isSupportedOrderType(order.getOrderType())) {
+            return RejectionReason::UNSUPPORTED_ORDER_TYPE;
+        }
+        if(!order.orderIsActive()) {
+            return RejectionReason::ORDER_NOT_ACTIVE;
         }
         if(orderIndex.find(order.getOrderId()) != orderIndex.end()) {
-            throw std::invalid_argument("duplicate active order id error");
+            return RejectionReason::DUPLICATE_ORDER_ID;
         }
+        return std::nullopt;
     }
 
     void OrderBook::addOrder(Order order) {
-        validateNewOrder(order);
+        if(const std::optional<RejectionReason> reason = validateNewOrder(order)) {
+            throw std::invalid_argument(*reason == RejectionReason::DUPLICATE_ORDER_ID
+                                            ? "duplicate active order id error"
+                                            : "adding a malformed or inactive order error");
+        }
         order.assignSequenceNum(nextSequenceNum);
         restOrder(order);
         // Consumed only once the order rests, so a rejected or rolled-back add leaves no gap.
@@ -166,10 +187,12 @@ namespace order_book {
         return trades;
     }
 
-    std::vector<Trade> OrderBook::submitOrder(Order incoming) {
+    SubmissionResults OrderBook::submitOrder(Order incoming) {
         // Reject before matching: failing only when the remainder rests would leave
-        // trades executed for a submission that then throws.
-        validateNewOrder(incoming);
+        // trades executed for a submission that is then refused.
+        if(const std::optional<RejectionReason> reason = validateNewOrder(incoming)) {
+            return SubmissionResults::rejected(incoming.getOrderId(), incoming.getRemainingQuantity(), *reason);
+        }
 
         // Accepted: numbered once, before matching, and the remainder rests with this same
         // number. Consumed even if matching throws, since executions may already stand.
@@ -186,7 +209,11 @@ namespace order_book {
             // of its last execution. Validation already passed, so it cannot be rejected now.
             restOrder(incoming);
         }
-        return trades;
+        return SubmissionResults::accepted(incoming.getOrderId(), std::move(trades), incoming.getRemainingQuantity());
+    }
+
+    std::size_t OrderBook::activeOrderCount() const {
+        return orderIndex.size();
     }
 
     Order OrderBook::findActiveOrder(OrderId orderId) const {

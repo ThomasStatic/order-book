@@ -367,8 +367,8 @@ void testRejectedExecutionLeavesBookUntouched() {
                  "rejected execution: an inactive incoming order should throw");
     expectUntouched(book, inactiveIncoming, "rejected execution (inactive incoming)");
 
-    expectThrows([&book, &inactiveIncoming] { book.submitOrder(inactiveIncoming); },
-                 "rejected execution: submitting an inactive incoming order should throw");
+    expect(book.submitOrder(inactiveIncoming).getRejectionReason() == RejectionReason::ORDER_NOT_ACTIVE,
+           "rejected execution: submitting an inactive incoming order should be rejected");
     expectUntouched(book, inactiveIncoming, "rejected submission (inactive incoming)");
 
     // The public API can no longer rest an inactive order (addOrder rejects one and

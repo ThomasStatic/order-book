@@ -167,7 +167,7 @@ int main() {
     matchBook.addOrder(Order(42, 102, 5, 3, Side::SELL));
     matchBook.addOrder(Order(43, 104, 5, 4, Side::SELL));
 
-    const auto buyTrades = matchBook.submitOrder(Order(50, 102, 10, 5, Side::BUY));
+    const auto buyTrades = matchBook.submitOrder(Order(50, 102, 10, 5, Side::BUY)).getGeneratedTrades();
     expect(buyTrades.size() == 3, "a crossing buy should trade against each resting order it fills");
     expect(buyTrades[0].getRestingId() == 40 && buyTrades[1].getRestingId() == 41,
            "orders at the same price should match in arrival order");
@@ -184,7 +184,7 @@ int main() {
     expect(matchBook.getBestAsk().getOrderId() == 42 && matchBook.getBestAsk().getRemainingQuantity() == 2,
            "a partially filled resting ask should keep its place with reduced quantity");
 
-    const auto restingBuyTrades = matchBook.submitOrder(Order(51, 103, 6, 6, Side::BUY));
+    const auto restingBuyTrades = matchBook.submitOrder(Order(51, 103, 6, 6, Side::BUY)).getGeneratedTrades();
     expect(restingBuyTrades.size() == 1, "a buy should stop matching when the best ask no longer crosses");
     expect(restingBuyTrades[0].getExecutionQuantity() == 2, "the buy should fill what crosses before resting");
     expect(matchBook.getBestBid().getOrderId() == 51 && matchBook.getBestBid().getRemainingQuantity() == 4,
@@ -194,14 +194,14 @@ int main() {
            "a resting remainder should be marked partially filled");
     expect(matchBook.getBestAsk().getOrderId() == 43, "a non-crossing ask should be left untouched");
 
-    const auto passiveTrades = matchBook.submitOrder(Order(52, 104, 1, 7, Side::SELL));
+    const auto passiveTrades = matchBook.submitOrder(Order(52, 104, 1, 7, Side::SELL)).getGeneratedTrades();
     expect(passiveTrades.empty(), "a sell above the best bid should not trade");
     expect(matchBook.findActiveOrder(52).getRemainingQuantity() == 1, "a non-crossing sell should rest in full");
     expect(matchBook.getBestAsk().getOrderId() == 43, "a new order at an existing price should queue behind older orders");
 
     matchBook.addOrder(Order(53, 103, 2, 8, Side::BUY));
     matchBook.addOrder(Order(54, 102, 5, 9, Side::BUY));
-    const auto sellTrades = matchBook.submitOrder(Order(55, 102, 8, 10, Side::SELL));
+    const auto sellTrades = matchBook.submitOrder(Order(55, 102, 8, 10, Side::SELL)).getGeneratedTrades();
     expect(sellTrades.size() == 3, "a crossing sell should trade down through the bid levels");
     expect(sellTrades[0].getRestingId() == 51 && sellTrades[1].getRestingId() == 53,
            "a sell should match the highest bid first, then FIFO within the level");
@@ -214,7 +214,7 @@ int main() {
            "the partially filled bid should remain best");
 
     OrderBook emptyBook{};
-    expect(emptyBook.submitOrder(Order(60, 100, 5, 1, Side::SELL)).empty(),
+    expect(emptyBook.submitOrder(Order(60, 100, 5, 1, Side::SELL)).getGeneratedTrades().empty(),
            "an order into an empty opposing side should not trade");
     expect(emptyBook.hasAsks() && emptyBook.findActiveOrder(60).getSide() == Side::SELL,
            "an order into an empty opposing side should rest");
@@ -233,8 +233,9 @@ int main() {
     expect(validationBook.orderIndex.size() == 1 && validationBook.findActiveOrder(70).getRemainingQuantity() == 5,
            "a rejected duplicate should leave the original order's index entry in place");
 
-    expectThrows([&validationBook] { validationBook.submitOrder(Order(70, 100, 2, 4, Side::BUY)); },
-           "submitting a duplicate active order ID should throw before matching");
+    expect(validationBook.submitOrder(Order(70, 100, 2, 4, Side::BUY)).getRejectionReason() ==
+               RejectionReason::DUPLICATE_ORDER_ID,
+           "submitting a duplicate active order ID should be rejected before matching");
     expect(validationBook.findActiveOrder(70).getRemainingQuantity() == 5 && validationBook.nextTradeId == 1,
            "a rejected duplicate submission should not trade");
 
@@ -242,8 +243,8 @@ int main() {
     filledOrder.setExecutionLevel(FillStatus::FILLED);
     expectThrows([&validationBook, &filledOrder] { validationBook.addOrder(filledOrder); },
            "adding an order marked FILLED should throw");
-    expectThrows([&validationBook, &filledOrder] { validationBook.submitOrder(filledOrder); },
-           "submitting an order marked FILLED should throw rather than rest it");
+    expect(validationBook.submitOrder(filledOrder).getRejectionReason() == RejectionReason::ORDER_NOT_ACTIVE,
+           "submitting an order marked FILLED should be rejected rather than rest it");
 
     Order emptiedOrder(72, 99, 5, 6, Side::BUY);
     emptiedOrder.fillQuantity(5);

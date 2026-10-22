@@ -2,6 +2,7 @@
 
 #include <stdexcept>
 #include "fill_status.hpp"
+#include "order_type.hpp"
 #include "side.hpp"
 
 namespace order_book {
@@ -10,6 +11,8 @@ namespace order_book {
     private:
         // OrderBook alone assigns the sequence number, once, when it accepts the order.
         friend class OrderBook;
+        // Test-only access to internals; defined in tests, never in the library.
+        friend struct OrderBookTestAccess;
 
         unsigned int orderId;
         unsigned int sequenceNum;
@@ -19,6 +22,7 @@ namespace order_book {
         unsigned int remainingQuant;
 
         Side side;
+        OrderType type;
         FillStatus execution;
 
         // Replaces the sequence number given at construction; throws
@@ -26,7 +30,10 @@ namespace order_book {
         void assignSequenceNum(unsigned int seq);
 
     public:
-        Order(unsigned int id, unsigned int tick, unsigned int quant, unsigned int arrival, Side s);
+        // Throws std::invalid_argument on a zero ID, price, quantity, or sequence number,
+        // a side other than BUY or SELL, or an unsupported order type.
+        Order(unsigned int id, unsigned int tick, unsigned int quant, unsigned int arrival, Side s,
+              OrderType t = OrderType::LIMIT);
 
         unsigned int getOrderId() const;
         unsigned int getSequenceNum() const;
@@ -37,6 +44,7 @@ namespace order_book {
         unsigned int fillQuantity(unsigned int amt);
 
         Side getSide() const;
+        OrderType getOrderType() const;
         FillStatus getExecutionLevel() const;
         void setExecutionLevel(FillStatus newLevel);
         bool orderIsActive() const;

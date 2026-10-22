@@ -2,7 +2,8 @@
 
 namespace order_book {
 
-Order::Order(unsigned int id, unsigned int tick, unsigned int quant, unsigned int seq, Side s): sequenceNum(seq), side(s) {
+Order::Order(unsigned int id, unsigned int tick, unsigned int quant, unsigned int seq, Side s, OrderType t)
+    : sequenceNum(seq), side(s), type(t) {
     if (id == 0) {
         throw std::invalid_argument("Non-positive order ID error.");
     }
@@ -17,6 +18,14 @@ Order::Order(unsigned int id, unsigned int tick, unsigned int quant, unsigned in
 
     if(seq == 0) {
         throw std::invalid_argument("Non-positive sequence number error.");
+    }
+
+    if(!isValidSide(s)) {
+        throw std::invalid_argument("Invalid order side error.");
+    }
+
+    if(!isSupportedOrderType(t)) {
+        throw std::invalid_argument("Unsupported order type error.");
     }
 
     orderId = id;
@@ -79,6 +88,10 @@ unsigned int Order::fillQuantity(unsigned int amt) {
 
 Side Order::getSide() const {
     return side;
+}
+
+OrderType Order::getOrderType() const {
+    return type;
 }
 
 FillStatus Order::getExecutionLevel() const {

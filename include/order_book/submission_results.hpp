@@ -25,8 +25,21 @@ namespace order_book {
         SubmissionStatus status;
         RejectionReason rejectionReason;
 
+        // Unchecked, so a rejection can echo whatever ID was submitted, including zero.
+        SubmissionResults(unsigned int sId, unsigned int remaining, RejectionReason reason);
+
     public:
         SubmissionResults(unsigned int sId);
+
+        // An accepted submission, identified by the incoming order's ID. Its fill status
+        // follows from the trades and what is left: NONE if nothing traded, FILLED if
+        // nothing is left, PARTIAL otherwise. Throws std::invalid_argument on a zero ID.
+        static SubmissionResults accepted(unsigned int orderId, std::vector<Trade> trades,
+                                          unsigned int remaining);
+
+        // A rejected submission: no trades, no fill, and the submitted quantity left
+        // unexecuted. Throws std::invalid_argument if the reason is NONE.
+        static SubmissionResults rejected(unsigned int orderId, unsigned int remaining, RejectionReason reason);
 
         unsigned int getSubmissionId() const;
 

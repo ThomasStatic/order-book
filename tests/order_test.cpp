@@ -36,6 +36,7 @@ int main() {
 
     using order_book::FillStatus;
     using order_book::Order;
+    using order_book::OrderType;
     using order_book::Side;
 
     Order baseOrder(1, 100, 10, 3, Side::BUY);
@@ -45,6 +46,9 @@ int main() {
     expect(baseOrder.getInitialQuantity() == 10, "initial quantity should be preserved");
     expect(baseOrder.getRemainingQuantity() == 10, "remaining quantity should start at the initial quantity");
     expect(baseOrder.getSide() == Side::BUY, "buy side should be preserved");
+    expect(baseOrder.getOrderType() == OrderType::LIMIT, "an order should be a limit order by default");
+    expect(Order(2, 100, 1, 1, Side::SELL, OrderType::LIMIT).getOrderType() == OrderType::LIMIT,
+           "an explicit limit order type should be preserved");
     expect(baseOrder.getExecutionLevel() == FillStatus::NONE, "new order should start with no execution lifecycle");
     expect(baseOrder.orderIsActive(), "new order should be active");
 
@@ -62,6 +66,10 @@ int main() {
     expectThrows([] { Order invalidTick(1, 0, 5, 1, Side::BUY); }, "constructor should reject a non-positive tick");
     expectThrows([] { Order invalidQuantity(1, 100, 0, 1, Side::BUY); }, "constructor should reject a non-positive quantity");
     expectThrows([] { Order invalidArrival(1, 100, 5, 0, Side::BUY); }, "constructor should reject a non-positive sequence number");
+    expectThrows([] { Order invalidSide(1, 100, 5, 1, static_cast<Side>(2)); },
+                 "constructor should reject a side that is neither BUY nor SELL");
+    expectThrows([] { Order invalidType(1, 100, 5, 1, Side::BUY, static_cast<OrderType>(1)); },
+                 "constructor should reject an unsupported order type");
     expectThrows([&baseOrder] { baseOrder.fillQuantity(0); }, "fillQuantity should reject zero fill requests");
 
     std::cout << "order tests passed" << std::endl;

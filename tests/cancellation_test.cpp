@@ -372,7 +372,7 @@ void testCancelPartiallyFilled(Side side) {
     book.addOrder(Order(2, price, 25, 1, side));
 
     // Fill 40 of order 1, leaving 60 resting.
-    const auto trades = book.submitOrder(Order(50, price, 40, 1, opposite(side)));
+    const auto trades = book.submitOrder(Order(50, price, 40, 1, opposite(side))).getGeneratedTrades();
     expect(trades.size() == 1, context + ": setup should execute once");
     expect(book.findActiveOrder(1).getRemainingQuantity() == 60, context + ": setup should leave 60 on order 1");
     expect(book.findActiveOrder(1).getExecutionLevel() == FillStatus::PARTIAL,
@@ -403,7 +403,7 @@ void testCancelledOrderIsNotMatchedAndIteratorsSurvive(Side side) {
     expectCancelled(book.cancelOrder(2), context);
 
     // Matching walks the level through the surviving iterators: A, C, D, skipping B.
-    const auto trades = book.submitOrder(Order(60, price, 30, 1, opposite(side)));
+    const auto trades = book.submitOrder(Order(60, price, 30, 1, opposite(side))).getGeneratedTrades();
     expect(trades.size() == 3, context + ": the sweep should execute against each survivor");
     expect(trades[0].getRestingId() == 1 && trades[1].getRestingId() == 3 && trades[2].getRestingId() == 4,
            context + ": the sweep should fill survivors in FIFO order and never the cancelled order");

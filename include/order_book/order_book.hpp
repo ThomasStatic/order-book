@@ -2,7 +2,9 @@
 
 #include <unordered_map>
 #include <map>
+#include <optional>
 #include <compare>
+#include <cstddef>
 #include <stdexcept>
 #include <vector>
 
@@ -10,6 +12,7 @@
 #include "order_location.hpp"
 #include "price_level.hpp"
 #include "order.hpp"
+#include "submission_results.hpp"
 #include "trade.hpp"
 
 namespace order_book {
@@ -46,9 +49,11 @@ namespace order_book {
         // and fixes time priority within a level.
         SequenceNum nextSequenceNum = 1;
 
-        // Throws std::invalid_argument, before anything is mutated, unless the order
-        // still has quantity, is not FILLED, and its ID is not already resting here.
-        void validateNewOrder(const Order& order) const;
+        // Why the book must refuse this order, or nothing if it may be accepted; reads only,
+        // so it runs before anything is mutated. Malformed fields are reported first (the
+        // Order constructor refuses them too, but an order may be changed after it), then
+        // a FILLED order, then an ID already resting here (DUPLICATE_ORDER_ID).
+        std::optional<RejectionReason> validateNewOrder(const Order& order) const;
 
         // Move to the next number, wrapping from the maximum back to 1 (zero is invalid),
         // so numbers are silently reused once a counter overflows.
@@ -87,12 +92,15 @@ namespace order_book {
 
         // Both accept the order with the book's next sequence number, replacing the one it
         // was constructed with. addOrder rests it without matching and consumes no number
-        // if it throws. submitOrder matches it by price-time priority, returning trades in
+        // if it throws. submitOrder matches it by price-time priority, reporting trades in
         // execution order, and rests any remainder at its own limit price; its number is
         // consumed once validation passes, even if matching later throws.
         void addOrder(Order order);
 
-        std::vector<Trade> submitOrder(Order incoming);
+        SubmissionResults submitOrder(Order incoming);
+
+        // Number of orders resting on the book (both sides), not of price levels.
+        std::size_t activeOrderCount() const;
 
         // Copy of a resting order as it is now (later fills are not reflected); throws
         // std::invalid_argument if no order with that ID is resting.
