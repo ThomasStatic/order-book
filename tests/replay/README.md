@@ -1,6 +1,6 @@
 # Replay sample files
 
-Sample input for the CSV replay format defined in [`docs/replay-format.md`](../../docs/replay-format.md). No parser reads these yet. They are the agreed examples that the parser and replay-engine tests will check against.
+Sample input for the CSV replay format defined in [`docs/replay-format.md`](../../docs/replay-format.md). `replay_parser_tests` reads every file here and checks the parsed records of each valid file and the line, column, and rule (`ParseErrorCode`) of each malformed one; it fails on a file it has no expectation for. No replay engine exists yet, so the events below are not checked automatically.
 
 `.gitattributes` marks every `*.csv` here `-text`, so Git keeps the bytes exactly as committed, whatever `core.autocrlf` says. Several files depend on that: `crlf_line_endings.csv`, `no_final_newline.csv`, `header_with_bom.csv`, and `trailing_blank_line.csv`. Don't re-save these files in an editor that normalizes line endings or encoding.
 
@@ -15,6 +15,7 @@ Every file here should replay to the end with exit status 0. The events are the 
 | `book_rejections.csv` | well-formed rows the book refuses, with the replay continuing; ID reuse after a cancel |
 | `sequence_gaps.csv` | non-contiguous sequence numbers; a cancel moves the next order to the front of the queue |
 | `limits.csv` | maximal ID, price, and quantity (4294967295) and maximal sequence (18446744073709551615) |
+| `leading_zeros.csv` | leading zeros in every numeric column, ignored; sequence order compares values (`0010` follows `002`) |
 | `header_only.csv` | header and no commands: replays nothing |
 | `crlf_line_endings.csv` | CRLF record terminators |
 | `no_final_newline.csv` | last record without a line ending |
@@ -79,6 +80,16 @@ line 2  OrderAccepted id=4294967295 side=SELL price=4294967295 qty=4294967295
 line 3  OrderAccepted id=1 side=BUY price=1 qty=1
 line 4  OrderCancelled id=4294967295 qty=4294967295
 final   bids: 1 x 1 (1)   asks: none
+```
+
+`leading_zeros.csv`
+
+```text
+line 2  OrderAccepted id=7001 side=BUY price=100 qty=10
+line 3  OrderAccepted id=7002 side=SELL price=100 qty=4
+        TradeExecuted incoming=7002 resting=7001 price=100 qty=4
+line 4  OrderCancelled id=7001 qty=6
+final   empty
 ```
 
 `header_only.csv`: no events; the book stays empty.
@@ -149,7 +160,6 @@ Most files share one layout. Lines 2 and 3 are valid and get dispatched (`OrderA
 | `command_lowercase.csv` | 4 | `command` | 2 | `add` (case-sensitive) |
 | `command_empty.csv` | 4 | `command` | 2 | empty |
 | `order_id_zero.csv` | 4 | `order_id` | 2 | zero on `ADD` |
-| `order_id_leading_zero.csv` | 4 | `order_id` | 2 | `01003` is not canonical |
 | `add_missing_order_id.csv` | 4 | `order_id` | 2 | empty on `ADD` |
 | `cancel_missing_order_id.csv` | 4 | `order_id` | 2 | empty on `CANCEL` |
 | `cancel_order_id_zero.csv` | 4 | `order_id` | 2 | zero on `CANCEL` (a parse error, not `ORDER_NOT_FOUND`) |
@@ -166,6 +176,7 @@ Most files share one layout. Lines 2 and 3 are valid and get dispatched (`OrderA
 | `price_out_of_range.csv` | 4 | `price` | 2 | 4294967296 exceeds `Price` |
 | `add_missing_quantity.csv` | 4 | `quantity` | 2 | empty on `ADD` |
 | `quantity_zero.csv` | 4 | `quantity` | 2 | zero |
+| `quantity_zero_padded.csv` | 4 | `quantity` | 2 | `000`: zero, however it is written |
 | `quantity_negative.csv` | 4 | `quantity` | 2 | `-20` |
 | `quantity_out_of_range.csv` | 4 | `quantity` | 2 | 4294967296 exceeds `Quantity` |
 | `cancel_with_side.csv` | 4 | `side` | 2 | `CANCEL` with `BUY` |

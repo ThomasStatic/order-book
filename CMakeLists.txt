@@ -142,6 +142,17 @@ elseif(ORDER_BOOK_INVARIANT_CHECKS STREQUAL "OFF")
     target_compile_definitions(order_book PUBLIC ORDER_BOOK_INVARIANT_CHECKS=0)
 endif()
 
+# The CSV replay parser (docs/replay-format.md). A library of its own, so order_book itself
+# knows nothing about CSV.
+add_library(order_book_replay STATIC
+    src/replay_parser.cpp
+)
+
+target_compile_features(order_book_replay PUBLIC cxx_std_20)
+target_link_libraries(order_book_replay PUBLIC order_book)
+order_book_enable_warnings(order_book_replay)
+order_book_enable_sanitizers(order_book_replay)
+
 add_executable(order_book_cli
     apps/order_book_cli.cpp
 )
@@ -284,6 +295,17 @@ if(BUILD_TESTING)
     order_book_enable_warnings(scenario_tests)
     order_book_enable_sanitizers(scenario_tests)
     add_test(NAME scenario_tests COMMAND scenario_tests)
+
+    add_executable(replay_parser_tests
+        tests/replay_parser_test.cpp
+    )
+
+    target_compile_features(replay_parser_tests PRIVATE cxx_std_20)
+    target_link_libraries(replay_parser_tests PRIVATE order_book_replay)
+    order_book_enable_warnings(replay_parser_tests)
+    order_book_enable_sanitizers(replay_parser_tests)
+    # Also reads every sample file in tests/replay/.
+    add_test(NAME replay_parser_tests COMMAND replay_parser_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay)
 
     # Randomized command testing: seeded streams of submissions and cancellations, each command
     # checked against the book's invariants and a reference model. The harness is a library so

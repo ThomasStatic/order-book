@@ -61,8 +61,8 @@ Line numbers in diagnostics are physical and 1-based. The header is line 1, and 
 
 ### Field syntax
 
-- **Numbers.** Unsigned decimal written in canonical form, `[1-9][0-9]*`, no larger than the column's maximum. These are all invalid: zero, leading zeros (`0105`), signs (`+105`, `-105`), decimal points (`100.50`), exponents, and surrounding whitespace (` 105`). Prices are integer ticks, the same `Price` the engine uses, so a replay file never contains a decimal price.
-- **Zero.** Zero is invalid for every numeric column. `types.hpp` reserves zero for `Price`, `Quantity`, and `OrderId`. So a zero is a parse error, not a book rejection, and that covers `CANCEL,0` too.
+- **Numbers.** Unsigned decimal digits only, `[0-9]+`, read without regard to locale. Leading zeros are allowed and ignored: `000105` is 105, in every numeric column, `sequence` included. The value must be no larger than the column's maximum, however many digits it is written with. These are all invalid: signs (`+105`, `-105`), decimal points (`100.50`), exponents (`1e3`), any other character (`12abc`, `0x10`), and surrounding whitespace (` 105`). Prices are integer ticks, the same `Price` the engine uses, so a replay file never contains a decimal price.
+- **Zero.** Zero is well-formed syntax but an invalid value for every numeric column, however it is written (`0`, `000`). `types.hpp` reserves zero for `Price`, `Quantity`, and `OrderId`. So a zero is a parse error, not a book rejection, and that covers `CANCEL,0` too.
 - **Keywords.** `ADD`, `CANCEL`, `BUY`, and `SELL` match exactly. Case variants and padded values are invalid.
 - **Empty and absent.** A field is empty only when it holds no characters. An empty field is never read as zero or as a default value. `3,ADD,1002,SELL,,20` is invalid because the price is missing. In `4,CANCEL,1002,,,` the empty fields are correct, because those columns don't apply to a cancel. `5,CANCEL,1002,,0,` is invalid because it fills in a price, and the value doesn't matter. A single space also counts as filled in.
 
@@ -98,7 +98,7 @@ Valid rows that the book refuses produce rejection events, and the replay carrie
 | File can't be opened | missing path | replay | fatal | nothing runs |
 | Missing or wrong header | empty file, reordered or duplicate columns, BOM | parser (file) | fatal | nothing runs |
 | Record framing | quote character, wrong field count, blank line | parser (record) | fatal | stop at that line |
-| Sequence out of order | repeated or decreasing `sequence` | parser (record) | fatal | stop at that line |
+| Sequence out of order | repeated or decreasing `sequence` | parser (field, across records) | fatal | stop at that line |
 | Invalid field | unknown command or side, bad number, missing or extra field | parser (field) | recoverable in principle, fatal under the current policy | stop at that line |
 | Book rejection | duplicate active ID, cancel of an ID that isn't resting | order book | recoverable | record the event and continue |
 
@@ -148,22 +148,19 @@ orders.csv:1: header must be 'sequence,command,order_id,side,price,quantity'
 
 The message wording is not part of the format. Tests should check the line, the column, and which rule was broken.
 
-## Parser output
+## Parser
 
-This is how the parser's output might look in C++ (the names may change when it is implemented):
+The parser is `include/order_book/replay_parser.hpp` (namespace `order_book::replay`), built as its own library, `order_book_replay`, so the `order_book` library stays free of CSV. It needs no `OrderBook` and does no file I/O of its own:
+
+- `splitRecord(text, lineNumber)` splits one line, its line ending already removed, into a `CsvRow` (the fields and the physical line number). It never fails.
+- `parseRow(row, previousSequence)` checks one data record in the order above and returns a `ReplayRecord` or the first `ParseError`. It is a pure function: the same row and previous sequence always give the same result.
+- `checkHeader(text)` checks line 1.
+- `ReplayReader` reads a `std::istream` line by line: the header, then one record per `next()`, tracking line numbers, line endings, and the sequence ordering between records. After the first error, or the end of input, it returns that again without reading further. Open files in binary mode, so CRs reach it exactly as written.
+- `formatParseError(error, path)` prints a diagnostic in the form above.
 
 ```c++
-struct AddCommand {
-    OrderId orderId;
-    Side side;
-    Price price;
-    Quantity quantity;
-};
-
-struct CancelCommand {
-    OrderId orderId;
-};
-
+struct AddCommand { OrderId orderId; Side side; Price price; Quantity quantity; };
+struct CancelCommand { OrderId orderId; };
 using Command = std::variant<AddCommand, CancelCommand>;
 
 struct ReplayRecord {
@@ -174,12 +171,32 @@ struct ReplayRecord {
 
 struct ParseError {
     std::size_t lineNumber;
+    ParseErrorCode code;      // which rule was broken
     std::string column;       // header name of the column at fault; empty for record- and file-level errors
+    std::string value;        // that field's text, or the whole record for record- and file-level errors
     std::string message;
 };
 ```
 
-A successfully parsed command satisfies the `Order` constructor's preconditions: nonzero ID, price, and quantity, and a valid side. So the replay engine never constructs an `Order` that throws.
+`ParseErrorCode` names the rule:
+
+| Code | Level | Rule |
+|---|---|---|
+| `MISSING_HEADER` | file | empty input, or a first line that is itself a valid data record |
+| `INVALID_HEADER` | file | any other first line that is not exactly the header |
+| `EMPTY_RECORD` | record | a blank line |
+| `QUOTE_CHARACTER` | record | a `"` anywhere in the record |
+| `WRONG_COLUMN_COUNT` | record | not six fields |
+| `SEQUENCE_NOT_INCREASING` | field | `sequence` not greater than the previous record's |
+| `UNKNOWN_COMMAND` | field | `command` neither `ADD` nor `CANCEL` |
+| `MISSING_REQUIRED_FIELD` | field | empty where a value is required |
+| `UNEXPECTED_FIELD` | field | filled in where `CANCEL` needs it empty |
+| `INVALID_SIDE` | field | `side` neither `BUY` nor `SELL` |
+| `INVALID_NUMBER` | field | anything but decimal digits |
+| `NUMBER_OUT_OF_RANGE` | field | above the column's maximum |
+| `INVALID_VALUE` | field | zero |
+
+A successfully parsed command satisfies the `Order` constructor's preconditions: nonzero ID, price, and quantity, and a valid side. So the replay engine never constructs an `Order` that throws. No replay engine exists yet.
 
 ## Versioning and scope
 
