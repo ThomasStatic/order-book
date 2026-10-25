@@ -1,0 +1,5 @@
+sequence,command,order_id,side,price,quantity
+1,ADD,1001,BUY,100,50
+2,ADD,1002,SELL,105,30
+3,ADD,1003,BUY,105,-20
+4,CANCEL,1001,,,

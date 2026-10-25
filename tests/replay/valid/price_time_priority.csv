@@ -1,0 +1,7 @@
+sequence,command,order_id,side,price,quantity
+1,ADD,2001,SELL,101,10
+2,ADD,2002,SELL,101,15
+3,ADD,2003,SELL,102,20
+4,ADD,2004,BUY,99,5
+5,ADD,2005,BUY,102,50
+6,ADD,2006,SELL,99,8
