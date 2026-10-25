@@ -142,10 +142,12 @@ elseif(ORDER_BOOK_INVARIANT_CHECKS STREQUAL "OFF")
     target_compile_definitions(order_book PUBLIC ORDER_BOOK_INVARIANT_CHECKS=0)
 endif()
 
-# The CSV replay parser (docs/replay-format.md). A library of its own, so order_book itself
-# knows nothing about CSV.
+# The CSV replay parser and replay engine (docs/replay-format.md). A library of its own, so
+# order_book itself knows nothing about CSV or replays.
 add_library(order_book_replay STATIC
     src/replay_parser.cpp
+    src/replay_engine.cpp
+    src/replay_summary.cpp
 )
 
 target_compile_features(order_book_replay PUBLIC cxx_std_20)
@@ -158,7 +160,7 @@ add_executable(order_book_cli
 )
 
 target_compile_features(order_book_cli PRIVATE cxx_std_20)
-target_link_libraries(order_book_cli PRIVATE order_book)
+target_link_libraries(order_book_cli PRIVATE order_book_replay)
 order_book_enable_warnings(order_book_cli)
 order_book_enable_sanitizers(order_book_cli)
 
@@ -306,6 +308,57 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(replay_parser_tests)
     # Also reads every sample file in tests/replay/.
     add_test(NAME replay_parser_tests COMMAND replay_parser_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay)
+
+    add_executable(replay_engine_tests
+        tests/replay_engine_test.cpp
+    )
+
+    target_compile_features(replay_engine_tests PRIVATE cxx_std_20)
+    target_link_libraries(replay_engine_tests PRIVATE order_book_replay)
+    order_book_enable_warnings(replay_engine_tests)
+    order_book_enable_sanitizers(replay_engine_tests)
+    # Also replays every sample file in tests/replay/.
+    add_test(NAME replay_engine_tests COMMAND replay_engine_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay)
+
+    # order_book_cli on each sample, compared byte for byte with tests/replay/expected/. Paths
+    # are relative to tests/replay, so diagnostics don't depend on the checkout location.
+    # A stream with no expected file must stay empty.
+    function(order_book_add_replay_cli_test name)
+        cmake_parse_arguments(PARSE_ARGV 1 cli "" "EXIT;STDOUT;STDERR" "ARGS")
+        set(dir ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay)
+        list(JOIN cli_ARGS "|" args)
+        set(defines -DNAME=${name} -DCLI=$<TARGET_FILE:order_book_cli> -DARGS=${args}
+                    -DWORKING_DIRECTORY=${dir} -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/replay-cli-output
+                    -DEXPECTED_EXIT=${cli_EXIT})
+        if(cli_STDOUT)
+            list(APPEND defines -DEXPECTED_STDOUT=${dir}/expected/${cli_STDOUT})
+        endif()
+        if(cli_STDERR)
+            list(APPEND defines -DEXPECTED_STDERR=${dir}/expected/${cli_STDERR})
+        endif()
+        add_test(NAME replay_cli_${name} COMMAND ${CMAKE_COMMAND} ${defines} -P ${dir}/check_cli_output.cmake)
+    endfunction()
+
+    foreach(sample basic price_time_priority book_rejections sequence_gaps limits leading_zeros
+                   header_only crlf_line_endings no_final_newline)
+        order_book_add_replay_cli_test(${sample} ARGS replay valid/${sample}.csv EXIT 0 STDOUT ${sample}.stdout)
+    endforeach()
+    # Validation changes nothing on a sound book.
+    order_book_add_replay_cli_test(validate_per_command
+        ARGS replay valid/basic.csv --validate per-command EXIT 0 STDOUT basic.stdout)
+    order_book_add_replay_cli_test(validate_none
+        ARGS replay valid/basic.csv --validate none EXIT 0 STDOUT basic.stdout)
+    # A parse error part-way prints what ran, then the diagnostic; one before any command, or
+    # a file that can't be opened, prints the empty book's summary.
+    order_book_add_replay_cli_test(price_zero
+        ARGS replay malformed/price_zero.csv EXIT 1 STDOUT price_zero.stdout STDERR price_zero.stderr)
+    order_book_add_replay_cli_test(empty_file
+        ARGS replay malformed/empty_file.csv EXIT 1 STDOUT header_only.stdout STDERR empty_file.stderr)
+    order_book_add_replay_cli_test(missing_file
+        ARGS replay no_such_file.csv EXIT 1 STDOUT header_only.stdout STDERR missing_file.stderr)
+    order_book_add_replay_cli_test(usage_unknown_command ARGS play valid/basic.csv EXIT 2 STDERR usage.stderr)
+    order_book_add_replay_cli_test(usage_bad_validation
+        ARGS replay valid/basic.csv --validate sometimes EXIT 2 STDERR usage.stderr)
 
     # Randomized command testing: seeded streams of submissions and cancellations, each command
     # checked against the book's invariants and a reference model. The harness is a library so

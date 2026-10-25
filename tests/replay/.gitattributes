@@ -1,2 +1,5 @@
 # Replay fixtures are byte-exact: keep line endings, the BOM, and missing final newlines as committed.
 *.csv -text
+# Expected CLI output, compared byte for byte.
+*.stdout -text
+*.stderr -text

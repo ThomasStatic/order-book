@@ -1,0 +1,21 @@
+line 2: OrderAccepted id=3001 side=BUY price=100 qty=10
+line 3: OrderRejected id=3001 reason=DUPLICATE_ORDER_ID
+line 4: CancelRejected id=9999 reason=ORDER_NOT_FOUND
+line 5: OrderCancelled id=3001 qty=10
+line 6: CancelRejected id=3001 reason=ORDER_NOT_FOUND
+line 7: OrderAccepted id=3001 side=SELL price=110 qty=5
+
+commands processed: 6
+add commands: 3
+adds accepted: 2
+adds rejected: 1
+cancel commands: 3
+cancels accepted: 1
+cancels rejected: 2
+trades executed: 0
+volume traded: 0
+resting orders: 1
+bids:
+  none
+asks:
+  price=110 qty=5 orders=1

@@ -1,0 +1,1 @@
+malformed/price_zero.csv:4: price: price must be positive, not '0'

@@ -1,0 +1,26 @@
+line 2: OrderAccepted id=2001 side=SELL price=101 qty=10
+line 3: OrderAccepted id=2002 side=SELL price=101 qty=15
+line 4: OrderAccepted id=2003 side=SELL price=102 qty=20
+line 5: OrderAccepted id=2004 side=BUY price=99 qty=5
+line 6: OrderAccepted id=2005 side=BUY price=102 qty=50
+line 6: TradeExecuted incoming=2005 resting=2001 price=101 qty=10
+line 6: TradeExecuted incoming=2005 resting=2002 price=101 qty=15
+line 6: TradeExecuted incoming=2005 resting=2003 price=102 qty=20
+line 7: OrderAccepted id=2006 side=SELL price=99 qty=8
+line 7: TradeExecuted incoming=2006 resting=2005 price=102 qty=5
+line 7: TradeExecuted incoming=2006 resting=2004 price=99 qty=3
+
+commands processed: 6
+add commands: 6
+adds accepted: 6
+adds rejected: 0
+cancel commands: 0
+cancels accepted: 0
+cancels rejected: 0
+trades executed: 5
+volume traded: 53
+resting orders: 1
+bids:
+  price=99 qty=2 orders=1
+asks:
+  none

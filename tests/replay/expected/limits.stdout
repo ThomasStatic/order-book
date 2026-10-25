@@ -1,0 +1,18 @@
+line 2: OrderAccepted id=4294967295 side=SELL price=4294967295 qty=4294967295
+line 3: OrderAccepted id=1 side=BUY price=1 qty=1
+line 4: OrderCancelled id=4294967295 qty=4294967295
+
+commands processed: 3
+add commands: 2
+adds accepted: 2
+adds rejected: 0
+cancel commands: 1
+cancels accepted: 1
+cancels rejected: 0
+trades executed: 0
+volume traded: 0
+resting orders: 1
+bids:
+  price=1 qty=1 orders=1
+asks:
+  none

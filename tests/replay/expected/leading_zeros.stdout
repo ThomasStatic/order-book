@@ -1,0 +1,19 @@
+line 2: OrderAccepted id=7001 side=BUY price=100 qty=10
+line 3: OrderAccepted id=7002 side=SELL price=100 qty=4
+line 3: TradeExecuted incoming=7002 resting=7001 price=100 qty=4
+line 4: OrderCancelled id=7001 qty=6
+
+commands processed: 3
+add commands: 2
+adds accepted: 2
+adds rejected: 0
+cancel commands: 1
+cancels accepted: 1
+cancels rejected: 0
+trades executed: 1
+volume traded: 4
+resting orders: 0
+bids:
+  none
+asks:
+  none

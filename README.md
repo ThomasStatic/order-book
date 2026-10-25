@@ -33,8 +33,11 @@ cmake --build build/release
 ### Run the CLI
 
 ```bash
-./build/debug/order_book_cli
+./build/debug/order_book_cli                                         # a scripted demo session
+./build/debug/order_book_cli replay tests/replay/valid/basic.csv     # replay a CSV file
 ```
+
+`replay` prints each event with its line, then a deterministic summary: command and execution counts, and the final book, best price first. See [`docs/replay-format.md`](docs/replay-format.md) for the file format, the `--validate none|final|per-command` option, and exit statuses.
 
 ### Enable benchmarks
 

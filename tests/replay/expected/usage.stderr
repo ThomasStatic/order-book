@@ -1,0 +1,1 @@
+usage: order_book_cli [replay <file.csv> [--validate none|final|per-command]]

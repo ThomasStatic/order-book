@@ -1,0 +1,17 @@
+line 2: OrderAccepted id=6001 side=SELL price=300 qty=7
+line 3: OrderCancelled id=6001 qty=7
+
+commands processed: 2
+add commands: 1
+adds accepted: 1
+adds rejected: 0
+cancel commands: 1
+cancels accepted: 1
+cancels rejected: 0
+trades executed: 0
+volume traded: 0
+resting orders: 0
+bids:
+  none
+asks:
+  none

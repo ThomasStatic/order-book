@@ -1,0 +1,20 @@
+line 2: OrderAccepted id=4001 side=SELL price=200 qty=5
+line 3: OrderAccepted id=4002 side=SELL price=200 qty=5
+line 4: OrderCancelled id=4001 qty=5
+line 5: OrderAccepted id=4003 side=BUY price=200 qty=5
+line 5: TradeExecuted incoming=4003 resting=4002 price=200 qty=5
+
+commands processed: 4
+add commands: 3
+adds accepted: 3
+adds rejected: 0
+cancel commands: 1
+cancels accepted: 1
+cancels rejected: 0
+trades executed: 1
+volume traded: 5
+resting orders: 0
+bids:
+  none
+asks:
+  none
