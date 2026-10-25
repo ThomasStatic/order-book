@@ -510,6 +510,12 @@ void testSampleFiles(const std::filesystem::path& root) {
                                ReplayRecord{3, 20, AddCommand{4002, Side::SELL, 200, 5}},
                                ReplayRecord{4, 35, CancelCommand{4001}},
                                ReplayRecord{5, 36, AddCommand{4003, Side::BUY, 200, 5}}}},
+        {"sweep_and_rest.csv", {ReplayRecord{2, 1, AddCommand{8001, Side::SELL, 10125, 50}},
+                                ReplayRecord{3, 2, AddCommand{8002, Side::SELL, 10125, 30}},
+                                ReplayRecord{4, 3, AddCommand{8003, Side::SELL, 10126, 100}},
+                                ReplayRecord{5, 4, AddCommand{8004, Side::SELL, 10128, 200}},
+                                ReplayRecord{6, 5, AddCommand{8005, Side::BUY, 10120, 100}},
+                                ReplayRecord{7, 6, AddCommand{8006, Side::BUY, 10127, 200}}}},
     };
     const std::map<std::string, MalformedSample> malformed = {
         {"empty_file.csv", {1, "", Code::MISSING_HEADER, 0}},

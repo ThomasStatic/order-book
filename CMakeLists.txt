@@ -340,8 +340,8 @@ if(BUILD_TESTING)
     endfunction()
 
     # --events --book prints everything: each event, the statistics, and the final book.
-    foreach(sample basic price_time_priority book_rejections sequence_gaps limits leading_zeros
-                   header_only crlf_line_endings no_final_newline)
+    foreach(sample basic price_time_priority sweep_and_rest book_rejections sequence_gaps limits
+                   leading_zeros header_only crlf_line_endings no_final_newline)
         order_book_add_replay_cli_test(${sample}
             ARGS replay valid/${sample}.csv --events --book EXIT 0 STDOUT ${sample}.stdout)
     endforeach()

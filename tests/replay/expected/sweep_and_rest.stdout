@@ -1,0 +1,25 @@
+line 2: OrderAccepted id=8001 side=SELL price=10125 qty=50
+line 3: OrderAccepted id=8002 side=SELL price=10125 qty=30
+line 4: OrderAccepted id=8003 side=SELL price=10126 qty=100
+line 5: OrderAccepted id=8004 side=SELL price=10128 qty=200
+line 6: OrderAccepted id=8005 side=BUY price=10120 qty=100
+line 7: OrderAccepted id=8006 side=BUY price=10127 qty=200
+line 7: TradeExecuted incoming=8006 resting=8001 price=10125 qty=50
+line 7: TradeExecuted incoming=8006 resting=8002 price=10125 qty=30
+line 7: TradeExecuted incoming=8006 resting=8003 price=10126 qty=100
+
+commands processed: 6
+add commands: 6
+adds accepted: 6
+adds rejected: 0
+cancel commands: 0
+cancels accepted: 0
+cancels rejected: 0
+trades executed: 3
+volume traded: 180
+resting orders: 3
+bids:
+  price=10127 qty=20 orders=1
+  price=10120 qty=100 orders=1
+asks:
+  price=10128 qty=200 orders=1

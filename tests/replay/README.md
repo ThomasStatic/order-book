@@ -12,6 +12,7 @@ Every file here should replay to the end with exit status 0. The events are the 
 |---|---|
 | `basic.csv` | the example from the spec: rest, rest, cross, cancel |
 | `price_time_priority.csv` | FIFO within a level, a multi-level sweep, a resting remainder, execution at the resting price |
+| `sweep_and_rest.csv` | a sweep stopped by its limit with the next ask out of reach; the remainder rests at its limit, not its last fill price, with the book left two-sided |
 | `book_rejections.csv` | well-formed rows the book refuses, with the replay continuing; ID reuse after a cancel |
 | `sequence_gaps.csv` | non-contiguous sequence numbers; a cancel moves the next order to the front of the queue |
 | `limits.csv` | maximal ID, price, and quantity (4294967295) and maximal sequence (18446744073709551615) |
@@ -48,6 +49,21 @@ line 7  OrderAccepted id=2006 side=SELL price=99 qty=8
         TradeExecuted incoming=2006 resting=2005 price=102 qty=5
         TradeExecuted incoming=2006 resting=2004 price=99 qty=3
 final   bids: 99 x 2 (2004)   asks: none
+```
+
+`sweep_and_rest.csv`
+
+```text
+line 2  OrderAccepted id=8001 side=SELL price=10125 qty=50
+line 3  OrderAccepted id=8002 side=SELL price=10125 qty=30
+line 4  OrderAccepted id=8003 side=SELL price=10126 qty=100
+line 5  OrderAccepted id=8004 side=SELL price=10128 qty=200
+line 6  OrderAccepted id=8005 side=BUY price=10120 qty=100
+line 7  OrderAccepted id=8006 side=BUY price=10127 qty=200
+        TradeExecuted incoming=8006 resting=8001 price=10125 qty=50
+        TradeExecuted incoming=8006 resting=8002 price=10125 qty=30
+        TradeExecuted incoming=8006 resting=8003 price=10126 qty=100
+final   bids: 10127 x 20 (8006), 10120 x 100 (8005)   asks: 10128 x 200 (8004)
 ```
 
 `book_rejections.csv`
