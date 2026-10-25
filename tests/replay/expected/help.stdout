@@ -1,0 +1,34 @@
+usage: order_book_cli replay <file.csv> [--trades] [--events] [--book] [--validate none|final|per-command]
+       order_book_cli demo
+       order_book_cli --help
+
+Replays a CSV command file (docs/replay-format.md) on an empty order book and prints
+replay statistics. Never prompts: everything is set on the command line.
+
+commands:
+  replay <file.csv>  replay the file, then print its statistics
+  demo               print the events of a short scripted session
+  help               print this help
+
+replay options, in any order before or after the file:
+  --trades           print each trade, tagged with its command's line, before the statistics
+  --events           print every event (acceptances, rejections, trades, and cancels)
+                     instead; this includes the trades
+  --book             print the final book after the statistics, best price first
+  --validate MODE    check the book's invariants: none, final (the default), or
+                     per-command (after every command; slower)
+  --                 treat the next argument as the file, even if it starts with '-'
+  -h, --help         print this help and exit
+
+exit status:
+  0  replayed to the end, even if the book rejected some commands; or help printed
+  1  input error: the file can't be opened or read, or is malformed (what ran before
+     the error is still printed)
+  2  usage error
+  3  engine failure: the book threw, or failed an invariant check
+
+examples:
+  order_book_cli replay orders.csv
+  order_book_cli replay orders.csv --trades
+  order_book_cli replay orders.csv --trades --book
+  order_book_cli replay orders.csv --events --book --validate per-command

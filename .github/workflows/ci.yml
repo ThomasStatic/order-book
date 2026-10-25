@@ -82,7 +82,9 @@ jobs:
       - name: Run the CLI
         run: |
           if [ "${{ runner.os }}" = "Windows" ]; then
-            ./build/${{ matrix.config }}/order_book_cli.exe
+            cli=./build/${{ matrix.config }}/order_book_cli.exe
           else
-            ./build/order_book_cli
+            cli=./build/order_book_cli
           fi
+          "$cli" demo
+          "$cli" replay tests/replay/valid/price_time_priority.csv --trades --book

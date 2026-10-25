@@ -32,12 +32,45 @@ cmake --build build/release
 
 ### Run the CLI
 
+`order_book_cli` replays a CSV command file ([`docs/replay-format.md`](docs/replay-format.md)) on an empty book and prints the replay statistics. It never prompts; everything is set by arguments, so it scripts cleanly.
+
 ```bash
-./build/debug/order_book_cli                                         # a scripted demo session
-./build/debug/order_book_cli replay tests/replay/valid/basic.csv     # replay a CSV file
+./build/debug/order_book_cli --help                                          # usage, options, exit statuses
+./build/debug/order_book_cli replay tests/replay/valid/basic.csv             # statistics only
+./build/debug/order_book_cli replay tests/replay/valid/basic.csv --trades    # each trade, then the statistics
+./build/debug/order_book_cli replay tests/replay/valid/basic.csv --book      # the statistics, then the final book
+./build/debug/order_book_cli replay tests/replay/valid/price_time_priority.csv --trades --book
+./build/debug/order_book_cli replay tests/replay/valid/basic.csv --events --validate per-command
+./build/debug/order_book_cli demo                                            # a scripted demo session
 ```
 
-`replay` prints each event with its line, then a deterministic summary: command and execution counts, and the final book, best price first. See [`docs/replay-format.md`](docs/replay-format.md) for the file format, the `--validate none|final|per-command` option, and exit statuses.
+| Option | Effect |
+|---|---|
+| `--trades` | print each trade, tagged with the line of the command that made it, before the statistics |
+| `--events` | print every event instead (acceptances, rejections, trades, cancels) |
+| `--book` | print the final book after the statistics, every level, best price first |
+| `--validate none\|final\|per-command` | how often to check the book's invariants (default `final`) |
+| `--` | the next argument is the file, even if it starts with `-` |
+| `-h`, `--help` | print help to stdout and exit 0 |
+
+Options go before or after the file. For example, `replay tests/replay/valid/basic.csv --trades` prints:
+
+```text
+line 4: TradeExecuted incoming=1003 resting=1002 price=105 qty=20
+
+commands processed: 4
+add commands: 3
+adds accepted: 3
+adds rejected: 0
+cancel commands: 1
+cancels accepted: 1
+cancels rejected: 0
+trades executed: 1
+volume traded: 20
+resting orders: 1
+```
+
+Exit statuses: `0` replayed to the end, even if the book rejected some commands (or help was printed); `1` input error (the file can't be opened or read, or is malformed; what ran before the error is still printed, and the diagnostic goes to stderr); `2` usage error (stderr names the problem and shows the usage); `3` engine failure (the book threw or failed an invariant check). Output is byte-identical on every platform, with LF line endings.
 
 ### Enable benchmarks
 

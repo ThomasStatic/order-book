@@ -33,7 +33,7 @@ namespace order_book::replay {
         return "line " + std::to_string(event.lineNumber) + ": " + formatEvent(event.event);
     }
 
-    std::string formatReplaySummary(const ReplayResult& result) {
+    std::string formatReplayStatistics(const ReplayResult& result) {
         const ReplayStatistics& statistics = result.statistics;
         std::string text;
         appendLine(text, "commands processed", statistics.commandsProcessed);
@@ -46,10 +46,19 @@ namespace order_book::replay {
         appendLine(text, "trades executed", statistics.tradesExecuted);
         appendLine(text, "volume traded", statistics.volumeTraded);
         appendLine(text, "resting orders", result.finalBook.totalActiveVisibleOrders);
-        // The snapshot lists each side best price first, which is the order printed.
-        appendSide(text, "bids", result.finalBook.bids);
-        appendSide(text, "asks", result.finalBook.asks);
         return text;
+    }
+
+    std::string formatFinalBook(const BookSnapshot& book) {
+        std::string text;
+        // The snapshot lists each side best price first, which is the order printed.
+        appendSide(text, "bids", book.bids);
+        appendSide(text, "asks", book.asks);
+        return text;
+    }
+
+    std::string formatReplaySummary(const ReplayResult& result) {
+        return formatReplayStatistics(result) + formatFinalBook(result.finalBook);
     }
 
     std::string formatReplayError(const ReplayError& error, std::string_view path) {

@@ -339,26 +339,65 @@ if(BUILD_TESTING)
         add_test(NAME replay_cli_${name} COMMAND ${CMAKE_COMMAND} ${defines} -P ${dir}/check_cli_output.cmake)
     endfunction()
 
+    # --events --book prints everything: each event, the statistics, and the final book.
     foreach(sample basic price_time_priority book_rejections sequence_gaps limits leading_zeros
                    header_only crlf_line_endings no_final_newline)
-        order_book_add_replay_cli_test(${sample} ARGS replay valid/${sample}.csv EXIT 0 STDOUT ${sample}.stdout)
+        order_book_add_replay_cli_test(${sample}
+            ARGS replay valid/${sample}.csv --events --book EXIT 0 STDOUT ${sample}.stdout)
     endforeach()
+    # Output selection: the statistics alone by default; --trades, --events (which covers the
+    # trades), and --book add to them. Options go before or after the file, and "--" ends them.
+    order_book_add_replay_cli_test(statistics_only ARGS replay valid/basic.csv EXIT 0 STDOUT basic_statistics.stdout)
+    order_book_add_replay_cli_test(trades ARGS replay valid/basic.csv --trades EXIT 0 STDOUT basic_trades.stdout)
+    order_book_add_replay_cli_test(book ARGS replay valid/basic.csv --book EXIT 0 STDOUT basic_book.stdout)
+    order_book_add_replay_cli_test(trades_and_book
+        ARGS replay valid/price_time_priority.csv --trades --book EXIT 0 STDOUT price_time_priority_trades_book.stdout)
+    order_book_add_replay_cli_test(trades_none_executed
+        ARGS replay valid/book_rejections.csv --trades EXIT 0 STDOUT book_rejections_statistics.stdout)
+    order_book_add_replay_cli_test(events_cover_trades
+        ARGS replay valid/basic.csv --trades --events --book EXIT 0 STDOUT basic.stdout)
+    order_book_add_replay_cli_test(options_before_file
+        ARGS replay --book --events valid/basic.csv EXIT 0 STDOUT basic.stdout)
+    order_book_add_replay_cli_test(end_of_options
+        ARGS replay --events --book -- valid/basic.csv EXIT 0 STDOUT basic.stdout)
     # Validation changes nothing on a sound book.
     order_book_add_replay_cli_test(validate_per_command
-        ARGS replay valid/basic.csv --validate per-command EXIT 0 STDOUT basic.stdout)
+        ARGS replay valid/basic.csv --events --book --validate per-command EXIT 0 STDOUT basic.stdout)
     order_book_add_replay_cli_test(validate_none
-        ARGS replay valid/basic.csv --validate none EXIT 0 STDOUT basic.stdout)
+        ARGS replay --validate none valid/basic.csv --events --book EXIT 0 STDOUT basic.stdout)
     # A parse error part-way prints what ran, then the diagnostic; one before any command, or
-    # a file that can't be opened, prints the empty book's summary.
+    # a file that can't be opened, prints the empty book's statistics.
     order_book_add_replay_cli_test(price_zero
-        ARGS replay malformed/price_zero.csv EXIT 1 STDOUT price_zero.stdout STDERR price_zero.stderr)
+        ARGS replay malformed/price_zero.csv --events --book EXIT 1 STDOUT price_zero.stdout STDERR price_zero.stderr)
+    order_book_add_replay_cli_test(price_zero_statistics
+        ARGS replay malformed/price_zero.csv EXIT 1 STDOUT price_zero_statistics.stdout STDERR price_zero.stderr)
     order_book_add_replay_cli_test(empty_file
-        ARGS replay malformed/empty_file.csv EXIT 1 STDOUT header_only.stdout STDERR empty_file.stderr)
+        ARGS replay malformed/empty_file.csv --book EXIT 1 STDOUT header_only.stdout STDERR empty_file.stderr)
     order_book_add_replay_cli_test(missing_file
-        ARGS replay no_such_file.csv EXIT 1 STDOUT header_only.stdout STDERR missing_file.stderr)
-    order_book_add_replay_cli_test(usage_unknown_command ARGS play valid/basic.csv EXIT 2 STDERR usage.stderr)
+        ARGS replay no_such_file.csv EXIT 1 STDOUT empty_statistics.stdout STDERR missing_file.stderr)
+    # Help goes to stdout and exits 0, wherever the option appears before "--".
+    order_book_add_replay_cli_test(help_long ARGS --help EXIT 0 STDOUT help.stdout)
+    order_book_add_replay_cli_test(help_short ARGS -h EXIT 0 STDOUT help.stdout)
+    order_book_add_replay_cli_test(help_command ARGS help EXIT 0 STDOUT help.stdout)
+    order_book_add_replay_cli_test(help_after_options
+        ARGS replay valid/basic.csv --trades --bogus --help EXIT 0 STDOUT help.stdout)
+    order_book_add_replay_cli_test(help_after_end_of_options
+        ARGS replay -- --help EXIT 1 STDOUT empty_statistics.stdout STDERR help_as_file.stderr)
+    order_book_add_replay_cli_test(demo ARGS demo EXIT 0 STDOUT demo.stdout)
+    # Usage errors name the problem, then print the usage, on stderr only.
+    order_book_add_replay_cli_test(usage_no_arguments EXIT 2 STDERR usage_no_arguments.stderr)
+    order_book_add_replay_cli_test(usage_unknown_command
+        ARGS play valid/basic.csv EXIT 2 STDERR usage_unknown_command.stderr)
+    order_book_add_replay_cli_test(usage_missing_file ARGS replay --trades EXIT 2 STDERR usage_missing_file.stderr)
+    order_book_add_replay_cli_test(usage_two_files
+        ARGS replay valid/basic.csv valid/limits.csv EXIT 2 STDERR usage_two_files.stderr)
+    order_book_add_replay_cli_test(usage_unknown_option
+        ARGS replay valid/basic.csv --trade EXIT 2 STDERR usage_unknown_option.stderr)
+    order_book_add_replay_cli_test(usage_missing_validation
+        ARGS replay valid/basic.csv --validate EXIT 2 STDERR usage_missing_validation.stderr)
     order_book_add_replay_cli_test(usage_bad_validation
-        ARGS replay valid/basic.csv --validate sometimes EXIT 2 STDERR usage.stderr)
+        ARGS replay valid/basic.csv --validate sometimes EXIT 2 STDERR usage_bad_validation.stderr)
+    order_book_add_replay_cli_test(usage_demo_argument ARGS demo valid/basic.csv EXIT 2 STDERR usage_demo_argument.stderr)
 
     # Randomized command testing: seeded streams of submissions and cancellations, each command
     # checked against the book's invariants and a reference model. The harness is a library so

@@ -16,9 +16,8 @@ namespace order_book::replay {
     std::string formatReplayEvent(const ReplayEvent& event);
 
     // The statistics in a fixed order (each command kind's count beside its accepted and
-    // rejected counts), then the final book: one "name: value" line each, then each side's levels best price first (bids descending, asks ascending), one
-    // "  price=<ticks> qty=<total> orders=<count>" line per level, or "  none" for an empty
-    // side. Every line ends with '\n'. For example:
+    // rejected counts), ending with the number of orders resting in the final book: one
+    // "name: value" line each, every line ending with '\n'. For example:
     //
     //   commands processed: 4
     //   add commands: 3
@@ -30,10 +29,19 @@ namespace order_book::replay {
     //   trades executed: 1
     //   volume traded: 20
     //   resting orders: 1
+    std::string formatReplayStatistics(const ReplayResult& result);
+
+    // Each side's levels best price first (bids descending, asks ascending), one
+    // "  price=<ticks> qty=<total> orders=<count>" line per level, or "  none" for an empty
+    // side. Every line ends with '\n'. For example:
+    //
     //   bids:
     //     none
     //   asks:
     //     price=105 qty=10 orders=1
+    std::string formatFinalBook(const BookSnapshot& book);
+
+    // formatReplayStatistics, then formatFinalBook of the final book.
     std::string formatReplaySummary(const ReplayResult& result);
 
     // One diagnostic line for path. A parse error prints as formatParseError does

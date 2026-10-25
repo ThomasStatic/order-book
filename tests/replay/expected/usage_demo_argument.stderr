@@ -1,0 +1,4 @@
+order_book_cli: unexpected argument 'valid/basic.csv'; demo takes none
+usage: order_book_cli replay <file.csv> [--trades] [--events] [--book] [--validate none|final|per-command]
+       order_book_cli demo
+       order_book_cli --help

@@ -303,6 +303,16 @@ void testSummaryFormatting() {
                    "basic summary");
     }
     {
+        // The summary is the statistics, then the final book, which the CLI prints separately.
+        OrderBook book;
+        const ReplayResult result = expectResult(ReplayEngine::run(basicRecords, book), "basic parts");
+        const std::string statistics = order_book::replay::formatReplayStatistics(result);
+        const std::string finalBook = order_book::replay::formatFinalBook(result.finalBook);
+        expect(statistics.ends_with("resting orders: 1\n"), "statistics end with resting orders: " + statistics);
+        expectText(finalBook, "bids:\n  none\nasks:\n  price=105 qty=10 orders=1\n", "basic final book");
+        expectText(formatReplaySummary(result), statistics + finalBook, "summary is statistics then book");
+    }
+    {
         OrderBook book;
         expectText(formatReplaySummary(expectResult(ReplayEngine::run({}, book), "empty")),
                    "commands processed: 0\n"

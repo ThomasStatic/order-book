@@ -1,0 +1,14 @@
+commands processed: 4
+add commands: 3
+adds accepted: 3
+adds rejected: 0
+cancel commands: 1
+cancels accepted: 1
+cancels rejected: 0
+trades executed: 1
+volume traded: 20
+resting orders: 1
+bids:
+  none
+asks:
+  price=105 qty=10 orders=1

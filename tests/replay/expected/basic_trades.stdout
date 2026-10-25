@@ -1,0 +1,12 @@
+line 4: TradeExecuted incoming=1003 resting=1002 price=105 qty=20
+
+commands processed: 4
+add commands: 3
+adds accepted: 3
+adds rejected: 0
+cancel commands: 1
+cancels accepted: 1
+cancels rejected: 0
+trades executed: 1
+volume traded: 20
+resting orders: 1

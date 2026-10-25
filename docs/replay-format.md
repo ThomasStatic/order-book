@@ -205,24 +205,26 @@ The engine is `include/order_book/replay_engine.hpp`, in the same library and na
 - `readReplayFile(path)` opens the file in binary mode and reads it through a `ReplayReader`; `readReplayInput(stream)` does the same for a stream. Either returns a `ReplayInput`: every record up to the first error, and that error, if any, as a `ReplayError` holding the parser's `ParseError`. A file that can't be opened, or a stream that fails mid-read, is an error with no line. Since the format fails fast, the records before the error are exactly the ones a replay runs.
 - `ReplayEngine::run(records, book, options)` runs each record against `book` in the order given, as the command table above says, and returns a `ReplayOutcome`: a `ReplayResult` or a `ReplayError`. A result holds every event the book returned, unchanged and in order, each with its record's line (`ReplayEvent`); the `ReplayStatistics` (commands processed; `ADD` and `CANCEL` commands, each split into accepted and rejected; trades executed; volume traded); and the final book as a `BookSnapshot` of every level, best price first. A replay of a file starts from an empty `OrderBook`, so the same file always gives the same events, statistics, and final book.
 - `run` stops at the first exception from the book (`INTERNAL_EXECUTION_FAILURE`, naming the command's line) or failed invariant check (`INVARIANT_VIOLATION`). `ReplayOptions::invariantValidation` sets how often it calls `checkInvariants`: `NONE`, `FINAL` (the default: once, after the last command, which names no line), or `PER_COMMAND` (after every command, naming the first line after which the book is broken, at O(N + L) per command). These are separate from the book's own automatic checks, which abort rather than report.
-- `replay_summary.hpp` prints a replay: `formatReplayEvent` (`line 4: TradeExecuted ...`), `formatReplaySummary`, and `formatReplayError`. The summary is one `name: value` line per statistic, in a fixed order (commands processed, then the `ADD` counts, then the `CANCEL` counts, then trades and volume), then `resting orders`, then `bids:` and `asks:`, each followed by one `  price=<ticks> qty=<total> orders=<count>` line per level, best price first (bids descending, asks ascending), or `  none`. It holds no timestamps, durations, addresses, or unordered iteration, and numbers are formatted without a locale.
+- `replay_summary.hpp` prints a replay: `formatReplayEvent` (`line 4: TradeExecuted ...`), `formatReplayStatistics`, `formatFinalBook`, `formatReplaySummary` (the statistics, then the final book), and `formatReplayError`. The statistics are one `name: value` line per statistic, in a fixed order (commands processed, then the `ADD` counts, then the `CANCEL` counts, then trades and volume), then `resting orders`. The final book is `bids:` and `asks:`, each followed by one `  price=<ticks> qty=<total> orders=<count>` line per level, best price first (bids descending, asks ascending), or `  none`. It holds no timestamps, durations, addresses, or unordered iteration, and numbers are formatted without a locale.
 
 ### Command line
 
 ```text
-order_book_cli replay <file.csv> [--validate none|final|per-command]
+order_book_cli replay <file.csv> [--trades] [--events] [--book] [--validate none|final|per-command]
+order_book_cli demo
+order_book_cli --help
 ```
 
-It replays the file on an empty book and prints each event (`formatReplayEvent`), a blank line if there were any, and the summary, on stdout, with LF line endings on every platform. A parse error stops the replay at that line: what ran before it is printed as usual, events and summary, and the diagnostic follows on stderr. Exit statuses:
+It replays the file on an empty book and prints, on stdout with LF line endings on every platform: each trade (`--trades`) or each event (`--events`, which includes the trades), as `formatReplayEvent` writes them, then a blank line if any were printed; then the statistics (`formatReplayStatistics`), always; then the final book (`formatFinalBook`) with `--book`. `--events --book` is the full summary, `formatReplaySummary`. Options go before or after the file, and `--` makes the next argument the file. `-h` or `--help` anywhere before `--` prints the help on stdout and exits 0; there are no prompts. A parse error stops the replay at that line: what ran before it is printed as usual, and the diagnostic follows on stderr. Exit statuses:
 
 | Status | Meaning |
 |---|---|
-| 0 | replayed to the end, even if the book rejected some commands |
+| 0 | replayed to the end, even if the book rejected some commands; or help printed |
 | 1 | input error: the file can't be opened or read, or is malformed |
-| 2 | usage error |
+| 2 | usage error: one line on stderr naming the problem (a missing or unknown command, no file or two, an unknown option, a missing or unknown `--validate` mode), then the usage |
 | 3 | engine failure: the book threw, or failed an invariant check. Only the diagnostic is printed. When the final check fails, the same records are replayed on a fresh book with per-command checks, and a second diagnostic names the first line after which the book is broken. |
 
-`tests/replay/expected/` holds the exact output for each valid sample and a few failing ones; the `replay_cli_*` tests compare it byte for byte.
+`tests/replay/expected/` holds the exact output for each valid sample (with `--events --book`), each output selection, a few failing files, help, the demo, and each usage error; the `replay_cli_*` tests compare it byte for byte.
 
 ## Versioning and scope
 

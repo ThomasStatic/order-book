@@ -21,11 +21,63 @@
 namespace {
     namespace replay = order_book::replay;
 
-    // Exit statuses for `replay`: a file that replays to the end exits 0, even when the book
-    // rejected some commands.
+    // Exit statuses: a file that replays to the end exits 0, even when the book rejected
+    // some commands, and so does --help.
     constexpr int inputError = 1;    // the file can't be opened or read, or is malformed
     constexpr int usageError = 2;
     constexpr int engineFailure = 3; // the book threw, or failed an invariant check
+
+    constexpr std::string_view usageText =
+        "usage: order_book_cli replay <file.csv> [--trades] [--events] [--book] [--validate none|final|per-command]\n"
+        "       order_book_cli demo\n"
+        "       order_book_cli --help\n";
+
+    constexpr std::string_view helpText =
+        "Replays a CSV command file (docs/replay-format.md) on an empty order book and prints\n"
+        "replay statistics. Never prompts: everything is set on the command line.\n"
+        "\n"
+        "commands:\n"
+        "  replay <file.csv>  replay the file, then print its statistics\n"
+        "  demo               print the events of a short scripted session\n"
+        "  help               print this help\n"
+        "\n"
+        "replay options, in any order before or after the file:\n"
+        "  --trades           print each trade, tagged with its command's line, before the statistics\n"
+        "  --events           print every event (acceptances, rejections, trades, and cancels)\n"
+        "                     instead; this includes the trades\n"
+        "  --book             print the final book after the statistics, best price first\n"
+        "  --validate MODE    check the book's invariants: none, final (the default), or\n"
+        "                     per-command (after every command; slower)\n"
+        "  --                 treat the next argument as the file, even if it starts with '-'\n"
+        "  -h, --help         print this help and exit\n"
+        "\n"
+        "exit status:\n"
+        "  0  replayed to the end, even if the book rejected some commands; or help printed\n"
+        "  1  input error: the file can't be opened or read, or is malformed (what ran before\n"
+        "     the error is still printed)\n"
+        "  2  usage error\n"
+        "  3  engine failure: the book threw, or failed an invariant check\n"
+        "\n"
+        "examples:\n"
+        "  order_book_cli replay orders.csv\n"
+        "  order_book_cli replay orders.csv --trades\n"
+        "  order_book_cli replay orders.csv --trades --book\n"
+        "  order_book_cli replay orders.csv --events --book --validate per-command\n";
+
+    int printHelp() {
+        std::cout << usageText << '\n' << helpText;
+        return EXIT_SUCCESS;
+    }
+
+    // One line saying what was wrong, then the usage, on stderr.
+    int usage(std::string_view problem) {
+        std::cerr << "order_book_cli: " << problem << '\n' << usageText;
+        return usageError;
+    }
+
+    bool isHelpOption(std::string_view arg) {
+        return arg == "-h" || arg == "--help";
+    }
 
     // Printing lives here, outside the engine: the book only returns events.
     void printEvents(const std::vector<order_book::BookEvent>& events) {
@@ -50,21 +102,26 @@ namespace {
         return EXIT_SUCCESS;
     }
 
-    int usage() {
-        std::cerr << "usage: order_book_cli [replay <file.csv> [--validate none|final|per-command]]\n";
-        return usageError;
-    }
+    struct ReplaySettings {
+        std::string path;
+        bool printTrades = false;
+        bool printEvents = false;  // every event, which covers printTrades
+        bool printBook = false;
+        replay::InvariantValidation validation = replay::InvariantValidation::FINAL;
+    };
 
-    // Replays path on an empty book: its events, a blank line if there were any, then the
-    // summary, on stdout. Input that stops part-way still prints what ran, then the
-    // diagnostic on stderr. An engine failure prints only its diagnostic, since the result
-    // was lost with it; a failed final check is replayed again on a fresh book, checking
-    // after every command, to find the first line after which the book is broken.
-    int runReplay(const std::string& path, replay::InvariantValidation validation) {
+    // Replays settings.path on an empty book. On stdout: the trades or events asked for, a
+    // blank line if any were printed, the statistics, then the final book if asked for.
+    // Input that stops part-way still prints what ran, then the diagnostic on stderr. An
+    // engine failure prints only its diagnostic, since the result was lost with it; a failed
+    // final check is replayed again on a fresh book, checking after every command, to find
+    // the first line after which the book is broken.
+    int runReplay(const ReplaySettings& settings) {
+        const std::string& path = settings.path;
         const replay::ReplayInput input = replay::readReplayFile(path);
 
         replay::ReplayOptions options;
-        options.invariantValidation = validation;
+        options.invariantValidation = settings.validation;
         order_book::OrderBook book;
         const replay::ReplayOutcome outcome = replay::ReplayEngine::run(input.records, book, options);
 
@@ -86,13 +143,21 @@ namespace {
         }
 
         const replay::ReplayResult& result = std::get<replay::ReplayResult>(outcome);
+        bool printedAny = false;
         for (const replay::ReplayEvent& event : result.events) {
-            std::cout << replay::formatReplayEvent(event) << '\n';
+            const bool isTrade = std::holds_alternative<order_book::TradeExecuted>(event.event);
+            if (settings.printEvents || (settings.printTrades && isTrade)) {
+                std::cout << replay::formatReplayEvent(event) << '\n';
+                printedAny = true;
+            }
         }
-        if (!result.events.empty()) {
+        if (printedAny) {
             std::cout << '\n';
         }
-        std::cout << replay::formatReplaySummary(result);
+        std::cout << replay::formatReplayStatistics(result);
+        if (settings.printBook) {
+            std::cout << replay::formatFinalBook(result.finalBook);
+        }
         std::cout.flush();
 
         if (input.error) {
@@ -100,6 +165,52 @@ namespace {
             return inputError;
         }
         return EXIT_SUCCESS;
+    }
+
+    // args are what follows "replay". Options may come before or after the file; after
+    // "--", the next argument is the file whatever it looks like.
+    int replayCommand(const std::vector<std::string_view>& args) {
+        ReplaySettings settings;
+        bool havePath = false;
+        bool optionsEnded = false;
+        for (std::size_t i = 0; i < args.size(); ++i) {
+            const std::string_view arg = args[i];
+            if (!optionsEnded && arg == "--") {
+                optionsEnded = true;
+            } else if (!optionsEnded && arg == "--trades") {
+                settings.printTrades = true;
+            } else if (!optionsEnded && arg == "--events") {
+                settings.printEvents = true;
+            } else if (!optionsEnded && arg == "--book") {
+                settings.printBook = true;
+            } else if (!optionsEnded && arg == "--validate") {
+                if (i + 1 == args.size()) {
+                    return usage("--validate needs a mode: none, final, or per-command");
+                }
+                const std::string_view mode = args[++i];
+                if (mode == "none") {
+                    settings.validation = replay::InvariantValidation::NONE;
+                } else if (mode == "final") {
+                    settings.validation = replay::InvariantValidation::FINAL;
+                } else if (mode == "per-command") {
+                    settings.validation = replay::InvariantValidation::PER_COMMAND;
+                } else {
+                    return usage("unknown --validate mode '" + std::string(mode)
+                                 + "'; expected none, final, or per-command");
+                }
+            } else if (!optionsEnded && arg.starts_with('-')) {
+                return usage("unknown option '" + std::string(arg) + "'");
+            } else if (havePath) {
+                return usage("unexpected argument '" + std::string(arg) + "'; replay takes one file");
+            } else {
+                settings.path = std::string(arg);
+                havePath = true;
+            }
+        }
+        if (!havePath) {
+            return usage("replay needs a file to read");
+        }
+        return runReplay(settings);
     }
 }  // namespace
 
@@ -112,26 +223,29 @@ int main(int argc, char** argv) {
 
     const std::vector<std::string_view> args(argv + 1, argv + argc);
     if (args.empty()) {
-        return runDemo();
+        return usage("missing command");
     }
-    if (args[0] != "replay" || (args.size() != 2 && args.size() != 4)) {
-        return usage();
+    // A help option anywhere before "--" wins over everything else on the line.
+    for (const std::string_view arg : args) {
+        if (arg == "--") {
+            break;
+        }
+        if (isHelpOption(arg)) {
+            return printHelp();
+        }
     }
 
-    replay::InvariantValidation validation = replay::InvariantValidation::FINAL;
-    if (args.size() == 4) {
-        if (args[2] != "--validate") {
-            return usage();
-        }
-        if (args[3] == "none") {
-            validation = replay::InvariantValidation::NONE;
-        } else if (args[3] == "final") {
-            validation = replay::InvariantValidation::FINAL;
-        } else if (args[3] == "per-command") {
-            validation = replay::InvariantValidation::PER_COMMAND;
-        } else {
-            return usage();
-        }
+    const std::string_view command = args[0];
+    const std::vector<std::string_view> rest(args.begin() + 1, args.end());
+    if (command == "replay") {
+        return replayCommand(rest);
     }
-    return runReplay(std::string(args[1]), validation);
+    if (command == "demo" || command == "help") {
+        if (!rest.empty()) {
+            return usage("unexpected argument '" + std::string(rest[0]) + "'; "
+                         + std::string(command) + " takes none");
+        }
+        return command == "demo" ? runDemo() : printHelp();
+    }
+    return usage("unknown command '" + std::string(command) + "'");
 }
