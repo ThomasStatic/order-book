@@ -128,3 +128,5 @@ Record any departure from these, and anything else that could move the numbers: 
 - `order_book_benchmark.cpp`: the program.
 
 These are built into the `order_book_benchmarking` library (linking `order_book_replay`) when `ORDER_BOOK_BUILD_BENCHMARKS` is on. `tests/benchmark_harness_test.cpp` (`benchmark_harness_tests`) tests the library. `benchmark_cli_smoke` runs the program once on a tiny workload, writing both files.
+
+Recorded results live in `results/`, one directory per session set, kept byte for byte as the program wrote them. The baseline is `results/2026-10-25-baseline/`, written up in [`docs/BENCHMARKS.md`](../docs/BENCHMARKS.md); its `summarize.py` recomputes that page's tables from the raw CSV files.

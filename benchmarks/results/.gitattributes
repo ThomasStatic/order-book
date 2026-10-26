@@ -1,0 +1,4 @@
+# Raw benchmark output, kept byte for byte as order_book_benchmarks wrote it.
+*.csv -text
+*.json -text
+*.txt -text

@@ -74,7 +74,7 @@ Exit statuses: `0` replayed to the end, even if the book rejected some commands 
 
 ### Benchmarks
 
-`order_book_benchmarks` generates seeded workloads, then times them on a freshly preloaded book. Generation and preloading stay outside the timed region. Each run is repeated after a warm-up, and every measurement can be exported as CSV or JSON. It times the engine alone (`--kind core`) or the CSV replay path end to end (`--kind replay`). It runs only in an optimized build (Release, no automatic invariant checks, no sanitizers) unless given `--allow-unoptimized`. See [`benchmarks/README.md`](benchmarks/README.md) for the workloads, what is timed, and the output formats.
+`order_book_benchmarks` generates seeded workloads, then times them on a freshly preloaded book. Generation and preloading stay outside the timed region. Each run is repeated after a warm-up, and every measurement can be exported as CSV or JSON. It times the engine alone (`--kind core`) or the CSV replay path end to end (`--kind replay`). It runs only in an optimized build (Release, no automatic invariant checks, no sanitizers) unless given `--allow-unoptimized`. See [`benchmarks/README.md`](benchmarks/README.md) for the workloads, what is timed, and the output formats, and [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) for the recorded baseline, its methodology, and its limitations.
 
 ```bash
 cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DORDER_BOOK_BUILD_BENCHMARKS=ON
