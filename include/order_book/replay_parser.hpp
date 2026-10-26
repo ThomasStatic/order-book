@@ -123,6 +123,13 @@ namespace order_book::replay {
     // already have its line ending removed.
     CsvRow splitRecord(std::string_view text, std::size_t lineNumber);
 
+    // The same split into an existing row, replacing its line number and fields. It reuses
+    // the row's storage, so a reader that splits every six-field record into one row stops
+    // allocating once the row has grown (fields short enough for the small-string buffer
+    // never allocate). text must not view the row's own fields. If an allocation fails, the
+    // row is left valid but partly overwritten.
+    void splitRecordInto(std::string_view text, std::size_t lineNumber, CsvRow& row);
+
     // The header check for the input's first line, which the caller has read as line 1.
     std::optional<ParseError> checkHeader(std::string_view text);
 
@@ -157,9 +164,14 @@ namespace order_book::replay {
         ReadResult next();
 
     private:
-        std::optional<std::string> readLine();
+        // Reads the next line into the member `line`, reusing its storage; false at the end
+        // of the input, when `line` is left unspecified.
+        bool readLine();
 
         std::istream& input;
+        // Reused for every record, so reading one allocates nothing once they have grown.
+        std::string line;
+        CsvRow row;
         std::size_t linesRead = 0;
         bool headerChecked = false;
         std::optional<std::uint64_t> previousSequence;

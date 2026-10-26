@@ -11,6 +11,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -42,6 +43,7 @@ using order_book::replay::ReplayRecord;
 using order_book::replay::sequenceColumn;
 using order_book::replay::sideColumn;
 using order_book::replay::splitRecord;
+using order_book::replay::splitRecordInto;
 
 constexpr std::uint64_t maxSequence = std::numeric_limits<std::uint64_t>::max();
 constexpr unsigned int maxField = std::numeric_limits<unsigned int>::max();
@@ -145,6 +147,19 @@ void testSplitRecord() {
     expect(splitRecord(",", 1) == CsvRow{1, {"", ""}}, "a lone comma is two empty fields");
     expect(splitRecord(" a ,\"b\",c\r", 1) == CsvRow{1, {" a ", "\"b\"", "c\r"}},
            "splitting keeps spaces, quotes, and CRs as written");
+
+    // One row reused for records of every width gives what a fresh split gives, with no
+    // field left over from a longer record before it.
+    CsvRow reused{0, {}};
+    std::size_t lineNumber = 7;
+    for (const std::string_view text : {std::string_view("1,ADD,1001,BUY,100,50"), std::string_view("4,CANCEL"),
+                                        std::string_view("a,b,c,d,e,f,g"), std::string_view(""),
+                                        std::string_view("a longer field than the small-string buffer holds,x"),
+                                        std::string_view("2,ADD,7,SELL,1,1")}) {
+        splitRecordInto(text, ++lineNumber, reused);
+        expect(reused == splitRecord(text, lineNumber) && reused.lineNumber == lineNumber,
+               "a reused row splits '" + std::string(text) + "' like a fresh one, with its own line number");
+    }
 }
 
 void testValidRows() {
@@ -392,6 +407,13 @@ void testReader() {
     expectReadError(header + "\r\n1,ADD,1001,BUY,100,50\r\n\r\n", 3, ParseErrorCode::EMPTY_RECORD, "", 1);
     expectReadError(header + "\n1,ADD,1001,BUY,100,50\n2,ADD,1002,SELL,105,30\n3,ADD,1003,BUY,105\n", 4,
                     ParseErrorCode::WRONG_COLUMN_COUNT, "", 2);
+    // The reader reuses one line and one row for every record: an error's text is the failing
+    // record's alone, with nothing left over from the longer records before it.
+    expect(readText(header + "\n1,ADD,1001,BUY,100,50\n2,ADD,1002,SELL,105,30\n3,ADD,1003,BUY,105\n").error->value
+               == "3,ADD,1003,BUY,105",
+           "a record-level error quotes only its own record");
+    expect(readText(header + "\n1,ADD,1001,BUY,100,50\n2,ADD,1002,SELL,105,3x\n").error->value == "3x",
+           "a field-level error quotes only its own field");
 
     // A CR is a line ending only directly before an LF; anywhere else it stays in its field.
     expectReadError(header + "\n1,ADD,1001,BUY,100,50\r", 2, ParseErrorCode::INVALID_NUMBER, "quantity", 0);

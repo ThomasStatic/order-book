@@ -152,7 +152,7 @@ The message wording is not part of the format. Tests should check the line, the 
 
 The parser is `include/order_book/replay_parser.hpp` (namespace `order_book::replay`), built as its own library, `order_book_replay`, so the `order_book` library stays free of CSV. It needs no `OrderBook` and does no file I/O of its own:
 
-- `splitRecord(text, lineNumber)` splits one line, its line ending already removed, into a `CsvRow` (the fields and the physical line number). It never fails.
+- `splitRecord(text, lineNumber)` splits one line, its line ending already removed, into a `CsvRow` (the fields and the physical line number). It never fails. `splitRecordInto(text, lineNumber, row)` does the same into an existing row, reusing its storage; `ReplayReader` splits every record into one row this way, so reading a record allocates nothing once the row has grown.
 - `parseRow(row, previousSequence)` checks one data record in the order above and returns a `ReplayRecord` or the first `ParseError`. It is a pure function: the same row and previous sequence always give the same result.
 - `checkHeader(text)` checks line 1.
 - `ReplayReader` reads a `std::istream` line by line: the header, then one record per `next()`, tracking line numbers, line endings, and the sequence ordering between records. After the first error, or the end of input, it returns that again without reading further. Open files in binary mode, so CRs reach it exactly as written.

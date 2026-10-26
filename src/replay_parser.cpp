@@ -88,18 +88,32 @@ namespace order_book::replay {
         constexpr std::uint64_t engineFieldMax = std::numeric_limits<OrderId>::max();
     }  // namespace
 
-    CsvRow splitRecord(std::string_view text, std::size_t lineNumber) {
-        CsvRow row{lineNumber, {}};
+    void splitRecordInto(std::string_view text, std::size_t lineNumber, CsvRow& row) {
+        row.lineNumber = lineNumber;
+        std::size_t count = 0;
         std::size_t start = 0;
         while (true) {
             const std::size_t comma = text.find(',', start);
-            if (comma == std::string_view::npos) {
-                row.fields.emplace_back(text.substr(start));
-                return row;
+            const std::string_view field =
+                comma == std::string_view::npos ? text.substr(start) : text.substr(start, comma - start);
+            if (count < row.fields.size()) {
+                row.fields[count].assign(field);
+            } else {
+                row.fields.emplace_back(field);
             }
-            row.fields.emplace_back(text.substr(start, comma - start));
+            ++count;
+            if (comma == std::string_view::npos) {
+                break;
+            }
             start = comma + 1;
         }
+        row.fields.resize(count);
+    }
+
+    CsvRow splitRecord(std::string_view text, std::size_t lineNumber) {
+        CsvRow row{lineNumber, {}};
+        splitRecordInto(text, lineNumber, row);
+        return row;
     }
 
     std::optional<ParseError> checkHeader(std::string_view text) {
@@ -194,24 +208,23 @@ namespace order_book::replay {
 
         if (!headerChecked) {
             headerChecked = true;
-            const std::optional<std::string> header = readLine();
-            if (!header) {
+            if (!readLine()) {
                 finalResult = ReadResult{ParseError{1, ParseErrorCode::MISSING_HEADER, "", "",
                     "missing header: the input is empty; the first line must be '" + std::string(expectedHeader) + "'"}};
                 return *finalResult;
             }
-            if (std::optional<ParseError> error = checkHeader(*header)) {
+            if (std::optional<ParseError> error = checkHeader(line)) {
                 finalResult = ReadResult{std::move(*error)};
                 return *finalResult;
             }
         }
 
-        const std::optional<std::string> line = readLine();
-        if (!line) {
+        if (!readLine()) {
             finalResult = ReadResult{EndOfInput{}};
             return *finalResult;
         }
-        ParseResult result = parseRow(splitRecord(*line, linesRead), previousSequence);
+        splitRecordInto(line, linesRead, row);
+        ParseResult result = parseRow(row, previousSequence);
         if (ReplayRecord* record = std::get_if<ReplayRecord>(&result)) {
             previousSequence = record->sequence;
             return std::move(*record);
@@ -220,13 +233,13 @@ namespace order_book::replay {
         return *finalResult;
     }
 
-    std::optional<std::string> ReplayReader::readLine() {
-        std::string line;
+    bool ReplayReader::readLine() {
+        // getline empties the line and appends, keeping its capacity.
         if (!std::getline(input, line)) {
             if (input.bad()) {
                 throw std::runtime_error("error reading replay input");
             }
-            return std::nullopt;
+            return false;
         }
         ++linesRead;
         // getline sets eof only when no LF ended the line. So a CR that ends the input without
@@ -234,7 +247,7 @@ namespace order_book::replay {
         if (!input.eof() && !line.empty() && line.back() == '\r') {
             line.pop_back();
         }
-        return line;
+        return true;
     }
 
     std::string formatParseError(const ParseError& error, std::string_view path) {
