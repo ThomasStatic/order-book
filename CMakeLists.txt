@@ -12,6 +12,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(ORDER_BOOK_BUILD_BENCHMARKS "Build the benchmark executable" OFF)
+option(ORDER_BOOK_BUILD_PROFILING "Build the profiling tools in benchmarks/profiling (needs ORDER_BOOK_BUILD_BENCHMARKS)" OFF)
 option(ORDER_BOOK_ENABLE_ASAN "Enable AddressSanitizer for project-owned targets" OFF)
 option(ORDER_BOOK_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer for project-owned targets" OFF)
 option(ORDER_BOOK_WARNINGS_AS_ERRORS "Treat warnings as errors" OFF)
@@ -517,5 +518,20 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
                     --repetitions 2 --warmup 1 --allow-unoptimized
                     --csv ${CMAKE_CURRENT_BINARY_DIR}/benchmark-smoke.csv
                     --json ${CMAKE_CURRENT_BINARY_DIR}/benchmark-smoke.json)
+    endif()
+
+    if(ORDER_BOOK_BUILD_PROFILING)
+        # Profiling tools (benchmarks/profiling/README.md): exact allocation counts per
+        # command, and on Windows a sampling profiler for the benchmark program. Not tested.
+        add_executable(allocation_profile benchmarks/profiling/allocation_profile.cpp)
+        target_compile_features(allocation_profile PRIVATE cxx_std_20)
+        target_link_libraries(allocation_profile PRIVATE order_book_benchmarking)
+        order_book_enable_warnings(allocation_profile)
+        if(WIN32)
+            add_executable(sampling_profiler benchmarks/profiling/sampling_profiler.cpp)
+            target_compile_features(sampling_profiler PRIVATE cxx_std_20)
+            target_link_libraries(sampling_profiler PRIVATE dbghelp)
+            order_book_enable_warnings(sampling_profiler)
+        endif()
     endif()
 endif()

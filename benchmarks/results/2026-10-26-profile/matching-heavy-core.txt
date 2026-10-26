@@ -1,0 +1,488 @@
+# Sampling profile
+
+command: ./build/profile/Release/order_book_benchmarks.exe --workload matching-heavy --size extended --kind core --warmup 0 --repetitions 20 --seed 42
+exit code: 0
+interval: 1000 us; wall time 6187 ms; the target thread was suspended for 81 ms of that
+samples: 3021 total, 2897 selected; root: runCore runReplay; drop: preload generateWorkload recordFinalBook renderReplayCsv describeOutcome ~OrderBook
+
+Percentages are of the selected samples.
+
+## Unselected samples, by the project function nearest their root
+
+| samples | % | function |
+|---:|---:|---|
+| 77 | 62.1 | dropped: order_book::benchmark::generateWorkload |
+| 24 | 19.4 | dropped: order_book::benchmark::`anonymous namespace'::preload |
+| 12 | 9.7 | dropped: order_book::OrderBook::~OrderBook |
+| 9 | 7.3 | `anonymous namespace'::runBenchmarks |
+| 2 | 1.6 | (none) |
+
+## Self time by module
+
+| samples | % | module |
+|---:|---:|---|
+| 1732 | 59.8 | (program) |
+| 1063 | 36.7 | ntdll |
+| 82 | 2.8 | ucrtbase |
+| 20 | 0.7 | VCRUNTIME140 |
+
+## Self time by function (inlined functions shown as their own frames)
+
+| samples | % | function |
+|---:|---:|---|
+| 707 | 24.4 | ntdll!RtlAllocateHeap |
+| 343 | 11.8 | ntdll!RtlFreeHeap |
+| 298 | 10.3 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Find_last |
+| 132 | 4.6 | order_book::benchmark::`anonymous namespace'::execute |
+| 103 | 3.6 | std::_Construct_in_place |
+| 93 | 3.2 | order_book::OrderBook::executeOnce |
+| 66 | 2.3 | order_book::SubmissionResults::accepted |
+| 58 | 2.0 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 58 | 2.0 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 56 | 1.9 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::_Assign_counted_range<order_book::Trade const *> |
+| 55 | 1.9 | order_book::Order::getRemainingQuantity |
+| 41 | 1.4 | ucrtbase!malloc_base |
+| 39 | 1.3 | order_book::OrderBook::matchOrder |
+| 38 | 1.3 | order_book::OrderBook::validateNewOrder |
+| 37 | 1.3 | order_book::PriceLevel::fillOldestOrder |
+| 36 | 1.2 | order_book::OrderBook::crossesBestOpposing |
+| 30 | 1.0 | order_book::OrderBook::submitOrder |
+| 29 | 1.0 | order_book::Order::malformedReason |
+| 28 | 1.0 | ucrtbase!free |
+| 25 | 0.9 | order_book::Order::fillQuantity |
+| 25 | 0.9 | order_book::Order::orderIsActive |
+| 23 | 0.8 | operator new |
+| 21 | 0.7 | std::_Fnv1a_append_bytes |
+| 20 | 0.7 | VCRUNTIME140!memmove |
+| 20 | 0.7 | std::_Tree_val<std::_Tree_simple_types<std::pair<unsigned int const ,order_book::benchmark::`anonymous namespace'::WorkloadModel::Level> > >::_Insert_node |
+| 18 | 0.6 | std::list<std::pair<unsigned int const ,order_book::OrderLocation>,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> > >::_Unchecked_erase |
+| 17 | 0.6 | std::_Deallocate |
+| 15 | 0.5 | order_book::Trade::Trade |
+| 15 | 0.5 | std::vector<order_book::benchmark::BenchmarkCommand,std::allocator<order_book::benchmark::BenchmarkCommand> >::_Tidy |
+| 14 | 0.5 | __security_check_cookie |
+| 14 | 0.5 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Check_rehash_required_1 |
+| 14 | 0.5 | std::_Optional_construct_base<order_book::OrderLocation>::_Assign |
+| 14 | 0.5 | std::_Tree_val<std::_Tree_simple_types<std::pair<unsigned int const ,order_book::PriceLevel> > >::_Extract |
+| 13 | 0.4 | order_book::CancellationResult::cancelled |
+| 13 | 0.4 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Insert_new_node_before |
+| 13 | 0.4 | std::list<order_book::Order,std::allocator<order_book::Order> >::front |
+| 13 | 0.4 | ucrtbase!free_base |
+| 12 | 0.4 | order_book::Order::getSide |
+| 12 | 0.4 | std::list<order_book::Order,std::allocator<order_book::Order> >::_Unchecked_erase |
+| 12 | 0.4 | std::list<order_book::Order,std::allocator<order_book::Order> >::empty |
+| 11 | 0.4 | order_book::isValidSide |
+| 11 | 0.4 | std::_List_node_emplace_op2<std::allocator<std::_List_node<order_book::Order,void *> > >::_Transfer_before |
+| 11 | 0.4 | std::exchange |
+| 11 | 0.4 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::capacity |
+| 10 | 0.3 | order_book::Order::getPriceTick |
+| 9 | 0.3 | ntdll!ExpInterlockedPopEntrySListEnd |
+| 9 | 0.3 | std::_Vector_val<std::_Simple_types<order_book::Trade> >::{ctor} |
+| 8 | 0.3 | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 8 | 0.3 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::_Tidy |
+| 8 | 0.3 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::size |
+
+## Inclusive time by function
+
+| samples | % | function |
+|---:|---:|---|
+| 2897 | 100.0 | KERNEL32!BaseThreadInitThunk |
+| 2897 | 100.0 | __scrt_common_main_seh |
+| 2897 | 100.0 | `anonymous namespace'::runBenchmarks |
+| 2897 | 100.0 | invoke_main |
+| 2897 | 100.0 | main |
+| 2897 | 100.0 | ntdll!RtlUserThreadStart |
+| 2897 | 100.0 | order_book::benchmark::`anonymous namespace'::runCore |
+| 2897 | 100.0 | order_book::benchmark::runOnce |
+| 2897 | 100.0 | order_book::benchmark::runRepeated |
+| 2892 | 99.8 | order_book::benchmark::`anonymous namespace'::execute |
+| 2309 | 79.7 | order_book::OrderBook::submitOrder |
+| 784 | 27.1 | operator new |
+| 784 | 27.1 | order_book::OrderBook::matchOrder |
+| 756 | 26.1 | ucrtbase!malloc_base |
+| 715 | 24.7 | ntdll!RtlAllocateHeap |
+| 589 | 20.3 | order_book::OrderBook::restOrder |
+| 556 | 19.2 | order_book::SubmissionResults::accepted |
+| 546 | 18.8 | order_book::OrderBook::executeOnce |
+| 426 | 14.7 | std::_Allocate_at_least_helper |
+| 383 | 13.2 | std::_Deallocate |
+| 367 | 12.7 | std::_Allocate |
+| 366 | 12.6 | std::_Default_allocate_traits::_Allocate |
+| 361 | 12.5 | ucrtbase!free_base |
+| 348 | 12.0 | ntdll!RtlFreeHeap |
+| 301 | 10.4 | order_book::OrderBook::validateNewOrder |
+| 300 | 10.4 | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 298 | 10.3 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Find_last |
+| 296 | 10.2 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::reserve |
+| 293 | 10.1 | std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> >::allocate |
+| 287 | 9.9 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::_Reallocate |
+| 286 | 9.9 | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 203 | 7.0 | order_book::OrderBook::cancelOrder |
+| 201 | 6.9 | std::allocator<std::_List_node<order_book::Order,void *> >::allocate |
+| 195 | 6.7 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::emplace<unsigned int,order_book::OrderLocation &> |
+| 185 | 6.4 | order_book::PriceLevel::addOrder |
+| 175 | 6.0 | std::list<order_book::Order,std::allocator<order_book::Order> >::_Emplace |
+| 172 | 5.9 | std::list<order_book::Order,std::allocator<order_book::Order> >::insert |
+| 165 | 5.7 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Find |
+| 161 | 5.6 | std::_Alloc_construct_ptr<std::allocator<std::_List_node<order_book::Order,void *> > >::_Allocate |
+| 161 | 5.6 | std::_List_node_emplace_op2<std::allocator<std::_List_node<order_book::Order,void *> > >::{ctor} |
+| 151 | 5.2 | std::vector<order_book::benchmark::BenchmarkCommand,std::allocator<order_book::benchmark::BenchmarkCommand> >::~vector<order_book::benchmark::BenchmarkCommand,std::allocator<order_book::benchmark::BenchmarkCommand> > |
+| 147 | 5.1 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::_Reallocate |
+| 147 | 5.1 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::reserve |
+| 146 | 5.0 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::find |
+| 146 | 5.0 | std::vector<order_book::benchmark::BenchmarkCommand,std::allocator<order_book::benchmark::BenchmarkCommand> >::_Tidy |
+| 145 | 5.0 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::erase |
+| 141 | 4.9 | std::_List_node_emplace_op2<std::allocator<std::_List_node<std::pair<unsigned int const ,order_book::OrderLocation>,void *> > >::{ctor} |
+| 140 | 4.8 | std::_Alloc_construct_ptr<std::allocator<std::_List_node<std::pair<unsigned int const ,order_book::OrderLocation>,void *> > >::_Allocate |
+| 138 | 4.8 | std::allocator<std::_List_node<std::pair<unsigned int const ,order_book::OrderLocation>,void *> >::allocate |
+| 137 | 4.7 | order_book::PriceLevel::fillOldestOrder |
+| 133 | 4.6 | std::allocator<order_book::benchmark::BenchmarkCommand>::deallocate |
+| 131 | 4.5 | std::allocator<order_book::Trade>::allocate |
+| 115 | 4.0 | std::list<std::pair<unsigned int const ,order_book::OrderLocation>,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> > >::_Unchecked_erase |
+| 107 | 3.7 | order_book::OrderBook::cancelOrder::__l2::<lambda_1>::operator() |
+| 107 | 3.7 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Erase |
+| 103 | 3.6 | std::_Construct_in_place |
+| 100 | 3.5 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::_Emplace_one_at_back |
+| 100 | 3.5 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::push_back |
+| 97 | 3.3 | std::_Default_allocator_traits<std::allocator<std::_List_node<std::pair<unsigned int const ,order_book::OrderLocation>,void *> > >::deallocate |
+| 97 | 3.3 | std::_List_node<std::pair<unsigned int const ,order_book::OrderLocation>,void *>::_Freenode |
+
+## Self time by source line
+
+| samples | % | location  function |
+|---:|---:|---|
+| 707 | 24.4 | (no line)  ntdll!RtlAllocateHeap |
+| 343 | 11.8 | (no line)  ntdll!RtlFreeHeap |
+| 131 | 4.5 | include/xhash:1596  std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Find_last |
+| 118 | 4.1 | include/xhash:1589  std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Find_last |
+| 103 | 3.6 | include/xutility:476  std::_Construct_in_place |
+| 75 | 2.6 | benchmarks/benchmark_runner.cpp:32  order_book::benchmark::`anonymous namespace'::execute |
+| 43 | 1.5 | src/order.cpp:68  order_book::Order::getRemainingQuantity |
+| 41 | 1.4 | (no line)  ucrtbase!malloc_base |
+| 37 | 1.3 | include/xtree:1632  std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 34 | 1.2 | include/xtree:1632  std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 28 | 1.0 | (no line)  ucrtbase!free |
+| 28 | 1.0 | include/vector:1480  std::vector<order_book::Trade,std::allocator<order_book::Trade> >::_Assign_counted_range<order_book::Trade const *> |
+| 24 | 0.8 | src/order.cpp:110  order_book::Order::orderIsActive |
+| 20 | 0.7 | (no line)  VCRUNTIME140!memmove |
+| 19 | 0.7 | include/xhash:1587  std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Find_last |
+| 19 | 0.7 | src/order.cpp:36  order_book::Order::malformedReason |
+| 17 | 0.6 | src/order_book.cpp:37  order_book::OrderBook::validateNewOrder |
+| 16 | 0.6 | src/order_book.cpp:114  order_book::OrderBook::crossesBestOpposing |
+| 16 | 0.6 | src/submission_results.cpp:20  order_book::SubmissionResults::accepted |
+| 15 | 0.5 | include/list:1442  std::list<std::pair<unsigned int const ,order_book::OrderLocation>,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> > >::_Unchecked_erase |
+| 15 | 0.5 | include/type_traits:2261  std::_Fnv1a_append_bytes |
+| 15 | 0.5 | src/submission_results.cpp:27  order_book::SubmissionResults::accepted |
+| 14 | 0.5 | benchmarks/benchmark_runner.cpp:30  order_book::benchmark::`anonymous namespace'::execute |
+| 14 | 0.5 | include/optional:165  std::_Optional_construct_base<order_book::OrderLocation>::_Assign |
+| 14 | 0.5 | include/xhash:1674  std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Check_rehash_required_1 |
+| 14 | 0.5 | src/order_book.cpp:122  order_book::OrderBook::executeOnce |
+| 14 | 0.5 | src/order_book.cpp:184  order_book::OrderBook::matchOrder |
+| 13 | 0.4 | (no line)  ucrtbase!free_base |
+| 13 | 0.4 | include/xhash:1588  std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Find_last |
+| 13 | 0.4 | src/order_book.cpp:173  order_book::OrderBook::matchOrder |
+| 13 | 0.4 | src/order_book.cpp:31  order_book::OrderBook::validateNewOrder |
+| 12 | 0.4 | heap/new_scalar.cpp:33  operator new |
+| 12 | 0.4 | include/list:1213  std::list<order_book::Order,std::allocator<order_book::Order> >::empty |
+| 12 | 0.4 | include/vector:1432  std::vector<order_book::Trade,std::allocator<order_book::Trade> >::_Assign_counted_range<order_book::Trade const *> |
+| 12 | 0.4 | include/xmemory:289  std::_Deallocate |
+| 12 | 0.4 | src/cancellation_results.cpp:19  order_book::CancellationResult::cancelled |
+| 12 | 0.4 | src/order.cpp:66  order_book::Order::getRemainingQuantity |
+| 11 | 0.4 | benchmarks/benchmark_runner.cpp:37  order_book::benchmark::`anonymous namespace'::execute |
+| 11 | 0.4 | include/vector:1420  std::vector<order_book::Trade,std::allocator<order_book::Trade> >::_Assign_counted_range<order_book::Trade const *> |
+| 11 | 0.4 | include/vector:1924  std::vector<order_book::Trade,std::allocator<order_book::Trade> >::capacity |
+| 11 | 0.4 | include/xhash:1606  std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Find_last |
+| 11 | 0.4 | order_book/side.hpp:11  order_book::isValidSide |
+| 11 | 0.4 | src/order.cpp:90  order_book::Order::fillQuantity |
+| 11 | 0.4 | src/order.cpp:95  order_book::Order::getSide |
+| 11 | 0.4 | src/order_book.cpp:146  order_book::OrderBook::executeOnce |
+| 11 | 0.4 | src/submission_results.cpp:30  order_book::SubmissionResults::accepted |
+| 10 | 0.3 | include/list:1233  std::list<order_book::Order,std::allocator<order_book::Order> >::front |
+| 10 | 0.3 | include/list:609  std::_List_node_emplace_op2<std::allocator<std::_List_node<order_book::Order,void *> > >::_Transfer_before |
+| 10 | 0.3 | include/xtree:1636  std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 9 | 0.3 | (no line)  ntdll!ExpInterlockedPopEntrySListEnd |
+| 9 | 0.3 | benchmarks/benchmark_runner.cpp:39  order_book::benchmark::`anonymous namespace'::execute |
+| 9 | 0.3 | include/vector:2093  std::vector<order_book::benchmark::BenchmarkCommand,std::allocator<order_book::benchmark::BenchmarkCommand> >::_Tidy |
+| 9 | 0.3 | src/order_book.cpp:113  order_book::OrderBook::crossesBestOpposing |
+| 9 | 0.3 | src/order_book.cpp:116  order_book::OrderBook::crossesBestOpposing |
+| 9 | 0.3 | src/order_book.cpp:148  order_book::OrderBook::executeOnce |
+| 9 | 0.3 | src/order_book.cpp:155  order_book::OrderBook::executeOnce |
+| 8 | 0.3 | amd64/amdsecgs.asm:45  __security_check_cookie |
+| 8 | 0.3 | heap/new_scalar.cpp:36  operator new |
+| 8 | 0.3 | include/utility:773  std::exchange |
+| 8 | 0.3 | include/vector:1915  std::vector<order_book::Trade,std::allocator<order_book::Trade> >::size |
+
+## Heap allocator: samples inside malloc/free and the heap, by kind
+
+| samples | % | kind |
+|---:|---:|---|
+| 784 | 27.1 | allocate |
+| 381 | 13.2 | free |
+
+## Heap allocator: by project caller and the standard-library entry point it went through
+
+| samples | % | kind | project caller | entry point |
+|---:|---:|---|
+| 271 | 9.4 | allocate | order_book::SubmissionResults::accepted | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::reserve |
+| 161 | 5.6 | allocate | order_book::PriceLevel::addOrder | std::list<order_book::Order,std::allocator<order_book::Order> >::insert |
+| 129 | 4.5 | allocate | order_book::OrderBook::matchOrder | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::reserve |
+| 122 | 4.2 | free | order_book::benchmark::`anonymous namespace'::execute | std::vector<order_book::benchmark::BenchmarkCommand,std::allocator<order_book::benchmark::BenchmarkCommand> >::~vector<order_book::benchmark::BenchmarkCommand,std::allocator<order_book::benchmark::BenchmarkCommand> > |
+| 69 | 2.4 | allocate | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::emplace<unsigned int,order_book::OrderLocation &> |
+| 69 | 2.4 | allocate | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::emplace<unsigned int,order_book::OrderLocation &> |
+| 61 | 2.1 | free | order_book::benchmark::`anonymous namespace'::execute | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::{dtor} |
+| 56 | 1.9 | free | order_book::PriceLevel::fillOldestOrder | std::list<order_book::Order,std::allocator<order_book::Order> >::pop_front |
+| 53 | 1.8 | free | order_book::OrderBook::executeOnce | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::erase |
+| 41 | 1.4 | free | order_book::OrderBook::cancelOrder::__l2::<lambda_1>::operator() | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::erase<std::_List_iterator<std::_List_val<std::_List_simple_types<std::pair<unsigned int const ,order_book::OrderLocation> > > >,0> |
+| 40 | 1.4 | allocate | order_book::PriceLevel::PriceLevel | std::list<order_book::Order,std::allocator<order_book::Order> >::{ctor} |
+| 32 | 1.1 | free | order_book::OrderBook::executeOnce | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::erase<std::_Tree_iterator<std::_Tree_val<std::_Tree_simple_types<std::pair<unsigned int const ,order_book::PriceLevel> > > >,0> |
+| 19 | 0.7 | allocate | order_book::CancellationResult::{ctor} | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::{ctor} |
+| 14 | 0.5 | allocate | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > | std::map<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > >::try_emplace |
+| 14 | 0.5 | free | order_book::OrderBook::cancelOrder::__l2::<lambda_1>::operator() | ucrtbase!free_base |
+| 12 | 0.4 | allocate | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > | std::map<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > >::try_emplace |
+| 2 | 0.1 | free | order_book::OrderBook::matchOrder | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::reserve |
+
+## Heap allocator: self time by function
+
+| samples | % | function |
+|---:|---:|---|
+| 707 | 24.4 | ntdll!RtlAllocateHeap |
+| 343 | 11.8 | ntdll!RtlFreeHeap |
+| 41 | 1.4 | ucrtbase!malloc_base |
+| 28 | 1.0 | ucrtbase!free |
+| 23 | 0.8 | operator new |
+| 9 | 0.3 | ntdll!ExpInterlockedPopEntrySListEnd |
+| 5 | 0.2 | malloc |
+| 5 | 0.2 | operator delete |
+| 2 | 0.1 | ntdll!RtlTryEnterCriticalSection |
+| 1 | 0.0 | ntdll!RtlInterlockedPopEntrySList |
+| 1 | 0.0 | ntdll!RtlUpcaseUnicodeString |
+
+## Container: std::map (red-black tree) (inclusive 685 samples): by entry point and project caller
+
+| samples | % | entry point | project caller |
+|---:|---:|---|
+| 300 | 10.4 | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > | order_book::OrderBook::restOrder |
+| 286 | 9.9 | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > | order_book::OrderBook::restOrder |
+| 63 | 2.2 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::erase<std::_Tree_iterator<std::_Tree_val<std::_Tree_simple_types<std::pair<unsigned int const ,order_book::PriceLevel> > > >,0> | order_book::OrderBook::executeOnce |
+| 20 | 0.7 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::find | order_book::OrderBook::cancelOrder::__l2::<lambda_1>::operator() |
+| 15 | 0.5 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::find | order_book::OrderBook::cancelOrder::__l2::<lambda_1>::operator() |
+| 1 | 0.0 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::begin | order_book::OrderBook::crossesBestOpposing |
+
+## Container: std::map (red-black tree) (inclusive 685 samples): self time by function
+
+| samples | % | function |
+|---:|---:|---|
+| 329 | 11.4 | ntdll!RtlAllocateHeap |
+| 58 | 2.0 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 58 | 2.0 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 30 | 1.0 | ntdll!RtlFreeHeap |
+| 20 | 0.7 | std::_Tree_val<std::_Tree_simple_types<std::pair<unsigned int const ,order_book::benchmark::`anonymous namespace'::WorkloadModel::Level> > >::_Insert_node |
+| 17 | 0.6 | ucrtbase!malloc_base |
+| 14 | 0.5 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Check_rehash_required_1 |
+| 14 | 0.5 | std::_Optional_construct_base<order_book::OrderLocation>::_Assign |
+| 14 | 0.5 | std::_Tree_val<std::_Tree_simple_types<std::pair<unsigned int const ,order_book::PriceLevel> > >::_Extract |
+| 13 | 0.4 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Insert_new_node_before |
+| 11 | 0.4 | std::_List_node_emplace_op2<std::allocator<std::_List_node<order_book::Order,void *> > >::_Transfer_before |
+| 10 | 0.3 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Find_last |
+| 9 | 0.3 | operator new |
+| 8 | 0.3 | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 7 | 0.2 | order_book::PriceLevel::addOrder |
+| 7 | 0.2 | std::_Tree_unchecked_const_iterator<std::_Tree_val<std::_Tree_simple_types<std::pair<unsigned int const ,order_book::PriceLevel> > >,std::_Iterator_base0>::operator++ |
+| 5 | 0.2 | ntdll!ExpInterlockedPopEntrySListEnd |
+| 5 | 0.2 | std::_Tree_val<std::_Tree_simple_types<std::pair<unsigned int const ,order_book::benchmark::`anonymous namespace'::WorkloadModel::Level> > >::_Rrotate |
+| 4 | 0.1 | std::_Fnv1a_append_bytes |
+| 4 | 0.1 | std::_List_node<order_book::Order,void *>::_Free_non_head |
+
+## Container: std::unordered_map (hash table) (inclusive 636 samples): by entry point and project caller
+
+| samples | % | entry point | project caller |
+|---:|---:|---|
+| 145 | 5.0 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::erase | order_book::OrderBook::executeOnce |
+| 132 | 4.6 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::find | order_book::OrderBook::validateNewOrder |
+| 102 | 3.5 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::emplace<unsigned int,order_book::OrderLocation &> | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 93 | 3.2 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::emplace<unsigned int,order_book::OrderLocation &> | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 67 | 2.3 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Find_last | order_book::OrderBook::validateNewOrder |
+| 49 | 1.7 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::erase<std::_List_iterator<std::_List_val<std::_List_simple_types<std::pair<unsigned int const ,order_book::OrderLocation> > > >,0> | order_book::OrderBook::cancelOrder::__l2::<lambda_1>::operator() |
+| 18 | 0.6 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Find | order_book::OrderBook::validateNewOrder |
+| 14 | 0.5 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::find | order_book::OrderBook::cancelOrder |
+| 11 | 0.4 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Find | order_book::OrderBook::cancelOrder |
+| 3 | 0.1 | std::_Fnv1a_append_bytes | order_book::OrderBook::validateNewOrder |
+| 2 | 0.1 | std::_Hash_representation | order_book::OrderBook::validateNewOrder |
+
+## Container: std::unordered_map (hash table) (inclusive 636 samples): self time by function
+
+| samples | % | function |
+|---:|---:|---|
+| 298 | 10.3 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Find_last |
+| 127 | 4.4 | ntdll!RtlAllocateHeap |
+| 88 | 3.0 | ntdll!RtlFreeHeap |
+| 21 | 0.7 | std::_Fnv1a_append_bytes |
+| 18 | 0.6 | std::list<std::pair<unsigned int const ,order_book::OrderLocation>,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> > >::_Unchecked_erase |
+| 14 | 0.5 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Check_rehash_required_1 |
+| 13 | 0.4 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Insert_new_node_before |
+| 7 | 0.2 | std::equal_to<unsigned int>::operator() |
+| 6 | 0.2 | std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >::operator() |
+| 5 | 0.2 | std::_Deallocate |
+| 4 | 0.1 | ntdll!ExpInterlockedPopEntrySListEnd |
+| 4 | 0.1 | operator new |
+| 4 | 0.1 | ucrtbase!free |
+| 3 | 0.1 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Check_max_size |
+| 3 | 0.1 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::_Erase_bucket |
+| 3 | 0.1 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::emplace<unsigned int,order_book::OrderLocation &> |
+| 3 | 0.1 | ucrtbase!malloc_base |
+| 2 | 0.1 | std::_Alloc_construct_ptr<std::allocator<std::_List_node<std::pair<unsigned int const ,order_book::OrderLocation>,void *> > >::_Allocate |
+| 2 | 0.1 | std::pair<std::_List_iterator<std::_List_val<std::_List_simple_types<std::pair<unsigned int const ,order_book::OrderLocation> > > >,bool>::{ctor} |
+| 2 | 0.1 | std::pair<unsigned int const ,order_book::OrderLocation>::{ctor} |
+
+## Container: std::list (inclusive 617 samples): by entry point and project caller
+
+| samples | % | entry point | project caller |
+|---:|---:|---|
+| 172 | 5.9 | std::list<order_book::Order,std::allocator<order_book::Order> >::insert | order_book::PriceLevel::addOrder |
+| 75 | 2.6 | std::list<order_book::Order,std::allocator<order_book::Order> >::pop_front | order_book::PriceLevel::fillOldestOrder |
+| 72 | 2.5 | std::list<std::pair<unsigned int const ,order_book::OrderLocation>,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> > >::_Unchecked_erase | order_book::OrderBook::executeOnce |
+| 71 | 2.5 | std::_List_node_emplace_op2<std::allocator<std::_List_node<std::pair<unsigned int const ,order_book::OrderLocation>,void *> > >::{ctor} | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 70 | 2.4 | std::_List_node_emplace_op2<std::allocator<std::_List_node<std::pair<unsigned int const ,order_book::OrderLocation>,void *> > >::{ctor} | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 49 | 1.7 | std::_Hash<std::_Umap_traits<unsigned int,order_book::OrderLocation,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> >,0> >::erase<std::_List_iterator<std::_List_val<std::_List_simple_types<std::pair<unsigned int const ,order_book::OrderLocation> > > >,0> | order_book::OrderBook::cancelOrder::__l2::<lambda_1>::operator() |
+| 40 | 1.4 | std::list<order_book::Order,std::allocator<order_book::Order> >::{ctor} | order_book::PriceLevel::PriceLevel |
+| 23 | 0.8 | std::list<order_book::Order,std::allocator<order_book::Order> >::{dtor} | order_book::OrderBook::executeOnce |
+| 10 | 0.3 | std::list<order_book::Order,std::allocator<order_book::Order> >::empty | order_book::PriceLevel::isEmpty |
+| 10 | 0.3 | std::list<order_book::Order,std::allocator<order_book::Order> >::front | order_book::PriceLevel::getOldestOrder |
+| 6 | 0.2 | std::_List_const_iterator<std::_List_val<std::_List_simple_types<std::pair<unsigned int const ,order_book::OrderLocation> > > >::operator== | order_book::OrderBook::validateNewOrder |
+| 5 | 0.2 | std::list<order_book::Order,std::allocator<order_book::Order> >::erase | order_book::PriceLevel::removeOrder |
+| 3 | 0.1 | std::list<order_book::Order,std::allocator<order_book::Order> >::front | order_book::PriceLevel::fillOldestOrder |
+| 2 | 0.1 | std::_Alloc_construct_ptr<std::allocator<std::_List_node<std::pair<unsigned int const ,order_book::OrderLocation>,void *> > >::_Allocate | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 2 | 0.1 | std::list<order_book::Order,std::allocator<order_book::Order> >::_Emplace | order_book::PriceLevel::addOrder |
+| 2 | 0.1 | std::list<order_book::Order,std::allocator<order_book::Order> >::empty | order_book::PriceLevel::getOldestOrder |
+| 2 | 0.1 | std::pair<std::_List_iterator<std::_List_val<std::_List_simple_types<std::pair<unsigned int const ,order_book::OrderLocation> > > >,bool>::{ctor} | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 1 | 0.0 | std::_Alloc_construct_ptr<std::allocator<std::_List_node<std::pair<unsigned int const ,order_book::OrderLocation>,void *> > >::{ctor} | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 1 | 0.0 | std::_Default_allocator_traits<std::allocator<std::_List_node<order_book::Order,void *> > >::construct | order_book::PriceLevel::addOrder |
+| 1 | 0.0 | std::list<order_book::Order,std::allocator<order_book::Order> >::_Unchecked_erase | order_book::PriceLevel::fillOldestOrder |
+
+## Container: std::list (inclusive 617 samples): self time by function
+
+| samples | % | function |
+|---:|---:|---|
+| 307 | 10.6 | ntdll!RtlAllocateHeap |
+| 156 | 5.4 | ntdll!RtlFreeHeap |
+| 18 | 0.6 | std::list<std::pair<unsigned int const ,order_book::OrderLocation>,std::allocator<std::pair<unsigned int const ,order_book::OrderLocation> > >::_Unchecked_erase |
+| 15 | 0.5 | ucrtbase!malloc_base |
+| 13 | 0.4 | std::list<order_book::Order,std::allocator<order_book::Order> >::front |
+| 12 | 0.4 | std::list<order_book::Order,std::allocator<order_book::Order> >::_Unchecked_erase |
+| 12 | 0.4 | std::list<order_book::Order,std::allocator<order_book::Order> >::empty |
+| 11 | 0.4 | std::_List_node_emplace_op2<std::allocator<std::_List_node<order_book::Order,void *> > >::_Transfer_before |
+| 10 | 0.3 | std::_Deallocate |
+| 9 | 0.3 | ntdll!ExpInterlockedPopEntrySListEnd |
+| 8 | 0.3 | ucrtbase!free |
+| 7 | 0.2 | operator new |
+| 6 | 0.2 | std::_List_const_iterator<std::_List_val<std::_List_simple_types<std::pair<unsigned int const ,order_book::OrderLocation> > > >::operator== |
+| 5 | 0.2 | std::_List_val<std::_List_simple_types<order_book::Order> >::_Unlinknode |
+| 4 | 0.1 | std::_List_node<order_book::Order,void *>::_Free_non_head |
+| 4 | 0.1 | ucrtbase!free_base |
+| 3 | 0.1 | std::list<order_book::Order,std::allocator<order_book::Order> >::_Emplace |
+| 2 | 0.1 | malloc |
+| 2 | 0.1 | ntdll!RtlTryEnterCriticalSection |
+| 2 | 0.1 | std::_Alloc_construct_ptr<std::allocator<std::_List_node<std::pair<unsigned int const ,order_book::OrderLocation>,void *> > >::_Allocate |
+
+## Container: std::vector (inclusive 917 samples): by entry point and project caller
+
+| samples | % | entry point | project caller |
+|---:|---:|---|
+| 296 | 10.2 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::reserve | order_book::SubmissionResults::accepted |
+| 151 | 5.2 | std::vector<order_book::benchmark::BenchmarkCommand,std::allocator<order_book::benchmark::BenchmarkCommand> >::~vector<order_book::benchmark::BenchmarkCommand,std::allocator<order_book::benchmark::BenchmarkCommand> > | order_book::benchmark::`anonymous namespace'::execute |
+| 147 | 5.1 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::reserve | order_book::OrderBook::matchOrder |
+| 100 | 3.5 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::push_back | order_book::SubmissionResults::accepted |
+| 75 | 2.6 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::{dtor} | order_book::benchmark::`anonymous namespace'::execute |
+| 59 | 2.0 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::operator= | order_book::SubmissionResults::{ctor} |
+| 23 | 0.8 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::{ctor} | order_book::CancellationResult::{ctor} |
+| 11 | 0.4 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::capacity | order_book::OrderBook::matchOrder |
+| 11 | 0.4 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::{ctor} | order_book::OrderBook::submitOrder |
+| 7 | 0.2 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::operator= | order_book::SubmissionResults::accepted |
+| 7 | 0.2 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::push_back | order_book::OrderBook::matchOrder |
+| 6 | 0.2 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::size | order_book::SubmissionResults::accepted |
+| 4 | 0.1 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::_Emplace_one_at_back | order_book::OrderBook::matchOrder |
+| 4 | 0.1 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::{ctor} | order_book::OrderBook::submitOrder |
+| 2 | 0.1 | std::_Compressed_pair<std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> >,std::_Vector_val<std::_Simple_types<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >,1>::{ctor} | order_book::OrderBook::submitOrder |
+| 2 | 0.1 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::_Reallocate | order_book::OrderBook::matchOrder |
+| 2 | 0.1 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::size | order_book::OrderBook::matchOrder |
+| 2 | 0.1 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::{ctor} | order_book::OrderBook::matchOrder |
+| 2 | 0.1 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::{ctor} | order_book::SubmissionResults::{ctor} |
+| 1 | 0.0 | std::_Vector_val<std::_Simple_types<order_book::Trade> >::{ctor} | order_book::OrderBook::matchOrder |
+| 1 | 0.0 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::{dtor} | order_book::SubmissionResults::accepted |
+| 1 | 0.0 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::_Change_array | order_book::SubmissionResults::accepted |
+| 1 | 0.0 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::_Construct_n | order_book::CancellationResult::cancelled |
+| 1 | 0.0 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::_Reallocate | order_book::SubmissionResults::accepted |
+| 1 | 0.0 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::capacity | order_book::SubmissionResults::accepted |
+
+## Container: std::vector (inclusive 917 samples): self time by function
+
+| samples | % | function |
+|---:|---:|---|
+| 378 | 13.0 | ntdll!RtlAllocateHeap |
+| 160 | 5.5 | ntdll!RtlFreeHeap |
+| 103 | 3.6 | std::_Construct_in_place |
+| 56 | 1.9 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::_Assign_counted_range<order_book::Trade const *> |
+| 24 | 0.8 | ucrtbase!malloc_base |
+| 20 | 0.7 | VCRUNTIME140!memmove |
+| 20 | 0.7 | ucrtbase!free |
+| 15 | 0.5 | std::vector<order_book::benchmark::BenchmarkCommand,std::allocator<order_book::benchmark::BenchmarkCommand> >::_Tidy |
+| 14 | 0.5 | operator new |
+| 11 | 0.4 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::capacity |
+| 9 | 0.3 | std::_Vector_val<std::_Simple_types<order_book::Trade> >::{ctor} |
+| 8 | 0.3 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::_Tidy |
+| 8 | 0.3 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::size |
+| 8 | 0.3 | ucrtbase!free_base |
+| 7 | 0.2 | std::exchange |
+| 7 | 0.2 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::capacity |
+| 6 | 0.2 | std::_Deallocate |
+| 6 | 0.2 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::_Change_array |
+| 5 | 0.2 | operator delete |
+| 5 | 0.2 | std::_Vector_val<std::_Simple_types<order_book::Trade> >::_Take_contents |
+
+## Container: std::variant / std::visit (inclusive 431 samples): by entry point and project caller
+
+| samples | % | entry point | project caller |
+|---:|---:|---|
+| 296 | 10.2 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::reserve | order_book::SubmissionResults::accepted |
+| 100 | 3.5 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::push_back | order_book::SubmissionResults::accepted |
+| 23 | 0.8 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::{ctor} | order_book::CancellationResult::{ctor} |
+| 4 | 0.1 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::{ctor} | order_book::OrderBook::submitOrder |
+| 2 | 0.1 | std::_Compressed_pair<std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> >,std::_Vector_val<std::_Simple_types<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >,1>::{ctor} | order_book::OrderBook::submitOrder |
+| 2 | 0.1 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::{ctor} | order_book::SubmissionResults::{ctor} |
+| 1 | 0.0 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::_Change_array | order_book::SubmissionResults::accepted |
+| 1 | 0.0 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::_Construct_n | order_book::CancellationResult::cancelled |
+| 1 | 0.0 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::_Reallocate | order_book::SubmissionResults::accepted |
+| 1 | 0.0 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::capacity | order_book::SubmissionResults::accepted |
+
+## Container: std::variant / std::visit (inclusive 431 samples): self time by function
+
+| samples | % | function |
+|---:|---:|---|
+| 268 | 9.3 | ntdll!RtlAllocateHeap |
+| 97 | 3.3 | std::_Construct_in_place |
+| 14 | 0.5 | ucrtbase!malloc_base |
+| 9 | 0.3 | VCRUNTIME140!memmove |
+| 7 | 0.2 | operator new |
+| 7 | 0.2 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::capacity |
+| 6 | 0.2 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::_Change_array |
+| 4 | 0.1 | std::_Vector_val<std::_Simple_types<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::{ctor} |
+| 4 | 0.1 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::reserve |
+| 3 | 0.1 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::_Emplace_one_at_back |
+| 2 | 0.1 | std::_Allocate<16,std::_Default_allocate_traits> |
+| 2 | 0.1 | std::exchange |
+| 2 | 0.1 | std::vector<order_book::Trade,std::allocator<order_book::Trade> >::_Tidy |
+| 2 | 0.1 | std::vector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> > >::_Reallocate |
+| 1 | 0.0 | malloc |
+| 1 | 0.0 | std::_Uninitialized_copy |
+| 1 | 0.0 | std::_Variant_storage_<1,order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>::{ctor} |
+| 1 | 0.0 | std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> >::allocate |
+
+## Container: strings and streams (inclusive 0 samples): by entry point and project caller
+
+| samples | % | entry point | project caller |
+|---:|---:|---|
+
+## Container: strings and streams (inclusive 0 samples): self time by function
+
+| samples | % | function |
+|---:|---:|---|
+
