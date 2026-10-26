@@ -341,8 +341,8 @@ namespace order_book {
         }
 
         BookSnapshot snapshot;
-        snapshot.asks = bestAsks;
-        snapshot.bids = bestBids;
+        snapshot.asks = std::move(bestAsks);
+        snapshot.bids = std::move(bestBids);
         snapshot.totalActiveVisibleOrders = totalActiveOrders;
         return snapshot;
     }
