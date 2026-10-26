@@ -169,6 +169,33 @@ void testAddOrderToExistingLevelRollsBack() {
     expect(failures > 0, "addOrder (existing level): at least one allocation failure should have been injected");
 }
 
+// A submission that does not cross rests whole without matching. Whatever allocation fails,
+// the book is left as it was: no index entry, no order, no new or emptied level. Its sequence
+// number is consumed, since submitOrder numbers an order as soon as it is accepted and every
+// allocation comes after that.
+void expectRestingSubmitRollsBack(Order incoming, const std::string& context) {
+    const long failures = failEachAllocationInTurn(
+        [](OrderBook& book) { book.addOrder(Order(1, 100, 5, 1, Side::SELL)); },
+        [incoming](OrderBook& book) { book.submitOrder(incoming); },
+        [](const OrderBook& book, const std::string& attempt) {
+            const auto& asks = Access::asks(book);
+            expect(asks.size() == 1 && asks.at(100).getOrdersQuantity() == 1 && asks.at(100).getAggregateQuantity() == 5,
+                   attempt + ": a failed resting submission should leave the asks as they were");
+            expect(Access::bids(book).empty(), attempt + ": a failed resting submission should not leave a bid level");
+            expect(Access::index(book).size() == 1 && Access::index(book).count(2) == 0,
+                   attempt + ": a failed resting submission should not leave an index entry");
+            expect(Access::nextSequenceNum(book) == 3,
+                   attempt + ": a resting submission accepted before failing should still have consumed its number");
+        },
+        context);
+    expect(failures > 0, context + ": at least one allocation failure should have been injected");
+}
+
+void testRestingSubmitRollsBack() {
+    expectRestingSubmitRollsBack(Order(2, 100, 5, 9, Side::SELL), "submitOrder resting (existing level)");
+    expectRestingSubmitRollsBack(Order(2, 99, 5, 9, Side::BUY), "submitOrder resting (new level)");
+}
+
 void testSubmitOrderStaysConsistent() {
     // Sweeps two asks, then rests the remainder as a new bid level.
     const long failures = failEachAllocationInTurn(
@@ -232,6 +259,7 @@ int main() {
         testAddOrderToNewLevelRollsBack();
         testAddOrderToExistingLevelRollsBack();
         testSubmitOrderStaysConsistent();
+        testRestingSubmitRollsBack();
         testConsumeLevelFailsBeforeFilling();
         testCancelOrderFailsBeforeRemoving();
 
