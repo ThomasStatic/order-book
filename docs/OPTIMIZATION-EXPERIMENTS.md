@@ -315,3 +315,19 @@ The standard size is 16 pairs. The base is experiment 4's code.
   - `CLAUDE.md`'s two descriptions of the guard are corrected, and so is the exception text.
   - `invariant_tests` now checks the detail text of the new level check, so deleting that branch would fail a test.
   - `cancellation_tests` has a test that a null handle and a handle to another level make `cancelOrder` throw without changing the book. It runs only without automatic invariant checks, since with them the command's boundary aborts first.
+
+### Experiment 7: aggregate-quantity maintenance. A null result, as predicted; nothing kept.
+
+A throwaway build stopped maintaining each level's cached aggregate. It removed the add or subtract in `addOrder`, `fillOldestOrder`, and `removeOrder`, and summed the queue whenever the aggregate was asked for. It was compared with experiment 5's code, 16 pairs.
+
+| Workload | core | replay |
+|---|---:|---:|
+| `small-book` | 1.003 (0.993-1.006) | 1.004 (1.002-1.009) |
+| `matching-heavy` | 0.994 (0.985-1.021) | 0.998 (0.994-1.006) |
+| `deep-book` | 1.022 (0.957-1.041) | **0.950 (0.940-0.952)**, 0% of pairs faster |
+| `cancellation-heavy` | 1.015 (0.970-1.031) | 0.989 (0.981-0.999) |
+| `mostly-resting` | 1.003 (0.990-1.034) | **0.953 (0.945-0.971)**, 6% of pairs faster |
+
+- **Outcome.** Exactly the plan's prediction. The core path is within noise on every workload: maintaining the aggregate costs nothing measurable. The replay path is 5% slower on the two workloads whose final books hold about 90,000-100,000 orders, because the replay's full-depth snapshot now sums every queue. It is unchanged on the small books.
+- **What it says about the method.** The protocol reported no change where the profile said there was none, and a change of the predicted sign and rough size where one was expected. This supports reading the other experiments' results within the stated ±3% floor.
+- **Reverted.** The maintained aggregate stays: it is free on the hot path, and it keeps `snapshot` proportional to levels rather than orders.
