@@ -469,12 +469,53 @@ if(BUILD_TESTING)
 endif()
 
 if(ORDER_BOOK_BUILD_BENCHMARKS)
+    # Workload generation, timed runs, and result export (benchmarks/README.md). A library so
+    # its own tests can drive it. Numbers are only meaningful from a Release build; the
+    # program refuses any other unless given --allow-unoptimized.
+    add_library(order_book_benchmarking STATIC
+        benchmarks/workload.cpp
+        benchmarks/benchmark_runner.cpp
+        benchmarks/benchmark_report.cpp
+    )
+
+    target_compile_features(order_book_benchmarking PUBLIC cxx_std_20)
+    target_include_directories(order_book_benchmarking PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks)
+    target_link_libraries(order_book_benchmarking PUBLIC order_book_replay)
+    # Recorded with every result, so a report says which configuration produced it.
+    target_compile_definitions(order_book_benchmarking PRIVATE ORDER_BOOK_BUILD_CONFIG="$<CONFIG>")
+    # GCC defines no macro under UBSan, so say whether order_book_enable_sanitizers applies it.
+    if(ORDER_BOOK_ENABLE_UBSAN AND NOT MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_definitions(order_book_benchmarking PRIVATE ORDER_BOOK_UNDEFINED_SANITIZER=1)
+    endif()
+    order_book_enable_warnings(order_book_benchmarking)
+    order_book_enable_sanitizers(order_book_benchmarking)
+
     add_executable(order_book_benchmarks
         benchmarks/order_book_benchmark.cpp
     )
 
     target_compile_features(order_book_benchmarks PRIVATE cxx_std_20)
-    target_link_libraries(order_book_benchmarks PRIVATE order_book)
+    target_link_libraries(order_book_benchmarks PRIVATE order_book_benchmarking)
     order_book_enable_warnings(order_book_benchmarks)
     order_book_enable_sanitizers(order_book_benchmarks)
+
+    if(BUILD_TESTING)
+        add_executable(benchmark_harness_tests
+            tests/benchmark_harness_test.cpp
+        )
+
+        target_compile_features(benchmark_harness_tests PRIVATE cxx_std_20)
+        target_link_libraries(benchmark_harness_tests PRIVATE order_book_benchmarking)
+        order_book_enable_warnings(benchmark_harness_tests)
+        order_book_enable_sanitizers(benchmark_harness_tests)
+        add_test(NAME benchmark_harness_tests COMMAND benchmark_harness_tests)
+
+        # The program end to end on a tiny run of one workload, both kinds, writing both
+        # files. --allow-unoptimized, since CTest runs in every configuration.
+        add_test(NAME benchmark_cli_smoke
+            COMMAND order_book_benchmarks --workload small-book --commands 500 --kind both
+                    --repetitions 2 --warmup 1 --allow-unoptimized
+                    --csv ${CMAKE_CURRENT_BINARY_DIR}/benchmark-smoke.csv
+                    --json ${CMAKE_CURRENT_BINARY_DIR}/benchmark-smoke.json)
+    endif()
 endif()

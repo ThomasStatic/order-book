@@ -8,7 +8,7 @@ A correctness-first C++ limit-order-book and matching-engine project.
 - `src/` — implementation for the reusable library
 - `apps/` — thin CLI entry points
 - `tests/` — lightweight infrastructure tests
-- `benchmarks/` — optional benchmark placeholders
+- `benchmarks/` — the optional benchmark harness ([`benchmarks/README.md`](benchmarks/README.md))
 - `docs/` — design notes
 
 ## Build and test
@@ -72,12 +72,15 @@ resting orders: 1
 
 Exit statuses: `0` replayed to the end, even if the book rejected some commands (or help was printed); `1` input error (the file can't be opened or read, or is malformed; what ran before the error is still printed, and the diagnostic goes to stderr); `2` usage error (stderr names the problem and shows the usage); `3` engine failure (the book threw or failed an invariant check). Output is byte-identical on every platform, with LF line endings.
 
-### Enable benchmarks
+### Benchmarks
+
+`order_book_benchmarks` generates seeded workloads, then times them on a freshly preloaded book. Generation and preloading stay outside the timed region. Each run is repeated after a warm-up, and every measurement can be exported as CSV or JSON. It times the engine alone (`--kind core`) or the CSV replay path end to end (`--kind replay`). It runs only in an optimized build (Release, no automatic invariant checks, no sanitizers) unless given `--allow-unoptimized`. See [`benchmarks/README.md`](benchmarks/README.md) for the workloads, what is timed, and the output formats.
 
 ```bash
-cmake -S . -B build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DORDER_BOOK_BUILD_BENCHMARKS=ON
-cmake --build build/debug --target order_book_benchmarks
-./build/debug/order_book_benchmarks
+cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DORDER_BOOK_BUILD_BENCHMARKS=ON
+cmake --build build/release --target order_book_benchmarks
+./build/release/order_book_benchmarks                                  # all five workloads, 100k timed commands, 5 runs each
+./build/release/order_book_benchmarks --size smoke --kind both --json results.json
 ```
 
 ### Enable sanitizers
@@ -147,5 +150,5 @@ ctest --test-dir build/debug --output-on-failure
 - The reusable library target is `order_book`.
 - The CLI target is `order_book_cli`.
 - The smoke-test target is `order_book_tests`.
-- Benchmarks are only built when `ORDER_BOOK_BUILD_BENCHMARKS` is enabled.
+- Benchmarks (and their tests) are only built when `ORDER_BOOK_BUILD_BENCHMARKS` is enabled.
 - The current implementation assumes a fixed tick size of $0.01 for simplicity.
