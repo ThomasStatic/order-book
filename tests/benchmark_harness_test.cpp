@@ -406,6 +406,7 @@ BenchmarkReport fabricatedReport() {
     record.fingerprint = 0xabcULL;
     record.preloadOrders = 100;
     record.timedCommands = 600;
+    record.reservedOrders = 173;
     report.workloads.push_back(record);
     report.measurements.push_back(fabricated("small-book", BenchmarkKind::CORE, true, 1, 1500000000));
     report.measurements.push_back(fabricated("small-book", BenchmarkKind::CORE, false, 1, 3000000000));
@@ -431,7 +432,7 @@ void testJsonExport() {
          {"\"generator_version\": 2", "\"seed\": 42", "\"size\": \"custom\"", "\"timed_commands\": 600",
           "\"started_at_unix_seconds\": 1700000000", "\"config\": \"Release\"",
           "\"compiler\": \"Test \\\"compiler\\\"\"", "\"optimized\": true", "\"name\": \"small-book\"",
-          "\"fingerprint\": \"0xabc\"", "\"target_levels\": 10", "\"marketable\": 25", "\"active_order_cap\": 200", "\"warmup\": true",
+          "\"fingerprint\": \"0xabc\"", "\"target_levels\": 10", "\"marketable\": 25", "\"active_order_cap\": 200", "\"reserved_orders\": 173", "\"warmup\": true",
           "\"elapsed_ns\": 3000000000", "\"ops_per_second\": 200.000", "\"repetitions\": 1",
           "\"median\": 200.000"}) {
         expect(contains(json, part), "JSON export holds " + part + ":\n" + json);
@@ -493,6 +494,17 @@ void testBuildInfo() {
 
 }  // namespace
 
+// The capacity hint is the preload for a steady book and the predicted final size for a
+// growing one.
+void testExpectedBookSize() {
+    const Workload steady = generateWorkload(findWorkload("cancellation-heavy"), 2000, 42);
+    expect(expectedBookSize(steady) == std::max(steady.preload.size(), steady.expected.finalActiveOrders),
+           "the hint is the larger of the preload and the final size");
+    const Workload growing = generateWorkload(findWorkload("mostly-resting"), 2000, 42);
+    expect(growing.expected.finalActiveOrders > growing.preload.size(), "mostly-resting grows its book");
+    expect(expectedBookSize(growing) == growing.expected.finalActiveOrders, "a growing book is sized for its final size");
+}
+
 int main() {
     testSizes();
     testQuantityRanges();
@@ -511,6 +523,7 @@ int main() {
     testSummaries();
     testCsvExport();
     testJsonExport();
+    testExpectedBookSize();
     testReplayCsv();
     testFormatting();
     testBuildInfo();

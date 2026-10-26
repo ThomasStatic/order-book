@@ -157,6 +157,7 @@ std::string workloadJson(const WorkloadRecord& record) {
            ", \"large\": " + std::to_string(config.largePercent) + "}" +
            ", \"preload_orders\": " + std::to_string(record.preloadOrders) +
            ", \"timed_commands\": " + std::to_string(record.timedCommands) +
+           ", \"reserved_orders\": " + std::to_string(record.reservedOrders) +
            ", \"generation_ns\": " + std::to_string(record.generationNanoseconds) +
            ", \"expected\": " + outcomeJson(record.expected) + "}";
 }
