@@ -83,6 +83,43 @@ workload,kind,size,seed,generator_version,build_config,optimized,repetition,warm
 
 `--json` writes the whole session: generator version, seed, size, warm-ups and repetitions, start time (Unix seconds), the build (configuration, compiler, `NDEBUG`, invariant checks, AddressSanitizer, UBSan), each workload's configuration, fingerprint, expected outcome, and untimed generation time, the summaries, and every raw measurement. Both files are written with LF line endings, and numbers are formatted without regard to locale.
 
+## Environment
+
+A result means little without the machine and build that produced it. Compare results only from the same environment, and publish every number with the record below. The program records part of it with every result. The rest has to be written down by hand.
+
+| Item | Recorded by the program | Reference machine |
+|---|---|---|
+| CPU model | no | AMD Ryzen 5 5600G (Zen 3), 6 cores / 12 threads, 3.9 GHz base, up to 4.4 GHz boost, 512 KiB L2 per core, 16 MiB shared L3 |
+| Memory | no | 32 GiB DDR4-3200 (two 16 GiB modules) |
+| Operating system | no | Windows 11 Pro, 64-bit, version 10.0.26200 |
+| Compiler and version | yes (JSON `build.compiler`, as `_MSC_FULL_VER`, `__clang_version__`, or `__VERSION__`) | MSVC 19.44.35228 (Visual Studio 2022 Build Tools, toolset 14.44.35207), x64 host and target; CMake 4.4.3, Visual Studio 17 2022 generator |
+| Compiler flags | no | see below |
+| Build type | yes (`build_config`, `optimized`; JSON also `ndebug`, `invariant_checks`, sanitizers) | Release; `ORDER_BOOK_INVARIANT_CHECKS=AUTO`, so off; no sanitizers |
+| Number of commands | yes (`size`, `commands`) | standard: 100,000 timed commands per run, after each workload's untimed preload |
+| Workload distribution | yes (workload name, `generator_version`, `seed`; JSON also each workload's configuration and fingerprint) | the five built-in workloads ([Workloads](#workloads)), generator version from `workload.hpp`, seed 42 |
+| Number of repetitions | yes (`repetition`, `warmup`; JSON also the totals) | 1 warm-up, then 5 measured runs per workload and kind |
+| Machine conditions | no | see below |
+
+### Compiler flags
+
+The project adds no optimization flags of its own: Release uses CMake's defaults plus the warning level and the language standard. On the reference machine, every target is compiled with:
+
+```text
+/DWIN32 /D_WINDOWS /EHsc /O2 /Ob2 /DNDEBUG /W4 /std:c++20 /MD
+```
+
+and linked with `/INCREMENTAL:NO`. There is no link-time code generation (`/GL`, `/LTCG`), no profile-guided optimization, and no `/arch` option, so the code targets baseline x64 (SSE2). With GCC or Clang, CMake's Release default is `-O3 -DNDEBUG`, plus `-std=c++20` and the warnings in `CMakeLists.txt`, again without `-march`. A build with other flags (a `-march=native`, LTO, a different `CMAKE_CXX_FLAGS_RELEASE`) is a different environment. Record its flags in full: CMake shows them in `CMakeCache.txt`, and a Ninja or Makefile build's `compile_commands.json` holds each file's exact command line.
+
+### Machine conditions
+
+The benchmark runs on one thread. It does not pin itself to a core or raise its priority, so the scheduler, frequency scaling, and anything else running on the machine all reach the timings. On the reference machine:
+
+- it is a desktop on mains power, with the Windows power plan set to High performance;
+- `std::chrono::steady_clock` is MSVC's `QueryPerformanceCounter` clock at 10 MHz, a 100 ns tick, far finer than any run at the smoke size or above;
+- results are taken from a terminal, not under a debugger or profiler, with other programs closed.
+
+Record any departure from these, and anything else that could move the numbers: running on battery or a power-saving plan, a laptop's thermal limits, other heavy work on the machine, a virtual machine or container, or changed firmware settings such as boost or SMT. The coefficient of variation in each summary is the check that the machine was quiet: if it is large, the conditions were not steady enough for the results to be compared.
+
 ## Code
 
 - `workload.hpp`, `workload.cpp`: sizes, workload configurations, the built-in workloads, the model, and the generator.
