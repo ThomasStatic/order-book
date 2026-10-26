@@ -85,7 +85,7 @@ void testDuplicateSubmissionEmitsOnlyOrderRejected() {
     OrderBook book;
     book.submitOrder(Order(1, 100, 5, 1, Side::BUY));
 
-    const Events events = book.submitOrder(Order(1, 101, 7, 1, Side::SELL)).getEvents();
+    const Events events = book.submitOrder(Order(1, 101, 7, 1, Side::SELL)).getEvents().toVector();
     expect(events == Events{OrderRejected{1, RejectionReason::DUPLICATE_ORDER_ID}},
            "a duplicate submission should emit exactly one OrderRejected with its ID and reason");
 }
@@ -111,7 +111,7 @@ void testRestingSubmissionEmitsOnlyOrderAccepted(Side side) {
     const std::string context = sideName(side) + " resting submission";
     OrderBook book;
 
-    const Events events = book.submitOrder(Order(4, 100, 9, 1, side)).getEvents();
+    const Events events = book.submitOrder(Order(4, 100, 9, 1, side)).getEvents().toVector();
     expect(events == Events{OrderAccepted{4, side, 100, 9}},
            context + ": should emit exactly one OrderAccepted with its ID, side, limit price, and quantity");
 }
@@ -122,7 +122,7 @@ void testFullyFilledSweepEmitsAcceptanceThenEachTrade(Side side) {
     const std::string context = sideName(side) + " fully filled sweep";
     OrderBook book = seededBook(side);
 
-    const Events events = book.submitOrder(Order(9, priceAway(side, 1), 16, 1, side)).getEvents();
+    const Events events = book.submitOrder(Order(9, priceAway(side, 1), 16, 1, side)).getEvents().toVector();
     const Events expected{
         OrderAccepted{9, side, priceAway(side, 1), 16},
         TradeExecuted{9, 1, priceAway(side, 0), 3},
@@ -140,7 +140,7 @@ void testPartiallyFilledSubmissionEmitsNoRestingEvent(Side side) {
     const std::string context = sideName(side) + " partially filled submission";
     OrderBook book = seededBook(side);
 
-    const Events events = book.submitOrder(Order(9, priceAway(side, 0), 20, 1, side)).getEvents();
+    const Events events = book.submitOrder(Order(9, priceAway(side, 0), 20, 1, side)).getEvents().toVector();
     const Events expected{
         OrderAccepted{9, side, priceAway(side, 0), 20},
         TradeExecuted{9, 1, priceAway(side, 0), 3},
@@ -192,17 +192,17 @@ void testRefusedCancellationsEmitOnlyCancelRejected() {
     book.submitOrder(Order(6, 100, 4, 1, Side::BUY));
     book.submitOrder(Order(7, 100, 8, 1, Side::BUY));  // fills the rest of 5
 
-    const Events unknown = book.cancelOrder(42).getEvents();
+    const Events unknown = book.cancelOrder(42).getEvents().toVector();
     expect(unknown == Events{CancelRejected{42, RejectionReason::ORDER_NOT_FOUND}},
            "cancelling an unknown ID should emit exactly one CancelRejected with ORDER_NOT_FOUND");
 
-    const Events filled = book.cancelOrder(5).getEvents();
+    const Events filled = book.cancelOrder(5).getEvents().toVector();
     expect(filled == Events{CancelRejected{5, RejectionReason::ORDER_NOT_FOUND}},
            "cancelling a fully filled order should emit exactly one CancelRejected");
 
     book.submitOrder(Order(8, 101, 3, 1, Side::SELL));
     book.cancelOrder(8);
-    const Events repeated = book.cancelOrder(8).getEvents();
+    const Events repeated = book.cancelOrder(8).getEvents().toVector();
     expect(repeated == Events{CancelRejected{8, RejectionReason::ORDER_NOT_FOUND}},
            "cancelling an already cancelled order should emit exactly one CancelRejected");
 }
@@ -222,11 +222,11 @@ Events replay(const std::vector<Command>& commands) {
     for (const Command& command : commands) {
         Events events;
         if (std::holds_alternative<Order>(command)) {
-            events = book.submitOrder(std::get<Order>(command)).getEvents();
+            events = book.submitOrder(std::get<Order>(command)).getEvents().toVector();
         } else if (std::holds_alternative<Add>(command)) {
-            events = book.addOrder(std::get<Add>(command).order).getEvents();
+            events = book.addOrder(std::get<Add>(command).order).getEvents().toVector();
         } else {
-            events = book.cancelOrder(std::get<order_book::OrderId>(command)).getEvents();
+            events = book.cancelOrder(std::get<order_book::OrderId>(command)).getEvents().toVector();
         }
         stream.insert(stream.end(), events.begin(), events.end());
     }

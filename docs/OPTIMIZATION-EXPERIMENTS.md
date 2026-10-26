@@ -258,3 +258,39 @@ The `replay` rows at the standard size are 0.990-1.001.
   - when allocating the index node failed, the submission now consumed no sequence number, which the contract in `CLAUDE.md` would have had to describe.
 - **What the plan got wrong.** It predicted a 2-5% ceiling; the first run said 5-7% and the recheck said 3%. Building the design rested on the first run alone. The review pointed out that the deep-book ceiling moved from 1.066 to 1.028 between sessions, a shift as large as one run's interval: a single run's interval overstates its certainty. Later experiments recheck a result near the floor before acting on it.
 - **Kept: a test.** `testRestingSubmitRollsBack` in `allocation_failure_tests` fails each allocation in turn for a submission that rests without trading, into an existing level and into a new one. It requires the book to be left unchanged and the sequence number consumed. No such test existed. Deliberately breaking the design's cleanup made it fail. At the engine's committed code it guards `restOrder`'s rollback, and it would guard any future resting fast path. The reverted engine diff is kept in `benchmarks/results/2026-10-26-experiments/exp3-reverted.diff`.
+
+### Experiment 4: inline storage for results' events and trades. Kept.
+
+A header-only `SmallVector<T, N>` (`include/order_book/small_vector.hpp`) holds trivially copyable elements, `N` of them inside the object and the rest on the heap. `SubmissionResults` holds its trades in a `SmallVector<Trade, 4>` and its events in a `SmallVector<BookEvent, 5>`. `CancellationResult` holds its one event in a `SmallVector<BookEvent, 1>`. `matchOrder` builds its trades in the same type, still making room before each execution. The getters return these types. They iterate, index, compare equal with a `std::vector`, and bind to `std::span`. A `std::vector` copy is an explicit `toVector()`.
+
+Exact allocations per command at the standard size (`allocation_profile`):
+
+| Command kind | Before | After |
+|---|---:|---:|
+| submit that rests without trading | 3.0 | 2.0 |
+| submit that trades, then rests the remainder | 6.0-6.2 | 4.0-4.2 |
+| submit filled completely | 2.0-2.1 | 0.0-0.2 |
+| cancel | 1.0 | 0.0 |
+
+The fractions are sweeps of more than four trades, whose trades and events go to the heap.
+
+| Workload | core (16 pairs) | core, final build (12 pairs) | replay (16 pairs) |
+|---|---:|---:|---:|
+| `small-book` | 1.183 (1.177-1.206), 100% | 1.193 (1.177-1.206), 100% | 1.040 (1.033-1.047) |
+| `matching-heavy` | 1.191 (1.185-1.204), 100% | 1.177 (1.164-1.189), 100% | 1.046 (1.042-1.056) |
+| `deep-book` | 1.161 (1.140-1.183), 94% | 1.157 (1.133-1.248), 100% | 1.050 (1.043-1.057) |
+| `cancellation-heavy` | 1.190 (1.158-1.230), 100% | 1.147 (1.122-1.218), 100% | 1.035 (1.023-1.040) |
+| `mostly-resting` | 1.086 (1.079-1.122), 94% | 1.129 (1.083-1.165), 100% | 1.032 (1.023-1.036) |
+
+The base is experiment 2's code. The final build includes the review's fixes.
+
+- **Outcome.** The plan predicted 15-25% on the cached workloads and 8-12% on the large-book ones. The cached workloads gained 18-19%, inside the prediction. The large-book workloads did better than predicted: 15-19% on `deep-book` and `cancellation-heavy`, and 9-13% on `mostly-resting`. The prediction assumed the allocation's cost was the same everywhere and only its share changed. The heap on a large book is itself slower, so removing calls to it saves more there. The replay path gained 3-5%: the same saving, set against parsing's larger cost.
+- **Readability cost.** One 190-line container with its own tests (`small_vector_tests`), and new return types on two getters. Every caller that copied a result into a `std::vector` now says so with `toVector()`, which changed about 25 test lines. The replay engine, the CLI, and one test helper now take `std::span`.
+- **Review.** The independent review found no bug in the container's main paths or in the engine's contracts. It required these fixes before keeping, all made:
+  - **Implicit conversions removed.** The first version converted implicitly to `std::vector`, which would let a copy happen unseen in a change whose purpose is removing allocations, and also had a redundant conversion to `std::span`. A `std::span` binds to the container as a range anyway.
+  - **Hardening.** Element accessors gained bounds asserts, the inline storage is reached through `std::launder`, and the header includes `<new>`.
+  - **The aliasing test now tests aliasing.** As first written it grew from inline storage, which is never freed, so it could not fail. It now pushes an element while full on the heap. With the copy-before-grow line deleted, AddressSanitizer reports a heap use-after-free.
+  - **The strong guarantee is tested.** The container's test replaces `operator new` to make growth fail, and checks that nothing changed. Further cases cover copying a heap vector that fits inline and an inline capacity of 1.
+  - **A long sweep is tested under allocation failure.** `allocation_failure_tests` gained a six-trade sweep, the only case where matching now allocates. Its first allocation is the trades vector growing after four executions already stand, and each failure leaves those executions standing and no remainder resting.
+  - **`cancelOrder` is pinned allocation-free.** It no longer allocates, so the old test, which required at least one injected failure, could not run. It is replaced by a test that `cancelOrder` never allocates, whether it cancels or refuses. `CLAUDE.md` records this as part of `cancelOrder`'s contract.
+- **Not verified here.** GCC and Clang were not available on this machine, so neither their `-Werror` builds nor UBSan has compiled this container. The review named GCC's array-bounds and maybe-uninitialized warnings as a plausible risk for inline-buffer containers. CI's Linux jobs are the first place it will be checked.

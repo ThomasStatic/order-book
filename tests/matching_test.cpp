@@ -6,6 +6,7 @@
 #include <list>
 #include <set>
 #include <stdexcept>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -155,7 +156,7 @@ struct ExpectedTrade {
 // price, and quantity, all naming `incoming` as the taker, with consecutive trade IDs
 // from `firstTradeId`, never through the incoming limit, and never improving on an
 // earlier execution's price (best opposing price first).
-void expectTrades(const std::vector<Trade>& trades, const Order& incoming, TradeId firstTradeId,
+void expectTrades(std::span<const Trade> trades, const Order& incoming, TradeId firstTradeId,
                   std::initializer_list<ExpectedTrade> expected, const std::string& context) {
     expect(trades.size() == expected.size(), context + ": should produce " + std::to_string(expected.size()) +
                                                  " trade(s), got " + std::to_string(trades.size()));
@@ -190,7 +191,7 @@ void testExactMatch(Side incomingSide) {
     book.addOrder(Order(1, 100, 10, 1, opposite(incomingSide)));
     const Order incoming(2, 100, 10, 1, incomingSide);
 
-    const std::vector<Trade> trades = book.submitOrder(incoming).getGeneratedTrades();
+    const std::vector<Trade> trades = book.submitOrder(incoming).getGeneratedTrades().toVector();
 
     expectTrades(trades, incoming, 1, {{1, 100, 10}}, context);
     expect(!book.hasBids() && !book.hasAsks(), context + ": both orders should be gone, leaving the book empty");
@@ -204,7 +205,7 @@ void testIncomingPartialFill(Side incomingSide) {
     book.addOrder(Order(1, 100, 4, 1, opposite(incomingSide)));
     const Order incoming(2, priceAway(incomingSide, 2), 10, 1, incomingSide);
 
-    const std::vector<Trade> trades = book.submitOrder(incoming).getGeneratedTrades();
+    const std::vector<Trade> trades = book.submitOrder(incoming).getGeneratedTrades().toVector();
 
     expectTrades(trades, incoming, 1, {{1, 100, 4}}, context);
     expect(!hasSide(book, opposite(incomingSide)), context + ": the filled resting order's level should be erased");
@@ -229,7 +230,7 @@ void testRestingPartialFill(Side incomingSide) {
     const Order* restingBefore = &Access::indexedOrder(book, 1);
     const Order incoming(2, 100, 4, 1, incomingSide);
 
-    const std::vector<Trade> trades = book.submitOrder(incoming).getGeneratedTrades();
+    const std::vector<Trade> trades = book.submitOrder(incoming).getGeneratedTrades().toVector();
 
     expectTrades(trades, incoming, 1, {{1, 100, 4}}, context);
     expect(!isIndexed(book, 2) && !hasSide(book, incomingSide), context + ": a fully filled incoming order should not rest");
@@ -255,7 +256,7 @@ void testMultipleMatchesAtOnePrice(Side incomingSide) {
     book.addOrder(Order(7, 100, 5, 1, restingSide));
     const Order incoming(20, 100, 10, 1, incomingSide);
 
-    const std::vector<Trade> trades = book.submitOrder(incoming).getGeneratedTrades();
+    const std::vector<Trade> trades = book.submitOrder(incoming).getGeneratedTrades().toVector();
 
     expectTrades(trades, incoming, 1, {{9, 100, 3}, {4, 100, 4}, {7, 100, 3}}, context);
     expect(!isIndexed(book, 9) && !isIndexed(book, 4), context + ": the fully filled orders should be unindexed");
@@ -279,7 +280,7 @@ void testMultiplePriceLevels(Side incomingSide) {
     book.addOrder(Order(3, priceAway(incomingSide, 0), 1, 1, restingSide));
     const Order incoming(2, priceAway(incomingSide, 2), 20, 1, incomingSide);
 
-    const std::vector<Trade> trades = book.submitOrder(incoming).getGeneratedTrades();
+    const std::vector<Trade> trades = book.submitOrder(incoming).getGeneratedTrades().toVector();
 
     expectTrades(trades, incoming, 1,
                  {{1, priceAway(incomingSide, 0), 2},
@@ -307,7 +308,7 @@ void testPriceBeatsTimePriority(Side incomingSide) {
     book.addOrder(Order(3, priceAway(incomingSide, 0), 5, 1, restingSide));  // newer, better price
     const Order incoming(2, priceAway(incomingSide, 1), 5, 1, incomingSide);
 
-    const std::vector<Trade> trades = book.submitOrder(incoming).getGeneratedTrades();
+    const std::vector<Trade> trades = book.submitOrder(incoming).getGeneratedTrades().toVector();
 
     expectTrades(trades, incoming, 1, {{3, priceAway(incomingSide, 0), 5}}, context);
     expect(isIndexed(book, 1) && book.findActiveOrder(1).getRemainingQuantity() == 5,
@@ -322,7 +323,7 @@ void testNonCrossingOrderRests(Side incomingSide) {
     book.addOrder(Order(1, 100, 5, 1, restingSide));
     const Order incoming(2, priceAway(incomingSide, -1), 7, 1, incomingSide);
 
-    const std::vector<Trade> trades = book.submitOrder(incoming).getGeneratedTrades();
+    const std::vector<Trade> trades = book.submitOrder(incoming).getGeneratedTrades().toVector();
 
     expect(trades.empty(), context + ": an order one tick short of the best opposing price should not trade");
     expect(Access::nextTradeId(book) == 1, context + ": no trade ID should be consumed");
@@ -348,7 +349,7 @@ void testSweepingWholeSideRestsRemainder(Side incomingSide) {
     book.addOrder(Order(3, priceAway(incomingSide, 1), 4, 1, restingSide));
     const Order incoming(2, priceAway(incomingSide, 5), 10, 1, incomingSide);
 
-    const std::vector<Trade> trades = book.submitOrder(incoming).getGeneratedTrades();
+    const std::vector<Trade> trades = book.submitOrder(incoming).getGeneratedTrades().toVector();
 
     expectTrades(trades, incoming, 1, {{1, priceAway(incomingSide, 0), 3}, {3, priceAway(incomingSide, 1), 4}},
                  context);
@@ -367,7 +368,7 @@ void testRemainderLaterTradesAsMaker(Side incomingSide) {
     book.submitOrder(Order(2, priceAway(incomingSide, 1), 8, 1, incomingSide));  // 5 rests
 
     const Order taker(5, priceAway(incomingSide, 1), 5, 1, restingSide);
-    const std::vector<Trade> trades = book.submitOrder(taker).getGeneratedTrades();
+    const std::vector<Trade> trades = book.submitOrder(taker).getGeneratedTrades().toVector();
 
     expectTrades(trades, taker, 2, {{2, priceAway(incomingSide, 1), 5}}, context);
     expect(!book.hasBids() && !book.hasAsks(), context + ": both orders should be fully filled");
@@ -461,7 +462,7 @@ void testTradeIdWraps() {
     Access::setNextTradeId(book, maxTradeId);
 
     // Matching keeps working across the wrap rather than rejecting every crossing order.
-    const std::vector<Trade> trades = book.submitOrder(Order(3, 101, 5, 1, Side::BUY)).getGeneratedTrades();
+    const std::vector<Trade> trades = book.submitOrder(Order(3, 101, 5, 1, Side::BUY)).getGeneratedTrades().toVector();
     expect(trades.size() == 2, context + ": both resting orders should be filled");
     expect(trades[0].getTradeId() == maxTradeId && trades[0].getRestingId() == 1,
            context + ": the first execution should use the last trade ID");
@@ -497,7 +498,7 @@ std::vector<Trade> runScript(OrderBook& book, const std::string& context) {
     std::vector<Trade> all;
     for (const Submission& step : kScript) {
         const std::vector<Trade> trades =
-            book.submitOrder(Order(step.id, step.price, step.quantity, 1, step.side)).getGeneratedTrades();
+            book.submitOrder(Order(step.id, step.price, step.quantity, 1, step.side)).getGeneratedTrades().toVector();
         all.insert(all.end(), trades.begin(), trades.end());
         expectBookConsistent(book, context + " after order " + std::to_string(step.id));
     }

@@ -345,14 +345,14 @@ std::optional<Failure> CommandReplayer::execute(OrderBook& book, ReferenceBook& 
             if (!actual.outcome.success) {
                 actual.outcome.rejection = result.getRejectionReason();
             }
-            actual.outcome.events = result.getEvents();
+            actual.outcome.events = result.getEvents().toVector();
             actual.outcome.remaining = result.getRemainingQuantity();
             actual.outcome.fillStatus = result.getFillStatus();
         } else {
             const CancellationResult result = book.cancelOrder(command.orderId);
             actual.outcome.success = result.isSuccess();
             actual.outcome.rejection = result.getRejectionReason();
-            actual.outcome.events = result.getEvents();
+            actual.outcome.events = result.getEvents().toVector();
         }
     } catch (const std::exception& error) {
         return fail(FailureType::UNEXPECTED_EXCEPTION, std::string(operation) + " threw: " + error.what());

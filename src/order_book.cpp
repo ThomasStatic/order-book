@@ -170,13 +170,14 @@ namespace order_book {
         return trade;
     }
 
-    std::vector<Trade> OrderBook::matchOrder(Order& incoming) {
-        std::vector<Trade> trades;
+    SubmissionTrades OrderBook::matchOrder(Order& incoming) {
+        SubmissionTrades trades;
         while(incoming.getRemainingQuantity() > 0 && crossesBestOpposing(incoming)) {
             // Make room first: once executeOnce has changed the book, recording its trade
-            // must not be able to throw. Doubling keeps push_back amortized O(1).
+            // must not be able to throw. The first few fit inline; beyond them, doubling
+            // keeps push_back amortized O(1).
             if(trades.size() == trades.capacity()) {
-                trades.reserve(trades.empty() ? 4 : trades.capacity() * 2);
+                trades.reserve(trades.capacity() * 2);
             }
             trades.push_back(executeOnce(incoming));
         }
@@ -207,7 +208,7 @@ namespace order_book {
 
         // The result, events included, is built before the remainder rests, so resting is
         // the last step that can fail: a remainder is never left resting behind a throw.
-        std::vector<Trade> trades = matchOrder(incoming);
+        SubmissionTrades trades = matchOrder(incoming);
         SubmissionResults result = SubmissionResults::accepted(acceptance, std::move(trades),
                                                                incoming.getRemainingQuantity());
         if(incoming.getRemainingQuantity() > 0) {
@@ -246,8 +247,8 @@ namespace order_book {
             return CancellationResult::rejected(orderId, RejectionReason::ORDER_NOT_FOUND);
         }
         const OrderLocation location = indexItr->second;
-        // Built before anything is mutated: recording the event allocates, and once the
-        // order is removed nothing may throw.
+        // Built before anything is mutated, so nothing after the removal can throw. (Its one
+        // event is held inline, so building it does not allocate either.)
         CancellationResult result = CancellationResult::cancelled(orderId, location.itr->getRemainingQuantity());
 
         auto cancel = [this, indexItr, &location](auto& levels) {

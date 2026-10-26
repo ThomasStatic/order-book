@@ -5,6 +5,7 @@
 #include <istream>
 #include <limits>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -14,7 +15,7 @@
 
 namespace order_book::replay {
     namespace {
-        void collectEvents(const std::vector<BookEvent>& events, std::size_t lineNumber,
+        void collectEvents(std::span<const BookEvent> events, std::size_t lineNumber,
                            std::vector<ReplayEvent>& replayEvents) {
             for (const BookEvent& event : events) {
                 replayEvents.push_back(ReplayEvent{lineNumber, event});

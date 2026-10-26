@@ -67,7 +67,7 @@ namespace order_book {
 
         Trade executeOnce(Order& incoming);
 
-        std::vector<Trade> matchOrder(Order& incoming);
+        SubmissionTrades matchOrder(Order& incoming);
 
         // Placed at the top of each public command that can change the book, so the whole
         // book is checked once the command has finished, whether it returns or throws. That
