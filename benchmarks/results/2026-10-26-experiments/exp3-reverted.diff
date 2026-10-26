@@ -1,0 +1,245 @@
+diff --git a/include/order_book/order_book.hpp b/include/order_book/order_book.hpp
+index 1a28e9b..dab45f6 100644
+--- a/include/order_book/order_book.hpp
++++ b/include/order_book/order_book.hpp
+@@ -52,6 +52,8 @@ namespace order_book {
+         // Order::malformedReason (checked again here because an order may be changed after
+         // construction), then a FILLED order, then an ID already resting here.
+         std::optional<RejectionReason> validateNewOrder(const Order& order) const;
++        // validateNewOrder's checks that need no index lookup: malformed fields, then FILLED.
++        static std::optional<RejectionReason> validateFields(const Order& order);
+ 
+         // Move to the next number, wrapping from the maximum back to 1 (zero is invalid),
+         // so numbers are silently reused once a counter overflows.
+@@ -63,6 +65,20 @@ namespace order_book {
+         // ID is already indexed: callers must validate first.
+         void restOrder(const Order& order);
+ 
++        // Appends an accepted order to the back of its price level, creating the level if
++        // needed, and returns where it was queued; does not index it. On a throw the book is
++        // unchanged (a level created for it is erased again).
++        OrderLocation queueOrder(const Order& order);
++        // Undoes queueOrder: removes the order from its level and erases the level if that
++        // leaves it empty. Never throws; the level must exist.
++        void removeQueued(const OrderLocation& location);
++
++        // submitOrder's path for an order that does not cross the book, so rests whole: one
++        // try_emplace both refuses a resting duplicate ID and creates the order's index entry,
++        // which is then filled in once the order is queued, instead of a lookup to validate
++        // and a second one to index. The fields must already have been validated.
++        SubmissionResults submitResting(Order& incoming);
++
+         bool crossesBestOpposing(const Order& incoming) const;
+ 
+         Trade executeOnce(Order& incoming);
+diff --git a/src/order_book.cpp b/src/order_book.cpp
+index 477a5d1..a33b210 100644
+--- a/src/order_book.cpp
++++ b/src/order_book.cpp
+@@ -27,13 +27,20 @@ namespace order_book {
+         return !asks.empty();
+     }
+ 
+-    std::optional<RejectionReason> OrderBook::validateNewOrder(const Order& order) const {
++    std::optional<RejectionReason> OrderBook::validateFields(const Order& order) {
+         if(const std::optional<RejectionReason> reason = order.malformedReason()) {
+             return reason;
+         }
+         if(!order.orderIsActive()) {
+             return RejectionReason::ORDER_NOT_ACTIVE;
+         }
++        return std::nullopt;
++    }
++
++    std::optional<RejectionReason> OrderBook::validateNewOrder(const Order& order) const {
++        if(const std::optional<RejectionReason> reason = validateFields(order)) {
++            return reason;
++        }
+         if(orderIndex.find(order.getOrderId()) != orderIndex.end()) {
+             return RejectionReason::DUPLICATE_ORDER_ID;
+         }
+@@ -74,38 +81,54 @@ namespace order_book {
+         }
+     }
+ 
+-    void OrderBook::restOrder(const Order& order) {
+-        auto rest = [this, &order](auto& levels) {
++    OrderLocation OrderBook::queueOrder(const Order& order) {
++        auto queue = [&order](auto& levels) {
+             const auto levelItr = levels.try_emplace(
+                 order.getPriceTick(), order.getPriceTick(), order.getSide()).first;
+             PriceLevel& level = levelItr->second;
+-
+-            std::optional<OrderLocation> location;
+             try {
+-                location = level.addOrder(order);
+-                if(!orderIndex.emplace(order.getOrderId(), *location).second) {
+-                    // emplace keeps the existing entry, which would leave this order resting
+-                    // unindexed; throwing here unwinds it like a failed allocation.
+-                    throw std::runtime_error("resting an order whose id is already indexed error");
+-                }
++                return level.addOrder(order);
+             }
+             catch(...) {
+-                // Unwind so a failed allocation leaves no unindexed order and no empty level.
+-                if(location) {
+-                    level.removeOrder(location->itr);
+-                }
++                // A failed allocation leaves no empty level behind.
+                 if(level.isEmpty()) {
+                     levels.erase(levelItr);
+                 }
+                 throw;
+             }
+         };
++        return order.getSide() == Side::BUY ? queue(bids) : queue(asks);
++    }
+ 
+-        if(order.getSide() == Side::BUY) {
+-            rest(bids);
++    void OrderBook::removeQueued(const OrderLocation& location) {
++        auto remove = [&location](auto& levels) {
++            const auto levelItr = levels.find(location.tickPrice);
++            levelItr->second.removeOrder(location.itr);
++            if(levelItr->second.isEmpty()) {
++                levels.erase(levelItr);
++            }
++        };
++        if(location.side == Side::BUY) {
++            remove(bids);
+         }
+         else {
+-            rest(asks);
++            remove(asks);
++        }
++    }
++
++    void OrderBook::restOrder(const Order& order) {
++        const OrderLocation location = queueOrder(order);
++        try {
++            if(!orderIndex.emplace(order.getOrderId(), location).second) {
++                // emplace keeps the existing entry, which would leave this order resting
++                // unindexed; throwing here unwinds it like a failed allocation.
++                throw std::runtime_error("resting an order whose id is already indexed error");
++            }
++        }
++        catch(...) {
++            // Unwind so a failed allocation leaves no unindexed order and no empty level.
++            removeQueued(location);
++            throw;
+         }
+     }
+ 
+@@ -183,13 +206,48 @@ namespace order_book {
+         return trades;
+     }
+ 
++    SubmissionResults OrderBook::submitResting(Order& incoming) {
++        // The duplicate check and the index entry in one lookup. The entry's location is a
++        // placeholder until the order is queued, and the entry is removed again if anything
++        // below throws, so no public command ever returns with it in place.
++        const auto [entry, inserted] = orderIndex.try_emplace(
++            incoming.getOrderId(), incoming.getPriceTick(), incoming.getSide(), std::list<Order>::iterator{});
++        if(!inserted) {
++            return SubmissionResults::rejected(incoming.getOrderId(), incoming.getRemainingQuantity(),
++                                               RejectionReason::DUPLICATE_ORDER_ID);
++        }
++        try {
++            // Numbered as submitOrder numbers any accepted order: consumed even if resting fails.
++            incoming.assignSequenceNum(nextSequenceNum);
++            advanceSequenceNum();
++            // Built before the order rests, so resting is the last step that can fail.
++            SubmissionResults result = SubmissionResults::accepted(
++                {incoming.getOrderId(), incoming.getSide(), incoming.getPriceTick(), incoming.getRemainingQuantity()},
++                {}, incoming.getRemainingQuantity());
++            entry->second = queueOrder(incoming);
++            return result;
++        }
++        catch(...) {
++            orderIndex.erase(entry);
++            throw;
++        }
++    }
++
+     SubmissionResults OrderBook::submitOrder(Order incoming) {
+         const InvariantBoundary boundary(*this, "submitOrder");
+         // Reject before matching: failing only when the remainder rests would leave
+-        // trades executed for a submission that is then refused.
+-        if(const std::optional<RejectionReason> reason = validateNewOrder(incoming)) {
++        // trades executed for a submission that is then refused. The checks run in
++        // validateNewOrder's order either way: fields, then a resting duplicate ID.
++        if(const std::optional<RejectionReason> reason = validateFields(incoming)) {
+             return SubmissionResults::rejected(incoming.getOrderId(), incoming.getRemainingQuantity(), *reason);
+         }
++        if(!crossesBestOpposing(incoming)) {
++            return submitResting(incoming);
++        }
++        if(orderIndex.find(incoming.getOrderId()) != orderIndex.end()) {
++            return SubmissionResults::rejected(incoming.getOrderId(), incoming.getRemainingQuantity(),
++                                               RejectionReason::DUPLICATE_ORDER_ID);
++        }
+ 
+         // Accepted: numbered once, before matching, and the remainder rests with this same
+         // number. Consumed even if matching throws, since executions may already stand.
+diff --git a/tests/allocation_failure_test.cpp b/tests/allocation_failure_test.cpp
+index 10ee4c1..5bf5af7 100644
+--- a/tests/allocation_failure_test.cpp
++++ b/tests/allocation_failure_test.cpp
+@@ -169,6 +169,49 @@ void testAddOrderToExistingLevelRollsBack() {
+     expect(failures > 0, "addOrder (existing level): at least one allocation failure should have been injected");
+ }
+ 
++// A submission that does not cross rests whole, through one index lookup that creates its
++// entry before it is queued. Whatever allocation fails, the book is left as it was: no index
++// entry, no order, no new or emptied level. Its sequence number is consumed only once the
++// index entry exists (the duplicate check is then complete), as for any accepted order.
++void expectRestingSubmitRollsBack(Order incoming, const std::string& context) {
++    const long failures = failEachAllocationInTurn(
++        [](OrderBook& book) { book.addOrder(Order(1, 100, 5, 1, Side::SELL)); },
++        [incoming](OrderBook& book) { book.submitOrder(incoming); },
++        [](const OrderBook& book, const std::string& attempt) {
++            const auto& asks = Access::asks(book);
++            expect(asks.size() == 1 && asks.at(100).getOrdersQuantity() == 1 && asks.at(100).getAggregateQuantity() == 5,
++                   attempt + ": a failed resting submission should leave the asks as they were");
++            expect(Access::bids(book).empty(), attempt + ": a failed resting submission should not leave a bid level");
++            expect(Access::index(book).size() == 1 && Access::index(book).count(2) == 0,
++                   attempt + ": a failed resting submission should not leave an index entry");
++            const auto sequence = Access::nextSequenceNum(book);
++            expect(sequence == 2 || sequence == 3,
++                   attempt + ": a failed resting submission consumes at most its own number");
++        },
++        context);
++    expect(failures > 0, context + ": at least one allocation failure should have been injected");
++
++    // The first allocation is the index entry: failing it refuses the order before it is
++    // accepted, so no number is consumed.
++    OrderBook book{};
++    book.addOrder(Order(1, 100, 5, 1, Side::SELL));
++    allocationsBeforeFailure = 0;
++    bool threw = false;
++    try {
++        book.submitOrder(incoming);
++    } catch (const std::bad_alloc&) {
++        threw = true;
++    }
++    allocationsBeforeFailure = -1;
++    expect(threw && Access::nextSequenceNum(book) == 2,
++           context + ": failing the index entry should not consume a sequence number");
++}
++
++void testRestingSubmitRollsBack() {
++    expectRestingSubmitRollsBack(Order(2, 100, 5, 9, Side::SELL), "submitOrder resting (existing level)");
++    expectRestingSubmitRollsBack(Order(2, 99, 5, 9, Side::BUY), "submitOrder resting (new level)");
++}
++
+ void testSubmitOrderStaysConsistent() {
+     // Sweeps two asks, then rests the remainder as a new bid level.
+     const long failures = failEachAllocationInTurn(
+@@ -232,6 +275,7 @@ int main() {
+         testAddOrderToNewLevelRollsBack();
+         testAddOrderToExistingLevelRollsBack();
+         testSubmitOrderStaysConsistent();
++        testRestingSubmitRollsBack();
+         testConsumeLevelFailsBeforeFilling();
+         testCancelOrderFailsBeforeRemoving();
+ 

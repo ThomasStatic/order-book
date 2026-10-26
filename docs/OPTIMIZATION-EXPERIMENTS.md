@@ -228,3 +228,33 @@ The `replay` rows at the standard size are 0.990-1.001.
   - a test assertion that relied on MSVC never shrinking a table was rewritten to what the standard guarantees;
   - the runner exports the helper instead of the allocation counter copying it.
 - **Documentation.** `CLAUDE.md` names `reserve` as the one non-const public member without an `InvariantBoundary`, since it changes nothing the book reports.
+
+### Experiment 3: reduce repeated lookups. Reverted; a test kept.
+
+**Ceiling.** A throwaway build deleted `validateNewOrder`'s duplicate-ID lookup. That is not correct code, and was built only to bound what removing the second index walk per resting submit could gain.
+
+| Workload, core | First run (12 pairs) | Recheck (24 pairs) |
+|---|---:|---:|
+| `deep-book` | 1.066 (1.004-1.110) | 1.028 (1.013-1.061) |
+| `cancellation-heavy` | 1.049 (1.034-1.067) | 1.029 (1.002-1.107) |
+| `matching-heavy` | 1.037 (1.015-1.049) | |
+| `small-book` | 1.018 (1.013-1.034) | |
+| `mostly-resting` | 1.020 (0.993-1.062) | |
+
+**Design.** The first run's ceiling cleared the plan's 3% threshold, so a design was built. The plan's provisional-entry idea would have cost `matching-heavy` an extra allocation and free on each of its many fully filled submits. So the design was narrowed to submits that do not cross the book, which rest whole. For those, one `try_emplace` both refused a duplicate and created the index entry, with a placeholder location filled in once the order was queued and erased on any exception. Crossing submits kept the existing path. `restOrder` was split into queue and index steps to share code.
+
+| Workload, core | First run (16 pairs) | Recheck (24 pairs) |
+|---|---:|---:|
+| `deep-book` | 0.972 (0.950-1.006) | 1.018 (0.997-1.025) |
+| `cancellation-heavy` | 0.997 (0.951-1.013) | 1.004 (0.992-1.029) |
+| `mostly-resting` | 1.034 (1.018-1.074) | |
+| `small-book` | 1.012 (1.002-1.017) | |
+| `matching-heavy` | 1.005 (0.992-1.016) | |
+
+- **Outcome: reverted.** On the recheck the ceiling itself fell to about 3%, the noise floor. The design's gain on its target workloads cannot be told apart from zero in either run. The only clear gain was `mostly-resting`'s 3%, at the floor. MSVC's `emplace` already looks the key up before it allocates, so the design and the ceiling both make one probe per resting submit, and there was never more than the ceiling's few percent to recover.
+- **The design was correct**, by the independent review. It refused duplicates in the same order, built the result before resting, and left no placeholder behind a throw. It would have carried costs had it been kept:
+  - the index held, for a moment within the command, an entry whose iterator pointed at nothing, a hazard for any future code that reads the index there;
+  - the duplicate check lived in three places;
+  - when allocating the index node failed, the submission now consumed no sequence number, which the contract in `CLAUDE.md` would have had to describe.
+- **What the plan got wrong.** It predicted a 2-5% ceiling; the first run said 5-7% and the recheck said 3%. Building the design rested on the first run alone. The review pointed out that the deep-book ceiling moved from 1.066 to 1.028 between sessions, a shift as large as one run's interval: a single run's interval overstates its certainty. Later experiments recheck a result near the floor before acting on it.
+- **Kept: a test.** `testRestingSubmitRollsBack` in `allocation_failure_tests` fails each allocation in turn for a submission that rests without trading, into an existing level and into a new one. It requires the book to be left unchanged and the sequence number consumed. No such test existed. Deliberately breaking the design's cleanup made it fail. At the engine's committed code it guards `restOrder`'s rollback, and it would guard any future resting fast path. The reverted engine diff is kept in `benchmarks/results/2026-10-26-experiments/exp3-reverted.diff`.
