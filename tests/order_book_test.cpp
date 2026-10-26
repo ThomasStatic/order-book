@@ -298,5 +298,34 @@ int main() {
     expectThrows([&baseOrder] { baseOrder.fillQuantity(0); }, "fillQuantity should reject zero fill requests");
 
     std::cout << "order tests passed" << std::endl;
+
+    // reserve is a capacity hint: the index stops rehashing up to the hinted size, and
+    // nothing the book reports changes, before or after orders rest.
+    {
+        OrderBook reserved{};
+        reserved.reserve(1000);
+        const std::size_t buckets = Access::index(reserved).bucket_count();
+        expect(static_cast<float>(buckets) * Access::index(reserved).max_load_factor() >= 1000.0f,
+               "reserve should size the index for the hinted number of orders");
+        expect(reserved.activeOrderCount() == 0 && !reserved.hasBids() && !reserved.hasAsks(),
+               "reserve should not change an empty book");
+        for (unsigned int id = 1; id <= 1000; ++id) {
+            reserved.submitOrder(Order(id, id % 2 == 0 ? 100 - id % 50 : 200 + id % 50, 1, 1,
+                                       id % 2 == 0 ? Side::BUY : Side::SELL));
+        }
+        expect(Access::index(reserved).bucket_count() == buckets,
+               "the index should not rehash before it holds the hinted number of orders");
+        expect(reserved.activeOrderCount() == 1000, "orders added after reserve should all rest");
+        expect(reserved.checkInvariants().isValid(), "a reserved book should satisfy its invariants");
+
+        reserved.reserve(10);
+        expect(static_cast<float>(Access::index(reserved).bucket_count()) * Access::index(reserved).max_load_factor()
+                   >= static_cast<float>(Access::index(reserved).size()),
+               "a smaller hint should leave room for every resting order");
+        expect(reserved.activeOrderCount() == 1000 && Access::index(reserved).size() == 1000,
+               "reserve should leave resting orders and their index entries in place");
+        expect(reserved.checkInvariants().isValid(), "reserve on a populated book should keep its invariants");
+    }
+    std::cout << "reserve tests passed" << std::endl;
     return EXIT_SUCCESS;
 }

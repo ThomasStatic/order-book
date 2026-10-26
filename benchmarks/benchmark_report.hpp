@@ -37,6 +37,8 @@ struct WorkloadRecord {
     std::uint64_t fingerprint = 0;
     std::size_t preloadOrders = 0;
     std::size_t timedCommands = 0;
+    // The hint passed to OrderBook::reserve before each run's preload (expectedBookSize).
+    std::size_t reservedOrders = 0;
     WorkloadOutcome expected;
     std::int64_t generationNanoseconds = 0;
 };

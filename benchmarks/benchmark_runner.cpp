@@ -1,5 +1,6 @@
 #include "benchmark_runner.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <limits>
 #include <sstream>
@@ -47,6 +48,7 @@ void execute(OrderBook& book, const BenchmarkCommand& command, WorkloadOutcome& 
 }
 
 void preload(OrderBook& book, const Workload& workload) {
+    book.reserve(expectedBookSize(workload));
     WorkloadOutcome preloadOutcome;
     for (const BenchmarkCommand& command : workload.preload) {
         execute(book, command, preloadOutcome);
@@ -119,6 +121,10 @@ Measurement runReplay(const Workload& workload) {
 }
 
 }  // namespace
+
+std::size_t expectedBookSize(const Workload& workload) {
+    return std::max(workload.preload.size(), workload.expected.finalActiveOrders);
+}
 
 const char* benchmarkKindName(BenchmarkKind kind) {
     switch (kind) {

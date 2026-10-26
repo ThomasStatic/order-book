@@ -50,6 +50,13 @@ struct RunSettings {
     std::size_t repetitions = 5;
 };
 
+// The capacity hint each run passes to OrderBook::reserve before its preload, untimed: the
+// larger of the preload and the predicted final number of resting orders. The predicted
+// final count stands in for a caller that knows how large its book gets; the index rounds
+// its bucket count up to a power of two, so a rough estimate gives the same table. It is
+// recorded with every result (JSON "reserved_orders").
+std::size_t expectedBookSize(const Workload& workload);
+
 // Times the workload's commands once on a fresh book, preloaded outside the timed region.
 // Throws std::runtime_error, describing both, if the book's outcome differs from the one the
 // workload's model predicted, so a measurement never stands for work the book did not do.

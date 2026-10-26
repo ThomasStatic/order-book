@@ -189,3 +189,42 @@ Median ratio experiment/base, bootstrap 95% interval, and share of pairs in whic
 - **The `restOrder` rewrite was reverted.** The independent review found it behavior-preserving but judged it performance-neutral, since table-based exception handling makes a `try` block free on the happy path and the `optional` only saved a flag write, and slightly harder to scan, with a second handler and a nesting level. Without it the results are the same within their intervals, so it bought nothing measurable for a small readability cost.
 - **Kept** the constructor and `snapshot` changes. They shorten the code, and the review confirmed both are equivalent. `snapshot` runs once per replay and never inside the core timed region, so it is a cleanup, not a speedup.
 - **What the first measurement got wrong.** The whole-session protocol reported +3.5% on `matching-heavy` in all three sessions. The base-against-base run showed that the slot alone was worth +9% there, so that number meant nothing. This is why the protocol changed.
+
+### Experiment 2(b): the order index's load factor. Diagnostic, nothing kept.
+
+Throwaway builds set the index's `max_load_factor` to 0.25 and to 4.0 (the default is 1.0). Each was compared with the current code on `core` only, 12 pairs.
+
+| Workload, core | 0.25 (bucket array 4x larger) | 4.0 (bucket array 4x smaller, longer chains) |
+|---|---:|---:|
+| `small-book` (index in cache) | 1.012 (1.008-1.016) | 0.925 (0.918-0.929) |
+| `deep-book` | 0.977 (0.950-1.012) | 0.917 (0.886-0.967) |
+| `cancellation-heavy` | 0.914 (0.891-0.935) | 0.911 (0.881-0.922) |
+
+- **The larger table** helps the book whose index is in cache, by 1%, and slows `cancellation-heavy` by 9%. A bigger table costs nothing in instructions, so that slowdown comes from memory: this supports the profile's reading that the index's cost on large books is cache misses.
+- **The smaller table** is 7-9% slower everywhere, cached book included. Longer chains cost instructions even in cache, so this direction does not separate misses from instructions. The plan predicted it would be no slower on the large books; that prediction was wrong.
+- **The default, 1.0, is the best of the three.** No change is proposed. The evidence for misses is the asymmetry in the first column, not a clean slope.
+
+### Experiment 2(a): reserve the order index. Kept.
+
+`OrderBook::reserve(n)` is a capacity hint that calls `unordered_map::reserve`. The benchmark runner calls it before each run's preload, untimed, with `expectedBookSize`: the larger of the preload and the predicted final count. The hint is recorded in the JSON as `reserved_orders`. Before, `allocation_profile` counted 7 rehashes in `mostly-resting`'s timed commands at the standard size; now it counts 0, and no other workload rehashed before or after.
+
+| Workload, core | Standard size (16 pairs) | Extended size (8 pairs) |
+|---|---:|---:|
+| `mostly-resting` | 1.028 (0.994-1.085), 69% | **1.195 (1.160-1.222), 100%** |
+| `deep-book` | 0.974 (0.933-0.991), 19% | 1.018 (1.009-1.030), 88% |
+| `small-book` | 0.977 (0.962-0.996), 12% | |
+| `matching-heavy` | 1.015 (0.998-1.029), 62% | |
+| `cancellation-heavy` | 0.991 (0.927-1.028), 50% | |
+
+The `replay` rows at the standard size are 0.990-1.001.
+
+- **The standard-size prediction failed.** The plan predicted 5-10% on `mostly-resting` and measured 3%, inside the noise floor. With seven rehashes over 100,000 commands there was little to remove.
+- **The extended-size gain is larger than predicted.** The plan said up to 11%; the measurement is 19.5%, and every pair was faster. A profile of the new build at the extended size accounts for it. The rehash path, its own allocations included, was 13.9% of the old profile's samples, not the 11% self time the plan used. Every other part of inserting an order also became about 25% cheaper: the list insert, the index emplace, and the rest of `restOrder`. A plausible cause is that each rehash walked all of the index's up to 860,000 nodes and evicted the working set, but the profile does not prove it.
+- **The controls are inside the noise floor.** `deep-book`'s index has the same number of buckets with and without the hint, so its -2.6% at the standard size cannot come from this change. `small-book`'s table did change, from 512 buckets (the index grows eightfold below 512) to 256, so its -2.3% has a possible mechanism. The difference is under the floor and was not pursued.
+- **What it changes about the benchmark.** The gain exists only for a caller that calls `reserve`; a caller who does not sees no difference. `mostly-resting` now measures growth into a pre-sized index, so the baseline's `mostly-resting` numbers, especially the extended 440 ns per command, are no longer comparable. `benchmarks/README.md` says so.
+- **Review.** The independent review found the method safe: `reserve` either succeeds or leaves the index unchanged, and a rehash never invalidates the list iterators the index holds. It required four fixes before keeping, all made:
+  - the hint is recorded in the results, as the plan had demanded;
+  - the header comment also names `std::length_error`;
+  - a test assertion that relied on MSVC never shrinking a table was rewritten to what the standard guarantees;
+  - the runner exports the helper instead of the allocation counter copying it.
+- **Documentation.** `CLAUDE.md` names `reserve` as the one non-const public member without an `InvariantBoundary`, since it changes nothing the book reports.

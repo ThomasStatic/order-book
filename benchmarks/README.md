@@ -35,7 +35,7 @@ The program refuses to run unless `NDEBUG` is defined, automatic invariant check
 
 Generation and execution are separate. The generator decides what happens. The book decides how fast that runs. Mixing their costs would make a measurement hard to interpret, so every workload is generated in full before anything is timed. Each run then:
 
-1. builds a fresh `OrderBook` and applies the workload's preload (untimed);
+1. builds a fresh `OrderBook`, sizes its order index with `OrderBook::reserve` for the larger of the preload and the predicted final number of resting orders (`expectedBookSize`, recorded in the JSON as `reserved_orders`), and applies the workload's preload (untimed);
 2. reads the clock (`std::chrono::steady_clock`), runs every timed command, and reads the clock again;
 3. checks the book's outcome (trades, volume, final resting orders and levels, no rejections) against the outcome the generator predicted, and fails the session if they differ (untimed);
 4. destroys the book (untimed).
@@ -57,13 +57,14 @@ The difference between the two kinds is the cost of the replay layers.
 | `deep-book` | 100,000 | 2,000 | 35% | 50 / 17 / 33 | 40 / 50 / 10 | large working set |
 | `matching-heavy` | 10,000 | 200 | 8% | 10 / 32 / 58 | 20 / 60 / 20 | matching efficiency |
 | `cancellation-heavy` | 50,000 | 500 | 50% | 50 / 50 / 0 | 50 / 50 / 0 | order index and removal |
-| `mostly-resting` | 1,000 | 100 | 5% | 80 / 18 / 2 | 50 / 40 / 10 | insertion and book growth |
+| `mostly-resting` | 1,000 | 100 | 5% | 80 / 18 / 2 | 50 / 40 / 10 | insertion and book growth (into a pre-sized index, see below) |
 
 - **Preload.** The initial orders are spread round-robin over the target levels, alternating bid and ask, one tick apart either side of a middle price of 100,000 ticks. None of them trade.
 - **Cancellation rate** is r_cancel = cancellation commands / total timed commands. A cancellation always names a resting order, picked uniformly. One drawn while nothing rests becomes a submission instead, so the realized rate, reported with every run, can fall slightly below the configured one.
 - **Prices** are integer ticks (`Price`), drawn relative to the book just before the command. *Uniform* is anywhere in the order's own side's band of levels. *Concentrated* is 0-3 ticks behind its own side's best price. *Marketable* is at the opposing best price (matching-heavy goes up to 2 ticks through it), so it trades. Only marketable orders cross. The others are held one tick behind the opposing best, so the book keeps about its target number of levels.
 - **Quantities**: small 1-10, medium 11-100, large 101-1000.
 - **Steady state.** No command depends on the book's size, so an unbalanced mix drifts steadily and a balanced one wanders like a random walk. The mixes are tuned to keep each book's shape from 10k to 1M commands. Small-book also has a cap of 200 resting orders: a submission drawn at the cap is priced marketable instead, which leaves the cancellation rate unchanged. A book cannot sustain a cancellation rate above 50%, since every cancellation removes an order that a submission had to add. Cancellation-heavy sits exactly at that balance: none of its submissions trade, so each one rests an order and each cancellation removes one. Deep-book relies on matching for part of its removal, so it can stay clearly lower, at 35%. Mostly-resting is meant to grow, and does: from 1,000 to about 87,000 orders at the standard size.
+- **Pre-sized index.** Since the first optimization experiments (`docs/OPTIMIZATION-EXPERIMENTS.md`, experiment 2), every run reserves the order index for the book's expected size before the preload. The hint is the larger of the preload and the predicted *final* count, not the peak; the index rounds its bucket count up to a power of two, which covers every built-in workload's peak. So mostly-resting measures insertion and growth of the levels and queues, but no longer the index's rehashing as it grows. The recorded baseline in `docs/BENCHMARKS.md` predates the hint: its mostly-resting numbers, especially at the extended size, are not comparable with later runs, and the other workloads' tables were already sized by their preloads (small-book's is now 256 buckets rather than 512).
 
 ### Determinism
 

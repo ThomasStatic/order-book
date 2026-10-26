@@ -151,6 +151,15 @@ namespace order_book {
         // Number of orders resting on the book (both sides), not of price levels.
         std::size_t activeOrderCount() const;
 
+        // Sizes the order index for at least `orders` resting orders, so it does not have to
+        // grow, rehashing every entry, until the book holds more. A capacity hint only: it
+        // changes nothing the book reports, does no matching, and consumes no sequence number
+        // or trade ID. Throws std::bad_alloc, or std::length_error for a hint beyond what the
+        // index can address, leaving it unchanged.
+        // An oversized hint costs memory and, once the book is larger than the cache, some
+        // lookup speed, so pass the size the book is expected to reach, not a loose bound.
+        void reserve(std::size_t orders);
+
         // Copy of a resting order as it is now (later fills are not reflected); throws
         // std::invalid_argument if no order with that ID is resting.
         Order findActiveOrder(OrderId orderId) const;

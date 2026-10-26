@@ -243,6 +243,7 @@ namespace {
             record.fingerprint = bench::workloadFingerprint(workload);
             record.preloadOrders = workload.preload.size();
             record.timedCommands = workload.timed.size();
+            record.reservedOrders = bench::expectedBookSize(workload);
             record.expected = workload.expected;
             record.generationNanoseconds =
                 std::chrono::duration_cast<std::chrono::nanoseconds>(generationStop - generationStart).count();

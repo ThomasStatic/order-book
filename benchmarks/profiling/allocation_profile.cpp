@@ -188,6 +188,7 @@ void printHistogram(const std::size_t* histogram, std::size_t commands, const ch
 
 void profileCore(const Workload& workload) {
     OrderBook book;
+    book.reserve(expectedBookSize(workload));
     std::size_t preloadRehashes = 0;
     const AllocationCounts beforePreload = snapshotCounts();
     for (const BenchmarkCommand& command : workload.preload) {
@@ -280,6 +281,7 @@ void profileCore(const Workload& workload) {
 
 void profileReplay(const Workload& workload) {
     OrderBook book;
+    book.reserve(expectedBookSize(workload));
     for (const BenchmarkCommand& command : workload.preload) {
         book.submitOrder(Order(command.orderId, command.price, command.quantity, 1, command.side));
     }

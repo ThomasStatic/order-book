@@ -222,6 +222,12 @@ namespace order_book {
         return orderIndex.size();
     }
 
+    void OrderBook::reserve(std::size_t orders) {
+        // No InvariantBoundary: the book's contents do not change. A rehash that throws
+        // (other than from the hash, which cannot) leaves the index as it was.
+        orderIndex.reserve(orders);
+    }
+
     Order OrderBook::findActiveOrder(OrderId orderId) const {
         auto orderItr = orderIndex.find(orderId);
 
