@@ -1,0 +1,28 @@
+order_book_benchmarks: generator v2, seed 42, size extended (1000000 timed commands), 0 warm-up and 20 measured runs each
+build: Release, MSVC 194435228
+
+mostly-resting: 1000 preloaded orders, 1000000 timed commands (cancellation rate 0.050, 38101 trades, ending with 862963 orders on 100 levels); generated in 474.405 ms, untimed
+  core run 1: 1000000 commands in 477.355 ms, 2094877 ops/s
+  core run 2: 1000000 commands in 480.103 ms, 2082887 ops/s
+  core run 3: 1000000 commands in 483.972 ms, 2066235 ops/s
+  core run 4: 1000000 commands in 500.992 ms, 1996040 ops/s
+  core run 5: 1000000 commands in 543.997 ms, 1838244 ops/s
+  core run 6: 1000000 commands in 565.986 ms, 1766829 ops/s
+  core run 7: 1000000 commands in 537.539 ms, 1860328 ops/s
+  core run 8: 1000000 commands in 540.586 ms, 1849844 ops/s
+  core run 9: 1000000 commands in 542.047 ms, 1844860 ops/s
+  core run 10: 1000000 commands in 541.206 ms, 1847724 ops/s
+  core run 11: 1000000 commands in 552.269 ms, 1810712 ops/s
+  core run 12: 1000000 commands in 558.992 ms, 1788936 ops/s
+  core run 13: 1000000 commands in 548.875 ms, 1821908 ops/s
+  core run 14: 1000000 commands in 541.404 ms, 1847049 ops/s
+  core run 15: 1000000 commands in 545.967 ms, 1831614 ops/s
+  core run 16: 1000000 commands in 542.701 ms, 1842636 ops/s
+  core run 17: 1000000 commands in 550.480 ms, 1816595 ops/s
+  core run 18: 1000000 commands in 550.913 ms, 1815170 ops/s
+  core run 19: 1000000 commands in 575.662 ms, 1737131 ops/s
+  core run 20: 1000000 commands in 557.957 ms, 1792252 ops/s
+
+summary of measured runs (warm-ups excluded):
+workload            kind     reps  commands   median ops/s      min ops/s      max ops/s   ns/cmd      cv
+mostly-resting      core       20   1000000        1840440        1737131        2094877    543.3    5.6%

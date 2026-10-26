@@ -1,0 +1,16 @@
+order_book_benchmarks: generator v2, seed 42, size extended (1000000 timed commands), 0 warm-up and 8 measured runs each
+build: Release, MSVC 194435228
+
+small-book: 100 preloaded orders, 1000000 timed commands (cancellation rate 0.351, 270918 trades, ending with 194 orders on 11 levels); generated in 110.829 ms, untimed
+  replay run 1: 1000000 commands in 785.584 ms, 1272938 ops/s
+  replay run 2: 1000000 commands in 816.980 ms, 1224021 ops/s
+  replay run 3: 1000000 commands in 791.244 ms, 1263833 ops/s
+  replay run 4: 1000000 commands in 779.500 ms, 1282874 ops/s
+  replay run 5: 1000000 commands in 795.354 ms, 1257303 ops/s
+  replay run 6: 1000000 commands in 781.413 ms, 1279734 ops/s
+  replay run 7: 1000000 commands in 781.919 ms, 1278904 ops/s
+  replay run 8: 1000000 commands in 782.168 ms, 1278498 ops/s
+
+summary of measured runs (warm-ups excluded):
+workload            kind     reps  commands   median ops/s      min ops/s      max ops/s   ns/cmd      cv
+small-book          replay      8   1000000        1275718        1224021        1282874    783.9    1.5%

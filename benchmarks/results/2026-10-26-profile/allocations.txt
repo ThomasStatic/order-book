@@ -1,0 +1,284 @@
+# Allocation profile
+
+size standard (100000 timed commands), seed 42, generator version 2
+sizes: Order 32, std::list node of Order 48, PriceLevel 32, OrderLocation 16, Trade 24, BookEvent 20, SubmissionResults 72, CancellationResult 40 bytes
+
+## small-book, core
+
+  preload: 100 orders, 322 allocations (3.220 per order), 21255 bytes, 2 index rehashes; 512 buckets, load factor 0.195
+  timed: 100000 commands, 226247 allocations (2.262 per command), 226101 frees (2.261 per command), 9090936 bytes (90.9 per command)
+  order index: 0 rehashes during the timed commands, 512 buckets at most, 512 at the end, load factor 0.338 (max 1.0), 173 resting orders
+  price levels: 744 created and 744 erased during the timed commands, 10 at the end
+  submit, rests without trading: 47765 commands
+    3.031 allocations, 1.000 frees, 109.9 bytes per command
+    48 bytes: 48509 allocations (1.016 per command)
+    40 bytes: 47765 allocations (1.000 per command)
+    20 bytes: 47765 allocations (1.000 per command)
+    72 bytes: 744 allocations (0.016 per command)
+  submit, trades then rests the remainder: 3076 commands, 3635 trades (1.18 per command)
+    6.000 allocations, 6.364 frees, 347.7 bytes per command
+    48 bytes: 6152 allocations (2.000 per command)
+    40 bytes: 5644 allocations (1.835 per command)
+    96 bytes: 3076 allocations (1.000 per command)
+    72 bytes: 3076 allocations (1.000 per command)
+    60 bytes: 462 allocations (0.150 per command)
+    80 bytes: 42 allocations (0.014 per command)
+    100 bytes: 3 allocations (0.001 per command)
+    192 bytes: 1 allocations (0.000 per command)
+    120 bytes: 1 allocations (0.000 per command)
+  submit, filled completely: 13821 commands, 22917 trades (1.66 per command)
+    2.002 allocations, 3.797 frees, 149.5 bytes per command
+    96 bytes: 13821 allocations (1.000 per command)
+    40 bytes: 6796 allocations (0.492 per command)
+    60 bytes: 5264 allocations (0.381 per command)
+    80 bytes: 1478 allocations (0.107 per command)
+    100 bytes: 256 allocations (0.019 per command)
+    192 bytes: 27 allocations (0.002 per command)
+    120 bytes: 27 allocations (0.002 per command)
+  cancel: 35338 commands
+    1.000 allocations, 3.008 frees, 20.0 bytes per command
+    20 bytes: 35338 allocations (1.000 per command)
+
+## small-book, replay
+
+  csv text: 2633735 bytes (26.3 per command); 100000 records parsed; 126552 events collected (1.266 per command); summary 544 bytes
+  sizes: ReplayRecord 40, CsvRow 32, ReplayEvent 32, BookEvent 20, ParseError 112 bytes
+  parse (readReplayInput): 596 ns per command (one run, not a benchmark); 6.000 allocations, 6.000 frees, 709.9 bytes per command
+    32 bytes: 199971 allocations (2.000 per command)
+    192 bytes: 100000 allocations (1.000 per command)
+    128 bytes: 100000 allocations (1.000 per command)
+    96 bytes: 100000 allocations (1.000 per command)
+    64 bytes: 100000 allocations (1.000 per command)
+    >= 1024 bytes: 22 allocations (0.000 per command)
+    760 bytes: 1 allocations (0.000 per command)
+    520 bytes: 1 allocations (0.000 per command)
+    360 bytes: 1 allocations (0.000 per command)
+    240 bytes: 1 allocations (0.000 per command)
+    160 bytes: 1 allocations (0.000 per command)
+    120 bytes: 1 allocations (0.000 per command)
+    ... 3 more sizes
+  run (ReplayEngine::run, book commands included): 187 ns per command; 2.263 allocations, 2.261 frees, 223.7 bytes per command
+  format (formatReplaySummary): 0 ns per command; 0.000 allocations, 0.0 bytes per command
+
+## deep-book, core
+
+  preload: 100000 orders, 304010 allocations (3.040 per order), 15227487 bytes, 10 index rehashes; 131072 buckets, load factor 0.763
+  timed: 100000 commands, 220977 allocations (2.210 per command), 221867 frees (2.219 per command), 9305136 bytes (93.1 per command)
+  order index: 0 rehashes during the timed commands, 131072 buckets at most, 131072 at the end, load factor 0.760 (max 1.0), 99555 resting orders
+  price levels: 62 created and 62 erased during the timed commands, 2000 at the end
+  submit, rests without trading: 43204 commands
+    3.003 allocations, 1.000 frees, 108.2 bytes per command
+    48 bytes: 43266 allocations (1.001 per command)
+    40 bytes: 43204 allocations (1.000 per command)
+    20 bytes: 43204 allocations (1.000 per command)
+    72 bytes: 62 allocations (0.001 per command)
+  submit, trades then rests the remainder: 3051 commands, 4948 trades (1.62 per command)
+    6.052 allocations, 7.296 frees, 368.8 bytes per command
+    48 bytes: 6102 allocations (2.000 per command)
+    40 bytes: 5249 allocations (1.720 per command)
+    96 bytes: 3051 allocations (1.000 per command)
+    72 bytes: 3051 allocations (1.000 per command)
+    60 bytes: 461 allocations (0.151 per command)
+    80 bytes: 181 allocations (0.059 per command)
+    192 bytes: 129 allocations (0.042 per command)
+    100 bytes: 82 allocations (0.027 per command)
+    120 bytes: 42 allocations (0.014 per command)
+    384 bytes: 26 allocations (0.009 per command)
+    160 bytes: 24 allocations (0.008 per command)
+    140 bytes: 23 allocations (0.008 per command)
+    ... 12 more sizes
+  submit, filled completely: 18424 commands, 24680 trades (1.34 per command)
+    2.033 allocations, 2.738 frees, 152.0 bytes per command
+    96 bytes: 18424 allocations (1.000 per command)
+    40 bytes: 16035 allocations (0.870 per command)
+    60 bytes: 1238 allocations (0.067 per command)
+    80 bytes: 479 allocations (0.026 per command)
+    192 bytes: 411 allocations (0.022 per command)
+    100 bytes: 261 allocations (0.014 per command)
+    384 bytes: 157 allocations (0.009 per command)
+    120 bytes: 116 allocations (0.006 per command)
+    140 bytes: 56 allocations (0.003 per command)
+    160 bytes: 53 allocations (0.003 per command)
+    768 bytes: 39 allocations (0.002 per command)
+    180 bytes: 29 allocations (0.002 per command)
+    ... 21 more sizes
+  cancel: 35321 commands
+    1.000 allocations, 3.000 frees, 20.0 bytes per command
+    20 bytes: 35321 allocations (1.000 per command)
+
+## deep-book, replay
+
+  csv text: 2768720 bytes (27.7 per command); 100000 records parsed; 129628 events collected (1.296 per command); summary 67242 bytes
+  sizes: ReplayRecord 40, CsvRow 32, ReplayEvent 32, BookEvent 20, ParseError 112 bytes
+  parse (readReplayInput): 576 ns per command (one run, not a benchmark); 6.030 allocations, 6.030 frees, 711.3 bytes per command
+    32 bytes: 200001 allocations (2.000 per command)
+    192 bytes: 100000 allocations (1.000 per command)
+    128 bytes: 100000 allocations (1.000 per command)
+    96 bytes: 100000 allocations (1.000 per command)
+    64 bytes: 100000 allocations (1.000 per command)
+    48 bytes: 2958 allocations (0.030 per command)
+    >= 1024 bytes: 22 allocations (0.000 per command)
+    760 bytes: 1 allocations (0.000 per command)
+    520 bytes: 1 allocations (0.000 per command)
+    360 bytes: 1 allocations (0.000 per command)
+    240 bytes: 1 allocations (0.000 per command)
+    160 bytes: 1 allocations (0.000 per command)
+    ... 3 more sizes
+  run (ReplayEngine::run, book commands included): 597 ns per command; 2.210 allocations, 2.219 frees, 227.8 bytes per command
+  format (formatReplaySummary): 3 ns per command; 0.040 allocations, 3.9 bytes per command
+
+## matching-heavy, core
+
+  preload: 10000 orders, 30407 allocations (3.041 per order), 1621354 bytes, 7 index rehashes; 16384 buckets, load factor 0.610
+  timed: 100000 commands, 269432 allocations (2.694 per command), 269150 frees (2.692 per command), 14784344 bytes (147.8 per command)
+  order index: 0 rehashes during the timed commands, 16384 buckets at most, 16384 at the end, load factor 0.619 (max 1.0), 10147 resting orders
+  price levels: 5021 created and 5027 erased during the timed commands, 194 at the end
+  submit, rests without trading: 38871 commands
+    3.258 allocations, 1.000 frees, 123.5 bytes per command
+    48 bytes: 43892 allocations (1.129 per command)
+    40 bytes: 38871 allocations (1.000 per command)
+    20 bytes: 38871 allocations (1.000 per command)
+    72 bytes: 5021 allocations (0.129 per command)
+  submit, trades then rests the remainder: 6411 commands, 12394 trades (1.93 per command)
+    6.084 allocations, 8.401 frees, 380.8 bytes per command
+    48 bytes: 12822 allocations (2.000 per command)
+    40 bytes: 10174 allocations (1.587 per command)
+    96 bytes: 6411 allocations (1.000 per command)
+    72 bytes: 6411 allocations (1.000 per command)
+    60 bytes: 1306 allocations (0.204 per command)
+    80 bytes: 558 allocations (0.087 per command)
+    192 bytes: 472 allocations (0.074 per command)
+    100 bytes: 312 allocations (0.049 per command)
+    120 bytes: 189 allocations (0.029 per command)
+    140 bytes: 118 allocations (0.018 per command)
+    384 bytes: 67 allocations (0.010 per command)
+    160 bytes: 62 allocations (0.010 per command)
+    ... 8 more sizes
+  submit, filled completely: 46753 commands, 71192 trades (1.52 per command)
+    2.049 allocations, 3.262 frees, 157.9 bytes per command
+    96 bytes: 46753 allocations (1.000 per command)
+    40 bytes: 36253 allocations (0.775 per command)
+    60 bytes: 5398 allocations (0.115 per command)
+    80 bytes: 2235 allocations (0.048 per command)
+    192 bytes: 1847 allocations (0.040 per command)
+    100 bytes: 1020 allocations (0.022 per command)
+    120 bytes: 583 allocations (0.012 per command)
+    384 bytes: 436 allocations (0.009 per command)
+    140 bytes: 375 allocations (0.008 per command)
+    160 bytes: 251 allocations (0.005 per command)
+    180 bytes: 202 allocations (0.004 per command)
+    200 bytes: 135 allocations (0.003 per command)
+    ... 13 more sizes
+  cancel: 7965 commands
+    1.000 allocations, 3.001 frees, 20.0 bytes per command
+    20 bytes: 7965 allocations (1.000 per command)
+
+## matching-heavy, replay
+
+  csv text: 2924515 bytes (29.2 per command); 100000 records parsed; 183586 events collected (1.836 per command); summary 6739 bytes
+  sizes: ReplayRecord 40, CsvRow 32, ReplayEvent 32, BookEvent 20, ParseError 112 bytes
+  parse (readReplayInput): 609 ns per command (one run, not a benchmark); 6.001 allocations, 6.001 frees, 709.9 bytes per command
+    32 bytes: 200001 allocations (2.000 per command)
+    192 bytes: 100000 allocations (1.000 per command)
+    128 bytes: 100000 allocations (1.000 per command)
+    96 bytes: 100000 allocations (1.000 per command)
+    64 bytes: 100000 allocations (1.000 per command)
+    48 bytes: 38 allocations (0.000 per command)
+    >= 1024 bytes: 22 allocations (0.000 per command)
+    760 bytes: 1 allocations (0.000 per command)
+    520 bytes: 1 allocations (0.000 per command)
+    360 bytes: 1 allocations (0.000 per command)
+    240 bytes: 1 allocations (0.000 per command)
+    160 bytes: 1 allocations (0.000 per command)
+    ... 3 more sizes
+  run (ReplayEngine::run, book commands included): 330 ns per command; 2.695 allocations, 2.692 frees, 347.2 bytes per command
+  format (formatReplaySummary): 1 ns per command; 0.004 allocations, 0.4 bytes per command
+
+## cancellation-heavy, core
+
+  preload: 50000 orders, 151009 allocations (3.020 per order), 7550296 bytes, 9 index rehashes; 65536 buckets, load factor 0.763
+  timed: 100000 commands, 199692 allocations (1.997 per command), 200308 frees (2.003 per command), 6386448 bytes (63.9 per command)
+  order index: 0 rehashes during the timed commands, 65536 buckets at most, 65536 at the end, load factor 0.758 (max 1.0), 49692 resting orders
+  price levels: 0 created and 0 erased during the timed commands, 500 at the end
+  submit, rests without trading: 49846 commands
+    3.000 allocations, 1.000 frees, 108.0 bytes per command
+    48 bytes: 49846 allocations (1.000 per command)
+    40 bytes: 49846 allocations (1.000 per command)
+    20 bytes: 49846 allocations (1.000 per command)
+  cancel: 50154 commands
+    1.000 allocations, 3.000 frees, 20.0 bytes per command
+    20 bytes: 50154 allocations (1.000 per command)
+
+## cancellation-heavy, replay
+
+  csv text: 2558319 bytes (25.6 per command); 100000 records parsed; 100000 events collected (1.000 per command); summary 16996 bytes
+  sizes: ReplayRecord 40, CsvRow 32, ReplayEvent 32, BookEvent 20, ParseError 112 bytes
+  parse (readReplayInput): 572 ns per command (one run, not a benchmark); 6.000 allocations, 6.000 frees, 709.9 bytes per command
+    32 bytes: 200001 allocations (2.000 per command)
+    192 bytes: 100000 allocations (1.000 per command)
+    128 bytes: 100000 allocations (1.000 per command)
+    96 bytes: 100000 allocations (1.000 per command)
+    64 bytes: 100000 allocations (1.000 per command)
+    >= 1024 bytes: 22 allocations (0.000 per command)
+    760 bytes: 1 allocations (0.000 per command)
+    520 bytes: 1 allocations (0.000 per command)
+    360 bytes: 1 allocations (0.000 per command)
+    240 bytes: 1 allocations (0.000 per command)
+    160 bytes: 1 allocations (0.000 per command)
+    120 bytes: 1 allocations (0.000 per command)
+    ... 3 more sizes
+  run (ReplayEngine::run, book commands included): 403 ns per command; 1.998 allocations, 2.004 frees, 197.2 bytes per command
+  format (formatReplaySummary): 1 ns per command; 0.010 allocations, 1.1 bytes per command
+
+## mostly-resting, core
+
+  preload: 1000 orders, 3203 allocations (3.203 per order), 145678 bytes, 3 index rehashes; 1024 buckets, load factor 0.977
+  timed: 100000 commands, 288348 allocations (2.883 per command), 116600 frees (1.166 per command), 14704309 bytes (147.0 per command)
+  order index: 7 rehashes during the timed commands, 131072 buckets at most, 131072 at the end, load factor 0.663 (max 1.0), 86874 resting orders
+  price levels: 0 created and 0 erased during the timed commands, 100 at the end
+  submit, rests without trading: 93074 commands
+    3.000 allocations, 1.000 frees, 152.7 bytes per command
+    48 bytes: 93074 allocations (1.000 per command)
+    40 bytes: 93074 allocations (1.000 per command)
+    20 bytes: 93074 allocations (1.000 per command)
+    >= 1024 bytes: 7 allocations (0.000 per command)
+  submit, filled completely: 1910 commands, 4073 trades (2.13 per command)
+    2.148 allocations, 4.435 frees, 204.3 bytes per command
+    96 bytes: 1910 allocations (1.000 per command)
+    40 bytes: 1440 allocations (0.754 per command)
+    192 bytes: 168 allocations (0.088 per command)
+    60 bytes: 166 allocations (0.087 per command)
+    384 bytes: 87 allocations (0.046 per command)
+    80 bytes: 82 allocations (0.043 per command)
+    100 bytes: 54 allocations (0.028 per command)
+    120 bytes: 30 allocations (0.016 per command)
+    768 bytes: 28 allocations (0.015 per command)
+    140 bytes: 21 allocations (0.011 per command)
+    160 bytes: 18 allocations (0.009 per command)
+    200 bytes: 12 allocations (0.006 per command)
+    ... 20 more sizes
+  cancel: 5016 commands
+    1.000 allocations, 3.000 frees, 20.0 bytes per command
+    20 bytes: 5016 allocations (1.000 per command)
+
+## mostly-resting, replay
+
+  csv text: 2905213 bytes (29.1 per command); 100000 records parsed; 104073 events collected (1.041 per command); summary 3794 bytes
+  sizes: ReplayRecord 40, CsvRow 32, ReplayEvent 32, BookEvent 20, ParseError 112 bytes
+  parse (readReplayInput): 609 ns per command (one run, not a benchmark); 6.000 allocations, 6.000 frees, 709.9 bytes per command
+    32 bytes: 200000 allocations (2.000 per command)
+    192 bytes: 100000 allocations (1.000 per command)
+    128 bytes: 100000 allocations (1.000 per command)
+    96 bytes: 100000 allocations (1.000 per command)
+    64 bytes: 100000 allocations (1.000 per command)
+    >= 1024 bytes: 22 allocations (0.000 per command)
+    48 bytes: 6 allocations (0.000 per command)
+    760 bytes: 1 allocations (0.000 per command)
+    520 bytes: 1 allocations (0.000 per command)
+    360 bytes: 1 allocations (0.000 per command)
+    240 bytes: 1 allocations (0.000 per command)
+    160 bytes: 1 allocations (0.000 per command)
+    ... 3 more sizes
+  run (ReplayEngine::run, book commands included): 381 ns per command; 2.884 allocations, 1.167 frees, 279.9 bytes per command
+  format (formatReplaySummary): 0 ns per command; 0.002 allocations, 0.2 bytes per command
+
