@@ -81,7 +81,7 @@ Every run is printed as it completes, followed by a summary per workload and kin
 workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,volume,final_active_orders,final_price_levels
 ```
 
-`--json` writes the whole session: generator version, seed, size, warm-ups and repetitions, start time (Unix seconds), the build (configuration, compiler, `NDEBUG`, invariant checks, AddressSanitizer, UBSan), each workload's configuration, fingerprint, expected outcome, and untimed generation time, the summaries, and every raw measurement. Both files are written with LF line endings, and numbers are formatted without regard to locale.
+`--json` writes the whole session: generator version, seed, size, warm-ups and repetitions, start time (Unix seconds), the build (configuration, compiler, `NDEBUG`, invariant checks, AddressSanitizer, UBSan), each workload's configuration, fingerprint, expected outcome, and untimed generation time, the summaries, and every raw measurement. Both files, like the console output, are written with LF line endings on every platform, and numbers are formatted without regard to locale.
 
 ## Environment
 

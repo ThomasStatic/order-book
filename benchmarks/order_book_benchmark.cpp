@@ -13,6 +13,12 @@
 #include <utility>
 #include <vector>
 
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#include <stdio.h>
+#endif
+
 #include "benchmark_report.hpp"
 #include "benchmark_runner.hpp"
 #include "workload.hpp"
@@ -273,6 +279,12 @@ namespace {
 }
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    // Write '\n' as is, not as CRLF, so the console output has LF line endings like the CSV and JSON files.
+    _setmode(_fileno(stdout), _O_BINARY);
+    _setmode(_fileno(stderr), _O_BINARY);
+#endif
+
     const std::vector<std::string_view> args(argv + 1, argv + argc);
     Settings settings;
     if (const std::optional<std::string> problem = parseArguments(args, settings)) {

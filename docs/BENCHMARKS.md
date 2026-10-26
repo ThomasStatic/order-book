@@ -99,7 +99,7 @@ order_book_benchmarks --size extended --kind both --repetitions 5 --warmup 1 --s
 python summarize.py
 ```
 
-Each `.csv` holds every run, warm-ups included. Each `.json` holds the whole session: build, each workload's configuration, fingerprint and predicted outcome, summaries, and every run. Each `.txt` is the program's console output. The Release test suite (`ctest -C Release`, 63 tests) passed on the same build before the runs.
+Each `.csv` holds every run, warm-ups included. Each `.json` holds the whole session: build, each workload's configuration, fingerprint and predicted outcome, summaries, and every run. Each `.txt` is the program's console output. Its line endings are CRLF, because the program wrote its console output in text mode on Windows until a later commit switched it to binary. The Release test suite (`ctest -C Release`, 63 tests) passed on the same build before the runs.
 
 ## Limitations
 
