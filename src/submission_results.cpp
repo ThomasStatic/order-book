@@ -14,7 +14,7 @@ namespace order_book {
         }
     }
 
-    SubmissionResults SubmissionResults::accepted(const OrderAccepted& acceptance, std::vector<Trade> trades,
+    SubmissionResults SubmissionResults::accepted(const OrderAccepted& acceptance, SubmissionTrades trades,
                                                   unsigned int remaining) {
         if (acceptance.quantity == 0 || acceptance.price == 0) {
             throw std::invalid_argument("accepted result with no quantity or a zero price error");
@@ -71,7 +71,7 @@ namespace order_book {
         return submissionId;
     }
 
-    const std::vector<Trade>& SubmissionResults::getGeneratedTrades() const {
+    const SubmissionTrades& SubmissionResults::getGeneratedTrades() const {
         return generatedTrades;
     }
 
@@ -91,7 +91,7 @@ namespace order_book {
         return rejectionReason;
     }
 
-    const std::vector<BookEvent>& SubmissionResults::getEvents() const {
+    const SubmissionEvents& SubmissionResults::getEvents() const {
         return events;
     }
 }

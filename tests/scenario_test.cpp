@@ -268,15 +268,15 @@ struct Outcome {
 Outcome run(OrderBook& book, const Command& command) {
     Outcome outcome;
     if (const Submit* submit = std::get_if<Submit>(&command)) {
-        outcome.events = book.submitOrder(submit->order).getEvents();
+        outcome.events = book.submitOrder(submit->order).getEvents().toVector();
     } else if (const Add* add = std::get_if<Add>(&command)) {
         try {
-            outcome.events = book.addOrder(add->order).getEvents();
+            outcome.events = book.addOrder(add->order).getEvents().toVector();
         } catch (const std::invalid_argument& error) {
             outcome.refusal = error.what();
         }
     } else {
-        outcome.events = book.cancelOrder(std::get<Cancel>(command).orderId).getEvents();
+        outcome.events = book.cancelOrder(std::get<Cancel>(command).orderId).getEvents().toVector();
     }
     return outcome;
 }

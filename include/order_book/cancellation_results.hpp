@@ -5,16 +5,20 @@
 
 #include "book_event.hpp"
 #include "rejection_reason.hpp"
+#include "small_vector.hpp"
 #include "types.hpp"
 
 namespace order_book {
     // Returned by OrderBook::cancelOrder. Built only through its factories, so its outcome,
     // reason, and single event always agree.
+    // A cancellation's single event, held inline so reporting it allocates nothing.
+    using CancellationEvents = SmallVector<BookEvent, 1>;
+
     class CancellationResult {
     private:
         bool success;
         std::optional<RejectionReason> rejectionReason;
-        std::vector<BookEvent> events;
+        CancellationEvents events;
 
         CancellationResult(bool succeeded, std::optional<RejectionReason> reason, BookEvent event);
 
@@ -29,6 +33,6 @@ namespace order_book {
 
         bool isSuccess() const;
         std::optional<RejectionReason> getRejectionReason() const;
-        const std::vector<BookEvent>& getEvents() const;
+        const CancellationEvents& getEvents() const;
     };
 }

@@ -34,7 +34,7 @@ namespace order_book {
         return rejectionReason;
     }
 
-    const std::vector<BookEvent>& CancellationResult::getEvents() const {
+    const CancellationEvents& CancellationResult::getEvents() const {
         return events;
     }
 }

@@ -5,6 +5,7 @@
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "order_book/order.hpp"
 #include "order_book/order_book.hpp"
@@ -218,6 +219,36 @@ void testSubmitOrderStaysConsistent() {
     expect(failures > 0, "submitOrder: at least one allocation failure should have been injected");
 }
 
+// A sweep of six trades outgrows the result's inline storage: the trades vector grows after
+// four executions already stand (matchOrder makes room before each execution, so a failure
+// there happens before the fifth), and the seven events spill to the heap when the result is
+// built. Whatever fails, every execution made is a filled resting order, and the remainder
+// never rests.
+void testLongSweepStaysConsistent() {
+    std::vector<long> injected;
+    const long failures = failEachAllocationInTurn(
+        [](OrderBook& book) {
+            for (unsigned int i = 0; i < 6; ++i) {
+                book.addOrder(Order(10 + i, 100 + i, 1, 1, Side::SELL));
+            }
+        },
+        [](OrderBook& book) { book.submitOrder(Order(2, 106, 7, 1, Side::BUY)); },
+        [&injected](const OrderBook& book, const std::string& context) {
+            expect(!book.hasBids() && Access::index(book).count(2) == 0,
+                   context + ": a failed sweep should not rest the incoming order");
+            const unsigned int executions = Access::nextTradeId(book) - 1;
+            expect(Access::index(book).size() == 6 - executions && Access::asks(book).size() == 6 - executions,
+                   context + ": every execution made should have filled exactly one resting order and its level");
+            expect(Access::nextSequenceNum(book) == 8,
+                   context + ": a submission accepted before failing should still have consumed its number");
+            injected.push_back(static_cast<long>(executions));
+        },
+        "submitOrder (six-trade sweep)");
+    expect(failures > 0, "submitOrder (six-trade sweep): at least one allocation failure should have been injected");
+    expect(!injected.empty() && injected.front() == 4,
+           "the first allocation of a six-trade sweep should be the trades vector growing after four executions");
+}
+
 void testConsumeLevelFailsBeforeFilling() {
     const long failures = failEachAllocationInTurn(
         [](OrderBook& book) {
@@ -233,20 +264,32 @@ void testConsumeLevelFailsBeforeFilling() {
     expect(failures > 0, "consumeLevel: at least one allocation failure should have been injected");
 }
 
-void testCancelOrderFailsBeforeRemoving() {
-    // Recording the cancellation event allocates, so it must happen before the order is removed.
-    const long failures = failEachAllocationInTurn(
-        [](OrderBook& book) {
-            book.addOrder(Order(1, 100, 5, 1, Side::SELL));
-            book.addOrder(Order(2, 100, 5, 2, Side::SELL));
-        },
-        [](OrderBook& book) { book.cancelOrder(1); },
-        [](const OrderBook& book, const std::string& context) {
-            expect(Access::asks(book).at(100).getAggregateQuantity() == 10 && Access::index(book).size() == 2,
-                   context + ": cancelOrder should only fail before the order is removed");
-        },
-        "cancelOrder");
-    expect(failures > 0, "cancelOrder: at least one allocation failure should have been injected");
+void testCancelOrderDoesNotAllocate() {
+    // A cancellation's result holds its one event inline, and removing an order only frees,
+    // so cancelOrder allocates nothing: with the very first allocation armed to fail, both a
+    // successful and a refused cancellation complete, and the failure is never triggered.
+    OrderBook book{};
+    book.addOrder(Order(1, 100, 5, 1, Side::SELL));
+    book.addOrder(Order(2, 100, 5, 2, Side::SELL));
+
+    allocationsBeforeFailure = 0;
+    bool threw = false;
+    bool cancelled = false;
+    bool refused = false;
+    try {
+        cancelled = book.cancelOrder(1).isSuccess();
+        refused = !book.cancelOrder(99).isSuccess();
+    } catch (const std::bad_alloc&) {
+        threw = true;
+    }
+    const bool stillArmed = allocationsBeforeFailure == 0;
+    allocationsBeforeFailure = -1;
+
+    expect(!threw && stillArmed, "cancelOrder should not allocate");
+    expect(cancelled && refused, "cancelOrder should cancel a resting order and refuse an unknown one");
+    expect(Access::asks(book).at(100).getAggregateQuantity() == 5 && Access::index(book).size() == 1,
+           "the cancelled order should be gone and the other left resting");
+    expectIndexConsistent(book, "cancelOrder without allocating");
 }
 
 }  // namespace
@@ -259,9 +302,10 @@ int main() {
         testAddOrderToNewLevelRollsBack();
         testAddOrderToExistingLevelRollsBack();
         testSubmitOrderStaysConsistent();
+        testLongSweepStaysConsistent();
         testRestingSubmitRollsBack();
         testConsumeLevelFailsBeforeFilling();
-        testCancelOrderFailsBeforeRemoving();
+        testCancelOrderDoesNotAllocate();
 
         std::cout << "allocation failure tests passed" << std::endl;
         return EXIT_SUCCESS;

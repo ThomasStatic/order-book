@@ -7,6 +7,7 @@
 #include "trade.hpp"
 #include "fill_status.hpp"
 #include "rejection_reason.hpp"
+#include "small_vector.hpp"
 
 namespace order_book {
 
@@ -15,18 +16,24 @@ namespace order_book {
         REJECTED
     };
 
+    // A submission's trades and events, held inline for up to four trades, so reporting one
+    // allocates nothing in the common case: a submission that trades makes 1.2-2.1 trades on
+    // average in the benchmark workloads (benchmarks/results/2026-10-26-profile/allocations.txt).
+    using SubmissionTrades = SmallVector<Trade, 4>;
+    using SubmissionEvents = SmallVector<BookEvent, 5>;  // the acceptance, then one per trade
+
     class SubmissionResults {
     private:
         unsigned int submissionId;
         
-        std::vector<Trade> generatedTrades;
+        SubmissionTrades generatedTrades;
         unsigned int remainingQuantity;
         
         FillStatus fillStatus;
         SubmissionStatus status;
         RejectionReason rejectionReason;
 
-        std::vector<BookEvent> events;
+        SubmissionEvents events;
 
         // An accepted result with no trades; throws std::invalid_argument on a zero ID.
         explicit SubmissionResults(unsigned int sId);
@@ -41,7 +48,7 @@ namespace order_book {
         // TradeExecuted per trade, in the trades' order. Throws std::invalid_argument on a
         // zero ID, quantity, or price, or unless every trade is for this order, on its side, and within its limit
         // price, and the traded quantities plus what is left sum to the accepted quantity.
-        static SubmissionResults accepted(const OrderAccepted& acceptance, std::vector<Trade> trades,
+        static SubmissionResults accepted(const OrderAccepted& acceptance, SubmissionTrades trades,
                                           unsigned int remaining);
 
         // A rejected submission: no trades, no fill, the submitted quantity left
@@ -51,14 +58,14 @@ namespace order_book {
 
         unsigned int getSubmissionId() const;
 
-        const std::vector<Trade>& getGeneratedTrades() const;
+        const SubmissionTrades& getGeneratedTrades() const;
         unsigned int getRemainingQuantity() const;
 
         FillStatus getFillStatus() const;
         SubmissionStatus getStatus() const;
         RejectionReason getRejectionReason() const;
 
-        const std::vector<BookEvent>& getEvents() const;
+        const SubmissionEvents& getEvents() const;
 
 
     };

@@ -198,6 +198,16 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(result_type_tests)
     add_test(NAME result_type_tests COMMAND result_type_tests)
 
+    add_executable(small_vector_tests
+        tests/small_vector_test.cpp
+    )
+
+    target_compile_features(small_vector_tests PRIVATE cxx_std_20)
+    target_link_libraries(small_vector_tests PRIVATE order_book)
+    order_book_enable_warnings(small_vector_tests)
+    order_book_enable_sanitizers(small_vector_tests)
+    add_test(NAME small_vector_tests COMMAND small_vector_tests)
+
     add_executable(price_level_tests
         tests/price_level_test.cpp
     )

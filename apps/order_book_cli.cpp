@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <iostream>
+#include <span>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -80,7 +81,7 @@ namespace {
     }
 
     // Printing lives here, outside the engine: the book only returns events.
-    void printEvents(const std::vector<order_book::BookEvent>& events) {
+    void printEvents(std::span<const order_book::BookEvent> events) {
         for (const order_book::BookEvent& event : events) {
             std::cout << order_book::formatEvent(event) << '\n';
         }
