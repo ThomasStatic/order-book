@@ -294,3 +294,24 @@ The base is experiment 2's code. The final build includes the review's fixes.
   - **A long sweep is tested under allocation failure.** `allocation_failure_tests` gained a six-trade sweep, the only case where matching now allocates. Its first allocation is the trades vector growing after four executions already stand, and each failure leaves those executions standing and no remainder resting.
   - **`cancelOrder` is pinned allocation-free.** It no longer allocates, so the old test, which required at least one injected failure, could not run. It is replaced by a test that `cancelOrder` never allocates, whether it cancels or refuses. `CLAUDE.md` records this as part of `cancelOrder`'s contract.
 - **Not verified here.** GCC and Clang were not available on this machine, so neither their `-Werror` builds nor UBSan has compiled this container. The review named GCC's array-bounds and maybe-uninitialized warnings as a plausible risk for inline-buffer containers. CI's Linux jobs are the first place it will be checked.
+
+### Experiment 5: a level handle in `OrderLocation`. Kept.
+
+Each index entry also holds a `PriceLevel*` to the order's level, set when the order is queued. `cancelOrder` follows it instead of searching the side's map, and erases the level by key only when the cancellation empties it. Before mutating anything, `cancelOrder` throws if the handle does not name a level at the entry's price and side. `checkInvariants` compares each entry's handle with the level it checks the order against, without following it. The measurement was taken first on a variant that differed only in giving the handle a null default. It cleared the floor on its target, so the variant was finished into the design rather than discarded.
+
+| Workload, core | Standard size | Recheck | Extended size (8 pairs) |
+|---|---:|---:|---:|
+| `cancellation-heavy` | 1.057 (1.007-1.135), 75% | 1.049 (1.010-1.090), 79%, 24 pairs | **1.067 (1.043-1.098), 100%** |
+| `deep-book` | 1.026 (0.987-1.048), 62% | 0.996 (0.965-1.053), 50%, 24 pairs | |
+| `mostly-resting` | 0.982 (0.927-1.012), 31% | 0.971 (0.945-1.014), 33%, 24 pairs | 0.995 (0.980-1.015), 38% |
+| `small-book` | 1.022 (1.009-1.039), 100% | | |
+| `matching-heavy` | 0.995 (0.989-1.007), 38% | | |
+
+The standard size is 16 pairs. The base is experiment 4's code.
+
+- **Outcome.** About 5-7% on `cancellation-heavy`, repeated in three measurements and at both sizes, inside the predicted 3-6%. The plan also predicted 3-6% on `deep-book`, and that did not appear in either measurement: deep-book cancels less, and when it does, its book's misses elsewhere dominate the map search. The handle makes each index node 8 bytes larger, which is the plausible cost for `mostly-resting`, whose index is the largest. Its three measurements all lean slightly negative, but none excludes 1, so it is recorded as no measurable loss rather than as none.
+- **Readability cost.** About 15 lines in the engine, plus a check and tests. The handle lives exactly as long as the entry's list iterator: a level is erased only once empty, after every order in it is unindexed, and `std::map` never moves its elements, even when the book is moved. So the new field adds no new lifetime rule.
+- **Review.** The independent review found no correctness problem, and judged the guard strictly safer than before. A corrupted price that named another live level used to pass a foreign iterator to the level's erase; now any mismatch throws. Its verdict was a weak keep, conditional on `mostly-resting` showing no real loss on a recheck, which is the recheck in the table. It asked for these changes, all made:
+  - `CLAUDE.md`'s two descriptions of the guard are corrected, and so is the exception text.
+  - `invariant_tests` now checks the detail text of the new level check, so deleting that branch would fail a test.
+  - `cancellation_tests` has a test that a null handle and a handle to another level make `cancelOrder` throw without changing the book. It runs only without automatic invariant checks, since with them the command's boundary aborts first.

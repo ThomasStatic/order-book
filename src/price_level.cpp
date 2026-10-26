@@ -13,7 +13,7 @@ namespace order_book {
         std::list<Order>::iterator itr = orders.insert(orders.end(), newOrder);
         quantity += newOrder.getRemainingQuantity();
         
-        OrderLocation location(tickPrice, side, itr);
+        OrderLocation location(tickPrice, side, itr, this);
         return location;
     }
 

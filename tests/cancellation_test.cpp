@@ -18,6 +18,7 @@ namespace order_book {
 // Befriended by OrderBook and PriceLevel so these tests can inspect internals.
 struct OrderBookTestAccess {
     static const auto& index(const OrderBook& book) { return book.orderIndex; }
+    static PriceLevel*& levelHandle(OrderBook& book, OrderId orderId) { return book.orderIndex.at(orderId).level; }
     static const auto& bids(const OrderBook& book) { return book.bids; }
     static const auto& asks(const OrderBook& book) { return book.asks; }
     static TradeId nextTradeId(const OrderBook& book) { return book.nextTradeId; }
@@ -453,6 +454,39 @@ void testIndexBookConsistencyThroughout() {
 
 }  // namespace
 
+// cancelOrder reaches the level through the entry's handle, and throws, changing nothing,
+// when the handle does not name a level at the entry's price and side. A broken handle is an
+// engine bug, so with automatic checks on the command's boundary aborts instead; this runs
+// only without them.
+void testBrokenLevelHandleThrowsBeforeChangingAnything() {
+    if constexpr (order_book::invariantChecksAfterCommands) {
+        std::cout << "broken level handle tests skipped: automatic invariant checks abort first" << std::endl;
+        return;
+    } else {
+        OrderBook book;
+        book.submitOrder(Order(1, 100, 5, 1, Side::BUY));
+        book.submitOrder(Order(2, 101, 7, 1, Side::SELL));
+        order_book::PriceLevel* const original = Access::levelHandle(book, 1);
+        const auto expectUnchanged = [&book](const std::string& context) {
+            expect(Access::index(book).size() == 2 && Access::bids(book).at(100).getAggregateQuantity() == 5
+                       && Access::asks(book).at(101).getAggregateQuantity() == 7,
+                   context + ": a cancellation that throws should change nothing");
+        };
+
+        Access::levelHandle(book, 1) = nullptr;
+        expectThrows([&book] { book.cancelOrder(1); }, "a null level handle should make cancelOrder throw");
+        expectUnchanged("null level handle");
+
+        Access::levelHandle(book, 1) = Access::levelHandle(book, 2);  // the ask level: wrong price and side
+        expectThrows([&book] { book.cancelOrder(1); }, "a handle to another level should make cancelOrder throw");
+        expectUnchanged("handle to another level");
+
+        Access::levelHandle(book, 1) = original;
+        expect(book.cancelOrder(1).isSuccess() && book.checkInvariants().isValid(),
+               "with its handle restored, the order cancels normally");
+    }
+}
+
 int main() {
     for (Side side : {Side::BUY, Side::SELL}) {
         testCancelOnlyOrderAtPrice(side);
@@ -469,6 +503,7 @@ int main() {
     testCancelTwice();
     testCancelledIdCanBeReused();
     testIndexBookConsistencyThroughout();
+    testBrokenLevelHandleThrowsBeforeChangingAnything();
 
     std::cout << "cancellation tests passed" << std::endl;
     return EXIT_SUCCESS;

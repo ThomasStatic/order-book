@@ -267,6 +267,22 @@ void testIndexChecks() {
                         "index entry recording the wrong price");
     }
     {
+        // The right side, price, and list position, but a handle to another level.
+        OrderBook book = restingBook();
+        Access::index(book).at(1).level = Access::index(book).at(3).level;
+        expectViolation(book,
+                        {.violation = InvariantViolation::INVALID_INDEX_ENTRY, .side = Side::BUY, .price = 99,
+                         .orderId = 1},
+                        "index entry pointing at another level");
+        expect(std::string(book.checkInvariants().detail) == "an index entry should point at its order's level",
+               "index entry pointing at another level: the violation should name the level check");
+        Access::index(book).at(1).level = nullptr;
+        expectViolation(book,
+                        {.violation = InvariantViolation::INVALID_INDEX_ENTRY, .side = Side::BUY, .price = 99,
+                         .orderId = 1},
+                        "index entry with no level");
+    }
+    {
         OrderBook book = restingBook();
         Access::index(book).at(1).itr = Access::index(book).at(2).itr;
         expectViolation(book,
@@ -308,7 +324,7 @@ void testIndexChecks() {
     {
         OrderBook book = restingBook();
         const OrderLocation location = Access::index(book).at(1);
-        Access::index(book).emplace(78, OrderLocation(99, static_cast<Side>(2), location.itr));
+        Access::index(book).emplace(78, OrderLocation(99, static_cast<Side>(2), location.itr, location.level));
         expectViolation(book,
                         {.violation = InvariantViolation::INVALID_INDEX_ENTRY, .price = 99, .orderId = 78},
                         "index entry with an invalid side");

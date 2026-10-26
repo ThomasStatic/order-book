@@ -252,20 +252,21 @@ namespace order_book {
         CancellationResult result = CancellationResult::cancelled(orderId, location.itr->getRemainingQuantity());
 
         auto cancel = [this, indexItr, &location](auto& levels) {
-            const auto levelItr = levels.find(location.tickPrice);
-            // An indexed order always has its level; if not, fail before mutating anything.
-            if(levelItr == levels.end()) {
-                throw std::runtime_error(location.side == Side::BUY ? "indexed order's level not found in bids error"
-                                                                    : "indexed order's level not found in asks error");
+            // The entry's own level handle, not a search of the map. An indexed order always
+            // has its level; if the handle does not name a level at the entry's price and side,
+            // fail before mutating anything.
+            PriceLevel* const level = location.level;
+            if(level == nullptr || level->tickPrice != location.tickPrice || level->side != location.side) {
+                throw std::runtime_error(location.side == Side::BUY ? "indexed order's level handle does not match its bid entry error"
+                                                                    : "indexed order's level handle does not match its ask entry error");
             }
-            PriceLevel& level = levelItr->second;
 
             // Nothing below can throw. Unindex straight after erasing, so the entry never
             // holds the erased element's dangling iterator.
-            level.removeOrder(location.itr);
+            level->removeOrder(location.itr);
             orderIndex.erase(indexItr);
-            if(level.isEmpty()) {
-                levels.erase(levelItr);
+            if(level->isEmpty()) {
+                levels.erase(location.tickPrice);
             }
         };
 

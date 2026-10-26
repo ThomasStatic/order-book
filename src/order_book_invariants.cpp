@@ -153,9 +153,10 @@ namespace order_book {
                 }
 
                 // The iterators are compared only once the entry names this level, so both
-                // belong to the same list.
+                // belong to the same list. The level handle is compared, never followed.
                 const OrderLocation& location = entry->second;
-                if(location.side == side && location.tickPrice == price && location.itr == orderItr) {
+                if(location.side == side && location.tickPrice == price && location.level == &level
+                   && location.itr == orderItr) {
                     continue;
                 }
                 if(idRestsElsewhere(*orderItr)) {
@@ -170,6 +171,10 @@ namespace order_book {
                     return {.violation = INVALID_INDEX_ENTRY, .side = side, .price = price, .orderId = orderId,
                             .expected = price, .actual = location.tickPrice,
                             .detail = "an index entry should record its order's price"};
+                }
+                if(location.level != &level) {
+                    return {.violation = INVALID_INDEX_ENTRY, .side = side, .price = price, .orderId = orderId,
+                            .detail = "an index entry should point at its order's level"};
                 }
                 return {.violation = INVALID_INDEX_ENTRY, .side = side, .price = price, .orderId = orderId,
                         .detail = "an index entry should point at its own order"};
