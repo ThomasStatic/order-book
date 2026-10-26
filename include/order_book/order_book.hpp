@@ -184,8 +184,8 @@ namespace order_book {
         // first, non-empty, and holding their own price and side; each resting order well
         // formed, with quantity left, at its level's price and side, and queued in
         // acceptance order; each level's aggregate equal to its orders' remaining sum;
-        // exactly one index entry per resting order, recording its side, price, and list
-        // position, with no ID resting twice; and best bid strictly below best ask.
+        // exactly one index entry per resting order, recording its side, price, level, and
+        // list position, with no ID resting twice; and best bid strictly below best ask.
         //
         // Never allocates or throws, and never dereferences an index entry's iterator. It
         // compares that iterator with the list's own only after the entry has named the
