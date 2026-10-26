@@ -331,3 +331,28 @@ A throwaway build stopped maintaining each level's cached aggregate. It removed 
 - **Outcome.** Exactly the plan's prediction. The core path is within noise on every workload: maintaining the aggregate costs nothing measurable. The replay path is 5% slower on the two workloads whose final books hold about 90,000-100,000 orders, because the replay's full-depth snapshot now sums every queue. It is unchanged on the small books.
 - **What it says about the method.** The protocol reported no change where the profile said there was none, and a change of the predicted sign and rough size where one was expected. This supports reading the other experiments' results within the stated ±3% floor.
 - **Reverted.** The maintained aggregate stays: it is free on the hot path, and it keeps `snapshot` proportional to levels rather than orders.
+
+### Experiment 9(a): reuse the replay reader's buffers. Kept.
+
+The plan proposed replacing the parser's `CsvRow` with `std::string_view` fields. A smaller change removes the same allocations without changing any public type. `ReplayReader` keeps one line and one `CsvRow` as members and reuses both for every record. `std::getline` reuses the line's capacity, and a new `splitRecordInto` overwrites the row's six field strings in place; each fits the small-string buffer. `splitRecord` and `parseRow` keep their signatures and behavior.
+
+`allocation_profile`: parsing makes 0 allocations per record, from 6, and its one-run time per command fell from about 550-660 ns to 310-340 ns.
+
+| Workload | replay (16 pairs) | core (16 pairs, the control) |
+|---|---:|---:|
+| `small-book` | **1.504 (1.499-1.509)**, 100% | 0.998 (0.993-1.004) |
+| `matching-heavy` | **1.410 (1.401-1.418)**, 100% | 1.006 (0.996-1.020) |
+| `cancellation-heavy` | **1.404 (1.388-1.430)**, 100% | 0.981 (0.948-1.005) |
+| `mostly-resting` | **1.416 (1.403-1.435)**, 100% | 1.022 (1.013-1.040) |
+| `deep-book` | **1.351 (1.347-1.361)**, 100% | 0.996 (0.956-1.022) |
+
+The base is experiment 5's code.
+
+- **Outcome.** Replay throughput rose 35-50% on every workload, which is 26-33% less time per command, and the core path, which never parses, did not move. The plan predicted 40-50% less time for a rewrite that also replaces `std::getline`'s character-at-a-time reads, so this first step delivers about two thirds of that. The rest is measured as 9(b).
+- **Readability cost.** About 30 changed lines, one new public function, and no change to any public type.
+- **Review.** The independent review found parsing byte-for-byte unchanged on every input the format defines: line endings, the CR rule, empty and long lines, rows wider or narrower than the one before, and the sticky end and error states. Nothing returned to a caller views the reused buffers. Its fixes, all made:
+  - `splitRecordInto`'s comment states that its text must not view the row's own fields, and that a failed allocation leaves the row valid but partly overwritten.
+  - The reader's private `readLine` takes no parameter, since it only ever reads into its member.
+  - The reuse test varies the line number.
+  - A reader-level test checks that an error's quoted text, for a whole record and for one field, contains nothing from the longer records read before it.
+  - `docs/replay-format.md` lists `splitRecordInto`.
