@@ -37,6 +37,12 @@ void* operator new(std::size_t size) {
     throw std::bad_alloc();
 }
 
+// GCC inlines these where it can see the pointer came from operator new and warns that free
+// does not match it; the operator new above allocates with malloc, so it does.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+#endif
 void operator delete(void* memory) noexcept {
     std::free(memory);
 }
@@ -44,6 +50,9 @@ void operator delete(void* memory) noexcept {
 void operator delete(void* memory, std::size_t) noexcept {
     std::free(memory);
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 namespace order_book {
 

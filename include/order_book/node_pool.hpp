@@ -1,12 +1,16 @@
 #pragma once
 
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <new>
 #include <type_traits>
 #include <vector>
 
 namespace order_book {
+
+    template <typename T>
+    class PoolAllocator;
 
     // A pool of fixed-size blocks for one book's resting-order nodes. Each block a node frees
     // goes on a free list and is handed to the next node of its size, so resting and removing
@@ -68,6 +72,9 @@ namespace order_book {
         }
 
     private:
+        template <typename T>
+        friend class PoolAllocator;
+
         struct FreeBlock {
             FreeBlock* next;
         };
@@ -115,7 +122,10 @@ namespace order_book {
         }
 
         // The plain global operator new whenever the alignment allows it, so replacements of
-        // it (allocation-failure tests, allocation counters) see the pool's chunks too.
+        // it (allocation-failure tests, allocation counters) see the pool's chunks, and
+        // PoolAllocator's heap allocations, too. A direct call, unlike std::allocator's
+        // __builtin_operator_new, also keeps an optimizer from assuming the replacement
+        // touches nothing else, and so from moving a counter's reads across it.
         static void* obtain(std::size_t bytes, std::size_t alignment) {
             if(alignment <= __STDCPP_DEFAULT_NEW_ALIGNMENT__) {
                 return ::operator new(bytes);
@@ -153,7 +163,10 @@ namespace order_book {
             if(pool != nullptr && count == 1) {
                 return static_cast<T*>(pool->allocate(sizeof(T), alignof(T)));
             }
-            return std::allocator<T>().allocate(count);
+            if(count > std::numeric_limits<std::size_t>::max() / sizeof(T)) {
+                throw std::bad_array_new_length();
+            }
+            return static_cast<T*>(NodePool::obtain(count * sizeof(T), alignof(T)));
         }
 
         void deallocate(T* pointer, std::size_t count) noexcept {
@@ -161,7 +174,7 @@ namespace order_book {
                 pool->deallocate(pointer, sizeof(T), alignof(T));
                 return;
             }
-            std::allocator<T>().deallocate(pointer, count);
+            NodePool::release(pointer, alignof(T));
         }
 
         template <typename U>
