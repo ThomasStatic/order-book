@@ -185,7 +185,7 @@ All nine experiments were run, one at a time, each against the code the previous
 | 6 | Node pool for level queues | kept | core +11-29%, replay +7-10% |
 | 8 | Open-addressed order index | kept | core +5-62%, replay +3-17% |
 
-**Cumulative.** The final code against the baseline's code (commit `0677c93`), measured the same paired way. Throughput ratio, final / baseline, with every pair faster at both sizes:
+**Cumulative.** The final code against the baseline's code (commit `0a81fe2`), measured the same paired way. Throughput ratio, final / baseline, with every pair faster at both sizes:
 
 | Workload | core, standard (12 pairs) | core, extended (6 pairs) | replay, standard | replay, extended |
 |---|---:|---:|---:|---:|
@@ -201,7 +201,7 @@ Two cautions. The baseline binary runs the earlier benchmark harness, which did 
 
 ## Results
 
-Each experiment's outcome, in the order run. Comparison summaries are in [`benchmarks/results/2026-10-26-experiments/`](../benchmarks/results/2026-10-26-experiments/). The base binary throughout is the Release build of commit `0677c93`, whose engine code is the baseline's. Every kept change passed the correctness gate before it was committed: the whole suite in Debug (where every public command also checks the whole book's invariants) and Release, the invariant and invariant-boundary tests, and the same suite under MSVC's AddressSanitizer in Debug and Release. UBSan is not available with MSVC, and no GCC or Clang toolchain is installed on this machine, so the UBSan configurations run only in CI.
+Each experiment's outcome, in the order run. Comparison summaries are in [`benchmarks/results/2026-10-26-experiments/`](../benchmarks/results/2026-10-26-experiments/). The base binary throughout is the Release build of commit `0a81fe2`, whose engine code is the baseline's. Every kept change passed the correctness gate before it was committed: the whole suite in Debug (where every public command also checks the whole book's invariants) and Release, the invariant and invariant-boundary tests, and the same suite under MSVC's AddressSanitizer in Debug and Release. UBSan is not available with MSVC, and no GCC or Clang toolchain is installed on this machine, so the UBSan configurations run only in CI.
 
 ### Experiment 1: remove unnecessary copies and no-op work. Kept, reduced.
 

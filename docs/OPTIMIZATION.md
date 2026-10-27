@@ -5,8 +5,8 @@ What profiling found in the baseline engine, what was changed because of it, wha
 | | |
 |---|---|
 | Date | 2026-10-26 |
-| Before | the baseline's engine, as profiled (commit `0677c93`, whose library code is that of `ab59f5c` and of the recorded baseline in [`BENCHMARKS.md`](BENCHMARKS.md)) |
-| After | branch `perf-experiments`, commits `bdd42c1` to `c4c6844`: eight kept changes, plus the commits recording reverted experiment 3 and null experiment 7 |
+| Before | the baseline's engine, as profiled (commit `0a81fe2`, whose library code is that of `ab59f5c` and of the recorded baseline in [`BENCHMARKS.md`](BENCHMARKS.md)) |
+| After | `main`, commits `8672a51` to `727ea96`: eight kept changes, plus the commits recording reverted experiment 3 and null experiment 7. The later fix for CI (`70ffeaa`, see Correctness) changes a path the benchmarks never take and was not re-measured |
 | Build | MSVC 19.44, Release (`/O2 /Ob2 /DNDEBUG`), no LTO, no `/arch`, as in the baseline |
 | Machine | the reference machine of [`benchmarks/README.md`](../benchmarks/README.md#environment) (Ryzen 5 5600G, Windows 11) |
 | Raw results | comparisons in [`benchmarks/results/2026-10-26-experiments/`](../benchmarks/results/2026-10-26-experiments/); profiles before in [`2026-10-26-profile/`](../benchmarks/results/2026-10-26-profile/) and after in [`2026-10-26-final-profile/`](../benchmarks/results/2026-10-26-final-profile/) |
@@ -17,7 +17,7 @@ What profiling found in the baseline engine, what was changed because of it, wha
 - **Most of the gain came from removing heap allocation.** The heap took 34-47% of the core path's time. It now takes 0-5%. A resting submission made 3 allocations and now makes none in the steady state; a cancellation made 1 and now makes none; parsing a replay record made 6 and now makes none.
 - **Eight changes were kept.** One experiment was reverted (3) and one was a planned null experiment (7). One kept experiment was cut back after measurement and review: experiment 1's rollback rewrite was dropped.
 - **Correctness held.** Every kept change passed the full suite in Debug, where every public command also checks the whole book's invariants, and in Release, plus both again under AddressSanitizer. Each was also read by an independent reviewer. No replay sample, expected output, saved regression stream, or workload fingerprint changed.
-- **One gap.** GCC, Clang, and UBSan are not installed on this machine, so CI's Linux jobs will be the first to compile three of the changes.
+- **CI caught one problem the local gate could not.** GCC, Clang, and UBSan are not installed on this machine. Their first run, in CI, failed one test, `node_pool_tests`, in two builds. Both were problems in how the test counts allocations, not in the engine; the fix is described under Correctness, and every CI configuration now passes.
 
 ## What profiling revealed
 
@@ -262,4 +262,9 @@ The only change in `benchmark_harness_tests` is a new field in the results JSON,
 - a book keeps its peak node memory, and a moved-from book's new levels use the heap;
 - `ReplayReader` reads ahead of what it returns.
 
-**Not verified here.** GCC and Clang are not installed on this machine, so their `-Werror` builds, UBSan, and the Linux ASan jobs have not compiled experiments 4, 6, and 8. The branch has not been pushed, so CI has not run. One reviewer named GCC's array-bounds and maybe-uninitialized warnings as a plausible risk for `SmallVector`'s inline buffer. Until CI passes on the branch, this report's correctness claims hold for MSVC only.
+**What CI found.** GCC and Clang are not installed on this machine, so their `-Werror` builds, UBSan, and the Linux ASan jobs first compiled experiments 4, 6, and 8 in CI. The first run failed `node_pool_tests` in two builds, and nothing else:
+
+- **Clang, ASan+UBSan, optimized: "arrays go to the heap".** `PoolAllocator`'s heap fallback (arrays, and allocators without a pool) went through `std::allocator`, which allocates with `__builtin_operator_new`. LLVM may assume such a call touches no memory the program can see, so it moved the test's reads of its allocation counter across the call and the count came out wrong. The pool's own chunks already used a direct `::operator new` call for exactly this reason. The fix (`70ffeaa`) sends the fallback through the same call, keeping `std::allocator`'s overflow check. That is library code, but the engine never takes this path: its queues allocate one node at a time, from a pool.
+- **GCC Release: `-Wmismatched-new-delete`.** GCC inlined the test's replacement `operator delete`, which calls `free`, where it could see the pointer came from `operator new`. The replacement `operator new` allocates with `malloc`, so the warning is a false positive. It is now ignored around those two definitions, under GCC only.
+
+With the fix, every configuration passes: GCC and Clang in Debug and Release, ASan+UBSan in Debug for both and optimized for Clang, and MSVC in Debug and Release with and without ASan. GCC's array-bounds and maybe-uninitialized warnings, which one reviewer named as a plausible risk for `SmallVector`'s inline buffer, did not appear.
