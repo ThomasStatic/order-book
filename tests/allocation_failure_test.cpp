@@ -181,6 +181,28 @@ void testFirstOrderOnEmptyBookRollsBack() {
            "an empty book's first order should fail at its level, its queue's chunk, and its index entry");
 }
 
+// The index holds twelve entries in sixteen slots, so the thirteenth order grows it: joining
+// the existing level then allocates only the index's new table, and if that fails the order
+// is unqueued again and the level left as it was.
+void testIndexGrowthOnExistingLevelRollsBack() {
+    const long failures = failEachAllocationInTurn(
+        [](OrderBook& book) {
+            for (unsigned int id = 1; id <= 12; ++id) {
+                book.addOrder(Order(id, 100, 5, 1, Side::SELL));
+            }
+        },
+        [](OrderBook& book) { book.addOrder(Order(13, 100, 7, 1, Side::SELL)); },
+        [](const OrderBook& book, const std::string& context) {
+            const auto& level = Access::asks(book).at(100);
+            expect(level.getOrdersQuantity() == 12 && level.getAggregateQuantity() == 60,
+                   context + ": a failed add should leave the existing level as it was");
+            expect(Access::index(book).size() == 12 && Access::index(book).count(13) == 0,
+                   context + ": a failed add should not leave an index entry");
+        },
+        "addOrder (existing level, index grows)");
+    expect(failures == 1, "addOrder (existing level, index grows): only the index's growth should allocate");
+}
+
 void testAddOrderToExistingLevelRollsBack() {
     const long failures = failEachAllocationInTurn(
         [](OrderBook& book) { book.addOrder(Order(1, 100, 5, 1, Side::SELL)); },
@@ -193,14 +215,16 @@ void testAddOrderToExistingLevelRollsBack() {
             expect(Access::nextSequenceNum(book) == 2, context + ": a failed add should not consume a sequence number");
         },
         "addOrder (existing level)");
-    expect(failures > 0, "addOrder (existing level): at least one allocation failure should have been injected");
+    // The level exists, its queue's pool has blocks to spare, and the index has room, so
+    // joining it allocates nothing at all: the operation completes before any failure fires.
+    expect(failures == 0, "addOrder (existing level): joining a level with room should allocate nothing");
 }
 
 // A submission that does not cross rests whole without matching. Whatever allocation fails,
 // the book is left as it was: no index entry, no order, no new or emptied level. Its sequence
 // number is consumed, since submitOrder numbers an order as soon as it is accepted and every
 // allocation comes after that.
-void expectRestingSubmitRollsBack(Order incoming, const std::string& context) {
+void expectRestingSubmitRollsBack(Order incoming, bool allocates, const std::string& context) {
     const long failures = failEachAllocationInTurn(
         [](OrderBook& book) { book.addOrder(Order(1, 100, 5, 1, Side::SELL)); },
         [incoming](OrderBook& book) { book.submitOrder(incoming); },
@@ -215,12 +239,16 @@ void expectRestingSubmitRollsBack(Order incoming, const std::string& context) {
                    attempt + ": a resting submission accepted before failing should still have consumed its number");
         },
         context);
-    expect(failures > 0, context + ": at least one allocation failure should have been injected");
+    // Joining an existing level allocates nothing (see testAddOrderToExistingLevelRollsBack);
+    // a new level does.
+    expect(allocates ? failures > 0 : failures == 0,
+           context + (allocates ? ": at least one allocation failure should have been injected"
+                                : ": joining a level with room should allocate nothing"));
 }
 
 void testRestingSubmitRollsBack() {
-    expectRestingSubmitRollsBack(Order(2, 100, 5, 9, Side::SELL), "submitOrder resting (existing level)");
-    expectRestingSubmitRollsBack(Order(2, 99, 5, 9, Side::BUY), "submitOrder resting (new level)");
+    expectRestingSubmitRollsBack(Order(2, 100, 5, 9, Side::SELL), false, "submitOrder resting (existing level)");
+    expectRestingSubmitRollsBack(Order(2, 99, 5, 9, Side::BUY), true, "submitOrder resting (new level)");
 }
 
 void testSubmitOrderStaysConsistent() {
@@ -328,6 +356,7 @@ int main() {
         testAddOrderToNewLevelRollsBack();
         testAddOrderToExistingLevelRollsBack();
         testFirstOrderOnEmptyBookRollsBack();
+        testIndexGrowthOnExistingLevelRollsBack();
         testSubmitOrderStaysConsistent();
         testLongSweepStaysConsistent();
         testRestingSubmitRollsBack();

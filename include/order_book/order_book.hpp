@@ -1,6 +1,5 @@
 #pragma once
 
-#include <unordered_map>
 #include <map>
 #include <memory>
 #include <optional>
@@ -12,6 +11,7 @@
 
 #include "cancellation_results.hpp"
 #include "invariants.hpp"
+#include "order_index.hpp"
 #include "order_location.hpp"
 #include "price_level.hpp"
 #include "order.hpp"
@@ -44,7 +44,7 @@ namespace order_book {
         // and any level it creates afterwards takes its nodes from the heap.
         std::unique_ptr<NodePool> nodePool = std::make_unique<NodePool>();
 
-        std::unordered_map<OrderId, OrderLocation> orderIndex;
+        OrderIndex orderIndex;
 
         std::map<Price, PriceLevel, std::greater<Price>> bids;
         std::map<Price, PriceLevel, std::less<Price>> asks;
@@ -126,8 +126,9 @@ namespace order_book {
         // with them the iterators, valid.
         //
         // Memory: resting orders' queue nodes come from a pool the book owns and reuses, so a
-        // book keeps the node memory of the most orders it has held until it is destroyed
-        // (index entries and levels still use the heap and are freed as they go). Moving a
+        // book keeps the node memory of the most orders it has held until it is destroyed;
+        // its index likewise keeps the table it grew to. Only levels use the heap and are
+        // freed as they go. Moving a
         // book moves its pool; a moved-from book has none, and any order it rests later takes
         // its node from the heap.
         OrderBook(const OrderBook&) = delete;

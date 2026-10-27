@@ -7,7 +7,7 @@
 // its remainder, one that fills completely, or a cancellation. A histogram of allocation
 // sizes per kind says which container each allocation came from (a std::list node, an index
 // node, a map node, a result's events vector, a trades vector), since each has a distinct
-// size. The order index (std::unordered_map) is watched for rehashes, and its bucket count
+// size. The order index is watched for growth (reported as rehashes), and its capacity
 // and load factor are reported at the end.
 //
 // For the replay path the three stages the benchmark times (parsing the CSV text, running
@@ -97,9 +97,12 @@ namespace order_book {
 
 // The friend the engine's headers declare for tests; here it reads the index's hash table.
 struct OrderBookTestAccess {
-    static std::size_t bucketCount(const OrderBook& book) { return book.orderIndex.bucket_count(); }
-    static float loadFactor(const OrderBook& book) { return book.orderIndex.load_factor(); }
-    static float maxLoadFactor(const OrderBook& book) { return book.orderIndex.max_load_factor(); }
+    static std::size_t bucketCount(const OrderBook& book) { return book.orderIndex.capacity(); }
+    static float loadFactor(const OrderBook& book) {
+        return book.orderIndex.capacity() == 0 ? 0.0f
+             : static_cast<float>(book.orderIndex.size()) / static_cast<float>(book.orderIndex.capacity());
+    }
+    static float maxLoadFactor(const OrderBook&) { return 0.75f; }
     static std::size_t levelCount(const OrderBook& book) { return book.bids.size() + book.asks.size(); }
     static std::size_t listNodeSize() {
 #ifdef _MSC_VER

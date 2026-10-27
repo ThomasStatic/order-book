@@ -218,6 +218,16 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(node_pool_tests)
     add_test(NAME node_pool_tests COMMAND node_pool_tests)
 
+    add_executable(order_index_tests
+        tests/order_index_test.cpp
+    )
+
+    target_compile_features(order_index_tests PRIVATE cxx_std_20)
+    target_link_libraries(order_index_tests PRIVATE order_book)
+    order_book_enable_warnings(order_index_tests)
+    order_book_enable_sanitizers(order_index_tests)
+    add_test(NAME order_index_tests COMMAND order_index_tests)
+
     add_executable(price_level_tests
         tests/price_level_test.cpp
     )
