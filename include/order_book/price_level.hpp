@@ -41,7 +41,7 @@ namespace order_book {
         const unsigned int tickPrice;
         const Side side;
         
-        std::list<Order> orders;
+        OrderQueue orders;
         // Aggregate of all orders' remaining quantities. Wider than a Quantity, so it wraps only
         // past about 2^32 orders of the maximum quantity at one price.
         std::uint64_t quantity = 0;
@@ -50,7 +50,8 @@ namespace order_book {
         OrderFill fillOldestOrder(unsigned int fillQuant);
 
     public:
-        PriceLevel(unsigned int price, Side s);
+        // A level whose queue takes its nodes from pool, or from the heap when pool is null.
+        PriceLevel(unsigned int price, Side s, NodePool* pool = nullptr);
         PriceLevel(unsigned int price, Side s, Order initialOrder);
 
         OrderLocation addOrder(Order newOrder);
@@ -58,7 +59,7 @@ namespace order_book {
 
         ConsumptionResult consumeQuantity(unsigned int fillQuant);
 
-        void removeOrder(std::list<Order>::iterator itr);
+        void removeOrder(OrderQueue::iterator itr);
 
         bool isEmpty() const;
 

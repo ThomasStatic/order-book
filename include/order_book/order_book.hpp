@@ -2,6 +2,7 @@
 
 #include <unordered_map>
 #include <map>
+#include <memory>
 #include <optional>
 #include <compare>
 #include <cstddef>
@@ -36,6 +37,12 @@ namespace order_book {
     private:
         // Test-only access to internals; defined in tests, never in the library.
         friend struct OrderBookTestAccess;
+
+        // The blocks of every resting order's queue node. Declared first, so it is destroyed
+        // after the levels whose nodes it holds; held by pointer, so its address, which every
+        // queue's allocator records, survives moving the book. A moved-from book has none,
+        // and any level it creates afterwards takes its nodes from the heap.
+        std::unique_ptr<NodePool> nodePool = std::make_unique<NodePool>();
 
         std::unordered_map<OrderId, OrderLocation> orderIndex;
 
@@ -117,10 +124,19 @@ namespace order_book {
         // Move-only: orderIndex holds iterators into this book's own level lists, so a
         // copy would point back into the original. Moving keeps those list nodes, and
         // with them the iterators, valid.
+        //
+        // Memory: resting orders' queue nodes come from a pool the book owns and reuses, so a
+        // book keeps the node memory of the most orders it has held until it is destroyed
+        // (index entries and levels still use the heap and are freed as they go). Moving a
+        // book moves its pool; a moved-from book has none, and any order it rests later takes
+        // its node from the heap.
         OrderBook(const OrderBook&) = delete;
         OrderBook& operator=(const OrderBook&) = delete;
         OrderBook(OrderBook&&) = default;
-        OrderBook& operator=(OrderBook&&) = default;
+        // Not defaulted: this book's levels must release their nodes into its own pool before
+        // that pool is replaced by the other book's. Assigns every member by hand, so a new
+        // member must be added here too.
+        OrderBook& operator=(OrderBook&& other) noexcept;
 
         // Copy of the oldest order at the best price; throws std::runtime_error if that
         // side is empty. A copy cannot dangle once the order is filled or removed.

@@ -27,7 +27,7 @@ struct OrderBookTestAccess {
     // The resting order itself (findActiveOrder only returns a copy), to check identity.
     static const Order& indexedOrder(const OrderBook& book, OrderId orderId) { return *book.orderIndex.at(orderId).itr; }
 
-    static const std::list<Order>& orders(const PriceLevel& level) { return level.orders; }
+    static const order_book::OrderQueue& orders(const PriceLevel& level) { return level.orders; }
 };
 
 }  // namespace order_book
@@ -419,7 +419,7 @@ void testSequenceNumbers() {
     // Later arrivals at the same price queue behind it, in number order.
     book.submitOrder(Order(9, 101, 2, 1, Side::BUY));
     expect(book.findActiveOrder(9).getSequenceNum() == 8, context + ": numbering should continue without gaps");
-    const std::list<Order>& queue = Access::orders(levelAt(book, Side::BUY, 101));
+    const order_book::OrderQueue& queue = Access::orders(levelAt(book, Side::BUY, 101));
     expect(queue.size() == 2 && queue.front().getOrderId() == 6 && queue.back().getOrderId() == 9,
            context + ": a later order at the same price should queue behind the remainder");
     expectBookConsistent(book, context);
@@ -446,7 +446,7 @@ void testSequenceNumberWraps() {
 
     // Time priority comes from queue position, so a wrapped (lower) number still queues
     // behind the order accepted before it.
-    const std::list<Order>& queue = Access::orders(levelAt(book, Side::SELL, 100));
+    const order_book::OrderQueue& queue = Access::orders(levelAt(book, Side::SELL, 100));
     expect(queue.size() == 2 && queue.front().getOrderId() == 1 && queue.back().getOrderId() == 2,
            context + ": the order accepted after the wrap should queue behind");
     const Order incoming(3, 100, 6, 1, Side::BUY);

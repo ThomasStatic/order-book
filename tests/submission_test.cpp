@@ -26,7 +26,7 @@ struct OrderBookTestAccess {
     static TradeId nextTradeId(const OrderBook& book) { return book.nextTradeId; }
     static SequenceNum nextSequenceNum(const OrderBook& book) { return book.nextSequenceNum; }
 
-    static const std::list<Order>& orders(const PriceLevel& level) { return level.orders; }
+    static const order_book::OrderQueue& orders(const PriceLevel& level) { return level.orders; }
 
     static void setOrderId(Order& order, OrderId orderId) { order.orderId = orderId; }
     static void setPrice(Order& order, Price price) { order.priceTick = price; }

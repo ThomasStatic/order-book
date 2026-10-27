@@ -32,7 +32,7 @@ struct OrderBookTestAccess {
 
     static const auto& bids(const OrderBook& book) { return book.bids; }
     static const auto& asks(const OrderBook& book) { return book.asks; }
-    static const std::list<Order>& orders(const PriceLevel& level) { return level.orders; }
+    static const order_book::OrderQueue& orders(const PriceLevel& level) { return level.orders; }
 };
 
 }  // namespace order_book
@@ -124,7 +124,7 @@ std::optional<std::string> compareLevels(const Levels& levels, const ModelLevels
             return where + ": the book's price is " + std::to_string(price) + ", the model's " +
                    std::to_string(modelPrice);
         }
-        const std::list<Order>& queue = Access::orders(level);
+        const order_book::OrderQueue& queue = Access::orders(level);
         if (queue.size() != modelQueue.size()) {
             return where + " at " + std::to_string(price) + ": the book queues " + std::to_string(queue.size()) +
                    " orders, the model " + std::to_string(modelQueue.size());

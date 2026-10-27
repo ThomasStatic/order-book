@@ -208,6 +208,16 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(small_vector_tests)
     add_test(NAME small_vector_tests COMMAND small_vector_tests)
 
+    add_executable(node_pool_tests
+        tests/node_pool_test.cpp
+    )
+
+    target_compile_features(node_pool_tests PRIVATE cxx_std_20)
+    target_link_libraries(node_pool_tests PRIVATE order_book)
+    order_book_enable_warnings(node_pool_tests)
+    order_book_enable_sanitizers(node_pool_tests)
+    add_test(NAME node_pool_tests COMMAND node_pool_tests)
+
     add_executable(price_level_tests
         tests/price_level_test.cpp
     )

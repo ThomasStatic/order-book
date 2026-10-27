@@ -32,7 +32,7 @@ struct OrderBookTestAccess {
     static SequenceNum nextSequenceNum(const OrderBook& book) { return book.nextSequenceNum; }
     static void setNextSequenceNum(OrderBook& book, SequenceNum next) { book.nextSequenceNum = next; }
 
-    static const std::list<Order>& orders(const PriceLevel& level) { return level.orders; }
+    static const order_book::OrderQueue& orders(const PriceLevel& level) { return level.orders; }
 
     static void setPrice(Order& order, Price price) { order.priceTick = price; }
     static void setQuantity(Order& order, Quantity quantity) { order.initialQuant = order.remainingQuant = quantity; }

@@ -5,6 +5,22 @@
 #include "order_book/order_book.hpp"
 
 namespace order_book {
+    OrderBook& OrderBook::operator=(OrderBook&& other) noexcept {
+        if(this != &other) {
+            // Free this book's nodes while their pool still exists, then take the other's.
+            orderIndex.clear();
+            bids.clear();
+            asks.clear();
+            orderIndex = std::move(other.orderIndex);
+            bids = std::move(other.bids);
+            asks = std::move(other.asks);
+            nextTradeId = other.nextTradeId;
+            nextSequenceNum = other.nextSequenceNum;
+            nodePool = std::move(other.nodePool);
+        }
+        return *this;
+    }
+
     Order OrderBook::getBestBid() const {
         if(bids.empty()) {
             throw std::runtime_error("best bid requested from an empty bid side error");
@@ -77,7 +93,7 @@ namespace order_book {
     void OrderBook::restOrder(const Order& order) {
         auto rest = [this, &order](auto& levels) {
             const auto levelItr = levels.try_emplace(
-                order.getPriceTick(), order.getPriceTick(), order.getSide()).first;
+                order.getPriceTick(), order.getPriceTick(), order.getSide(), nodePool.get()).first;
             PriceLevel& level = levelItr->second;
 
             std::optional<OrderLocation> location;

@@ -29,7 +29,7 @@ struct OrderBookTestAccess {
     // Bypasses the read-only findActiveOrder to corrupt a resting order on purpose.
     static Order& restingOrder(OrderBook& book, OrderId orderId) { return *book.orderIndex.at(orderId).itr; }
 
-    static const std::list<Order>& orders(const PriceLevel& level) { return level.orders; }
+    static const order_book::OrderQueue& orders(const PriceLevel& level) { return level.orders; }
     static OrderFill fillOldestOrder(PriceLevel& level, unsigned int quantity) {
         return level.fillOldestOrder(quantity);
     }

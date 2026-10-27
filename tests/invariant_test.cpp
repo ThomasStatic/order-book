@@ -28,7 +28,7 @@ struct OrderBookTestAccess {
     static PriceLevel& level(OrderBook& book, Side side, Price price) {
         return side == Side::BUY ? book.bids.at(price) : book.asks.at(price);
     }
-    static std::list<Order>& orders(PriceLevel& level) { return level.orders; }
+    static order_book::OrderQueue& orders(PriceLevel& level) { return level.orders; }
     static std::uint64_t& aggregate(PriceLevel& level) { return level.quantity; }
 
     // The resting order itself, through its index entry.
@@ -132,7 +132,7 @@ void testSequenceWrapPasses() {
     expectSound(book, context);
 
     // Queuing the wrapped order first is still out of order.
-    std::list<Order>& queue = Access::orders(Access::level(book, Side::SELL, 100));
+    order_book::OrderQueue& queue = Access::orders(Access::level(book, Side::SELL, 100));
     queue.splice(queue.begin(), queue, std::prev(queue.end()));
     expectViolation(book,
                     {.violation = InvariantViolation::INVALID_FIFO_SEQUENCE, .side = Side::SELL, .price = 100,
@@ -224,7 +224,7 @@ void testOrderChecks() {
     {
         // Moving the newest order to the front keeps every iterator valid but breaks time priority.
         OrderBook book = restingBook();
-        std::list<Order>& queue = Access::orders(Access::level(book, Side::BUY, 99));
+        order_book::OrderQueue& queue = Access::orders(Access::level(book, Side::BUY, 99));
         queue.splice(queue.begin(), queue, std::prev(queue.end()));
         expectViolation(book,
                         {.violation = InvariantViolation::INVALID_FIFO_SEQUENCE, .side = Side::BUY, .price = 99,
