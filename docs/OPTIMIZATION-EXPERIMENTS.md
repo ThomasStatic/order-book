@@ -407,3 +407,35 @@ The base is experiment 9(b)'s code. At the extended size, the first version meas
   - **Lost coverage.** Every allocation-failure test set up a book that already held an order, so the pool always had blocks to spare and a queue node's allocation could no longer fail there. `testFirstOrderOnEmptyBookRollsBack` fails each allocation of a first order on an empty book, for `addOrder` and `submitOrder`, and requires the book to stay empty.
 - **Documented** on `OrderBook`: a book keeps its peak node memory until it is destroyed, and a moved-from book uses the heap. In `CLAUDE.md`: the pool, its fallback cases, the move assignment rule, and the new test names.
 - **The cost of the final design.** The final build measures about 2 points below the first version on the cached workloads, within noise, but plausibly the size-class lookup on every allocation and free. That is the price of pooling in every build, Debug included.
+
+### Experiment 8: replace the order index's container. Kept.
+
+After experiment 6, the index's `std::unordered_map` bucket walk was the largest remaining cost on the large books, 16-33% of their core time. Experiment 2(b)'s load-factor sweep had shown that cost to be memory, not instructions. The level map was left alone: its share had fallen to 2-4% once cancellations stopped searching it (experiment 5).
+
+**Measured first.** A throwaway open-addressed table supporting only the operations the library calls measured, against experiment 6's code, 16 pairs: `cancellation-heavy` 1.635, `mostly-resting` 1.349, `deep-book` 1.261, `small-book` 1.251, `matching-heavy` 1.075, every pair faster; at the extended size 1.27-1.59.
+
+**Design.** `OrderIndex` (`include/order_book/order_index.hpp`) keeps `pair<OrderId, OrderLocation>` entries in one array. The array's size is a power of two, and the table is kept at most three quarters full. It probes linearly from a Fibonacci multiplicative hash, which spreads sequential IDs over the table, and erases by shifting later entries of the probe run back, so cancellations leave no tombstones. ID 0, never a valid order ID, marks an empty slot, and emplacing it throws. Its iterator skips empty slots. Any emplace or erase may move entries, and iteration order is unspecified. Growing allocates the new array before changing anything, so a failed growth leaves the index unchanged.
+
+| Workload | core (16 pairs) | core, extended size (8 pairs) | replay (16 pairs) |
+|---|---:|---:|---:|
+| `cancellation-heavy` | **1.621 (1.498-1.675), 100%** | 1.605 (1.552-1.628), 100% | 1.131 (1.119-1.149) |
+| `deep-book` | **1.260 (1.200-1.372), 100%** | 1.386 (1.319-1.460), 100% | 1.169 (1.155-1.180) |
+| `mostly-resting` | **1.262 (1.199-1.363), 100%** | 1.317 (1.255-1.416), 100% | 1.091 (1.077-1.103) |
+| `small-book` | **1.223 (1.213-1.238), 100%** | | 1.079 (1.070-1.086) |
+| `matching-heavy` | **1.049 (1.039-1.057), 100%** | | 1.030 (1.021-1.035) |
+
+The base is experiment 6's code.
+
+- **Outcome.** The plan predicted 25-35% on the three large-book workloads and only a few percent on the cached ones. Every prediction was met or beaten. The large books gained 26-62%, and `cancellation-heavy`, which does two index lookups per cancel, gained most. The cached `small-book` gained 22%, far more than predicted: an index entry no longer needs its own heap node, so every resting submit makes no allocation at all once the table has grown. `matching-heavy`, whose commands mostly match rather than look up resting orders, gained least.
+- **Readability cost.** About 280 lines of hash table at the center of the engine, in place of a standard container, and its own test executable. The table's contract is written in its header and in `CLAUDE.md`. Two test helpers changed: the `reserve` test now speaks of the table's capacity, and `allocation_profile` reports capacity and fill instead of buckets and load factor.
+- **Tests.**
+  - **A differential test.** `order_index_tests` drives the table and `std::unordered_map` through 60,000 random emplaces and erases, by key and by iterator, for each of 12, 40, 300, and 5,000 IDs. It also covers growth at exactly three quarters full, a failed growth and a failed reservation leaving the table unchanged, key 0, an impossible reservation, and copies and moves.
+  - **A wrapped probe run.** A deterministic test builds a run that wraps past the table's last slot and erases each of its members. Inverting the backward-shift condition, or breaking only its wrapped branch, made the tests fail.
+  - **Two failures caught before keeping.** The first full build failed four existing tests. The iterator stepped onto empty slots, which the invariant checker and the scenario tests walk, and a moved-from table kept stale counters, which hung `node_pool_tests` in Debug. Both were fixed before any measurement of the final version.
+  - **A new no-allocation property.** Joining an existing level now allocates nothing when the index and the pool have room, so two allocation-failure tests that required at least one failure now require none.
+- **Review.** The independent review found no correctness bug in the table or in how the library uses it. It required these changes, all made:
+  - **The wrapped path.** The 12-ID differential case never collided, so the test above was added to prove the wrapped path directly.
+  - **Index growth on an existing level.** The allocation-failure case for that rollback had been lost, and is restored: twelve orders rest at one level, so the thirteenth must grow the table, and its failure must leave the level as it was.
+  - **The hash's weakness is documented.** IDs in arithmetic progression with a large Fibonacci step, such as 75,025, crowd into a small part of the table, and a caller that picks IDs can slow the book that way. The standard library's maps have their own such patterns. The book stays correct.
+  - **A conversion operator is constrained,** so GCC's conversion warnings cannot fire on it.
+- **Not verified here.** As for experiments 4 and 6, GCC and Clang have not compiled this code; CI's Linux jobs are the first to.
