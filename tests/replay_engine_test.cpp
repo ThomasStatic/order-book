@@ -88,7 +88,7 @@ std::string describe(const std::vector<PriceLevelSummary>& levels) {
     std::string text;
     for (const PriceLevelSummary& level : levels) {
         text += (text.empty() ? "" : ", ") + std::to_string(level.price) + " x " + std::to_string(level.totalQuantity)
-              + " (" + std::to_string(level.orderQuantity) + " orders)";
+              + " (" + std::to_string(level.orderCount) + " orders)";
     }
     return text;
 }
@@ -119,7 +119,7 @@ void expectLevels(const std::vector<PriceLevelSummary>& actual, const std::vecto
     bool same = actual.size() == expected.size();
     for (std::size_t i = 0; same && i < actual.size(); ++i) {
         same = actual[i].price == expected[i].price && actual[i].totalQuantity == expected[i].totalQuantity
-            && actual[i].orderQuantity == expected[i].orderQuantity;
+            && actual[i].orderCount == expected[i].orderCount;
     }
     expect(same, context + ": levels are " + describe(actual) + ", expected " + describe(expected));
 }
@@ -130,10 +130,10 @@ void expectFinalBook(const ReplayResult& result, const std::vector<PriceLevelSum
     expectLevels(result.finalBook.asks, asks, context + ": final asks");
     unsigned int orders = 0;
     for (const PriceLevelSummary& level : bids) {
-        orders += level.orderQuantity;
+        orders += level.orderCount;
     }
     for (const PriceLevelSummary& level : asks) {
-        orders += level.orderQuantity;
+        orders += level.orderCount;
     }
     expect(result.finalBook.totalActiveVisibleOrders == orders, context + ": wrong resting order count");
 }

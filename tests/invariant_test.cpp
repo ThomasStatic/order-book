@@ -17,6 +17,9 @@ namespace order_book {
 // Befriended by OrderBook, PriceLevel, and Order so these tests can break the book's
 // structures on purpose, one at a time, and check that the invariant checker notices.
 struct OrderBookTestAccess {
+    static ConsumptionResult consumeLevel(OrderBook& book, Side side, Price price, Quantity quantity) {
+        return book.consumeLevel(side, price, quantity);
+    }
     static auto& index(OrderBook& book) { return book.orderIndex; }
     static auto& bids(OrderBook& book) { return book.bids; }
     static auto& asks(OrderBook& book) { return book.asks; }
@@ -33,7 +36,7 @@ struct OrderBookTestAccess {
 
     // The resting order itself, through its index entry.
     static Order& indexedOrder(OrderBook& book, OrderId orderId) { return *book.orderIndex.at(orderId).itr; }
-    static void setRemaining(Order& order, unsigned int quantity) { order.remainingQuant = quantity; }
+    static void setRemaining(Order& order, unsigned int quantity) { order.remainingQuantity = quantity; }
     static void setSequenceNum(Order& order, SequenceNum sequenceNum) { order.sequenceNum = sequenceNum; }
     static void setSide(Order& order, Side side) { order.side = side; }
     static void setPrice(Order& order, Price price) { order.priceTick = price; }
@@ -114,7 +117,7 @@ void testSoundBooksPass() {
     expectSound(book, "added bids");
     expect(book.cancelOrder(10).isSuccess() && book.cancelOrder(9).isSuccess(), "cancellations should succeed");
     expectSound(book, "after cancellations");
-    book.consumeLevel(Side::BUY, 96, 2);
+    Access::consumeLevel(book, Side::BUY, 96, 2);
     expectSound(book, "after consuming a level");
 }
 
@@ -181,7 +184,7 @@ void testOrderChecks() {
     }
     {
         OrderBook book = restingBook();
-        Access::indexedOrder(book, 5).setExecutionLevel(FillStatus::FILLED);
+        Access::indexedOrder(book, 5).setFillStatus(FillStatus::FILLED);
         expectViolation(book,
                         {.violation = InvariantViolation::MALFORMED_ORDER, .side = Side::SELL, .price = 101,
                          .orderId = 5},

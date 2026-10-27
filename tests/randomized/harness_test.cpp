@@ -292,7 +292,7 @@ void testProfilesExerciseTheBook() {
             for (const auto* levels : {&snapshot.bids, &snapshot.asks}) {
                 for (const order_book::PriceLevelSummary& level : *levels) {
                     largestAggregate = std::max(largestAggregate, level.totalQuantity);
-                    longestQueue = std::max(longestQueue, level.orderQuantity);
+                    longestQueue = std::max(longestQueue, level.orderCount);
                 }
             }
             return std::nullopt;
@@ -330,9 +330,9 @@ void testPlantedFaultIsReportedPreservedAndShrunk() {
         const order_book::BookSnapshot snapshot = book.snapshot(std::numeric_limits<unsigned int>::max());
         for (const auto* levels : {&snapshot.bids, &snapshot.asks}) {
             for (const order_book::PriceLevelSummary& level : *levels) {
-                if (level.orderQuantity >= 3) {
+                if (level.orderCount >= 3) {
                     return "the level at " + std::to_string(level.price) + " queues " +
-                           std::to_string(level.orderQuantity) + " orders";
+                           std::to_string(level.orderCount) + " orders";
                 }
             }
         }
@@ -419,15 +419,16 @@ void testPlantedFaultIsReportedPreservedAndShrunk() {
     }
 }
 
-// The book is changed behind the model's back (through consumeLevel, which keeps the book
-// itself sound) and the next command's comparison catches it: by its events when it touches
-// the changed order, by the book's levels when it does not.
+// The book is changed behind the model's back (by a submission the model never sees, which
+// keeps the book itself sound) and the next command's comparison catches it: by its events
+// when it touches the changed order, by the book's levels when it does not.
 void testDivergenceFromTheModelIsCaught() {
     const std::string context = "divergence from the model";
     auto drainAfterSecond = [](const OrderBook& book, const Command& command) -> std::optional<std::string> {
         if (command.orderId == 2) {
-            // The book is never const itself; the property just receives it read-only.
-            const_cast<OrderBook&>(book).consumeLevel(Side::SELL, 100, 3);
+            // The book is never const itself; the property just receives it read-only. Buys 3
+            // of order 1, the oldest ask at 100.
+            const_cast<OrderBook&>(book).submitOrder(Order(99, 100, 3, 1, Side::BUY));
         }
         return std::nullopt;
     };

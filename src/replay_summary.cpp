@@ -24,7 +24,7 @@ namespace order_book::replay {
             }
             for (const PriceLevelSummary& level : levels) {
                 text += "  price=" + std::to_string(level.price) + " qty=" + std::to_string(level.totalQuantity)
-                      + " orders=" + std::to_string(level.orderQuantity) + '\n';
+                      + " orders=" + std::to_string(level.orderCount) + '\n';
             }
         }
     }  // namespace

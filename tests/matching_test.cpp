@@ -216,7 +216,7 @@ void testIncomingPartialFill(Side incomingSide) {
     expect(remainder.getSide() == incomingSide, context + ": the remainder should rest on the incoming side");
     expect(remainder.getRemainingQuantity() == 6 && remainder.getInitialQuantity() == 10,
            context + ": the remainder should keep 6 of its original 10");
-    expect(remainder.getExecutionLevel() == FillStatus::PARTIAL, context + ": the remainder should be PARTIAL");
+    expect(remainder.getFillStatus() == FillStatus::PARTIAL, context + ": the remainder should be PARTIAL");
     expect(bestOn(book, incomingSide).getOrderId() == 2, context + ": the remainder should be the new best order");
     expectBookConsistent(book, context);
 }
@@ -237,11 +237,11 @@ void testRestingPartialFill(Side incomingSide) {
 
     const Order& resting = Access::indexedOrder(book, 1);
     expect(&resting == restingBefore, context + ": the resting order should be filled in place");
-    expect(resting.getRemainingQuantity() == 6 && resting.getExecutionLevel() == FillStatus::PARTIAL,
+    expect(resting.getRemainingQuantity() == 6 && resting.getFillStatus() == FillStatus::PARTIAL,
            context + ": the resting order should be left PARTIAL with 6");
     const PriceLevel& level = levelAt(book, restingSide, 100);
     expect(level.getOldestOrder().getOrderId() == 1, context + ": the resting order should keep its FIFO position");
-    expect(level.getAggregateQuantity() == 11 && level.getOrdersQuantity() == 2,
+    expect(level.getAggregateQuantity() == 11 && level.getOrderCount() == 2,
            context + ": the level should drop from 15 to 11 and keep both orders");
     expectBookConsistent(book, context);
 }
@@ -261,7 +261,7 @@ void testMultipleMatchesAtOnePrice(Side incomingSide) {
     expectTrades(trades, incoming, 1, {{9, 100, 3}, {4, 100, 4}, {7, 100, 3}}, context);
     expect(!isIndexed(book, 9) && !isIndexed(book, 4), context + ": the fully filled orders should be unindexed");
     const Order last = book.findActiveOrder(7);
-    expect(last.getRemainingQuantity() == 2 && last.getExecutionLevel() == FillStatus::PARTIAL,
+    expect(last.getRemainingQuantity() == 2 && last.getFillStatus() == FillStatus::PARTIAL,
            context + ": the last order reached should be left PARTIAL with 2");
     expect(levelAt(book, restingSide, 100).getAggregateQuantity() == 2, context + ": the level should hold 2");
     expect(!hasSide(book, incomingSide), context + ": a fully filled incoming order should not rest");
@@ -329,7 +329,7 @@ void testNonCrossingOrderRests(Side incomingSide) {
     expect(Access::nextTradeId(book) == 1, context + ": no trade ID should be consumed");
     const Order rested = book.findActiveOrder(2);
     expect(rested.getPriceTick() == priceAway(incomingSide, -1) && rested.getRemainingQuantity() == 7 &&
-               rested.getExecutionLevel() == FillStatus::NONE,
+               rested.getFillStatus() == FillStatus::NONE,
            context + ": the whole order should rest unfilled at its limit price");
     expect(book.findActiveOrder(1).getRemainingQuantity() == 5, context + ": the opposing order should be untouched");
     expectBookConsistent(book, context);
@@ -398,7 +398,7 @@ void testSequenceNumbers() {
     expectThrows([&book] { book.addOrder(Order(2, 102, 5, 1, Side::SELL)); },
                  context + ": adding a duplicate resting ID should throw");
     Order inactive(8, 100, 5, 1, Side::BUY);
-    inactive.setExecutionLevel(FillStatus::FILLED);
+    inactive.setFillStatus(FillStatus::FILLED);
     expect(book.submitOrder(inactive).getStatus() == SubmissionStatus::REJECTED,
            context + ": submitting an inactive order should be rejected");
     expect(Access::nextSequenceNum(book) == 5, context + ": rejected orders should not consume a number");

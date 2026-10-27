@@ -104,7 +104,7 @@ namespace order_book {
                     return {.violation = MALFORMED_ORDER, .side = side, .price = price, .orderId = orderId,
                             .detail = rejectionMessage(*reason)};
                 }
-                if(!order.orderIsActive()) {
+                if(!order.isActive()) {
                     return {.violation = MALFORMED_ORDER, .side = side, .price = price, .orderId = orderId,
                             .detail = "a resting order should not be marked FILLED"};
                 }

@@ -31,13 +31,13 @@
 #include <vector>
 
 #include "benchmark_runner.hpp"
-#include "order_book/cancellation_results.hpp"
+#include "order_book/cancellation_result.hpp"
 #include "order_book/order.hpp"
 #include "order_book/order_book.hpp"
 #include "order_book/replay_engine.hpp"
 #include "order_book/replay_parser.hpp"
 #include "order_book/replay_summary.hpp"
-#include "order_book/submission_results.hpp"
+#include "order_book/submission_result.hpp"
 #include "workload.hpp"
 
 namespace {
@@ -223,7 +223,7 @@ void profileCore(const Workload& workload) {
         std::copy(sizeHistogram, sizeHistogram + histogramLimit + 1, histogramBefore);
         const AllocationCounts before = snapshotCounts();
         if (command.type == CommandType::SUBMIT) {
-            const SubmissionResults result =
+            const SubmissionResult result =
                 book.submitOrder(Order(command.orderId, command.price, command.quantity, 1, command.side));
             trades = result.getGeneratedTrades().size();
             kind = trades == 0 ? CommandKind::SUBMIT_RESTS
@@ -378,9 +378,9 @@ int main(int argc, char** argv) {
                 benchmarkSizeName(size), timedCommandCount(size), static_cast<unsigned long long>(seed),
                 workloadGeneratorVersion);
     std::printf("sizes: Order %zu, std::list node of Order %zu, PriceLevel %zu, OrderLocation %zu, Trade %zu, "
-                "BookEvent %zu, SubmissionResults %zu, CancellationResult %zu bytes\n\n",
+                "BookEvent %zu, SubmissionResult %zu, CancellationResult %zu bytes\n\n",
                 sizeof(Order), OrderBookTestAccess::listNodeSize(), sizeof(PriceLevel), sizeof(OrderLocation), sizeof(Trade),
-                sizeof(BookEvent), sizeof(SubmissionResults), sizeof(CancellationResult));
+                sizeof(BookEvent), sizeof(SubmissionResult), sizeof(CancellationResult));
 
     std::vector<WorkloadConfig> configs;
     if (names.empty()) {

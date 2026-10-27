@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#include "order_book/cancellation_results.hpp"
+#include "order_book/cancellation_result.hpp"
 #include "order_book/order.hpp"
 #include "order_book/order_book.hpp"
 
@@ -138,7 +138,7 @@ std::vector<LevelState> captureLevels(const Levels& levels) {
         LevelState levelState{price, level.getAggregateQuantity(), {}};
         for (const Order& order : Access::orders(level)) {
             levelState.orders.push_back({order.getOrderId(), order.getSequenceNum(), order.getInitialQuantity(),
-                                         order.getRemainingQuantity(), order.getExecutionLevel(), &order});
+                                         order.getRemainingQuantity(), order.getFillStatus(), &order});
         }
         captured.push_back(levelState);
     }
@@ -279,7 +279,7 @@ void testAggregateQuantity(Side side) {
     expectCancelled(book.cancelOrder(2), context);
     expect(levelAt(book, side, price).getAggregateQuantity() == 110,
            context + ": cancelling 30 of 140 should leave 110");
-    expect(levelAt(book, side, price).getOrdersQuantity() == 2, context + ": two orders should remain");
+    expect(levelAt(book, side, price).getOrderCount() == 2, context + ": two orders should remain");
     expectBookConsistent(book, context);
 }
 
@@ -381,7 +381,7 @@ void testCancelPartiallyFilled(Side side) {
     const auto trades = book.submitOrder(Order(50, price, 40, 1, opposite(side))).getGeneratedTrades();
     expect(trades.size() == 1, context + ": setup should execute once");
     expect(book.findActiveOrder(1).getRemainingQuantity() == 60, context + ": setup should leave 60 on order 1");
-    expect(book.findActiveOrder(1).getExecutionLevel() == FillStatus::PARTIAL,
+    expect(book.findActiveOrder(1).getFillStatus() == FillStatus::PARTIAL,
            context + ": setup should leave order 1 partially filled");
     expect(levelAt(book, side, price).getAggregateQuantity() == 85, context + ": setup aggregate should be 85");
 

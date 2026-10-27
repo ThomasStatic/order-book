@@ -15,6 +15,9 @@ namespace order_book {
 // Befriended by OrderBook and PriceLevel so these tests can drive one execution and
 // inspect internals without widening the public API.
 struct OrderBookTestAccess {
+    static ConsumptionResult consumeLevel(OrderBook& book, Side side, Price price, Quantity quantity) {
+        return book.consumeLevel(side, price, quantity);
+    }
     static Trade executeOnce(OrderBook& book, Order& incoming) { return book.executeOnce(incoming); }
     static void restOrder(OrderBook& book, const Order& order) { book.restOrder(order); }
     // Plants an empty level, which no public operation leaves behind, to exercise the guard.
@@ -144,7 +147,7 @@ void testExactFill(Side incomingSide) {
     expect(trade.getExecutionQuantity() == 10, context + ": execution quantity should equal both quantities");
     expect(trade.getExecutionPrice() == 100, context + ": trade should execute at the resting price");
     expect(incoming.getRemainingQuantity() == 0, context + ": incoming order should have nothing left");
-    expect(incoming.getExecutionLevel() == FillStatus::FILLED, context + ": incoming order should be FILLED");
+    expect(incoming.getFillStatus() == FillStatus::FILLED, context + ": incoming order should be FILLED");
     expect(!isIndexed(book, 1), context + ": the fully filled resting order should be unindexed");
     expect(!hasSide(book, restingSide), context + ": the emptied price level should be erased");
     expectIndexConsistent(book, context);
@@ -163,17 +166,17 @@ void testPartialIncomingFill(Side incomingSide) {
     expect(trade.getExecutionQuantity() == 4, context + ": execution should be capped by the resting order");
     expect(trade.getRestingId() == 1, context + ": execution should hit the oldest resting order");
     expect(incoming.getRemainingQuantity() == 6, context + ": incoming should keep the unexecuted quantity");
-    expect(incoming.getExecutionLevel() == FillStatus::PARTIAL, context + ": incoming should be PARTIAL");
+    expect(incoming.getFillStatus() == FillStatus::PARTIAL, context + ": incoming should be PARTIAL");
     expect(!isIndexed(book, 1), context + ": the filled resting order should be unindexed");
 
     // One execution touches exactly one resting order.
     const PriceLevel& level = levelAt(book, restingSide, 100);
     const Order& next = level.getOldestOrder();
     expect(next.getOrderId() == 3, context + ": the next order should now be at the front of the level");
-    expect(next.getRemainingQuantity() == 6 && next.getExecutionLevel() == FillStatus::NONE,
+    expect(next.getRemainingQuantity() == 6 && next.getFillStatus() == FillStatus::NONE,
            context + ": one execution should not touch the next resting order");
     expect(level.getAggregateQuantity() == 6, context + ": level aggregate should drop by 4");
-    expect(level.getOrdersQuantity() == 1, context + ": level should hold one order");
+    expect(level.getOrderCount() == 1, context + ": level should hold one order");
     expectIndexConsistent(book, context);
 }
 
@@ -191,18 +194,18 @@ void testPartialRestingFill(Side incomingSide) {
 
     expect(trade.getExecutionQuantity() == 4, context + ": execution should be capped by the incoming order");
     expect(incoming.getRemainingQuantity() == 0, context + ": incoming should be fully executed");
-    expect(incoming.getExecutionLevel() == FillStatus::FILLED, context + ": incoming should be FILLED");
+    expect(incoming.getFillStatus() == FillStatus::FILLED, context + ": incoming should be FILLED");
 
     const Order& resting = Access::indexedOrder(book, 1);
     expect(&resting == restingBefore, context + ": the resting order should keep its original index entry");
     expect(resting.getRemainingQuantity() == 6, context + ": the resting order should drop to 6");
-    expect(resting.getExecutionLevel() == FillStatus::PARTIAL, context + ": the resting order should be PARTIAL");
+    expect(resting.getFillStatus() == FillStatus::PARTIAL, context + ": the resting order should be PARTIAL");
 
     const PriceLevel& level = levelAt(book, restingSide, 100);
     expect(level.getOldestOrder().getOrderId() == 1, context + ": the resting order should keep its FIFO position");
     expect(&Access::indexedOrder(book, 3) == behindBefore, context + ": orders behind should keep their entries");
     expect(level.getAggregateQuantity() == 11, context + ": level aggregate should drop from 15 to 11");
-    expect(level.getOrdersQuantity() == 2, context + ": no order should leave the level");
+    expect(level.getOrderCount() == 2, context + ": no order should leave the level");
     expectIndexConsistent(book, context);
 }
 
@@ -366,7 +369,7 @@ void testRejectedExecutionLeavesBookUntouched() {
 
     // An order marked FILLED while still holding quantity: filling it would throw.
     Order inactiveIncoming(2, 100, 5, 2, Side::BUY);
-    inactiveIncoming.setExecutionLevel(FillStatus::FILLED);
+    inactiveIncoming.setFillStatus(FillStatus::FILLED);
     expectThrows([&book, &inactiveIncoming] { Access::executeOnce(book, inactiveIncoming); },
                  "rejected execution: an inactive incoming order should throw");
     expectUntouched(book, inactiveIncoming, "rejected execution (inactive incoming)");
@@ -377,12 +380,12 @@ void testRejectedExecutionLeavesBookUntouched() {
 
     // The public API can no longer rest an inactive order (addOrder rejects one and
     // findActiveOrder is read-only), so corrupt one directly to exercise the guard.
-    Access::restingOrder(book, 1).setExecutionLevel(FillStatus::FILLED);
+    Access::restingOrder(book, 1).setFillStatus(FillStatus::FILLED);
     Order incoming(3, 100, 5, 3, Side::BUY);
     expectThrows([&book, &incoming] { Access::executeOnce(book, incoming); },
                  "rejected execution: an inactive resting order should throw");
     // Undo the corruption so the consistency checks judge only what the execution did.
-    Access::restingOrder(book, 1).setExecutionLevel(FillStatus::NONE);
+    Access::restingOrder(book, 1).setFillStatus(FillStatus::NONE);
     expectUntouched(book, incoming, "rejected execution (inactive resting)");
 }
 
@@ -394,7 +397,7 @@ void testRestOrderRejectsIndexedId() {
     expectThrows([&book] { Access::restOrder(book, Order(1, 100, 7, 2, Side::SELL)); },
                  "restOrder: an already indexed ID at an existing level should throw");
     const PriceLevel& level = levelAt(book, Side::SELL, 100);
-    expect(level.getOrdersQuantity() == 1 && level.getAggregateQuantity() == 5,
+    expect(level.getOrderCount() == 1 && level.getAggregateQuantity() == 5,
            "restOrder: the existing level should be left as it was");
     expect(book.findActiveOrder(1).getRemainingQuantity() == 5, "restOrder: the original entry should be kept");
     expectIndexConsistent(book, "restOrder (existing level)");
@@ -427,15 +430,15 @@ void testConsumeLevelUnindexesEachOrderAsItIsFilled() {
         book.addOrder(Order(1, 100, 5, 1, Side::SELL));
         book.addOrder(Order(2, 100, 5, 2, Side::SELL));
         // Corrupt the second order so its fill throws after the first has left the level.
-        Access::restingOrder(book, 2).setExecutionLevel(FillStatus::FILLED);
+        Access::restingOrder(book, 2).setFillStatus(FillStatus::FILLED);
 
-        expectThrows([&book] { book.consumeLevel(Side::SELL, 100, 10); },
+        expectThrows([&book] { Access::consumeLevel(book, Side::SELL, 100, 10); },
                      "consumeLevel: filling a corrupted order should throw");
         expect(!isIndexed(book, 1), "consumeLevel: an order filled before the throw should already be unindexed");
-        expect(isIndexed(book, 2) && levelAt(book, Side::SELL, 100).getOrdersQuantity() == 1,
+        expect(isIndexed(book, 2) && levelAt(book, Side::SELL, 100).getOrderCount() == 1,
                "consumeLevel: the order that threw should remain resting and indexed");
         // Undo the corruption: the throw should have left everything else sound.
-        Access::restingOrder(book, 2).setExecutionLevel(FillStatus::NONE);
+        Access::restingOrder(book, 2).setFillStatus(FillStatus::NONE);
         expectIndexConsistent(book, "consumeLevel after a throw");
     }
 }

@@ -1,13 +1,26 @@
 # Order Book
 
-A correctness-first C++ limit-order-book and matching-engine project.
+A correctness-first C++20 limit-order-book and matching-engine project: price-time-priority matching of limit orders, O(1) cancellation, lifecycle events for every command, a whole-book invariant checker, a CSV replay format and CLI, and a benchmark harness.
+
+## Public API
+
+Version 1.0.0. Everything is in namespace `order_book`, with headers in `include/order_book/`:
+
+- `order_book.hpp` — `OrderBook`: `submitOrder` (match, then rest any remainder), `addOrder` (rest without matching), `cancelOrder`, `findActiveOrder`, `getBestBid`/`getBestAsk`, `snapshot`, `activeOrderCount`, `reserve`, and `checkInvariants`. Move-only and not thread-safe.
+- `order.hpp`, `side.hpp`, `order_type.hpp`, `fill_status.hpp`, `types.hpp` — the `Order` a caller submits and the types it is built from. Prices are integer ticks; zero is invalid for every ID, price, and quantity.
+- `submission_result.hpp`, `cancellation_result.hpp`, `trade.hpp`, `book_event.hpp`, `rejection_reason.hpp` — what each command returns: a result built only through its factories, its trades, and its lifecycle events. A rejected submission or cancellation is a result, not an exception.
+- `event_format.hpp` — one line of text per event, for callers that print them.
+- `invariants.hpp` — `InvariantResult` and the `ORDER_BOOK_INVARIANT_CHECKS` switch for automatic checks after every command.
+- `replay_parser.hpp`, `replay_engine.hpp`, `replay_summary.hpp` (namespace `order_book::replay`, library `order_book_replay`) — the CSV replay format of [`docs/replay-format.md`](docs/replay-format.md).
+
+`price_level.hpp`, `order_location.hpp`, `order_index.hpp`, `node_pool.hpp`, and `small_vector.hpp` are implementation detail: `OrderBook` holds them by value, so its header includes them, but the book never hands one out, and they may change in any release. (The result types expose `SmallVector` through their getters only as a contiguous range, which binds to `std::span`.)
 
 ## Repository layout
 
 - `include/` — public headers for the reusable library
 - `src/` — implementation for the reusable library
 - `apps/` — thin CLI entry points
-- `tests/` — lightweight infrastructure tests
+- `tests/` — unit, scenario, randomized, and replay tests (no framework: each file is its own executable)
 - `benchmarks/` — the optional benchmark harness ([`benchmarks/README.md`](benchmarks/README.md))
 - `docs/` — design notes
 

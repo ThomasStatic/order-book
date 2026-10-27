@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(order_book VERSION 0.1.0 LANGUAGES CXX)
+project(order_book VERSION 1.0.0 LANGUAGES CXX)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
@@ -121,8 +121,8 @@ add_library(order_book STATIC
     src/order_book_invariants.cpp
     src/order.cpp
     src/trade.cpp
-    src/submission_results.cpp
-    src/cancellation_results.cpp
+    src/submission_result.cpp
+    src/cancellation_result.cpp
     src/price_level.cpp
     src/event_format.cpp
 )

@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <optional>
+#include <stdexcept>
 #include <utility>
 
 #include "order_book/order_book.hpp"
@@ -47,7 +48,7 @@ namespace order_book {
         if(const std::optional<RejectionReason> reason = order.malformedReason()) {
             return reason;
         }
-        if(!order.orderIsActive()) {
+        if(!order.isActive()) {
             return RejectionReason::ORDER_NOT_ACTIVE;
         }
         if(orderIndex.find(order.getOrderId()) != orderIndex.end()) {
@@ -56,7 +57,7 @@ namespace order_book {
         return std::nullopt;
     }
 
-    SubmissionResults OrderBook::addOrder(Order order) {
+    SubmissionResult OrderBook::addOrder(Order order) {
         const InvariantBoundary boundary(*this, "addOrder");
         if(const std::optional<RejectionReason> reason = validateNewOrder(order)) {
             throw std::invalid_argument(rejectionMessage(*reason));
@@ -67,7 +68,7 @@ namespace order_book {
         }
         order.assignSequenceNum(nextSequenceNum);
         // Built before the order rests, so a failed allocation leaves the book untouched.
-        SubmissionResults result = SubmissionResults::accepted(
+        SubmissionResult result = SubmissionResult::accepted(
             {order.getOrderId(), order.getSide(), order.getPriceTick(), order.getRemainingQuantity()}, {},
             order.getRemainingQuantity());
         restOrder(order);
@@ -135,7 +136,7 @@ namespace order_book {
     Trade OrderBook::executeOnce(Order& incoming) {
         // Every check runs and the trade is built before anything is mutated, so a throw
         // leaves the book, its index, and the incoming order untouched.
-        if(incoming.getRemainingQuantity() == 0 || !incoming.orderIsActive()) {
+        if(incoming.getRemainingQuantity() == 0 || !incoming.isActive()) {
             throw std::runtime_error("executing an inactive incoming order error");
         }
         if(!crossesBestOpposing(incoming)) {
@@ -155,11 +156,11 @@ namespace order_book {
         // Copy what the trade needs before filling: a fully filled resting order is
         // popped from the level, invalidating both this reference and its indexed iterator.
         const Order& resting = level.getOldestOrder();
-        if(!resting.orderIsActive()) {
+        if(!resting.isActive()) {
             throw std::runtime_error("executing against an inactive resting order error");
         }
         const OrderId restingId = resting.getOrderId();
-        const unsigned int execQuantity = std::min(incoming.getRemainingQuantity(),
+        const Quantity execQuantity = std::min(incoming.getRemainingQuantity(),
                                                    resting.getRemainingQuantity());
         const Trade trade(nextTradeId, restingId, incoming.getOrderId(),
                           restingPrice, execQuantity, incoming.getSide());
@@ -200,12 +201,12 @@ namespace order_book {
         return trades;
     }
 
-    SubmissionResults OrderBook::submitOrder(Order incoming) {
+    SubmissionResult OrderBook::submitOrder(Order incoming) {
         const InvariantBoundary boundary(*this, "submitOrder");
         // Reject before matching: failing only when the remainder rests would leave
         // trades executed for a submission that is then refused.
         if(const std::optional<RejectionReason> reason = validateNewOrder(incoming)) {
-            return SubmissionResults::rejected(incoming.getOrderId(), incoming.getRemainingQuantity(), *reason);
+            return SubmissionResult::rejected(incoming.getOrderId(), incoming.getRemainingQuantity(), *reason);
         }
 
         // Accepted: numbered once, before matching, and the remainder rests with this same
@@ -217,15 +218,13 @@ namespace order_book {
                                        incoming.getRemainingQuantity()};
 
         // Not atomic: if an allocation fails mid-match, while building the result, or while
-        // resting the remainder,
-        // executions already made stay made and their trades and events are lost with the
-        // exception.
-        // The book itself is left consistent.
+        // resting the remainder, executions already made stay made and their trades and events
+        // are lost with the exception. The book itself is left consistent.
 
         // The result, events included, is built before the remainder rests, so resting is
         // the last step that can fail: a remainder is never left resting behind a throw.
         SubmissionTrades trades = matchOrder(incoming);
-        SubmissionResults result = SubmissionResults::accepted(acceptance, std::move(trades),
+        SubmissionResult result = SubmissionResult::accepted(acceptance, std::move(trades),
                                                                incoming.getRemainingQuantity());
         if(incoming.getRemainingQuantity() > 0) {
             // Rests at the incoming limit price (fills never change it), not at the price
@@ -253,7 +252,6 @@ namespace order_book {
         }
 
         throw std::invalid_argument("order id not found in order index error");
-
     }
 
     CancellationResult OrderBook::cancelOrder(OrderId orderId) {
@@ -295,7 +293,7 @@ namespace order_book {
         return result;
     }
 
-    ConsumptionResult OrderBook::consumeLevel(Side side, Price price, unsigned int quantity) {
+    ConsumptionResult OrderBook::consumeLevel(Side side, Price price, Quantity quantity) {
         const InvariantBoundary boundary(*this, "consumeLevel");
         auto consume = [this, side, price, quantity](auto& levels) {
             const auto levelItr = levels.find(price);
@@ -311,7 +309,7 @@ namespace order_book {
             }
             // At most one fill per resting order, so recording a fill can never throw
             // after the level has changed.
-            result.fills.reserve(level.getOrdersQuantity());
+            result.fills.reserve(level.getOrderCount());
 
             // Unindex each fully filled order as soon as it leaves the level, so a throw
             // partway through cannot strand an index entry pointing at a popped order.
@@ -339,15 +337,15 @@ namespace order_book {
 
     BookSnapshot OrderBook::snapshot(unsigned int depth) const {
         unsigned int totalActiveOrders = 0;
-        
+
         unsigned int bidsCount = 0;
         std::vector<PriceLevelSummary> bestBids;
         for(auto itr = bids.begin(); itr != bids.end() && bidsCount < depth; ++itr, ++bidsCount) {
             PriceLevelSummary topBid;
             topBid.price = itr->first;
-            unsigned int ordersQuantity = itr->second.getOrdersQuantity();
-            topBid.orderQuantity = ordersQuantity;
-            totalActiveOrders += ordersQuantity;
+            const unsigned int orderCount = itr->second.getOrderCount();
+            topBid.orderCount = orderCount;
+            totalActiveOrders += orderCount;
             topBid.totalQuantity = itr->second.getAggregateQuantity();
             bestBids.push_back(topBid);
         }
@@ -357,9 +355,9 @@ namespace order_book {
         for(auto itr = asks.begin(); itr != asks.end() && asksCount < depth; ++itr, ++asksCount) {
             PriceLevelSummary topAsk;
             topAsk.price = itr->first;
-            unsigned int ordersQuantity = itr->second.getOrdersQuantity();
-            topAsk.orderQuantity = ordersQuantity;
-            totalActiveOrders += ordersQuantity;
+            const unsigned int orderCount = itr->second.getOrderCount();
+            topAsk.orderCount = orderCount;
+            totalActiveOrders += orderCount;
             topAsk.totalQuantity = itr->second.getAggregateQuantity();
             bestAsks.push_back(topAsk);
         }

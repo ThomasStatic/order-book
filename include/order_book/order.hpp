@@ -1,11 +1,12 @@
 #pragma once
 
 #include <optional>
-#include <stdexcept>
+
 #include "fill_status.hpp"
 #include "order_type.hpp"
 #include "rejection_reason.hpp"
 #include "side.hpp"
+#include "types.hpp"
 
 namespace order_book {
 
@@ -16,20 +17,20 @@ namespace order_book {
         // Test-only access to internals; defined in tests, never in the library.
         friend struct OrderBookTestAccess;
 
-        unsigned int orderId;
-        unsigned int sequenceNum;
+        OrderId orderId;
+        SequenceNum sequenceNum;
 
-        unsigned int priceTick;
-        unsigned int initialQuant;
-        unsigned int remainingQuant;
+        Price priceTick;
+        Quantity initialQuantity;
+        Quantity remainingQuantity;
 
         Side side;
         OrderType type;
-        FillStatus execution;
+        FillStatus fillStatus;
 
         // Replaces the sequence number given at construction; throws
         // std::invalid_argument on zero, leaving the order unchanged.
-        void assignSequenceNum(unsigned int seq);
+        void assignSequenceNum(SequenceNum sequence);
 
         // The one home for field checks, shared by the constructor and the book: a zero
         // ID, price, or remaining quantity, a side other than BUY or SELL, or an
@@ -38,23 +39,27 @@ namespace order_book {
 
     public:
         // Throws std::invalid_argument on a zero sequence number, or on any field
-        // malformedReason() refuses, with that reason's rejectionMessage.
-        Order(unsigned int id, unsigned int tick, unsigned int quant, unsigned int arrival, Side s,
-              OrderType t = OrderType::LIMIT);
+        // malformedReason() refuses, with that reason's rejectionMessage. A book replaces
+        // the sequence number with its own when it accepts the order.
+        Order(OrderId id, Price price, Quantity quantity, SequenceNum sequence, Side orderSide,
+              OrderType orderType = OrderType::LIMIT);
 
-        unsigned int getOrderId() const;
-        unsigned int getSequenceNum() const;
+        OrderId getOrderId() const;
+        SequenceNum getSequenceNum() const;
 
-        unsigned int getPriceTick() const;
-        unsigned int getInitialQuantity() const;
-        unsigned int getRemainingQuantity() const;
-        unsigned int fillQuantity(unsigned int amt);
+        Price getPriceTick() const;
+        Quantity getInitialQuantity() const;
+        Quantity getRemainingQuantity() const;
+        // Fills up to amount and returns the part of it this order could not take. Throws
+        // std::invalid_argument on zero, or std::runtime_error if the order is FILLED.
+        Quantity fillQuantity(Quantity amount);
 
         Side getSide() const;
         OrderType getOrderType() const;
-        FillStatus getExecutionLevel() const;
-        void setExecutionLevel(FillStatus newLevel);
-        bool orderIsActive() const;
+        FillStatus getFillStatus() const;
+        void setFillStatus(FillStatus status);
+        // Whether the order can still trade: anything but FILLED.
+        bool isActive() const;
     };
 
 }  // namespace order_book

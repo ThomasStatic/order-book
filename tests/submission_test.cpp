@@ -13,7 +13,7 @@
 
 #include "order_book/order.hpp"
 #include "order_book/order_book.hpp"
-#include "order_book/submission_results.hpp"
+#include "order_book/submission_result.hpp"
 
 namespace order_book {
 
@@ -30,7 +30,7 @@ struct OrderBookTestAccess {
 
     static void setOrderId(Order& order, OrderId orderId) { order.orderId = orderId; }
     static void setPrice(Order& order, Price price) { order.priceTick = price; }
-    static void setQuantity(Order& order, unsigned int quantity) { order.initialQuant = order.remainingQuant = quantity; }
+    static void setQuantity(Order& order, unsigned int quantity) { order.initialQuantity = order.remainingQuantity = quantity; }
     static void setSide(Order& order, Side side) { order.side = side; }
     static void setOrderType(Order& order, OrderType type) { order.type = type; }
 };
@@ -49,7 +49,7 @@ using order_book::Price;
 using order_book::RejectionReason;
 using order_book::SequenceNum;
 using order_book::Side;
-using order_book::SubmissionResults;
+using order_book::SubmissionResult;
 using order_book::SubmissionStatus;
 using order_book::TradeId;
 
@@ -156,7 +156,7 @@ std::vector<LevelState> captureLevels(const Levels& levels) {
         LevelState levelState{price, level.getAggregateQuantity(), {}};
         for (const Order& order : Access::orders(level)) {
             levelState.orders.push_back({order.getOrderId(), order.getSequenceNum(), order.getInitialQuantity(),
-                                         order.getRemainingQuantity(), order.getExecutionLevel(), &order});
+                                         order.getRemainingQuantity(), order.getFillStatus(), &order});
         }
         captured.push_back(levelState);
     }
@@ -185,7 +185,7 @@ OrderBook restingBook() {
     return book;
 }
 
-void expectRejected(const SubmissionResults& result, OrderId orderId, unsigned int quantity, RejectionReason reason,
+void expectRejected(const SubmissionResult& result, OrderId orderId, unsigned int quantity, RejectionReason reason,
                     const std::string& context) {
     expect(result.getStatus() == SubmissionStatus::REJECTED, context + ": the submission should be rejected");
     expect(result.getRejectionReason() == reason, context + ": unexpected rejection reason");
@@ -200,13 +200,13 @@ void expectRejected(const SubmissionResults& result, OrderId orderId, unsigned i
 void expectRejectedUnchanged(OrderBook& book, const Order& incoming, RejectionReason reason,
                              const std::string& context) {
     const BookState before = capture(book);
-    const SubmissionResults result = book.submitOrder(incoming);
+    const SubmissionResult result = book.submitOrder(incoming);
     expectRejected(result, incoming.getOrderId(), incoming.getRemainingQuantity(), reason, context);
     expect(capture(book) == before, context + ": a rejected submission should leave the book exactly as it was");
     expectBookConsistent(book, context);
 }
 
-void expectAccepted(const SubmissionResults& result, OrderId orderId, std::size_t tradeCount,
+void expectAccepted(const SubmissionResult& result, OrderId orderId, std::size_t tradeCount,
                     unsigned int remainingQuantity, FillStatus fillStatus, const std::string& context) {
     expect(result.getStatus() == SubmissionStatus::ACCEPTED, context + ": the submission should be accepted");
     expect(result.getRejectionReason() == RejectionReason::NONE,
@@ -225,7 +225,7 @@ void testFullyFilledIncomingIsNotIndexed(Side incomingSide) {
     book.addOrder(Order(2, priceAway(incomingSide, 0), 6, 1, restingSide));
     expect(book.activeOrderCount() == 2, context + ": two orders should be active before the submission");
 
-    const SubmissionResults result = book.submitOrder(Order(3, priceAway(incomingSide, 0), 7, 1, incomingSide));
+    const SubmissionResult result = book.submitOrder(Order(3, priceAway(incomingSide, 0), 7, 1, incomingSide));
 
     expectAccepted(result, 3, 2, 0, FillStatus::FILLED, context);
     expect(!isIndexed(book, 3), context + ": a fully filled incoming order should never be indexed");
@@ -256,13 +256,13 @@ void testReusedCancelledIdIsAccepted() {
     OrderBook book = restingBook();
     expect(book.cancelOrder(4).isSuccess(), context + ": cancelling the resting order should succeed");
 
-    const SubmissionResults crossing = book.submitOrder(Order(4, 101, 1, 1, Side::BUY));
+    const SubmissionResult crossing = book.submitOrder(Order(4, 101, 1, 1, Side::BUY));
     expectAccepted(crossing, 4, 1, 0, FillStatus::FILLED, context + " crossing");
     expect(crossing.getGeneratedTrades()[0].getRestingId() == 5,
            context + ": the reused id should trade against the remaining order at 101");
 
     expect(book.cancelOrder(1).isSuccess(), context + ": cancelling the resting bid should succeed");
-    const SubmissionResults resting = book.submitOrder(Order(1, 97, 3, 1, Side::BUY));
+    const SubmissionResult resting = book.submitOrder(Order(1, 97, 3, 1, Side::BUY));
     expectAccepted(resting, 1, 0, 3, FillStatus::NONE, context + " resting");
     expect(isIndexed(book, 1) && book.findActiveOrder(1).getPriceTick() == 97,
            context + ": the reused id should rest at its new price");
@@ -318,7 +318,7 @@ void testMalformedOrdersAreRejected() {
     // Reachable without test access: filled to nothing, then its status reset.
     Order emptied = crossingBuy();
     emptied.fillQuantity(20);
-    emptied.setExecutionLevel(FillStatus::NONE);
+    emptied.setFillStatus(FillStatus::NONE);
     expectRejectedUnchanged(book, emptied, RejectionReason::INVALID_QUANTITY, context + " no remaining quantity");
 
     for (int rawSide : {2, -1, 255}) {
@@ -334,7 +334,7 @@ void testMalformedOrdersAreRejected() {
 
     // Reachable without test access: marked FILLED while quantity remains.
     Order markedFilled = crossingBuy();
-    markedFilled.setExecutionLevel(FillStatus::FILLED);
+    markedFilled.setFillStatus(FillStatus::FILLED);
     expectRejectedUnchanged(book, markedFilled, RejectionReason::ORDER_NOT_ACTIVE, context + " marked filled");
 
     // Malformed is reported ahead of duplicate when an order is both.
@@ -343,7 +343,7 @@ void testMalformedOrdersAreRejected() {
     expectRejectedUnchanged(book, malformedDuplicate, RejectionReason::INVALID_PRICE, context + " and duplicate");
 }
 
-void expectTradePrices(const SubmissionResults& result, std::initializer_list<Price> prices,
+void expectTradePrices(const SubmissionResult& result, std::initializer_list<Price> prices,
                        const std::string& context) {
     expect(result.getGeneratedTrades().size() == prices.size(), context + ": unexpected number of trades");
     std::size_t i = 0;
@@ -360,14 +360,14 @@ void expectRestingRemainder(const OrderBook& book, OrderId orderId, Price price,
     expect(rested.getPriceTick() == price, context + ": the remainder should rest at its own limit price");
     expect(rested.getInitialQuantity() == initial && rested.getRemainingQuantity() == remaining,
            context + ": the remainder should keep its initial quantity and rest only what is left");
-    expect(rested.getExecutionLevel() == FillStatus::PARTIAL, context + ": the remainder should be partially filled");
+    expect(rested.getFillStatus() == FillStatus::PARTIAL, context + ": the remainder should be partially filled");
 }
 
 void testPartiallyFilledIncomingRestsIndexed() {
     {
         const std::string context = "partially filled incoming buy";
         OrderBook book = restingBook();
-        const SubmissionResults result = book.submitOrder(Order(9, 101, 10, 1, Side::BUY));
+        const SubmissionResult result = book.submitOrder(Order(9, 101, 10, 1, Side::BUY));
         expectAccepted(result, 9, 2, 2, FillStatus::PARTIAL, context);
         expectRestingRemainder(book, 9, 101, 10, 2, context);
         expect(book.getBestBid().getOrderId() == 9, context + ": the remainder should be the new best bid");
@@ -377,7 +377,7 @@ void testPartiallyFilledIncomingRestsIndexed() {
     {
         const std::string context = "partially filled incoming sell";
         OrderBook book = restingBook();
-        const SubmissionResults result = book.submitOrder(Order(9, 99, 10, 1, Side::SELL));
+        const SubmissionResult result = book.submitOrder(Order(9, 99, 10, 1, Side::SELL));
         expectAccepted(result, 9, 2, 2, FillStatus::PARTIAL, context);
         expectRestingRemainder(book, 9, 99, 10, 2, context);
         expect(book.getBestAsk().getOrderId() == 9, context + ": the remainder should be the new best ask");
@@ -390,7 +390,7 @@ void testMultipleLevelSweep() {
     {
         const std::string context = "buy sweeping both ask levels";
         OrderBook book = restingBook();
-        const SubmissionResults result = book.submitOrder(Order(9, 102, 20, 1, Side::BUY));
+        const SubmissionResult result = book.submitOrder(Order(9, 102, 20, 1, Side::BUY));
         expectAccepted(result, 9, 3, 5, FillStatus::PARTIAL, context);
         expectTradePrices(result, {101, 101, 102}, context);
         expect(!book.hasAsks(), context + ": every ask should be consumed");
@@ -401,7 +401,7 @@ void testMultipleLevelSweep() {
     {
         const std::string context = "sell sweeping both bid levels";
         OrderBook book = restingBook();
-        const SubmissionResults result = book.submitOrder(Order(9, 98, 20, 1, Side::SELL));
+        const SubmissionResult result = book.submitOrder(Order(9, 98, 20, 1, Side::SELL));
         expectAccepted(result, 9, 3, 8, FillStatus::PARTIAL, context);
         expectTradePrices(result, {99, 99, 98}, context);
         expect(!book.hasBids(), context + ": every bid should be consumed");
@@ -414,7 +414,7 @@ void testMultipleLevelSweep() {
         // at the price it last traded at.
         const std::string context = "buy sweeping both ask levels with a higher limit";
         OrderBook book = restingBook();
-        const SubmissionResults result = book.submitOrder(Order(9, 103, 20, 1, Side::BUY));
+        const SubmissionResult result = book.submitOrder(Order(9, 103, 20, 1, Side::BUY));
         expectAccepted(result, 9, 3, 5, FillStatus::PARTIAL, context);
         expectTradePrices(result, {101, 101, 102}, context);
         expectRestingRemainder(book, 9, 103, 20, 5, context);
@@ -424,7 +424,7 @@ void testMultipleLevelSweep() {
     {
         const std::string context = "buy sweeping both ask levels exactly";
         OrderBook book = restingBook();
-        const SubmissionResults result = book.submitOrder(Order(9, 102, 15, 1, Side::BUY));
+        const SubmissionResult result = book.submitOrder(Order(9, 102, 15, 1, Side::BUY));
         expectAccepted(result, 9, 3, 0, FillStatus::FILLED, context);
         expect(!book.hasAsks() && !isIndexed(book, 9), context + ": nothing should rest after an exact sweep");
         expect(book.activeOrderCount() == 3, context + ": only the three bids should be active");
@@ -492,7 +492,7 @@ void testAddOrderNamesEachRejection() {
     refused.push_back(crossingBuy());
     Access::setOrderType(refused.back(), static_cast<OrderType>(1));
     refused.push_back(crossingBuy());
-    refused.back().setExecutionLevel(FillStatus::FILLED);
+    refused.back().setFillStatus(FillStatus::FILLED);
     refused.push_back(crossingBuy(4));
     refused.push_back(crossingBuy());
 

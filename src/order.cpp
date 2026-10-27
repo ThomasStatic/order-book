@@ -1,18 +1,20 @@
+#include <stdexcept>
+
 #include "order_book/order.hpp"
 
 namespace order_book {
 
-Order::Order(unsigned int id, unsigned int tick, unsigned int quant, unsigned int seq, Side s, OrderType t)
+Order::Order(OrderId id, Price price, Quantity quantity, SequenceNum sequence, Side orderSide, OrderType orderType)
     : orderId(id),
-      sequenceNum(seq),
-      priceTick(tick),
-      initialQuant(quant),
-      remainingQuant(quant),
-      side(s),
-      type(t),
-      execution(FillStatus::NONE) {
-    if(seq == 0) {
-        throw std::invalid_argument("Non-positive sequence number error.");
+      sequenceNum(sequence),
+      priceTick(price),
+      initialQuantity(quantity),
+      remainingQuantity(quantity),
+      side(orderSide),
+      type(orderType),
+      fillStatus(FillStatus::NONE) {
+    if(sequence == 0) {
+        throw std::invalid_argument("zero sequence number error");
     }
 
     if(const std::optional<RejectionReason> reason = malformedReason()) {
@@ -27,7 +29,7 @@ std::optional<RejectionReason> Order::malformedReason() const {
     if(priceTick == 0) {
         return RejectionReason::INVALID_PRICE;
     }
-    if(remainingQuant == 0) {
+    if(remainingQuantity == 0) {
         return RejectionReason::INVALID_QUANTITY;
     }
     if(!isValidSide(side)) {
@@ -39,55 +41,52 @@ std::optional<RejectionReason> Order::malformedReason() const {
     return std::nullopt;
 }
 
-unsigned int Order::getOrderId() const{
+OrderId Order::getOrderId() const {
     return orderId;
 }
 
-unsigned int Order::getSequenceNum() const {
+SequenceNum Order::getSequenceNum() const {
     return sequenceNum;
 }
 
-void Order::assignSequenceNum(unsigned int seq) {
-    if (seq == 0) {
-        throw std::invalid_argument("Non-positive sequence number error.");
+void Order::assignSequenceNum(SequenceNum sequence) {
+    if(sequence == 0) {
+        throw std::invalid_argument("zero sequence number error");
     }
 
-    sequenceNum = seq;
+    sequenceNum = sequence;
 }
 
-unsigned int Order::getPriceTick() const {
+Price Order::getPriceTick() const {
     return priceTick;
 }
 
-unsigned int Order::getInitialQuantity() const {
-    return initialQuant;
+Quantity Order::getInitialQuantity() const {
+    return initialQuantity;
 }
 
-unsigned int Order::getRemainingQuantity() const {
-    return remainingQuant;
+Quantity Order::getRemainingQuantity() const {
+    return remainingQuantity;
 }
 
-unsigned int Order::fillQuantity(unsigned int amt) {
-    if(amt == 0) {
-        throw std::invalid_argument("Fill amount 0 error.");
+Quantity Order::fillQuantity(Quantity amount) {
+    if(amount == 0) {
+        throw std::invalid_argument("zero fill quantity error");
     }
 
-    if(execution == FillStatus::FILLED) {
-        throw std::runtime_error("Filling inactive order error.");
+    if(fillStatus == FillStatus::FILLED) {
+        throw std::runtime_error("filling an inactive order error");
     }
-    
-    unsigned int remainingAmt = amt;
-    if(amt >= remainingQuant) {
-        remainingAmt = amt - remainingQuant;
-        remainingQuant = 0;
-        execution = FillStatus::FILLED;
+
+    if(amount >= remainingQuantity) {
+        const Quantity excess = amount - remainingQuantity;
+        remainingQuantity = 0;
+        fillStatus = FillStatus::FILLED;
+        return excess;
     }
-    else {
-        remainingAmt = 0;
-        remainingQuant = remainingQuant - amt;
-        execution = FillStatus::PARTIAL;
-    }
-    return remainingAmt;
+    remainingQuantity -= amount;
+    fillStatus = FillStatus::PARTIAL;
+    return 0;
 }
 
 Side Order::getSide() const {
@@ -98,17 +97,16 @@ OrderType Order::getOrderType() const {
     return type;
 }
 
-FillStatus Order::getExecutionLevel() const {
-    return execution;
+FillStatus Order::getFillStatus() const {
+    return fillStatus;
 }
 
-void Order::setExecutionLevel(FillStatus newLevel) {
-    execution = newLevel;
+void Order::setFillStatus(FillStatus status) {
+    fillStatus = status;
 }
 
-bool Order::orderIsActive() const{
-    return execution == FillStatus::FILLED ? false : true;
+bool Order::isActive() const {
+    return fillStatus != FillStatus::FILLED;
 }
 
 }  // namespace order_book
-

@@ -1,30 +1,32 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
-#include <compare>
-#include <cstddef>
-#include <cstdint>
-#include <stdexcept>
 #include <vector>
 
-#include "cancellation_results.hpp"
+#include "cancellation_result.hpp"
 #include "invariants.hpp"
+#include "node_pool.hpp"
+#include "order.hpp"
 #include "order_index.hpp"
 #include "order_location.hpp"
 #include "price_level.hpp"
-#include "order.hpp"
-#include "submission_results.hpp"
+#include "side.hpp"
+#include "submission_result.hpp"
 #include "trade.hpp"
 #include "types.hpp"
 
 namespace order_book {
 
+    // One level of a BookSnapshot.
     struct PriceLevelSummary {
         Price price;
         std::uint64_t totalQuantity;  // the level's aggregate, which can exceed one Quantity
-        unsigned int orderQuantity;
+        unsigned int orderCount;      // resting orders at this price
     };
 
     struct BookSnapshot {
@@ -76,10 +78,17 @@ namespace order_book {
 
         SubmissionTrades matchOrder(Order& incoming);
 
-        // Placed at the top of each public command that can change the book, so the whole
-        // book is checked once the command has finished, whether it returns or throws. That
-        // is the invariant boundary: steps inside a command may leave the structures out of
-        // step with each other for a moment. Does nothing unless invariantChecksAfterCommands.
+        // Fills resting orders at one price level in FIFO order, unindexing fully filled
+        // orders and erasing the level once it is empty. It makes no trades and reports no
+        // events, so it is not a public command; tests reach it through OrderBookTestAccess.
+        // Throws std::invalid_argument if the side has no level at that price.
+        ConsumptionResult consumeLevel(Side side, Price price, Quantity quantity);
+
+        // Placed at the top of each command that can change the book (the public ones and
+        // consumeLevel), so the whole book is checked once the command has finished, whether
+        // it returns or throws. That is the invariant boundary: steps inside a command may
+        // leave the structures out of step with each other for a moment. Does nothing unless
+        // invariantChecksAfterCommands.
         class InvariantBoundary {
         public:
             InvariantBoundary(const OrderBook& checkedBook, const char* commandName)
@@ -128,9 +137,8 @@ namespace order_book {
         // Memory: resting orders' queue nodes come from a pool the book owns and reuses, so a
         // book keeps the node memory of the most orders it has held until it is destroyed;
         // its index likewise keeps the table it grew to. Only levels use the heap and are
-        // freed as they go. Moving a
-        // book moves its pool; a moved-from book has none, and any order it rests later takes
-        // its node from the heap.
+        // freed as they go. Moving a book moves its pool; a moved-from book has none, and any
+        // order it rests later takes its node from the heap.
         OrderBook(const OrderBook&) = delete;
         OrderBook& operator=(const OrderBook&) = delete;
         OrderBook(OrderBook&&) = default;
@@ -161,9 +169,9 @@ namespace order_book {
         // also checks it when it returns or throws, and aborts on a broken invariant. So an
         // exception caused by the book being internally inconsistent (not a failed allocation,
         // which leaves it sound) aborts there instead of reaching the caller.
-        SubmissionResults addOrder(Order order);
+        SubmissionResult addOrder(Order order);
 
-        SubmissionResults submitOrder(Order incoming);
+        SubmissionResult submitOrder(Order incoming);
 
         // Number of orders resting on the book (both sides), not of price levels.
         std::size_t activeOrderCount() const;
@@ -190,10 +198,8 @@ namespace order_book {
         // indexed order's level is missing.
         CancellationResult cancelOrder(OrderId orderId);
 
-        // Fills resting orders at one price level in FIFO order, unindexing fully
-        // filled orders and erasing the level once it is empty.
-        ConsumptionResult consumeLevel(Side side, Price price, unsigned int quantity);
-
+        // The best `depth` levels of each side, best price first, with each level's aggregate
+        // and order count.
         BookSnapshot snapshot(unsigned int depth = 5) const;
 
         // Checks the whole book in one O(N + L) pass over its N resting orders and L levels,
@@ -216,7 +222,5 @@ namespace order_book {
         // Callable in every build. Public commands also run it on return when
         // invariantChecksAfterCommands is set (see invariants.hpp).
         InvariantResult checkInvariants() const noexcept;
-
     };
-    
 }  // namespace order_book

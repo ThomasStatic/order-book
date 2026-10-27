@@ -8,12 +8,12 @@
 #include <utility>
 #include <variant>
 
-#include "order_book/cancellation_results.hpp"
+#include "order_book/cancellation_result.hpp"
 #include "order_book/order.hpp"
 #include "order_book/order_book.hpp"
 #include "order_book/replay_engine.hpp"
 #include "order_book/replay_summary.hpp"
-#include "order_book/submission_results.hpp"
+#include "order_book/submission_result.hpp"
 
 namespace order_book::benchmark {
 
@@ -30,7 +30,7 @@ std::int64_t nanosecondsBetween(Clock::time_point start, Clock::time_point stop)
 void execute(OrderBook& book, const BenchmarkCommand& command, WorkloadOutcome& outcome) {
     if (command.type == CommandType::SUBMIT) {
         ++outcome.submits;
-        const SubmissionResults result =
+        const SubmissionResult result =
             book.submitOrder(Order(command.orderId, command.price, command.quantity, 1, command.side));
         if (result.getStatus() == SubmissionStatus::REJECTED) {
             ++outcome.rejections;

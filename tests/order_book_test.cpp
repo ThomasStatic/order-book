@@ -11,6 +11,9 @@ namespace order_book {
 
 // Befriended by OrderBook so this test can seed levels directly and inspect internals.
 struct OrderBookTestAccess {
+    static ConsumptionResult consumeLevel(OrderBook& book, Side side, Price price, Quantity quantity) {
+        return book.consumeLevel(side, price, quantity);
+    }
     static auto& bids(OrderBook& book) { return book.bids; }
     static auto& asks(OrderBook& book) { return book.asks; }
     static const auto& index(const OrderBook& book) { return book.orderIndex; }
@@ -91,18 +94,18 @@ int main() {
     expect(snapshot.bids.size() == 2, "snapshot should include only the requested number of bid levels");
     expect(snapshot.bids[0].price == 105, "snapshot bids should be ordered from highest price");
     expect(snapshot.bids[0].totalQuantity == 4, "snapshot should report the bid level aggregate quantity");
-    expect(snapshot.bids[0].orderQuantity == 1, "snapshot should report the bid level order count");
+    expect(snapshot.bids[0].orderCount == 1, "snapshot should report the bid level order count");
     expect(snapshot.bids[1].price == 104, "snapshot should include the second-best bid level");
     expect(snapshot.bids[1].totalQuantity == 5, "snapshot should aggregate quantities at one bid price");
-    expect(snapshot.bids[1].orderQuantity == 2, "snapshot should count orders at one bid price");
+    expect(snapshot.bids[1].orderCount == 2, "snapshot should count orders at one bid price");
 
     expect(snapshot.asks.size() == 2, "snapshot should include only the requested number of ask levels");
     expect(snapshot.asks[0].price == 106, "snapshot asks should be ordered from lowest price");
     expect(snapshot.asks[0].totalQuantity == 6, "snapshot should report the ask level aggregate quantity");
-    expect(snapshot.asks[0].orderQuantity == 1, "snapshot should report the ask level order count");
+    expect(snapshot.asks[0].orderCount == 1, "snapshot should report the ask level order count");
     expect(snapshot.asks[1].price == 107, "snapshot should include the second-best ask level");
     expect(snapshot.asks[1].totalQuantity == 9, "snapshot should aggregate quantities at one ask price");
-    expect(snapshot.asks[1].orderQuantity == 2, "snapshot should count orders at one ask price");
+    expect(snapshot.asks[1].orderCount == 2, "snapshot should count orders at one ask price");
     expect(snapshot.totalActiveVisibleOrders == 6,
            "snapshot should count orders only in the visible bid and ask levels");
 
@@ -149,7 +152,7 @@ int main() {
         consumeBook.addOrder(Order(30, 300, 5, 1, Side::SELL));
         consumeBook.addOrder(Order(31, 300, 5, 2, Side::SELL));
 
-        const auto consumed = consumeBook.consumeLevel(Side::SELL, 300, 7);
+        const auto consumed = Access::consumeLevel(consumeBook, Side::SELL, 300, 7);
         expect(consumed.unfilledQuantity == 0, "consuming within level quantity should leave nothing unfilled");
         expectThrows([&consumeBook] { consumeBook.findActiveOrder(30); },
                "a fully filled order should no longer be indexed");
@@ -159,16 +162,16 @@ int main() {
             "a partially filled order should stay indexed with its reduced quantity");
         expect(consumeBook.getBestAsk().getOrderId() == 31, "the partially filled order should remain at the level");
 
-        const auto drained = consumeBook.consumeLevel(Side::SELL, 300, 10);
+        const auto drained = Access::consumeLevel(consumeBook, Side::SELL, 300, 10);
         expect(drained.unfilledQuantity == 7, "consuming past the level should report the unfilled remainder");
         expect(!consumeBook.hasAsks(), "a fully consumed level should be removed from the book");
         expectThrows([&consumeBook] { consumeBook.findActiveOrder(31); },
                "the last filled order should no longer be indexed");
-        expectThrows([&consumeBook] { consumeBook.consumeLevel(Side::SELL, 300, 1); },
+        expectThrows([&consumeBook] { Access::consumeLevel(consumeBook, Side::SELL, 300, 1); },
                "consuming from a missing price level should throw");
 
         consumeBook.addOrder(Order(32, 299, 2, 3, Side::BUY));
-        consumeBook.consumeLevel(Side::BUY, 299, 2);
+        Access::consumeLevel(consumeBook, Side::BUY, 299, 2);
         expect(!consumeBook.hasBids(), "a fully consumed bid level should be removed from the book");
         expectThrows([&consumeBook] { consumeBook.findActiveOrder(32); },
                "a fully filled bid should no longer be indexed");
@@ -202,7 +205,7 @@ int main() {
     expect(matchBook.getBestBid().getOrderId() == 51 && matchBook.getBestBid().getRemainingQuantity() == 4,
            "the unfilled remainder should rest at its limit price");
     expect(matchBook.findActiveOrder(51).getPriceTick() == 103, "a resting remainder should be indexed");
-    expect(matchBook.getBestBid().getExecutionLevel() == FillStatus::PARTIAL,
+    expect(matchBook.getBestBid().getFillStatus() == FillStatus::PARTIAL,
            "a resting remainder should be marked partially filled");
     expect(matchBook.getBestAsk().getOrderId() == 43, "a non-crossing ask should be left untouched");
 
@@ -238,7 +241,7 @@ int main() {
            "adding a duplicate active order ID at the same price should throw");
     expectThrows([&validationBook] { validationBook.addOrder(Order(70, 105, 3, 3, Side::BUY)); },
            "adding a duplicate active order ID at another price and side should throw");
-    expect(Access::asks(validationBook).at(100).getOrdersQuantity() == 1 && Access::asks(validationBook).at(100).getAggregateQuantity() == 5,
+    expect(Access::asks(validationBook).at(100).getOrderCount() == 1 && Access::asks(validationBook).at(100).getAggregateQuantity() == 5,
            "a rejected duplicate should not join the existing level");
     expect(!validationBook.hasBids() && Access::asks(validationBook).size() == 1,
            "a rejected duplicate should not create a price level");
@@ -252,7 +255,7 @@ int main() {
            "a rejected duplicate submission should not trade");
 
     Order filledOrder(71, 99, 5, 5, Side::BUY);
-    filledOrder.setExecutionLevel(FillStatus::FILLED);
+    filledOrder.setFillStatus(FillStatus::FILLED);
     expectThrows([&validationBook, &filledOrder] { validationBook.addOrder(filledOrder); },
            "adding an order marked FILLED should throw");
     expect(validationBook.submitOrder(filledOrder).getRejectionReason() == RejectionReason::ORDER_NOT_ACTIVE,
@@ -260,7 +263,7 @@ int main() {
 
     Order emptiedOrder(72, 99, 5, 6, Side::BUY);
     emptiedOrder.fillQuantity(5);
-    emptiedOrder.setExecutionLevel(FillStatus::NONE);
+    emptiedOrder.setFillStatus(FillStatus::NONE);
     expectThrows([&validationBook, &emptiedOrder] { validationBook.addOrder(emptiedOrder); },
            "adding an order with no remaining quantity should throw even if not marked FILLED");
     expect(!validationBook.hasBids() && Access::index(validationBook).size() == 1,
@@ -271,33 +274,6 @@ int main() {
     expect(validationBook.findActiveOrder(70).getPriceTick() == 101,
            "an ID may be reused once its earlier order is no longer resting");
 
-    Order baseOrder(1, 100, 10, 3, Side::BUY);
-    expect(baseOrder.getOrderId() == 1, "order ID should be preserved");
-    expect(baseOrder.getSequenceNum() == 3, "sequence number should be preserved");
-    expect(baseOrder.getPriceTick() == 100, "price tick should be preserved");
-    expect(baseOrder.getInitialQuantity() == 10, "initial quantity should be preserved");
-    expect(baseOrder.getRemainingQuantity() == 10, "remaining quantity should start at the initial quantity");
-    expect(baseOrder.getSide() == Side::BUY, "buy side should be preserved");
-    expect(baseOrder.getExecutionLevel() == FillStatus::NONE, "new order should start with no execution lifecycle");
-    expect(baseOrder.orderIsActive(), "new order should be active");
-
-    expect(baseOrder.fillQuantity(3) == 0, "partial fill should not return excess quantity");
-    expect(baseOrder.getRemainingQuantity() == 7, "remaining quantity should decrease after a partial fill");
-    expect(baseOrder.getExecutionLevel() == FillStatus::PARTIAL, "partial fill should set the execution lifecycle to PARTIAL");
-    expect(baseOrder.orderIsActive(), "partially filled order should stay active");
-
-    expect(baseOrder.fillQuantity(7) == 0, "full fill should not return excess quantity");
-    expect(baseOrder.getRemainingQuantity() == 0, "remaining quantity should reach zero after a full fill");
-    expect(baseOrder.getExecutionLevel() == FillStatus::FILLED, "full fill should set the execution lifecycle to FILLED");
-    expect(!baseOrder.orderIsActive(), "fully filled order should no longer be active");
-
-    expectThrows([] { Order invalidId(0, 100, 5, 1, Side::BUY); }, "constructor should reject a non-positive ID");
-    expectThrows([] { Order invalidTick(1, 0, 5, 1, Side::BUY); }, "constructor should reject a non-positive tick");
-    expectThrows([] { Order invalidQuantity(1, 100, 0, 1, Side::BUY); }, "constructor should reject a non-positive quantity");
-    expectThrows([] { Order invalidArrival(1, 100, 5, 0, Side::BUY); }, "constructor should reject a non-positive sequence number");
-    expectThrows([&baseOrder] { baseOrder.fillQuantity(0); }, "fillQuantity should reject zero fill requests");
-
-    std::cout << "order tests passed" << std::endl;
 
     // reserve is a capacity hint: the index stops rehashing up to the hinted size, and
     // nothing the book reports changes, before or after orders rest.

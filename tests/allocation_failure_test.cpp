@@ -52,6 +52,9 @@ namespace order_book {
 
 // Befriended by OrderBook and PriceLevel so these tests can inspect internals.
 struct OrderBookTestAccess {
+    static ConsumptionResult consumeLevel(OrderBook& book, Side side, Price price, Quantity quantity) {
+        return book.consumeLevel(side, price, quantity);
+    }
     static const auto& index(const OrderBook& book) { return book.orderIndex; }
     static const auto& bids(const OrderBook& book) { return book.bids; }
     static const auto& asks(const OrderBook& book) { return book.asks; }
@@ -194,7 +197,7 @@ void testIndexGrowthOnExistingLevelRollsBack() {
         [](OrderBook& book) { book.addOrder(Order(13, 100, 7, 1, Side::SELL)); },
         [](const OrderBook& book, const std::string& context) {
             const auto& level = Access::asks(book).at(100);
-            expect(level.getOrdersQuantity() == 12 && level.getAggregateQuantity() == 60,
+            expect(level.getOrderCount() == 12 && level.getAggregateQuantity() == 60,
                    context + ": a failed add should leave the existing level as it was");
             expect(Access::index(book).size() == 12 && Access::index(book).count(13) == 0,
                    context + ": a failed add should not leave an index entry");
@@ -209,7 +212,7 @@ void testAddOrderToExistingLevelRollsBack() {
         [](OrderBook& book) { book.addOrder(Order(2, 100, 7, 2, Side::SELL)); },
         [](const OrderBook& book, const std::string& context) {
             const auto& level = Access::asks(book).at(100);
-            expect(level.getOrdersQuantity() == 1 && level.getAggregateQuantity() == 5,
+            expect(level.getOrderCount() == 1 && level.getAggregateQuantity() == 5,
                    context + ": a failed add should leave the existing level as it was");
             expect(Access::index(book).size() == 1, context + ": a failed add should not leave an index entry");
             expect(Access::nextSequenceNum(book) == 2, context + ": a failed add should not consume a sequence number");
@@ -230,7 +233,7 @@ void expectRestingSubmitRollsBack(Order incoming, bool allocates, const std::str
         [incoming](OrderBook& book) { book.submitOrder(incoming); },
         [](const OrderBook& book, const std::string& attempt) {
             const auto& asks = Access::asks(book);
-            expect(asks.size() == 1 && asks.at(100).getOrdersQuantity() == 1 && asks.at(100).getAggregateQuantity() == 5,
+            expect(asks.size() == 1 && asks.at(100).getOrderCount() == 1 && asks.at(100).getAggregateQuantity() == 5,
                    attempt + ": a failed resting submission should leave the asks as they were");
             expect(Access::bids(book).empty(), attempt + ": a failed resting submission should not leave a bid level");
             expect(Access::index(book).size() == 1 && Access::index(book).count(2) == 0,
@@ -309,7 +312,7 @@ void testConsumeLevelFailsBeforeFilling() {
             book.addOrder(Order(1, 100, 5, 1, Side::SELL));
             book.addOrder(Order(2, 100, 5, 2, Side::SELL));
         },
-        [](OrderBook& book) { book.consumeLevel(Side::SELL, 100, 7); },
+        [](OrderBook& book) { Access::consumeLevel(book, Side::SELL, 100, 7); },
         [](const OrderBook& book, const std::string& context) {
             expect(Access::asks(book).at(100).getAggregateQuantity() == 10 && Access::index(book).size() == 2,
                    context + ": consumeLevel should only fail before any order is filled");
