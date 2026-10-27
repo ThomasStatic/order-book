@@ -1,0 +1,16 @@
+profiled ./build/profile/Release/order_book_benchmarks.exe --workload small-book --size extended --kind core --warmup 0 --repetitions 20 --seed 42: 1004 samples in 1938 ms, exit code 0
+wrote benchmarks/results/2026-10-26-final-profile/small-book-core.txt and benchmarks/results/2026-10-26-final-profile/small-book-core.folded
+profiled ./build/profile/Release/order_book_benchmarks.exe --workload deep-book --size extended --kind core --warmup 0 --repetitions 20 --seed 42: 3053 samples in 5781 ms, exit code 0
+wrote benchmarks/results/2026-10-26-final-profile/deep-book-core.txt and benchmarks/results/2026-10-26-final-profile/deep-book-core.folded
+profiled ./build/profile/Release/order_book_benchmarks.exe --workload matching-heavy --size extended --kind core --warmup 0 --repetitions 20 --seed 42: 1891 samples in 3672 ms, exit code 0
+wrote benchmarks/results/2026-10-26-final-profile/matching-heavy-core.txt and benchmarks/results/2026-10-26-final-profile/matching-heavy-core.folded
+profiled ./build/profile/Release/order_book_benchmarks.exe --workload cancellation-heavy --size extended --kind core --warmup 0 --repetitions 20 --seed 42: 1468 samples in 2766 ms, exit code 0
+wrote benchmarks/results/2026-10-26-final-profile/cancellation-heavy-core.txt and benchmarks/results/2026-10-26-final-profile/cancellation-heavy-core.folded
+profiled ./build/profile/Release/order_book_benchmarks.exe --workload mostly-resting --size extended --kind core --warmup 0 --repetitions 20 --seed 42: 6538 samples in 12062 ms, exit code 0
+wrote benchmarks/results/2026-10-26-final-profile/mostly-resting-core.txt and benchmarks/results/2026-10-26-final-profile/mostly-resting-core.folded
+profiled ./build/profile/Release/order_book_benchmarks.exe --workload small-book --size extended --kind replay --warmup 0 --repetitions 8 --seed 42: 1462 samples in 2875 ms, exit code 0
+wrote benchmarks/results/2026-10-26-final-profile/small-book-replay.txt and benchmarks/results/2026-10-26-final-profile/small-book-replay.folded
+profiled ./build/profile/Release/order_book_benchmarks.exe --workload deep-book --size extended --kind replay --warmup 0 --repetitions 8 --seed 42: 2433 samples in 4734 ms, exit code 0
+wrote benchmarks/results/2026-10-26-final-profile/deep-book-replay.txt and benchmarks/results/2026-10-26-final-profile/deep-book-replay.folded
+profiled ./build/profile/Release/order_book_benchmarks.exe --workload matching-heavy --size extended --kind replay --warmup 0 --repetitions 8 --seed 42: 1988 samples in 3922 ms, exit code 0
+wrote benchmarks/results/2026-10-26-final-profile/matching-heavy-replay.txt and benchmarks/results/2026-10-26-final-profile/matching-heavy-replay.folded

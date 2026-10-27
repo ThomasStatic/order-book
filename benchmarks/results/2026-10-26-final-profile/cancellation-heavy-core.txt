@@ -1,0 +1,351 @@
+# Sampling profile
+
+command: ./build/profile/Release/order_book_benchmarks.exe --workload cancellation-heavy --size extended --kind core --warmup 0 --repetitions 20 --seed 42
+exit code: 0
+interval: 1000 us; wall time 2766 ms; the target thread was suspended for 33 ms of that
+samples: 1468 total, 1120 selected; root: runCore runReplay; drop: preload generateWorkload recordFinalBook renderReplayCsv describeOutcome ~OrderBook order_book::PriceLevel> >,0> >::{dtor} ~unique_ptr<order_book::NodePool
+
+Percentages are of the selected samples.
+
+## Unselected samples, by the project function nearest their root
+
+| samples | % | function |
+|---:|---:|---|
+| 221 | 63.5 | dropped: order_book::benchmark::`anonymous namespace'::preload |
+| 100 | 28.7 | dropped: order_book::benchmark::generateWorkload |
+| 12 | 3.4 | `anonymous namespace'::runBenchmarks |
+| 5 | 1.4 | dropped: std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::{dtor} |
+| 4 | 1.1 | dropped: std::unique_ptr<order_book::NodePool,std::default_delete<order_book::NodePool> >::~unique_ptr<order_book::NodePool,std::default_delete<order_book::NodePool> > |
+| 3 | 0.9 | dropped: std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::{dtor} |
+| 2 | 0.6 | dropped: order_book::benchmark::?A0xd07dd6a7::recordFinalBook |
+| 1 | 0.3 | (none) |
+
+## Self time by module
+
+| samples | % | module |
+|---:|---:|---|
+| 1075 | 96.0 | (program) |
+| 45 | 4.0 | VCRUNTIME140 |
+
+## Self time by function (inlined functions shown as their own frames)
+
+| samples | % | function |
+|---:|---:|---|
+| 285 | 25.4 | order_book::OrderIndex::find |
+| 93 | 8.3 | order_book::Order::getRemainingQuantity |
+| 76 | 6.8 | order_book::benchmark::`anonymous namespace'::execute |
+| 70 | 6.2 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 63 | 5.6 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 49 | 4.4 | order_book::CancellationResult::cancelled |
+| 41 | 3.7 | order_book::CancellationResult::{ctor} |
+| 38 | 3.4 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5>::push_back |
+| 36 | 3.2 | VCRUNTIME140!memmove |
+| 35 | 3.1 | order_book::OrderIndex::erase |
+| 25 | 2.2 | order_book::PriceLevel::addOrder |
+| 24 | 2.1 | order_book::SubmissionResults::accepted |
+| 23 | 2.1 | order_book::Order::malformedReason |
+| 22 | 2.0 | order_book::OrderBook::submitOrder |
+| 17 | 1.5 | order_book::OrderBook::validateNewOrder |
+| 14 | 1.2 | std::_Optional_construct_base<order_book::OrderLocation>::_Assign |
+| 13 | 1.2 | order_book::OrderBook::cancelOrder |
+| 13 | 1.2 | std::_List_node_emplace_op2<order_book::PoolAllocator<std::_List_node<order_book::Order,void *> > >::_Transfer_before |
+| 11 | 1.0 | order_book::OrderIndex::emplace |
+| 11 | 1.0 | order_book::SmallVector<order_book::Trade,4>::end |
+| 10 | 0.9 | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 9 | 0.8 | VCRUNTIME140!_NLG_Return2 |
+| 7 | 0.6 | __security_check_cookie |
+| 7 | 0.6 | order_book::NodePool::allocate |
+| 7 | 0.6 | order_book::OrderBook::cancelOrder::__l2::<lambda_1>::operator() |
+| 6 | 0.5 | order_book::OrderBook::matchOrder |
+| 6 | 0.5 | order_book::SmallVector<order_book::Trade,4>::~SmallVector<order_book::Trade,4> |
+| 6 | 0.5 | order_book::isValidSide |
+| 4 | 0.4 | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 4 | 0.4 | order_book::NodePool::blockSizeFor |
+| 4 | 0.4 | order_book::Order::getOrderId |
+| 4 | 0.4 | order_book::PriceLevel::removeOrder |
+| 4 | 0.4 | order_book::SubmissionResults::SubmissionResults |
+| 4 | 0.4 | std::_List_const_iterator<std::_List_val<std::_List_simple_types<order_book::Order> > >::operator* |
+| 4 | 0.4 | std::_List_val<std::_List_simple_types<order_book::Order> >::_Unlinknode |
+| 4 | 0.4 | std::_Variant_base<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>::{ctor} |
+| 4 | 0.4 | std::list<order_book::Order,order_book::PoolAllocator<order_book::Order> >::_Emplace |
+| 3 | 0.3 | order_book::CancellationResult::isSuccess |
+| 3 | 0.3 | order_book::NodePool::classFor |
+| 3 | 0.3 | order_book::Order::Order |
+| 3 | 0.3 | order_book::OrderIndex::end |
+| 3 | 0.3 | order_book::PoolAllocator<std::_List_node<order_book::Order,void *> >::allocate |
+| 3 | 0.3 | order_book::SmallVector<order_book::Trade,4>::takeFrom |
+| 3 | 0.3 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,1>::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,1> |
+| 3 | 0.3 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5>::~SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5> |
+| 3 | 0.3 | std::_Copy_memmove_tail |
+| 3 | 0.3 | std::_Variant_storage_<1,order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>::{ctor} |
+| 3 | 0.3 | std::vector<std::pair<unsigned int,order_book::OrderLocation>,std::allocator<std::pair<unsigned int,order_book::OrderLocation> > >::operator[] |
+| 2 | 0.2 | order_book::Order::assignSequenceNum |
+| 2 | 0.2 | order_book::Order::getSide |
+
+## Inclusive time by function
+
+| samples | % | function |
+|---:|---:|---|
+| 1120 | 100.0 | KERNEL32!BaseThreadInitThunk |
+| 1120 | 100.0 | __scrt_common_main_seh |
+| 1120 | 100.0 | `anonymous namespace'::runBenchmarks |
+| 1120 | 100.0 | invoke_main |
+| 1120 | 100.0 | main |
+| 1120 | 100.0 | ntdll!RtlUserThreadStart |
+| 1120 | 100.0 | order_book::benchmark::`anonymous namespace'::runCore |
+| 1120 | 100.0 | order_book::benchmark::runOnce |
+| 1120 | 100.0 | order_book::benchmark::runRepeated |
+| 1118 | 99.8 | order_book::benchmark::`anonymous namespace'::execute |
+| 599 | 53.5 | order_book::OrderBook::submitOrder |
+| 424 | 37.9 | order_book::OrderBook::cancelOrder |
+| 288 | 25.7 | order_book::OrderIndex::find |
+| 252 | 22.5 | order_book::OrderBook::restOrder |
+| 201 | 17.9 | order_book::OrderBook::validateNewOrder |
+| 128 | 11.4 | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 126 | 11.2 | order_book::CancellationResult::cancelled |
+| 122 | 10.9 | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 93 | 8.3 | order_book::Order::getRemainingQuantity |
+| 82 | 7.3 | order_book::SubmissionResults::accepted |
+| 77 | 6.9 | order_book::CancellationResult::{ctor} |
+| 72 | 6.4 | std::map<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > >::_Try_emplace |
+| 72 | 6.4 | std::map<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > >::try_emplace |
+| 70 | 6.2 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 64 | 5.7 | std::map<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > >::_Try_emplace |
+| 64 | 5.7 | std::map<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > >::try_emplace |
+| 63 | 5.6 | order_book::PriceLevel::addOrder |
+| 63 | 5.6 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 54 | 4.8 | order_book::OrderBook::cancelOrder::__l2::<lambda_1>::operator() |
+| 48 | 4.3 | std::_Copy_memmove_tail |
+| 48 | 4.3 | std::uninitialized_copy_n |
+| 47 | 4.2 | std::_Copy_memmove_n |
+| 38 | 3.4 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5>::push_back |
+| 37 | 3.3 | order_book::OrderIndex::erase |
+| 36 | 3.2 | VCRUNTIME140!memmove |
+| 36 | 3.2 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,1>::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,1> |
+| 36 | 3.2 | std::list<order_book::Order,order_book::PoolAllocator<order_book::Order> >::_Emplace |
+| 34 | 3.0 | std::list<order_book::Order,order_book::PoolAllocator<order_book::Order> >::insert |
+| 29 | 2.6 | order_book::Order::malformedReason |
+| 29 | 2.6 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,1>::append |
+| 19 | 1.7 | order_book::OrderIndex::emplace |
+| 19 | 1.7 | order_book::SubmissionResults::SubmissionResults |
+| 19 | 1.7 | std::_List_node_emplace_op2<order_book::PoolAllocator<std::_List_node<order_book::Order,void *> > >::{ctor} |
+| 17 | 1.5 | order_book::PoolAllocator<std::_List_node<order_book::Order,void *> >::allocate |
+| 17 | 1.5 | std::_Alloc_construct_ptr<order_book::PoolAllocator<std::_List_node<order_book::Order,void *> > >::_Allocate |
+| 14 | 1.2 | order_book::NodePool::allocate |
+| 14 | 1.2 | std::_Optional_construct_base<order_book::OrderLocation>::_Assign |
+| 13 | 1.2 | std::_List_node_emplace_op2<order_book::PoolAllocator<std::_List_node<order_book::Order,void *> > >::_Transfer_before |
+| 13 | 1.2 | std::optional<order_book::OrderLocation>::operator= |
+| 12 | 1.1 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5>::takeFrom |
+| 12 | 1.1 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5>::{ctor} |
+| 11 | 1.0 | order_book::SmallVector<order_book::Trade,4>::end |
+| 10 | 0.9 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,1>::takeFrom |
+| 10 | 0.9 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,1>::{ctor} |
+| 9 | 0.8 | VCRUNTIME140!_NLG_Return2 |
+| 9 | 0.8 | order_book::OrderBook::matchOrder |
+| 9 | 0.8 | order_book::PriceLevel::removeOrder |
+| 7 | 0.6 | __security_check_cookie |
+| 7 | 0.6 | order_book::NodePool::classFor |
+| 7 | 0.6 | order_book::Order::Order |
+
+## Self time by source line
+
+| samples | % | location  function |
+|---:|---:|---|
+| 268 | 23.9 | order_book/order_index.hpp:141  order_book::OrderIndex::find |
+| 87 | 7.8 | src/order.cpp:68  order_book::Order::getRemainingQuantity |
+| 48 | 4.3 | benchmarks/benchmark_runner.cpp:33  order_book::benchmark::`anonymous namespace'::execute |
+| 48 | 4.3 | src/cancellation_results.cpp:19  order_book::CancellationResult::cancelled |
+| 41 | 3.7 | src/cancellation_results.cpp:10  order_book::CancellationResult::{ctor} |
+| 38 | 3.4 | include/xtree:1632  std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 36 | 3.2 | (no line)  VCRUNTIME140!memmove |
+| 34 | 3.0 | order_book/small_vector.hpp:132  order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5>::push_back |
+| 30 | 2.7 | include/xtree:1632  std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 26 | 2.3 | order_book/order_index.hpp:219  order_book::OrderIndex::erase |
+| 20 | 1.8 | src/price_level.cpp:15  order_book::PriceLevel::addOrder |
+| 15 | 1.3 | include/xtree:1636  std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 15 | 1.3 | include/xtree:1639  std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 14 | 1.2 | include/optional:165  std::_Optional_construct_base<order_book::OrderLocation>::_Assign |
+| 13 | 1.2 | src/submission_results.cpp:18  order_book::SubmissionResults::accepted |
+| 12 | 1.1 | include/list:609  std::_List_node_emplace_op2<order_book::PoolAllocator<std::_List_node<order_book::Order,void *> > >::_Transfer_before |
+| 12 | 1.1 | include/xtree:1636  std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 11 | 1.0 | include/xtree:1639  std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 10 | 0.9 | benchmarks/benchmark_runner.cpp:30  order_book::benchmark::`anonymous namespace'::execute |
+| 10 | 0.9 | src/order.cpp:36  order_book::Order::malformedReason |
+| 9 | 0.8 | (no line)  VCRUNTIME140!_NLG_Return2 |
+| 9 | 0.8 | src/order_book.cpp:47  order_book::OrderBook::validateNewOrder |
+| 7 | 0.6 | benchmarks/benchmark_runner.cpp:44  order_book::benchmark::`anonymous namespace'::execute |
+| 7 | 0.6 | benchmarks/benchmark_runner.cpp:48  order_book::benchmark::`anonymous namespace'::execute |
+| 7 | 0.6 | include/xtree:1634  std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 7 | 0.6 | order_book/node_pool.hpp:46  order_book::NodePool::allocate |
+| 6 | 0.5 | order_book/side.hpp:11  order_book::isValidSide |
+| 6 | 0.5 | order_book/small_vector.hpp:86  order_book::SmallVector<order_book::Trade,4>::end |
+| 6 | 0.5 | src/order.cpp:66  order_book::Order::getRemainingQuantity |
+| 6 | 0.5 | src/order_book.cpp:216  order_book::OrderBook::submitOrder |
+| 6 | 0.5 | src/order_book.cpp:236  order_book::OrderBook::submitOrder |
+| 5 | 0.4 | order_book/small_vector.hpp:88  order_book::SmallVector<order_book::Trade,4>::end |
+| 4 | 0.4 | (no line)  order_book::SubmissionResults::SubmissionResults |
+| 4 | 0.4 | benchmarks/benchmark_runner.cpp:31  order_book::benchmark::`anonymous namespace'::execute |
+| 4 | 0.4 | include/list:1030  std::list<order_book::Order,order_book::PoolAllocator<order_book::Order> >::_Emplace |
+| 4 | 0.4 | include/list:150  std::_List_const_iterator<std::_List_val<std::_List_simple_types<order_book::Order> > >::operator* |
+| 4 | 0.4 | include/list:405  std::_List_val<std::_List_simple_types<order_book::Order> >::_Unlinknode |
+| 4 | 0.4 | include/variant:756  std::_Variant_base<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>::{ctor} |
+| 4 | 0.4 | order_book/node_pool.hpp:88  order_book::NodePool::blockSizeFor |
+| 4 | 0.4 | order_book/order_index.hpp:137  order_book::OrderIndex::find |
+| 4 | 0.4 | order_book/order_index.hpp:140  order_book::OrderIndex::find |
+| 4 | 0.4 | order_book/order_index.hpp:151  order_book::OrderIndex::find |
+| 4 | 0.4 | order_book/order_index.hpp:171  order_book::OrderIndex::emplace |
+| 4 | 0.4 | order_book/small_vector.hpp:125  order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5>::push_back |
+| 4 | 0.4 | src/order.cpp:24  order_book::Order::malformedReason |
+| 4 | 0.4 | src/order.cpp:27  order_book::Order::malformedReason |
+| 4 | 0.4 | src/order.cpp:30  order_book::Order::malformedReason |
+| 4 | 0.4 | src/order.cpp:42  order_book::Order::getOrderId |
+| 4 | 0.4 | src/order_book.cpp:296  order_book::OrderBook::cancelOrder |
+| 4 | 0.4 | src/price_level.cpp:13  order_book::PriceLevel::addOrder |
+| 4 | 0.4 | src/submission_results.cpp:52  order_book::SubmissionResults::accepted |
+| 3 | 0.3 | include/variant:351  std::_Variant_storage_<1,order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>::{ctor} |
+| 3 | 0.3 | include/vector:1934  std::vector<std::pair<unsigned int,order_book::OrderLocation>,std::allocator<std::pair<unsigned int,order_book::OrderLocation> > >::operator[] |
+| 3 | 0.3 | include/xtree:1634  std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 3 | 0.3 | include/xutility:4751  std::_Copy_memmove_tail |
+| 3 | 0.3 | order_book/order_index.hpp:127  order_book::OrderIndex::end |
+| 3 | 0.3 | order_book/order_index.hpp:148  order_book::OrderIndex::find |
+| 3 | 0.3 | order_book/order_index.hpp:218  order_book::OrderIndex::erase |
+| 3 | 0.3 | order_book/order_index.hpp:222  order_book::OrderIndex::erase |
+| 3 | 0.3 | order_book/small_vector.hpp:72  order_book::SmallVector<order_book::Trade,4>::~SmallVector<order_book::Trade,4> |
+
+## Heap allocator: samples inside malloc/free and the heap, by kind
+
+| samples | % | kind |
+|---:|---:|---|
+
+## Heap allocator: by project caller and the standard-library entry point it went through
+
+| samples | % | kind | project caller | entry point |
+|---:|---:|---|
+
+## Heap allocator: self time by function
+
+| samples | % | function |
+|---:|---:|---|
+
+## Container: std::map (red-black tree) (inclusive 250 samples): by entry point and project caller
+
+| samples | % | entry point | project caller |
+|---:|---:|---|
+| 128 | 11.4 | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > | order_book::OrderBook::restOrder |
+| 122 | 10.9 | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > | order_book::OrderBook::restOrder |
+
+## Container: std::map (red-black tree) (inclusive 250 samples): self time by function
+
+| samples | % | function |
+|---:|---:|---|
+| 70 | 6.2 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 63 | 5.6 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 25 | 2.2 | order_book::PriceLevel::addOrder |
+| 14 | 1.2 | std::_Optional_construct_base<order_book::OrderLocation>::_Assign |
+| 13 | 1.2 | std::_List_node_emplace_op2<order_book::PoolAllocator<std::_List_node<order_book::Order,void *> > >::_Transfer_before |
+| 11 | 1.0 | order_book::OrderIndex::emplace |
+| 10 | 0.9 | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 7 | 0.6 | order_book::NodePool::allocate |
+| 4 | 0.4 | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 4 | 0.4 | order_book::NodePool::blockSizeFor |
+| 4 | 0.4 | std::list<order_book::Order,order_book::PoolAllocator<order_book::Order> >::_Emplace |
+| 3 | 0.3 | order_book::NodePool::classFor |
+| 3 | 0.3 | order_book::Order::getOrderId |
+| 3 | 0.3 | order_book::OrderIndex::end |
+| 3 | 0.3 | order_book::OrderIndex::find |
+| 3 | 0.3 | order_book::PoolAllocator<std::_List_node<order_book::Order,void *> >::allocate |
+| 2 | 0.2 | order_book::OrderLocation::{ctor} |
+| 2 | 0.2 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Lower_bound_duplicate |
+| 2 | 0.2 | std::construct_at |
+| 1 | 0.1 | order_book::Order::getPriceTick |
+
+## Container: std::unordered_map (hash table) (inclusive 0 samples): by entry point and project caller
+
+| samples | % | entry point | project caller |
+|---:|---:|---|
+
+## Container: std::unordered_map (hash table) (inclusive 0 samples): self time by function
+
+| samples | % | function |
+|---:|---:|---|
+
+## Container: std::list (inclusive 45 samples): by entry point and project caller
+
+| samples | % | entry point | project caller |
+|---:|---:|---|
+| 34 | 3.0 | std::list<order_book::Order,order_book::PoolAllocator<order_book::Order> >::insert | order_book::PriceLevel::addOrder |
+| 4 | 0.4 | std::list<order_book::Order,order_book::PoolAllocator<order_book::Order> >::erase | order_book::PriceLevel::removeOrder |
+| 3 | 0.3 | std::_List_const_iterator<std::_List_val<std::_List_simple_types<order_book::Order> > >::operator* | order_book::OrderBook::cancelOrder |
+| 2 | 0.2 | std::list<order_book::Order,order_book::PoolAllocator<order_book::Order> >::_Emplace | order_book::PriceLevel::addOrder |
+| 1 | 0.1 | order_book::PoolAllocator<std::_List_node<order_book::Order,void *> >::deallocate | order_book::OrderBook::cancelOrder::__l2::<lambda_1>::operator() |
+| 1 | 0.1 | std::_List_const_iterator<std::_List_val<std::_List_simple_types<order_book::Order> > >::operator* | order_book::PriceLevel::removeOrder |
+
+## Container: std::list (inclusive 45 samples): self time by function
+
+| samples | % | function |
+|---:|---:|---|
+| 13 | 1.2 | std::_List_node_emplace_op2<order_book::PoolAllocator<std::_List_node<order_book::Order,void *> > >::_Transfer_before |
+| 7 | 0.6 | order_book::NodePool::allocate |
+| 4 | 0.4 | order_book::NodePool::blockSizeFor |
+| 4 | 0.4 | std::_List_const_iterator<std::_List_val<std::_List_simple_types<order_book::Order> > >::operator* |
+| 4 | 0.4 | std::_List_val<std::_List_simple_types<order_book::Order> >::_Unlinknode |
+| 4 | 0.4 | std::list<order_book::Order,order_book::PoolAllocator<order_book::Order> >::_Emplace |
+| 3 | 0.3 | order_book::NodePool::classFor |
+| 3 | 0.3 | order_book::PoolAllocator<std::_List_node<order_book::Order,void *> >::allocate |
+| 2 | 0.2 | std::construct_at |
+| 1 | 0.1 | order_book::PoolAllocator<std::_List_node<order_book::Order,void *> >::deallocate |
+
+## Container: std::vector (inclusive 3 samples): by entry point and project caller
+
+| samples | % | entry point | project caller |
+|---:|---:|---|
+| 3 | 0.3 | std::vector<std::pair<unsigned int,order_book::OrderLocation>,std::allocator<std::pair<unsigned int,order_book::OrderLocation> > >::operator[] | order_book::OrderIndex::find |
+
+## Container: std::vector (inclusive 3 samples): self time by function
+
+| samples | % | function |
+|---:|---:|---|
+| 3 | 0.3 | std::vector<std::pair<unsigned int,order_book::OrderLocation>,std::allocator<std::pair<unsigned int,order_book::OrderLocation> > >::operator[] |
+
+## Container: std::variant / std::visit (inclusive 108 samples): by entry point and project caller
+
+| samples | % | entry point | project caller |
+|---:|---:|---|
+| 38 | 3.4 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5>::push_back | order_book::SubmissionResults::accepted |
+| 36 | 3.2 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,1>::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,1> | order_book::CancellationResult::{ctor} |
+| 11 | 1.0 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5>::{ctor} | order_book::SubmissionResults::SubmissionResults |
+| 10 | 0.9 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,1>::{ctor} | order_book::OrderBook::cancelOrder |
+| 4 | 0.4 | std::_Variant_base<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>::{ctor} | order_book::SubmissionResults::accepted |
+| 3 | 0.3 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5>::~SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5> | order_book::OrderBook::submitOrder |
+| 3 | 0.3 | std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>::{ctor} | order_book::SubmissionResults::accepted |
+| 2 | 0.2 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5>::takeFrom | order_book::SubmissionResults::SubmissionResults |
+| 1 | 0.1 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5>::{ctor} | order_book::SubmissionResults::{ctor} |
+
+## Container: std::variant / std::visit (inclusive 108 samples): self time by function
+
+| samples | % | function |
+|---:|---:|---|
+| 38 | 3.4 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5>::push_back |
+| 36 | 3.2 | VCRUNTIME140!memmove |
+| 9 | 0.8 | VCRUNTIME140!_NLG_Return2 |
+| 4 | 0.4 | std::_Variant_base<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>::{ctor} |
+| 3 | 0.3 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,1>::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,1> |
+| 3 | 0.3 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5>::~SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5> |
+| 3 | 0.3 | std::_Copy_memmove_tail |
+| 3 | 0.3 | std::_Variant_storage_<1,order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>::{ctor} |
+| 2 | 0.2 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,1>::reserve |
+| 2 | 0.2 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5>::takeFrom |
+| 2 | 0.2 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5>::{ctor} |
+| 2 | 0.2 | std::initializer_list<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> >::size |
+| 1 | 0.1 | std::launder |
+
+## Container: strings and streams (inclusive 0 samples): by entry point and project caller
+
+| samples | % | entry point | project caller |
+|---:|---:|---|
+
+## Container: strings and streams (inclusive 0 samples): self time by function
+
+| samples | % | function |
+|---:|---:|---|
+

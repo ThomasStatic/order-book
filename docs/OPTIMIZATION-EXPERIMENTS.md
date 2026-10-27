@@ -1,6 +1,6 @@
 # Optimization experiments
 
-Experiments designed from the profile of the baseline ([`PROFILING.md`](PROFILING.md)), one per candidate change. None of them has been run. Each states the bottleneck the profile observed, the hypothesis the change tests, which workloads should move and which should not (the controls), the correctness risks, the readability cost, and the measurement that decides it. The engine's contracts in `CLAUDE.md` (results built before mutation, `cancelOrder` throwing nothing once its lookup passes, no resting event, byte-exact replay output) are the correctness bar for every one of them.
+Experiments designed from the profile of the baseline ([`PROFILING.md`](PROFILING.md)), one per candidate change, designed before any was run; the Outcome and Results sections at the end record what each showed, and [`OPTIMIZATION.md`](OPTIMIZATION.md) summarizes them. Each states the bottleneck the profile observed, the hypothesis the change tests, which workloads should move and which should not (the controls), the correctness risks, the readability cost, and the measurement that decides it. The engine's contracts in `CLAUDE.md` (results built before mutation, `cancelOrder` throwing nothing once its lookup passes, no resting event, byte-exact replay output) are the correctness bar for every one of them.
 
 Starting points, from the profile:
 

@@ -1,0 +1,442 @@
+# Sampling profile
+
+command: ./build/profile/Release/order_book_benchmarks.exe --workload deep-book --size extended --kind replay --warmup 0 --repetitions 8 --seed 42
+exit code: 0
+interval: 1000 us; wall time 4734 ms; the target thread was suspended for 64 ms of that
+samples: 2433 total, 1699 selected; root: runCore runReplay; drop: preload generateWorkload recordFinalBook renderReplayCsv describeOutcome ~OrderBook order_book::PriceLevel> >,0> >::{dtor} ~unique_ptr<order_book::NodePool
+
+Percentages are of the selected samples.
+
+## Unselected samples, by the project function nearest their root
+
+| samples | % | function |
+|---:|---:|---|
+| 312 | 42.5 | dropped: order_book::benchmark::renderReplayCsv |
+| 220 | 30.0 | dropped: order_book::benchmark::`anonymous namespace'::preload |
+| 175 | 23.8 | dropped: order_book::benchmark::generateWorkload |
+| 11 | 1.5 | `anonymous namespace'::runBenchmarks |
+| 10 | 1.4 | dropped: std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::{dtor} |
+| 4 | 0.5 | dropped: std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::{dtor} |
+| 1 | 0.1 | (none) |
+| 1 | 0.1 | dropped: std::unique_ptr<order_book::NodePool,std::default_delete<order_book::NodePool> >::~unique_ptr<order_book::NodePool,std::default_delete<order_book::NodePool> > |
+
+## Self time by module
+
+| samples | % | module |
+|---:|---:|---|
+| 1488 | 87.6 | (program) |
+| 177 | 10.4 | VCRUNTIME140 |
+| 34 | 2.0 | ntdll |
+
+## Self time by function (inlined functions shown as their own frames)
+
+| samples | % | function |
+|---:|---:|---|
+| 320 | 18.8 | order_book::OrderIndex::find |
+| 143 | 8.4 | VCRUNTIME140!memmove |
+| 120 | 7.1 | order_book::replay::`anonymous namespace'::parseRequiredNumber |
+| 95 | 5.6 | order_book::Order::getRemainingQuantity |
+| 74 | 4.4 | `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_1,unsigned char> |
+| 71 | 4.2 | order_book::replay::ReplayReader::next |
+| 62 | 3.6 | order_book::replay::?A0xa60994aa::collectEvents |
+| 48 | 2.8 | std::_Construct_in_place |
+| 47 | 2.8 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 38 | 2.2 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 36 | 2.1 | order_book::OrderIndex::erase |
+| 35 | 2.1 | order_book::replay::splitRecordInto |
+| 34 | 2.0 | order_book::replay::parseRow |
+| 33 | 1.9 | order_book::replay::`anonymous namespace'::runAdd |
+| 31 | 1.8 | std::_String_val<std::_Simple_types<char> >::_Myptr |
+| 29 | 1.7 | VCRUNTIME140!memchr |
+| 27 | 1.6 | ntdll!NtFreeVirtualMemory |
+| 27 | 1.6 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5>::push_back |
+| 24 | 1.4 | std::_Variant_storage_<0,order_book::replay::ReplayRecord,order_book::replay::ParseError>::{ctor} |
+| 18 | 1.1 | order_book::replay::ReplayReader::readLine |
+| 17 | 1.0 | std::_Traits_find_ch |
+| 15 | 0.9 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::size |
+| 14 | 0.8 | order_book::OrderBook::executeOnce |
+| 14 | 0.8 | std::_List_node_emplace_op2<order_book::PoolAllocator<std::_List_node<order_book::Order,void *> > >::_Transfer_before |
+| 13 | 0.8 | std::basic_string<char,std::char_traits<char>,std::allocator<char> >::assign |
+| 12 | 0.7 | order_book::CancellationResult::{ctor} |
+| 11 | 0.6 | order_book::OrderBook::submitOrder |
+| 11 | 0.6 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::_Resize<std::_Value_init_tag> |
+| 10 | 0.6 | ?A0x8417fefe::_Byte_length |
+| 10 | 0.6 | order_book::CancellationResult::cancelled |
+| 10 | 0.6 | order_book::PriceLevel::addOrder |
+| 10 | 0.6 | std::_Find_vectorized |
+| 9 | 0.5 | order_book::OrderBook::matchOrder |
+| 9 | 0.5 | std::_Optional_construct_base<order_book::OrderLocation>::_Assign |
+| 8 | 0.5 | order_book::SubmissionResults::accepted |
+| 7 | 0.4 | order_book::NodePool::allocate |
+| 7 | 0.4 | order_book::Order::malformedReason |
+| 7 | 0.4 | order_book::OrderBook::validateNewOrder |
+| 7 | 0.4 | std::basic_string<char,std::char_traits<char>,std::allocator<char> >::append |
+| 7 | 0.4 | std::optional<order_book::replay::ParseError>::~optional<order_book::replay::ParseError> |
+| 6 | 0.4 | order_book::PriceLevel::fillOldestOrder |
+| 5 | 0.3 | VCRUNTIME140!_NLG_Return2 |
+| 5 | 0.3 | __security_check_cookie |
+| 5 | 0.3 | order_book::OrderBook::crossesBestOpposing |
+| 5 | 0.3 | std::_List_val<std::_List_simple_types<order_book::Order> >::_Unlinknode |
+| 5 | 0.3 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::operator[] |
+| 4 | 0.2 | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 4 | 0.2 | memmove |
+| 4 | 0.2 | order_book::OrderIndex::emplace |
+| 4 | 0.2 | order_book::SmallVector<order_book::Trade,4>::takeFrom |
+
+## Inclusive time by function
+
+| samples | % | function |
+|---:|---:|---|
+| 1699 | 100.0 | KERNEL32!BaseThreadInitThunk |
+| 1699 | 100.0 | __scrt_common_main_seh |
+| 1699 | 100.0 | `anonymous namespace'::runBenchmarks |
+| 1699 | 100.0 | invoke_main |
+| 1699 | 100.0 | main |
+| 1699 | 100.0 | ntdll!RtlUserThreadStart |
+| 1699 | 100.0 | order_book::benchmark::`anonymous namespace'::runReplay |
+| 1699 | 100.0 | order_book::benchmark::runOnce |
+| 1699 | 100.0 | order_book::benchmark::runRepeated |
+| 1030 | 60.6 | order_book::replay::ReplayEngine::run |
+| 1026 | 60.4 | std::_Visit_impl<3,void,std::_Meta_list<std::integer_sequence<unsigned __int64,0>,std::integer_sequence<unsigned __int64,1>,std::integer_sequence<unsigned __int64,2> >,`order_book::replay::ReplayEngine::run'::`7'::<lambda_1>,std::variant<order_book::replay::AddCommand,order_book::replay::CancelCommand> const &> |
+| 1026 | 60.4 | std::visit |
+| 1022 | 60.2 | std::invoke |
+| 1021 | 60.1 | order_book::replay::ReplayEngine::run::__l7::<lambda_1>::operator() |
+| 1020 | 60.0 | std::_Visit_strategy<1>::_Visit2 |
+| 688 | 40.5 | std::_Variant_dispatcher<std::integer_sequence<unsigned __int64,1> >::_Dispatch2 |
+| 686 | 40.4 | order_book::replay::`anonymous namespace'::runAdd |
+| 658 | 38.7 | order_book::replay::readReplayInput |
+| 600 | 35.3 | order_book::replay::ReplayReader::next |
+| 572 | 33.7 | order_book::OrderBook::submitOrder |
+| 334 | 19.7 | order_book::replay::?A0xa60994aa::runCancel |
+| 334 | 19.7 | std::_Variant_dispatcher<std::integer_sequence<unsigned __int64,2> >::_Dispatch2 |
+| 321 | 18.9 | order_book::OrderIndex::find |
+| 282 | 16.6 | order_book::replay::parseRow |
+| 243 | 14.3 | order_book::OrderBook::cancelOrder |
+| 228 | 13.4 | order_book::OrderBook::validateNewOrder |
+| 172 | 10.1 | order_book::replay::splitRecordInto |
+| 155 | 9.1 | order_book::replay::?A0xa60994aa::collectEvents |
+| 150 | 8.8 | order_book::OrderBook::restOrder |
+| 143 | 8.4 | VCRUNTIME140!memmove |
+| 132 | 7.8 | order_book::replay::`anonymous namespace'::parseRequiredNumber |
+| 112 | 6.6 | std::_Traits_find_ch |
+| 97 | 5.7 | std::_Find_vectorized |
+| 95 | 5.6 | order_book::Order::getRemainingQuantity |
+| 94 | 5.5 | std::vector<order_book::replay::ReplayEvent,std::allocator<order_book::replay::ReplayEvent> >::_Emplace_one_at_back |
+| 94 | 5.5 | std::vector<order_book::replay::ReplayEvent,std::allocator<order_book::replay::ReplayEvent> >::push_back |
+| 93 | 5.5 | order_book::OrderBook::matchOrder |
+| 91 | 5.4 | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 84 | 4.9 | `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_1,unsigned char> |
+| 72 | 4.2 | order_book::OrderBook::executeOnce |
+| 70 | 4.1 | std::basic_string_view<char,std::char_traits<char> >::find |
+| 60 | 3.5 | order_book::replay::ReplayReader::readLine |
+| 58 | 3.4 | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 57 | 3.4 | std::vector<order_book::replay::ReplayRecord,std::allocator<order_book::replay::ReplayRecord> >::_Emplace_one_at_back |
+| 57 | 3.4 | std::vector<order_book::replay::ReplayRecord,std::allocator<order_book::replay::ReplayRecord> >::push_back |
+| 56 | 3.3 | std::vector<order_book::replay::ReplayEvent,std::allocator<order_book::replay::ReplayEvent> >::_Emplace_reallocate<order_book::replay::ReplayEvent> |
+| 55 | 3.2 | std::vector<order_book::replay::ReplayEvent,std::allocator<order_book::replay::ReplayEvent> >::_Change_array |
+| 51 | 3.0 | order_book::OrderIndex::erase |
+| 49 | 2.9 | std::basic_string<char,std::char_traits<char>,std::allocator<char> >::find |
+| 48 | 2.8 | std::_Construct_in_place |
+| 48 | 2.8 | std::map<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > >::_Try_emplace |
+| 48 | 2.8 | std::map<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > >::try_emplace |
+| 47 | 2.8 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 46 | 2.7 | std::vector<order_book::replay::ReplayRecord,std::allocator<order_book::replay::ReplayRecord> >::_Change_array |
+| 46 | 2.7 | std::vector<order_book::replay::ReplayRecord,std::allocator<order_book::replay::ReplayRecord> >::_Emplace_reallocate<order_book::replay::ReplayRecord> |
+| 45 | 2.6 | std::basic_string<char,std::char_traits<char>,std::allocator<char> >::assign |
+| 43 | 2.5 | order_book::SubmissionResults::accepted |
+| 41 | 2.4 | std::uninitialized_copy_n |
+| 40 | 2.4 | std::_Copy_memmove_tail |
+| 39 | 2.3 | std::map<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > >::_Try_emplace |
+
+## Self time by source line
+
+| samples | % | location  function |
+|---:|---:|---|
+| 310 | 18.2 | order_book/order_index.hpp:141  order_book::OrderIndex::find |
+| 143 | 8.4 | (no line)  VCRUNTIME140!memmove |
+| 94 | 5.5 | src/order.cpp:68  order_book::Order::getRemainingQuantity |
+| 60 | 3.5 | src/replay_engine.cpp:21  order_book::replay::?A0xa60994aa::collectEvents |
+| 54 | 3.2 | src/replay_parser.cpp:72  order_book::replay::`anonymous namespace'::parseRequiredNumber |
+| 50 | 2.9 | src/vector_algorithms.cpp:2628  `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_1,unsigned char> |
+| 48 | 2.8 | include/xutility:476  std::_Construct_in_place |
+| 38 | 2.2 | src/replay_parser.cpp:228  order_book::replay::ReplayReader::next |
+| 33 | 1.9 | include/xtree:1632  std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 29 | 1.7 | (no line)  VCRUNTIME140!memchr |
+| 28 | 1.6 | order_book/order_index.hpp:219  order_book::OrderIndex::erase |
+| 28 | 1.6 | src/replay_parser.cpp:231  order_book::replay::ReplayReader::next |
+| 27 | 1.6 | (no line)  ntdll!NtFreeVirtualMemory |
+| 26 | 1.5 | order_book/small_vector.hpp:132  order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5>::push_back |
+| 25 | 1.5 | include/xtree:1632  std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 25 | 1.5 | src/replay_engine.cpp:27  order_book::replay::`anonymous namespace'::runAdd |
+| 24 | 1.4 | include/variant:395  std::_Variant_storage_<0,order_book::replay::ReplayRecord,order_book::replay::ParseError>::{ctor} |
+| 21 | 1.2 | src/replay_parser.cpp:61  order_book::replay::`anonymous namespace'::parseRequiredNumber |
+| 15 | 0.9 | include/vector:1915  std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::size |
+| 15 | 0.9 | include/xstring:444  std::_String_val<std::_Simple_types<char> >::_Myptr |
+| 15 | 0.9 | src/replay_parser.cpp:55  order_book::replay::`anonymous namespace'::parseRequiredNumber |
+| 14 | 0.8 | include/list:609  std::_List_node_emplace_op2<order_book::PoolAllocator<std::_List_node<order_book::Order,void *> > >::_Transfer_before |
+| 13 | 0.8 | src/replay_parser.cpp:294  order_book::replay::ReplayReader::readLine |
+| 12 | 0.7 | src/cancellation_results.cpp:10  order_book::CancellationResult::{ctor} |
+| 12 | 0.7 | src/replay_parser.cpp:70  order_book::replay::`anonymous namespace'::parseRequiredNumber |
+| 11 | 0.6 | include/__msvc_string_view.hpp:699  std::_Traits_find_ch |
+| 10 | 0.6 | include/xstring:445  std::_String_val<std::_Simple_types<char> >::_Myptr |
+| 10 | 0.6 | include/xutility:200  std::_Find_vectorized |
+| 10 | 0.6 | src/replay_parser.cpp:99  order_book::replay::splitRecordInto |
+| 10 | 0.6 | src/vector_algorithms.cpp:72  ?A0x8417fefe::_Byte_length |
+| 9 | 0.5 | include/optional:165  std::_Optional_construct_base<order_book::OrderLocation>::_Assign |
+| 9 | 0.5 | src/cancellation_results.cpp:19  order_book::CancellationResult::cancelled |
+| 9 | 0.5 | src/price_level.cpp:15  order_book::PriceLevel::addOrder |
+| 9 | 0.5 | src/replay_parser.cpp:106  order_book::replay::splitRecordInto |
+| 8 | 0.5 | src/replay_parser.cpp:133  order_book::replay::parseRow |
+| 7 | 0.4 | (no line)  std::optional<order_book::replay::ParseError>::~optional<order_book::replay::ParseError> |
+| 7 | 0.4 | include/xtree:1639  std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 7 | 0.4 | order_book/node_pool.hpp:46  order_book::NodePool::allocate |
+| 7 | 0.4 | src/replay_parser.cpp:101  order_book::replay::splitRecordInto |
+| 7 | 0.4 | src/replay_parser.cpp:57  order_book::replay::`anonymous namespace'::parseRequiredNumber |
+| 6 | 0.4 | include/__msvc_string_view.hpp:689  std::_Traits_find_ch |
+| 6 | 0.4 | include/xtree:1636  std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 6 | 0.4 | order_book/order_index.hpp:140  order_book::OrderIndex::find |
+| 6 | 0.4 | src/order.cpp:36  order_book::Order::malformedReason |
+| 6 | 0.4 | src/vector_algorithms.cpp:2615  `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_1,unsigned char> |
+| 5 | 0.3 | (no line)  VCRUNTIME140!_NLG_Return2 |
+| 5 | 0.3 | include/vector:1625  std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::_Resize<std::_Value_init_tag> |
+| 5 | 0.3 | include/xstring:1623  std::basic_string<char,std::char_traits<char>,std::allocator<char> >::assign |
+| 5 | 0.3 | include/xstring:1625  std::basic_string<char,std::char_traits<char>,std::allocator<char> >::assign |
+| 5 | 0.3 | include/xstring:436  std::_String_val<std::_Simple_types<char> >::_Myptr |
+| 5 | 0.3 | include/xtree:1636  std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 5 | 0.3 | include/xtree:1639  std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 5 | 0.3 | src/replay_parser.cpp:204  order_book::replay::parseRow |
+| 5 | 0.3 | src/replay_parser.cpp:60  order_book::replay::`anonymous namespace'::parseRequiredNumber |
+| 5 | 0.3 | src/vector_algorithms.cpp:2629  `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_1,unsigned char> |
+| 4 | 0.2 | (no line)  memmove |
+| 4 | 0.2 | include/optional:120  std::_Optional_destruct_base<order_book::replay::ParseError,0>::{ctor} |
+| 4 | 0.2 | include/xmemory:607  std::_Normal_allocator_traits<order_book::PoolAllocator<std::_List_node<order_book::Order,void *> > >::deallocate |
+| 4 | 0.2 | src/order_book.cpp:216  order_book::OrderBook::submitOrder |
+| 4 | 0.2 | src/replay_parser.cpp:85  order_book::replay::`anonymous namespace'::parseRequiredNumber |
+
+## Heap allocator: samples inside malloc/free and the heap, by kind
+
+| samples | % | kind |
+|---:|---:|---|
+| 32 | 1.9 | allocate |
+| 2 | 0.1 | free |
+
+## Heap allocator: by project caller and the standard-library entry point it went through
+
+| samples | % | kind | project caller | entry point |
+|---:|---:|---|
+| 12 | 0.7 | allocate | order_book::replay::?A0xa60994aa::collectEvents | std::vector<order_book::replay::ReplayEvent,std::allocator<order_book::replay::ReplayEvent> >::push_back |
+| 5 | 0.3 | allocate | order_book::benchmark::`anonymous namespace'::runReplay | std::_Variant_destroy_layer_<order_book::replay::ReplayResult,order_book::replay::ReplayError>::{dtor} |
+| 3 | 0.2 | allocate | order_book::SmallVector<order_book::Trade,4>::reserve | std::allocator<order_book::Trade>::allocate |
+| 3 | 0.2 | allocate | order_book::benchmark::`anonymous namespace'::runReplay | std::vector<order_book::replay::ReplayRecord,std::allocator<order_book::replay::ReplayRecord> >::{dtor} |
+| 3 | 0.2 | allocate | order_book::benchmark::`anonymous namespace'::runReplay | std::vector<std::pair<unsigned int,order_book::OrderLocation>,std::allocator<std::pair<unsigned int,order_book::OrderLocation> > >::{dtor} |
+| 3 | 0.2 | allocate | order_book::replay::readReplayInput | std::vector<order_book::replay::ReplayRecord,std::allocator<order_book::replay::ReplayRecord> >::push_back |
+| 2 | 0.1 | allocate | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5>::reserve | std::allocator<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected> >::allocate |
+| 2 | 0.1 | free | order_book::OrderBook::executeOnce | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::erase |
+| 1 | 0.1 | allocate | order_book::OrderBook::snapshot | std::vector<order_book::PriceLevelSummary,std::allocator<order_book::PriceLevelSummary> >::push_back |
+
+## Heap allocator: self time by function
+
+| samples | % | function |
+|---:|---:|---|
+| 27 | 1.6 | ntdll!NtFreeVirtualMemory |
+| 3 | 0.2 | ntdll!RtlGetSuiteMask |
+| 2 | 0.1 | ntdll!RtlFreeHeap |
+| 1 | 0.1 | ntdll!LdrFindEntryForAddress |
+| 1 | 0.1 | ntdll!RtlAllocateHeap |
+
+## Container: std::map (red-black tree) (inclusive 152 samples): by entry point and project caller
+
+| samples | % | entry point | project caller |
+|---:|---:|---|
+| 91 | 5.4 | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > | order_book::OrderBook::restOrder |
+| 58 | 3.4 | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > | order_book::OrderBook::restOrder |
+| 2 | 0.1 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::erase | order_book::OrderBook::executeOnce |
+| 1 | 0.1 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::begin | order_book::OrderBook::matchOrder |
+
+## Container: std::map (red-black tree) (inclusive 152 samples): self time by function
+
+| samples | % | function |
+|---:|---:|---|
+| 47 | 2.8 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 38 | 2.2 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 14 | 0.8 | std::_List_node_emplace_op2<order_book::PoolAllocator<std::_List_node<order_book::Order,void *> > >::_Transfer_before |
+| 10 | 0.6 | order_book::PriceLevel::addOrder |
+| 9 | 0.5 | std::_Optional_construct_base<order_book::OrderLocation>::_Assign |
+| 7 | 0.4 | order_book::NodePool::allocate |
+| 4 | 0.2 | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 4 | 0.2 | order_book::OrderIndex::emplace |
+| 3 | 0.2 | order_book::OrderIndex::end |
+| 3 | 0.2 | std::list<order_book::Order,order_book::PoolAllocator<order_book::Order> >::_Emplace |
+| 2 | 0.1 | ntdll!RtlFreeHeap |
+| 2 | 0.1 | order_book::Order::getOrderId |
+| 2 | 0.1 | order_book::OrderIndex::find |
+| 1 | 0.1 | `order_book::OrderBook::restOrder'::`2'::<lambda_1>::operator()<std::map<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> > > > |
+| 1 | 0.1 | order_book::NodePool::classFor |
+| 1 | 0.1 | order_book::OrderLocation::{ctor} |
+| 1 | 0.1 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Lower_bound_duplicate |
+| 1 | 0.1 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::begin |
+| 1 | 0.1 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Lower_bound_duplicate |
+| 1 | 0.1 | std::pair<order_book::OrderIndex::Iterator<0>,bool>::{ctor} |
+
+## Container: std::unordered_map (hash table) (inclusive 0 samples): by entry point and project caller
+
+| samples | % | entry point | project caller |
+|---:|---:|---|
+
+## Container: std::unordered_map (hash table) (inclusive 0 samples): self time by function
+
+| samples | % | function |
+|---:|---:|---|
+
+## Container: std::list (inclusive 37 samples): by entry point and project caller
+
+| samples | % | entry point | project caller |
+|---:|---:|---|
+| 23 | 1.4 | std::list<order_book::Order,order_book::PoolAllocator<order_book::Order> >::insert | order_book::PriceLevel::addOrder |
+| 5 | 0.3 | std::list<order_book::Order,order_book::PoolAllocator<order_book::Order> >::erase | order_book::PriceLevel::removeOrder |
+| 5 | 0.3 | std::list<order_book::Order,order_book::PoolAllocator<order_book::Order> >::pop_front | order_book::PriceLevel::fillOldestOrder |
+| 1 | 0.1 | std::_Normal_allocator_traits<order_book::PoolAllocator<std::_List_node<order_book::Order,void *> > >::construct | order_book::PriceLevel::addOrder |
+| 1 | 0.1 | std::list<order_book::Order,order_book::PoolAllocator<order_book::Order> >::_Emplace | order_book::PriceLevel::addOrder |
+| 1 | 0.1 | std::list<order_book::Order,order_book::PoolAllocator<order_book::Order> >::_Unchecked_erase | order_book::PriceLevel::fillOldestOrder |
+| 1 | 0.1 | std::list<order_book::Order,order_book::PoolAllocator<order_book::Order> >::front | order_book::PriceLevel::fillOldestOrder |
+
+## Container: std::list (inclusive 37 samples): self time by function
+
+| samples | % | function |
+|---:|---:|---|
+| 14 | 0.8 | std::_List_node_emplace_op2<order_book::PoolAllocator<std::_List_node<order_book::Order,void *> > >::_Transfer_before |
+| 7 | 0.4 | order_book::NodePool::allocate |
+| 5 | 0.3 | std::_List_val<std::_List_simple_types<order_book::Order> >::_Unlinknode |
+| 4 | 0.2 | std::_Normal_allocator_traits<order_book::PoolAllocator<std::_List_node<order_book::Order,void *> > >::deallocate |
+| 3 | 0.2 | std::list<order_book::Order,order_book::PoolAllocator<order_book::Order> >::_Emplace |
+| 2 | 0.1 | std::list<order_book::Order,order_book::PoolAllocator<order_book::Order> >::_Unchecked_erase |
+| 1 | 0.1 | order_book::NodePool::classFor |
+| 1 | 0.1 | std::list<order_book::Order,order_book::PoolAllocator<order_book::Order> >::front |
+
+## Container: std::vector (inclusive 198 samples): by entry point and project caller
+
+| samples | % | entry point | project caller |
+|---:|---:|---|
+| 93 | 5.5 | std::vector<order_book::replay::ReplayEvent,std::allocator<order_book::replay::ReplayEvent> >::push_back | order_book::replay::?A0xa60994aa::collectEvents |
+| 57 | 3.4 | std::vector<order_book::replay::ReplayRecord,std::allocator<order_book::replay::ReplayRecord> >::push_back | order_book::replay::readReplayInput |
+| 12 | 0.7 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::size | order_book::replay::splitRecordInto |
+| 11 | 0.6 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::_Resize<std::_Value_init_tag> | order_book::replay::ReplayReader::next |
+| 5 | 0.3 | std::vector<order_book::replay::ReplayEvent,std::allocator<order_book::replay::ReplayEvent> >::{dtor} | order_book::benchmark::`anonymous namespace'::runReplay |
+| 3 | 0.2 | std::vector<order_book::replay::ReplayRecord,std::allocator<order_book::replay::ReplayRecord> >::{dtor} | order_book::benchmark::`anonymous namespace'::runReplay |
+| 3 | 0.2 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::size | order_book::replay::parseRow |
+| 3 | 0.2 | std::vector<std::pair<unsigned int,order_book::OrderLocation>,std::allocator<std::pair<unsigned int,order_book::OrderLocation> > >::{dtor} | order_book::benchmark::`anonymous namespace'::runReplay |
+| 2 | 0.1 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::operator[] | order_book::replay::`anonymous namespace'::parseRequiredNumber |
+| 2 | 0.1 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::operator[] | order_book::replay::splitRecordInto |
+| 2 | 0.1 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::resize | order_book::replay::splitRecordInto |
+| 1 | 0.1 | std::vector<order_book::PriceLevelSummary,std::allocator<order_book::PriceLevelSummary> >::push_back | order_book::OrderBook::snapshot |
+| 1 | 0.1 | std::vector<order_book::replay::ReplayEvent,std::allocator<order_book::replay::ReplayEvent> >::push_back | order_book::replay::`anonymous namespace'::runAdd |
+| 1 | 0.1 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::operator[] | order_book::replay::parseRow |
+| 1 | 0.1 | std::vector<std::pair<unsigned int,order_book::OrderLocation>,std::allocator<std::pair<unsigned int,order_book::OrderLocation> > >::operator[] | order_book::OrderIndex::find |
+| 1 | 0.1 | std::vector<std::pair<unsigned int,order_book::OrderLocation>,std::allocator<std::pair<unsigned int,order_book::OrderLocation> > >::size | order_book::OrderIndex::end |
+
+## Container: std::vector (inclusive 198 samples): self time by function
+
+| samples | % | function |
+|---:|---:|---|
+| 82 | 4.8 | VCRUNTIME140!memmove |
+| 48 | 2.8 | std::_Construct_in_place |
+| 27 | 1.6 | ntdll!NtFreeVirtualMemory |
+| 15 | 0.9 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::size |
+| 11 | 0.6 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::_Resize<std::_Value_init_tag> |
+| 5 | 0.3 | VCRUNTIME140!memchr |
+| 5 | 0.3 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::operator[] |
+| 2 | 0.1 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::resize |
+| 1 | 0.1 | std::vector<order_book::replay::ReplayEvent,std::allocator<order_book::replay::ReplayEvent> >::_Emplace_back_with_unused_capacity |
+| 1 | 0.1 | std::vector<std::pair<unsigned int,order_book::OrderLocation>,std::allocator<std::pair<unsigned int,order_book::OrderLocation> > >::operator[] |
+| 1 | 0.1 | std::vector<std::pair<unsigned int,order_book::OrderLocation>,std::allocator<std::pair<unsigned int,order_book::OrderLocation> > >::size |
+
+## Container: std::variant / std::visit (inclusive 1063 samples): by entry point and project caller
+
+| samples | % | entry point | project caller |
+|---:|---:|---|
+| 1026 | 60.4 | std::visit | order_book::replay::ReplayEngine::run |
+| 24 | 1.4 | std::variant<order_book::replay::ReplayRecord,order_book::replay::ParseError>::{ctor} | order_book::replay::parseRow |
+| 5 | 0.3 | std::_Variant_destroy_layer_<order_book::replay::ReplayResult,order_book::replay::ReplayError>::{dtor} | order_book::benchmark::`anonymous namespace'::runReplay |
+| 2 | 0.1 | std::_Variant_storage_<0,order_book::replay::ReplayRecord,order_book::replay::ParseError,order_book::replay::EndOfInput>::{ctor} | order_book::replay::ReplayReader::next |
+| 2 | 0.1 | std::variant<order_book::replay::AddCommand,order_book::replay::CancelCommand>::{ctor} | order_book::replay::parseRow |
+| 1 | 0.1 | std::_Variant_base<order_book::replay::AddCommand,order_book::replay::CancelCommand>::{ctor} | order_book::replay::parseRow |
+| 1 | 0.1 | std::_Variant_destroy_layer_<order_book::replay::ReplayRecord,order_book::replay::ParseError,order_book::replay::EndOfInput>::{dtor} | order_book::replay::readReplayInput |
+| 1 | 0.1 | std::_Variant_destroy_layer_<order_book::replay::ReplayRecord,order_book::replay::ParseError>::{dtor} | order_book::replay::ReplayReader::next |
+| 1 | 0.1 | std::variant<order_book::replay::ReplayRecord,order_book::replay::ParseError,order_book::replay::EndOfInput>::{ctor} | order_book::replay::ReplayReader::next |
+
+## Container: std::variant / std::visit (inclusive 1063 samples): self time by function
+
+| samples | % | function |
+|---:|---:|---|
+| 320 | 18.8 | order_book::OrderIndex::find |
+| 95 | 5.6 | order_book::Order::getRemainingQuantity |
+| 79 | 4.6 | VCRUNTIME140!memmove |
+| 62 | 3.6 | order_book::replay::?A0xa60994aa::collectEvents |
+| 47 | 2.8 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 38 | 2.2 | std::_Tree<std::_Tmap_traits<unsigned int,order_book::PriceLevel,std::greater<unsigned int>,std::allocator<std::pair<unsigned int const ,order_book::PriceLevel> >,0> >::_Find_lower_bound |
+| 37 | 2.2 | std::_Construct_in_place |
+| 36 | 2.1 | order_book::OrderIndex::erase |
+| 33 | 1.9 | order_book::replay::`anonymous namespace'::runAdd |
+| 27 | 1.6 | order_book::SmallVector<std::variant<order_book::OrderAccepted,order_book::OrderRejected,order_book::TradeExecuted,order_book::OrderCancelled,order_book::CancelRejected>,5>::push_back |
+| 24 | 1.4 | std::_Variant_storage_<0,order_book::replay::ReplayRecord,order_book::replay::ParseError>::{ctor} |
+| 17 | 1.0 | ntdll!NtFreeVirtualMemory |
+| 14 | 0.8 | order_book::OrderBook::executeOnce |
+| 14 | 0.8 | std::_List_node_emplace_op2<order_book::PoolAllocator<std::_List_node<order_book::Order,void *> > >::_Transfer_before |
+| 12 | 0.7 | order_book::CancellationResult::{ctor} |
+| 11 | 0.6 | order_book::OrderBook::submitOrder |
+| 10 | 0.6 | order_book::CancellationResult::cancelled |
+| 10 | 0.6 | order_book::PriceLevel::addOrder |
+| 9 | 0.5 | order_book::OrderBook::matchOrder |
+| 9 | 0.5 | std::_Optional_construct_base<order_book::OrderLocation>::_Assign |
+
+## Container: strings and streams (inclusive 229 samples): by entry point and project caller
+
+| samples | % | entry point | project caller |
+|---:|---:|---|
+| 70 | 4.1 | std::basic_string_view<char,std::char_traits<char> >::find | order_book::replay::splitRecordInto |
+| 49 | 2.9 | std::basic_string<char,std::char_traits<char>,std::allocator<char> >::find | order_book::replay::parseRow |
+| 45 | 2.6 | std::basic_string<char,std::char_traits<char>,std::allocator<char> >::assign | order_book::replay::splitRecordInto |
+| 12 | 0.7 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::size | order_book::replay::splitRecordInto |
+| 11 | 0.6 | std::basic_string<char,std::char_traits<char>,std::allocator<char> >::append | order_book::replay::ReplayReader::readLine |
+| 11 | 0.6 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::_Resize<std::_Value_init_tag> | order_book::replay::ReplayReader::next |
+| 4 | 0.2 | MSVCP140!std::basic_istream<char,std::char_traits<char> >::readsome | order_book::replay::ReplayReader::refill |
+| 4 | 0.2 | std::basic_string<char,std::char_traits<char>,std::allocator<char> >::_Equal | order_book::replay::parseRow |
+| 3 | 0.2 | std::basic_string<char,std::char_traits<char>,std::allocator<char> >::_Unchecked_end | order_book::replay::`anonymous namespace'::parseRequiredNumber |
+| 3 | 0.2 | std::basic_string_view<char,std::char_traits<char> >::substr | order_book::replay::splitRecordInto |
+| 3 | 0.2 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::size | order_book::replay::parseRow |
+| 2 | 0.1 | std::basic_string<char,std::char_traits<char>,std::allocator<char> >::{dtor} | order_book::replay::parseRow |
+| 2 | 0.1 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::operator[] | order_book::replay::`anonymous namespace'::parseRequiredNumber |
+| 2 | 0.1 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::operator[] | order_book::replay::splitRecordInto |
+| 2 | 0.1 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::resize | order_book::replay::splitRecordInto |
+| 1 | 0.1 | std::basic_string<char,std::char_traits<char>,std::allocator<char> >::_Eos | order_book::replay::ReplayReader::readLine |
+| 1 | 0.1 | std::basic_string<char,std::char_traits<char>,std::allocator<char> >::clear | order_book::replay::ReplayReader::readLine |
+| 1 | 0.1 | std::basic_string<char,std::char_traits<char>,std::allocator<char> >::empty | order_book::replay::ReplayReader::readLine |
+| 1 | 0.1 | std::basic_string<char,std::char_traits<char>,std::allocator<char> >::{ctor} | order_book::replay::parseRow |
+| 1 | 0.1 | std::basic_string_view<char,std::char_traits<char> >::_Clamp_suffix_size | order_book::replay::splitRecordInto |
+| 1 | 0.1 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::operator[] | order_book::replay::parseRow |
+
+## Container: strings and streams (inclusive 229 samples): self time by function
+
+| samples | % | function |
+|---:|---:|---|
+| 74 | 4.4 | `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_1,unsigned char> |
+| 26 | 1.5 | VCRUNTIME140!memmove |
+| 16 | 0.9 | std::_String_val<std::_Simple_types<char> >::_Myptr |
+| 15 | 0.9 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::size |
+| 13 | 0.8 | std::basic_string<char,std::char_traits<char>,std::allocator<char> >::assign |
+| 11 | 0.6 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::_Resize<std::_Value_init_tag> |
+| 10 | 0.6 | ?A0x8417fefe::_Byte_length |
+| 10 | 0.6 | std::_Find_vectorized |
+| 10 | 0.6 | std::_Traits_find_ch |
+| 7 | 0.4 | std::basic_string<char,std::char_traits<char>,std::allocator<char> >::append |
+| 5 | 0.3 | std::vector<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,std::allocator<std::basic_string<char,std::char_traits<char>,std::allocator<char> > > >::operator[] |
+| 4 | 0.2 | VCRUNTIME140!_NLG_Return2 |
+| 3 | 0.2 | __std_find_trivial_1 |
+| 3 | 0.2 | memmove |
+| 3 | 0.2 | std::basic_string<char,std::char_traits<char>,std::allocator<char> >::_Unchecked_end |
+| 3 | 0.2 | std::basic_string_view<char,std::char_traits<char> >::{ctor} |
+| 2 | 0.1 | std::_Char_traits<char,int>::move |
+| 2 | 0.1 | std::_Narrow_char_traits<char,int>::compare |
+| 2 | 0.1 | std::_Traits_equal |
+| 2 | 0.1 | std::basic_string<char,std::char_traits<char>,std::allocator<char> >::_Tidy_deallocate |
+

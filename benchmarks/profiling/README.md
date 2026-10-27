@@ -24,8 +24,11 @@ A sampling profiler for one process's main thread, built on dbghelp. It starts t
 build/profile/Release/sampling_profiler.exe --interval-us 1000 --out results/deep-book-core \
   --root runCore --root runReplay \
   --drop preload --drop generateWorkload --drop recordFinalBook --drop renderReplayCsv --drop describeOutcome --drop ~OrderBook \
-  -- build/profile/Release/order_book_benchmarks.exe --workload deep-book --size extended --kind core --warmup 0 --repetitions 20
+  --drop 'order_book::PriceLevel> >,0> >::{dtor}' --drop '~unique_ptr<order_book::NodePool' \
+  -- ./build/profile/Release/order_book_benchmarks.exe --workload deep-book --size extended --kind core --warmup 0 --repetitions 20
 ```
+
+The target's path needs its leading `./` (or a backslash path): the command line goes to `CreateProcessW` unchanged, and it does not find `build/profile/...` written with forward slashes and no prefix.
 
 | Option | Effect |
 |---|---|
@@ -34,7 +37,7 @@ build/profile/Release/sampling_profiler.exe --interval-us 1000 --out results/dee
 | `--root NAME` | select only samples whose stack has a frame containing NAME (repeatable; all samples if none) |
 | `--drop NAME` | exclude samples whose stack has a frame containing NAME (repeatable) |
 
-The selection above keeps the timed regions of `benchmark_runner.cpp` and drops what the runner does around them: generating the workload, the preload, rendering the CSV, the outcome check, and destroying the book (which is inside `runCore` but after the clock stops, and for a large book costs as much as the run).
+The selection above keeps the timed regions of `benchmark_runner.cpp` and drops what the runner does around them: generating the workload, the preload, rendering the CSV, the outcome check, and destroying the book (which is inside `runCore` but after the clock stops, and for a large book costs as much as the run). Since the node pool (experiment 6 of `docs/OPTIMIZATION-EXPERIMENTS.md`) the compiler inlines `~OrderBook` into `runCore`, so the destruction shows as the level maps' destructor and the pool's `unique_ptr` destructor directly under `runCore`; the last two drops remove it. Without them, `mostly-resting` charges a quarter of its samples to freeing the book. Drop names containing spaces must be quoted.
 
 `PREFIX.txt` reports, over the selected samples: self time by module, function, and source line; inclusive time by function; time inside the heap allocator split into allocation and free and attributed to the project function that called into it and the standard-library entry point it went through; and, for `std::map`, `std::unordered_map`, `std::list`, `std::vector`, `std::variant`, and strings and streams, the inclusive time by entry point and caller. `PREFIX.folded` is the collapsed-stack format (`frame;frame;... count`, root first) that flame graph tools read.
 
@@ -47,7 +50,7 @@ Caveats:
 
 ## `allocation_profile`
 
-Exact allocation counts, not samples. Global `operator new`/`delete` are replaced with counting versions, then each built-in workload is generated as the benchmark does and run once on a preloaded book. For the core path every timed command is run on its own and its allocations, frees, and bytes are charged to its kind (a submission that rests, one that trades then rests, one that fills completely, a cancellation), with a histogram of allocation sizes, which identifies the container each allocation came from. The order index is watched for rehashes. For the replay path the three stages the benchmark times (parsing the CSV, running the records, formatting the summary) are counted and timed separately.
+Exact allocation counts, not samples. Global `operator new`/`delete` are replaced with counting versions, then each built-in workload is generated as the benchmark does and run once on a preloaded book. For the core path every timed command is run on its own and its allocations, frees, and bytes are charged to its kind (a submission that rests, one that trades then rests, one that fills completely, a cancellation), with a histogram of allocation sizes, which identifies the container each allocation came from. The order index is watched for growth, and its size in slots and its fill are printed. For the replay path the three stages the benchmark times (parsing the CSV, running the records, formatting the summary) are counted and timed separately.
 
 ```bash
 build/profile/Release/allocation_profile.exe --size standard > allocations.txt

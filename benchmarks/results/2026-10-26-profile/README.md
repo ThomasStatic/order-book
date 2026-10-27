@@ -13,7 +13,7 @@ Commands, run from the repository root:
 ```bash
 OUT=benchmarks/results/2026-10-26-profile
 P=build/profile/Release/sampling_profiler.exe
-B=build/profile/Release/order_book_benchmarks.exe
+B=./build/profile/Release/order_book_benchmarks.exe
 DROPS="--drop preload --drop generateWorkload --drop recordFinalBook --drop renderReplayCsv --drop describeOutcome --drop ~OrderBook"
 build/profile/Release/allocation_profile.exe --size standard > $OUT/allocations.txt
 for w in small-book deep-book matching-heavy cancellation-heavy mostly-resting; do
