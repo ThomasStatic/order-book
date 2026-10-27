@@ -1,19 +1,20 @@
 #include <algorithm>
+#include <stdexcept>
 
 #include "order_book/price_level.hpp"
 
 namespace order_book {
-    PriceLevel::PriceLevel(unsigned int price, Side s, NodePool* pool)
+    PriceLevel::PriceLevel(Price price, Side s, NodePool* pool)
         : tickPrice(price), side(s), orders(PoolAllocator<Order>(pool)) {}
 
-    PriceLevel::PriceLevel(unsigned int price, Side s, Order initialOrder): PriceLevel(price, s) {
+    PriceLevel::PriceLevel(Price price, Side s, Order initialOrder): PriceLevel(price, s) {
         addOrder(initialOrder);
     }
 
     OrderLocation PriceLevel::addOrder(Order newOrder) {
         OrderQueue::iterator itr = orders.insert(orders.end(), newOrder);
         quantity += newOrder.getRemainingQuantity();
-        
+
         OrderLocation location(tickPrice, side, itr, this);
         return location;
     }
@@ -22,7 +23,7 @@ namespace order_book {
         return orders.front();
     }
 
-    OrderFill PriceLevel::fillOldestOrder(unsigned int fillQuant) {
+    OrderFill PriceLevel::fillOldestOrder(Quantity fillQuant) {
         if(fillQuant == 0) {
             throw std::invalid_argument("filling zero quantity from a price level error");
         }
@@ -32,8 +33,8 @@ namespace order_book {
 
         Order& oldestOrder = orders.front();
 
-        const unsigned int availableQuant = oldestOrder.getRemainingQuantity();
-        const unsigned int fillAmount = std::min(fillQuant, availableQuant);
+        const Quantity availableQuant = oldestOrder.getRemainingQuantity();
+        const Quantity fillAmount = std::min(fillQuant, availableQuant);
         oldestOrder.fillQuantity(fillAmount);
         quantity -= fillAmount;
 
@@ -45,29 +46,10 @@ namespace order_book {
         return fill;
     }
 
-    ConsumptionResult PriceLevel::consumeQuantity(unsigned int fillQuant) {
-        ConsumptionResult result{QuantityConsumptionStatus::INVALID_REQUEST, fillQuant, {}};
-        if(fillQuant == 0) {
-            return result;
-        }
-        // At most one fill per order, so recording a fill can never throw mid-consumption.
-        result.fills.reserve(orders.size());
-
-        while (result.unfilledQuantity > 0 && quantity > 0) {
-            OrderFill fill = fillOldestOrder(result.unfilledQuantity);
-            result.unfilledQuantity -= fill.filledQuantity;
-            result.fills.push_back(fill);
-        }
-
-        result.status = quantity > 0 ? QuantityConsumptionStatus::LEVEL_EXHAUSTED
-                                     : QuantityConsumptionStatus::SATISFIED;
-        return result;
-    }
-
     void PriceLevel::removeOrder(OrderQueue::iterator itr) {
         // Read the remaining quantity first: erasing invalidates itr. It is the remaining
         // quantity, not the initial one, that the aggregate holds for this order.
-        const unsigned int remaining = itr->getRemainingQuantity();
+        const Quantity remaining = itr->getRemainingQuantity();
         quantity -= remaining;
         orders.erase(itr);
     }
@@ -79,7 +61,7 @@ namespace order_book {
     std::uint64_t PriceLevel::getAggregateQuantity() const {
         return quantity;
     }
-    unsigned int PriceLevel::getOrdersQuantity() const {
+    unsigned int PriceLevel::getOrderCount() const {
         // Live orders have distinct nonzero OrderIds, so a level never holds more than an
         // unsigned int can count.
         return static_cast<unsigned int>(orders.size());

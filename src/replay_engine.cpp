@@ -24,7 +24,7 @@ namespace order_book::replay {
 
         void runAdd(const AddCommand& add, std::size_t lineNumber, OrderBook& book, ReplayResult& result) {
             // The book assigns the real sequence number on acceptance; 1 is a placeholder.
-            const SubmissionResults submission = book.submitOrder(Order(add.orderId, add.price, add.quantity, 1, add.side));
+            const SubmissionResult submission = book.submitOrder(Order(add.orderId, add.price, add.quantity, 1, add.side));
 
             ReplayStatistics& statistics = result.statistics;
             ++statistics.addCommands;

@@ -5,7 +5,6 @@ namespace order_book {
         NONE,
         DUPLICATE_ORDER_ID,
         ORDER_NOT_FOUND,
-        ORDER_NOT_CANCELLABLE,
         // Malformed submissions, refused before matching.
         INVALID_ORDER_ID,       // the reserved ID 0
         INVALID_PRICE,          // zero price
@@ -22,7 +21,6 @@ namespace order_book {
             case RejectionReason::NONE: return "NONE";
             case RejectionReason::DUPLICATE_ORDER_ID: return "DUPLICATE_ORDER_ID";
             case RejectionReason::ORDER_NOT_FOUND: return "ORDER_NOT_FOUND";
-            case RejectionReason::ORDER_NOT_CANCELLABLE: return "ORDER_NOT_CANCELLABLE";
             case RejectionReason::INVALID_ORDER_ID: return "INVALID_ORDER_ID";
             case RejectionReason::INVALID_PRICE: return "INVALID_PRICE";
             case RejectionReason::INVALID_QUANTITY: return "INVALID_QUANTITY";
@@ -40,7 +38,6 @@ namespace order_book {
             case RejectionReason::NONE: return "no rejection";
             case RejectionReason::DUPLICATE_ORDER_ID: return "duplicate active order id error";
             case RejectionReason::ORDER_NOT_FOUND: return "order not found error";
-            case RejectionReason::ORDER_NOT_CANCELLABLE: return "order not cancellable error";
             case RejectionReason::INVALID_ORDER_ID: return "reserved order id 0 error";
             case RejectionReason::INVALID_PRICE: return "non-positive price tick error";
             case RejectionReason::INVALID_QUANTITY: return "no remaining quantity error";

@@ -20,12 +20,12 @@ struct OrderBookTestAccess {
         Order order(1, 1, 1, 1, Side::BUY);
         order.orderId = command.orderId;
         order.priceTick = command.price;
-        order.initialQuant = command.quantity;
-        order.remainingQuant = command.quantity;
+        order.initialQuantity = command.quantity;
+        order.remainingQuantity = command.quantity;
         order.side = command.side;
         order.type = command.orderType;
         if (command.markedFilled) {
-            order.execution = FillStatus::FILLED;
+            order.fillStatus = FillStatus::FILLED;
         }
         return order;
     }
@@ -339,7 +339,7 @@ std::optional<Failure> CommandReplayer::execute(OrderBook& book, ReferenceBook& 
     const char* operation = submission ? "submitOrder" : "cancelOrder";
     try {
         if (submission) {
-            const SubmissionResults result = book.submitOrder(Access::build(command));
+            const SubmissionResult result = book.submitOrder(Access::build(command));
             actual.submissionId = result.getSubmissionId();
             actual.outcome.success = result.getStatus() == SubmissionStatus::ACCEPTED;
             if (!actual.outcome.success) {

@@ -1,35 +1,38 @@
 #pragma once
 
-#include <stdexcept>
 #include "side.hpp"
+#include "types.hpp"
 
 namespace order_book {
 
     class Trade {
     private:
-        unsigned int tradeId;
-        unsigned int restingId;
-        unsigned int incomingId;
+        TradeId tradeId;
+        OrderId restingId;
+        OrderId incomingId;
 
-        unsigned int executionPrice; // in tick quantity
-        unsigned int executionQuantity;
+        Price executionPrice;  // the resting order's price
+        Quantity executionQuantity;
 
         Side incomingSide;
 
     public:
-        Trade(unsigned int tId, unsigned int rId, unsigned int iId, unsigned int execTick, unsigned int execQuant, Side iSide);
+        // Throws std::invalid_argument if any ID, the price, or the quantity is zero.
+        Trade(TradeId id, OrderId restingOrderId, OrderId incomingOrderId, Price price, Quantity quantity,
+              Side incomingOrderSide);
 
-        unsigned int getTradeId() const;
-        unsigned int getRestingId() const;
-        unsigned int getIncomingId() const;
+        TradeId getTradeId() const;
+        OrderId getRestingId() const;
+        OrderId getIncomingId() const;
 
-        unsigned int getExecutionPrice() const;
-        unsigned int getExecutionQuantity() const;
+        Price getExecutionPrice() const;
+        Quantity getExecutionQuantity() const;
 
         Side getIncomingSide() const;
 
-        unsigned int getBuyOrderId() const;
-        unsigned int getSellOrderId() const;
+        // The buy and sell orders, whichever was resting.
+        OrderId getBuyOrderId() const;
+        OrderId getSellOrderId() const;
     };
 
 }  // namespace order_book

@@ -13,6 +13,9 @@ namespace order_book {
 
 // Befriended by OrderBook and PriceLevel so this test can break the book on purpose.
 struct OrderBookTestAccess {
+    static ConsumptionResult consumeLevel(OrderBook& book, Side side, Price price, Quantity quantity) {
+        return book.consumeLevel(side, price, quantity);
+    }
     static std::uint64_t& aggregate(OrderBook& book, Price askPrice) { return book.asks.at(askPrice).quantity; }
     static Price& indexedPrice(OrderBook& book, OrderId orderId) { return book.orderIndex.at(orderId).tickPrice; }
 };
@@ -61,7 +64,7 @@ using order_book::Side;
     } else if (command == "cancelOrder") {
         book.cancelOrder(2);
     } else if (command == "consumeLevel") {
-        book.consumeLevel(Side::BUY, 90, 1);
+        Access::consumeLevel(book, Side::BUY, 90, 1);
     } else {
         std::cerr << "FAILED: unknown command " << command << std::endl;
         return EXIT_FAILURE;

@@ -35,7 +35,7 @@ struct OrderBookTestAccess {
     static const order_book::OrderQueue& orders(const PriceLevel& level) { return level.orders; }
 
     static void setPrice(Order& order, Price price) { order.priceTick = price; }
-    static void setQuantity(Order& order, Quantity quantity) { order.initialQuant = order.remainingQuant = quantity; }
+    static void setQuantity(Order& order, Quantity quantity) { order.initialQuantity = order.remainingQuantity = quantity; }
 };
 
 }  // namespace order_book
@@ -198,7 +198,7 @@ std::vector<LevelState> captureLevels(const Levels& levels, bool withAddresses) 
         LevelState levelState{price, level.getAggregateQuantity(), {}};
         for (const Order& order : Access::orders(level)) {
             levelState.orders.push_back({order.getOrderId(), order.getSequenceNum(), order.getInitialQuantity(),
-                                         order.getRemainingQuantity(), order.getExecutionLevel(),
+                                         order.getRemainingQuantity(), order.getFillStatus(),
                                          withAddresses ? &order : nullptr});
         }
         captured.push_back(levelState);
@@ -363,7 +363,7 @@ void testAlternatingSidesAtOnePrice() {
                step + ": only the new order's remainder should rest");
         const Order rested = bestOn(book, side);
         expect(rested.getOrderId() == id && rested.getRemainingQuantity() == resting &&
-                   rested.getExecutionLevel() == FillStatus::PARTIAL,
+                   rested.getFillStatus() == FillStatus::PARTIAL,
                step + ": its partially filled remainder should rest at 100");
     }
 }
@@ -385,7 +385,7 @@ void testManyOrdersAtOnePrice(Side restingSide) {
     expectBookConsistent(book, context + " after queueing");
     expect(levelCount(book, restingSide) == 1, context + ": every order should share one level");
     const order_book::PriceLevel& level = levelAt(book, restingSide, 100);
-    expect(level.getOrdersQuantity() == count && level.getAggregateQuantity() == total,
+    expect(level.getOrderCount() == count && level.getAggregateQuantity() == total,
            context + ": the level should hold every order and their whole quantity");
     SequenceNum expectedSequence = 1;
     for (const Order& order : Access::orders(level)) {
@@ -396,7 +396,7 @@ void testManyOrdersAtOnePrice(Side restingSide) {
     const order_book::BookSnapshot snapshot = book.snapshot(5);
     const auto& summaries = restingSide == Side::BUY ? snapshot.bids : snapshot.asks;
     expect(summaries.size() == 1 && summaries[0].price == 100 && summaries[0].totalQuantity == total &&
-               summaries[0].orderQuantity == count && snapshot.totalActiveVisibleOrders == count,
+               summaries[0].orderCount == count && snapshot.totalActiveVisibleOrders == count,
            context + ": the snapshot should show one level with every order");
 
     // Takes the first 100 orders whole and 3 of order 101's 4.
@@ -413,7 +413,7 @@ void testManyOrdersAtOnePrice(Side restingSide) {
     expectBookConsistent(book, context + " after the first taker");
     const Order front = bestOn(book, restingSide);
     expect(front.getOrderId() == 101 && front.getSequenceNum() == 101 && front.getRemainingQuantity() == 1 &&
-               front.getExecutionLevel() == FillStatus::PARTIAL,
+               front.getFillStatus() == FillStatus::PARTIAL,
            context + ": the partly filled order should keep its place at the front");
 
     // Cancelling every even ID leaves the odd ones queued as they were.
@@ -466,9 +466,9 @@ void testManyPriceLevels() {
     for (unsigned int offset = 1; offset <= levels; ++offset) {
         const order_book::PriceLevelSummary& bid = full.bids[offset - 1];
         const order_book::PriceLevelSummary& ask = full.asks[offset - 1];
-        expect(bid.price == 1000 - offset && bid.totalQuantity == offset && bid.orderQuantity == 1,
+        expect(bid.price == 1000 - offset && bid.totalQuantity == offset && bid.orderCount == 1,
                context + ": bids should be listed best (highest) first");
-        expect(ask.price == 1000 + offset && ask.totalQuantity == offset && ask.orderQuantity == 1,
+        expect(ask.price == 1000 + offset && ask.totalQuantity == offset && ask.orderCount == 1,
                context + ": asks should be listed best (lowest) first");
     }
     const order_book::BookSnapshot top = book.snapshot(10);
@@ -527,7 +527,7 @@ void testRepeatedPartialFills(Side restingSide) {
         expectBookConsistent(book, step);
         const Order front = bestOn(book, restingSide);
         expect(front.getOrderId() == 1 && front.getSequenceNum() == 1 && front.getInitialQuantity() == 1000 &&
-                   front.getRemainingQuantity() == 1000 - 7 * k && front.getExecutionLevel() == FillStatus::PARTIAL,
+                   front.getRemainingQuantity() == 1000 - 7 * k && front.getFillStatus() == FillStatus::PARTIAL,
                step + ": the front order should keep its place and record each fill");
         expect(levelAt(book, restingSide, 100).getAggregateQuantity() == 1000 - 7 * k + 5,
                step + ": the level aggregate should fall by each fill");
@@ -558,7 +558,7 @@ void testRepeatedPartialFills(Side restingSide) {
         expectBookConsistent(book, step);
         const Order remainder = book.findActiveOrder(500);
         expect(remainder.getRemainingQuantity() == 47 - 4 * k && remainder.getInitialQuantity() == 50 &&
-                   remainder.getExecutionLevel() == FillStatus::PARTIAL && bestOn(book, incomingSide).getOrderId() == 500,
+                   remainder.getFillStatus() == FillStatus::PARTIAL && bestOn(book, incomingSide).getOrderId() == 500,
                step + ": the remainder should stay at the front, recording each fill");
     }
     expect(book.submitOrder(Order(700, 100, 5, 1, restingSide)).getEvents() ==
@@ -741,7 +741,7 @@ Order zeroQuantity(OrderId id) {
 
 Order markedFilled(OrderId id) {
     Order order(id, 100, 5, 1, Side::SELL);
-    order.setExecutionLevel(FillStatus::FILLED);
+    order.setFillStatus(FillStatus::FILLED);
     return order;
 }
 
@@ -906,7 +906,7 @@ void testCommandsNearNumericLimits() {
                context + ": sequence numbers should wrap past the maximum to 1, skipping zero");
 
         Access::setNextTradeId(book, maxValue);
-        const order_book::SubmissionResults result = book.submitOrder(Order(24, 60, 4, 1, Side::BUY));
+        const order_book::SubmissionResult result = book.submitOrder(Order(24, 60, 4, 1, Side::BUY));
         expect(result.getEvents() == Events{OrderAccepted{24, Side::BUY, 60, 4}, TradeExecuted{24, 20, 60, 1},
                                             TradeExecuted{24, 21, 60, 1}, TradeExecuted{24, 22, 60, 1},
                                             TradeExecuted{24, 23, 60, 1}},

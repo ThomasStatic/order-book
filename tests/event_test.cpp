@@ -100,7 +100,7 @@ void testMalformedAndInactiveSubmissionsEmitOnlyOrderRejected() {
            "a zero-price submission should emit exactly one OrderRejected with INVALID_PRICE");
 
     Order filled(3, 100, 5, 1, Side::SELL);
-    filled.setExecutionLevel(FillStatus::FILLED);
+    filled.setFillStatus(FillStatus::FILLED);
     expect(book.submitOrder(filled).getEvents() == Events{OrderRejected{3, RejectionReason::ORDER_NOT_ACTIVE}},
            "a submission marked FILLED should emit exactly one OrderRejected with ORDER_NOT_ACTIVE");
 }

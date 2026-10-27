@@ -1,7 +1,7 @@
 #include <stdexcept>
 #include <utility>
 
-#include "order_book/cancellation_results.hpp"
+#include "order_book/cancellation_result.hpp"
 
 namespace order_book {
     CancellationResult::CancellationResult(bool succeeded, std::optional<RejectionReason> reason, BookEvent event)

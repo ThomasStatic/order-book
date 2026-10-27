@@ -1,51 +1,54 @@
+#include <stdexcept>
+
 #include "order_book/trade.hpp"
 
 namespace order_book {
-    Trade::Trade(unsigned int tId, unsigned int rId, unsigned int iId, unsigned int execTick, unsigned int execQuant, Side iSide): incomingSide(iSide) {
-        if (tId == 0) {
-            throw std::invalid_argument("Non-positive trade ID error.");
+    Trade::Trade(TradeId id, OrderId restingOrderId, OrderId incomingOrderId, Price price, Quantity quantity,
+                 Side incomingOrderSide)
+        : tradeId(id),
+          restingId(restingOrderId),
+          incomingId(incomingOrderId),
+          executionPrice(price),
+          executionQuantity(quantity),
+          incomingSide(incomingOrderSide) {
+        if (id == 0) {
+            throw std::invalid_argument("zero trade id error");
         }
 
-        if (rId == 0) {
-            throw std::invalid_argument("Non-positive resting ID error.");
+        if (restingOrderId == 0) {
+            throw std::invalid_argument("zero resting order id error");
         }
 
-        if (iId == 0) {
-            throw std::invalid_argument("Non-positive incoming ID error.");
+        if (incomingOrderId == 0) {
+            throw std::invalid_argument("zero incoming order id error");
         }
 
-        if (execTick == 0) {
-            throw std::invalid_argument("Non-positive execution price error.");
+        if (price == 0) {
+            throw std::invalid_argument("zero execution price error");
         }
 
-        if (execQuant == 0) {
-            throw std::invalid_argument("Non-positive execution quantity error.");
+        if (quantity == 0) {
+            throw std::invalid_argument("zero execution quantity error");
         }
-
-        tradeId = tId;
-        restingId = rId;
-        incomingId = iId;
-        executionPrice = execTick;
-        executionQuantity = execQuant;
     }
 
-    unsigned int Trade::getTradeId() const {
+    TradeId Trade::getTradeId() const {
         return tradeId;
     }
 
-    unsigned int Trade::getRestingId() const {
+    OrderId Trade::getRestingId() const {
         return restingId;
     }
 
-    unsigned int Trade::getIncomingId() const {
+    OrderId Trade::getIncomingId() const {
         return incomingId;
     }
 
-    unsigned int Trade::getExecutionPrice() const {
+    Price Trade::getExecutionPrice() const {
         return executionPrice;
     }
 
-    unsigned int Trade::getExecutionQuantity() const {
+    Quantity Trade::getExecutionQuantity() const {
         return executionQuantity;
     }
 
@@ -53,11 +56,11 @@ namespace order_book {
         return incomingSide;
     }
 
-    unsigned int Trade::getBuyOrderId() const {
+    OrderId Trade::getBuyOrderId() const {
         return incomingSide == Side::BUY ? incomingId : restingId;
     }
 
-    unsigned int Trade::getSellOrderId() const {
+    OrderId Trade::getSellOrderId() const {
         return incomingSide == Side::SELL ? incomingId : restingId;
     }
-}
+}  // namespace order_book
