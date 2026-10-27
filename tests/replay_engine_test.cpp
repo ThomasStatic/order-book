@@ -7,6 +7,10 @@
 #include <map>
 #include <optional>
 #include <sstream>
+#include <utility>
+#include <stdexcept>
+#include <streambuf>
+#include <istream>
 #include <string>
 #include <variant>
 #include <vector>
@@ -532,6 +536,23 @@ void testMalformedSampleFiles(const std::filesystem::path& root) {
     expect(unusualSeen == unusual.size(), "a listed malformed sample is missing from " + (root / "malformed").string());
 }
 
+// Delivers its text, then fails: the next read throws from the buffer, which the stream
+// turns into badbit, as a disk or network error would.
+class FailingStreamBuffer : public std::streambuf {
+public:
+    explicit FailingStreamBuffer(std::string text) : contents(std::move(text)) {
+        setg(contents.data(), contents.data(), contents.data() + contents.size());
+    }
+
+protected:
+    int_type underflow() override {
+        throw std::runtime_error("the device failed");
+    }
+
+private:
+    std::string contents;
+};
+
 void testUnreadableInput(const std::filesystem::path& root) {
     const ReplayInput missing = readReplayFile(root / "no_such_file.csv");
     expect(missing.error.has_value(), "a missing file should be an input error");
@@ -548,6 +569,20 @@ void testUnreadableInput(const std::filesystem::path& root) {
            && !bad.error->lineNumber.has_value() && !bad.error->parseError.has_value(),
            "a failed stream should be an input error with no line");
     expect(bad.records.empty(), "failed stream: no records");
+
+    // A stream that fails partway: the records completed before the failure stand, and the
+    // record it cut short is not read.
+    FailingStreamBuffer failing("sequence,command,order_id,side,price,quantity\n"
+                                "1,ADD,1001,BUY,100,50\n"
+                                "2,ADD,1002,SELL,105,30\n"
+                                "3,ADD,10");
+    std::istream failingInput(&failing);
+    const ReplayInput cut = readReplayInput(failingInput);
+    expect(cut.error.has_value() && cut.error->code == ReplayErrorCode::INPUT_READ_FAILURE
+           && !cut.error->lineNumber.has_value() && !cut.error->parseError.has_value(),
+           "a stream failing partway should be an input error with no line");
+    expect(cut.records.size() == 2 && cut.records[1].sequence == 2,
+           "the records completed before a stream failure should stand");
 }
 
 }  // namespace

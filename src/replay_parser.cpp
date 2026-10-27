@@ -1,9 +1,11 @@
 #include "order_book/replay_parser.hpp"
 
+#include <cstring>
 #include <initializer_list>
 #include <istream>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace order_book::replay {
@@ -233,21 +235,67 @@ namespace order_book::replay {
         return *finalResult;
     }
 
-    bool ReplayReader::readLine() {
-        // getline empties the line and appends, keeping its capacity.
-        if (!std::getline(input, line)) {
-            if (input.bad()) {
-                throw std::runtime_error("error reading replay input");
-            }
+    bool ReplayReader::refill() {
+        if (inputExhausted) {
             return false;
         }
-        ++linesRead;
-        // getline sets eof only when no LF ended the line. So a CR that ends the input without
-        // an LF is not a line ending, and stays in its field.
-        if (!input.eof() && !line.empty() && line.back() == '\r') {
-            line.pop_back();
+        chunk.resize(chunkCapacity);
+        const auto capacity = static_cast<std::streamsize>(chunkCapacity);
+        // readsome copies only what the stream has already buffered, and peek makes it fetch
+        // more when nothing is. So a stream that fails while fetching never takes bytes it
+        // had already delivered with it (istream::read can: if the buffer throws, it reports
+        // nothing read), and the complete lines before a failure still stand, as they did when
+        // the reader read a line at a time.
+        std::streamsize count = input.readsome(chunk.data(), capacity);
+        if (count == 0 && input.good()
+            && !std::char_traits<char>::eq_int_type(input.peek(), std::char_traits<char>::eof())) {
+            count = input.readsome(chunk.data(), capacity);
         }
-        return true;
+        chunkSize = static_cast<std::size_t>(count);
+        chunkPosition = 0;
+        if (chunkSize > 0) {
+            return true;
+        }
+        if (input.bad()) {
+            throw std::runtime_error("error reading replay input");
+        }
+        inputExhausted = true;
+        return false;
+    }
+
+    bool ReplayReader::readLine() {
+        line.clear();
+        bool consumedAny = false;
+        while (true) {
+            if (chunkPosition == chunkSize && !refill()) {
+                // The input ended. Any text since the last LF is a final line with no ending,
+                // so a CR at its end is not a line ending and stays in its field. No text at
+                // all means there is no further line.
+                if (!consumedAny) {
+                    return false;
+                }
+                ++linesRead;
+                return true;
+            }
+            const char* const begin = chunk.data() + chunkPosition;
+            const std::size_t available = chunkSize - chunkPosition;
+            const void* const newline = std::memchr(begin, '\n', available);
+            if (newline == nullptr) {
+                line.append(begin, available);
+                chunkPosition = chunkSize;
+                consumedAny = true;
+                continue;
+            }
+            const std::size_t length = static_cast<std::size_t>(static_cast<const char*>(newline) - begin);
+            line.append(begin, length);
+            chunkPosition += length + 1;
+            ++linesRead;
+            // The LF ends the line; a CR directly before it is part of the line ending.
+            if (!line.empty() && line.back() == '\r') {
+                line.pop_back();
+            }
+            return true;
+        }
     }
 
     std::string formatParseError(const ParseError& error, std::string_view path) {

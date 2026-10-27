@@ -123,7 +123,9 @@ namespace order_book::replay {
     };
 
     // Reads through a ReplayReader; a stream that fails to read is an INPUT_READ_FAILURE
-    // with no line. Open files in binary mode (see ReplayReader).
+    // with no line, after the records completed before the failure. Open files in binary
+    // mode (see ReplayReader). The reader reads ahead in chunks, so the stream's position
+    // afterwards is not just past the last record.
     ReplayInput readReplayInput(std::istream& input);
 
     // Opens path in binary mode and reads it; a file that can't be opened is an
