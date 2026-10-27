@@ -356,3 +356,26 @@ The base is experiment 5's code.
   - The reuse test varies the line number.
   - A reader-level test checks that an error's quoted text, for a whole record and for one field, contains nothing from the longer records read before it.
   - `docs/replay-format.md` lists `splitRecordInto`.
+
+### Experiment 9(b): read the replay input in chunks. Kept.
+
+After 9(a), `std::getline` was still 38% of `small-book`'s replay time and 26% of `deep-book`'s, mostly MSVC's `streambuf::snextc`, one exported library call per character. The reader now copies the stream a chunk at a time, by default 64 KiB, into a buffer of its own. It finds each LF with `memchr` and appends the line to its reused string, dropping a CR directly before the LF and keeping a CR that ends the input. The reader's constructor takes an optional chunk size, so tests can put chunk boundaries at every byte.
+
+| Workload | replay, first version (16 pairs) | replay, final version (12 pairs) | core (16 pairs, the control) |
+|---|---:|---:|---:|
+| `small-book` | 1.512 (1.508-1.521), 100% | **1.520 (1.504-1.525), 100%** | 1.009 (1.007-1.012) |
+| `matching-heavy` | 1.429 (1.422-1.435), 100% | **1.417 (1.407-1.429), 100%** | 1.004 (0.997-1.015) |
+| `mostly-resting` | 1.417 (1.396-1.425), 100% | **1.410 (1.398-1.431), 100%** | 0.990 (0.977-1.002) |
+| `cancellation-heavy` | 1.398 (1.365-1.416), 100% | **1.407 (1.387-1.429), 100%** | 1.012 (0.983-1.031) |
+| `deep-book` | 1.324 (1.316-1.344), 100% | **1.309 (1.293-1.328), 100%** | 0.998 (0.941-1.051) |
+
+The base is 9(a)'s code.
+
+- **Outcome.** Replay throughput rose another 31-52%, and the core path did not move. Together with 9(a), replay time per command fell by 49-56% on the cached workloads and by about 43% on `deep-book`. The plan predicted 40-50% for the two together, so the prediction was met, and exceeded on the small books.
+- **Files.** The CLI replaying a generated 8.6 MB, 300,000-record file took 268-308 ms, against 339-370 ms with 9(a)'s build, three runs each. Its output was byte-identical.
+- **Tests.** A new parser test reads every edge-case input and every sample file with chunks of 1, 2, 3, 5, and 7 bytes, and requires results identical to a single-chunk read. It covers a boundary at every position, including between a CR and its LF. Changing the CR check to look only within the current chunk made the test fail.
+- **Readability cost.** About 50 lines replacing a `std::getline` call, plus the chunk-size parameter. The reader now consumes its stream ahead of what it returns, which is documented on `ReplayReader`, on `readReplayInput`, and in `CLAUDE.md`. Nothing in the repository shares a stream with the reader.
+- **Review.** The independent review found every line and line number identical to the `getline` version, including empty input, a lone CR at the end, CR CR LF, trailing empty lines, NUL bytes, lines longer than a chunk, and input ending exactly on a chunk boundary. It found three problems, all fixed:
+  - **A vacuous test.** The existing "nothing is read after an error" test had silently become vacuous. With the whole input read in one short read the stream's failbit is set, and `tellg` then returns -1 before and after, so the comparison could not fail. The test now uses one-byte chunks and also checks that the position is real.
+  - **Read-ahead was documented only on a private member.** The note now sits on the public class and on `readReplayInput`.
+  - **Records lost on a stream failure.** With `getline`, the complete lines read before the stream failed were returned, and only then was the failure reported. A first fix kept `istream::read`'s byte count after a failure. The new test, a stream buffer that delivers two records and part of a third and then throws, showed that MSVC's `istream::read` reports zero bytes when the buffer throws, even though it had copied data. So the final version uses `readsome`, which copies only what the stream has already buffered, and `peek` to make it fetch more. A failure then never takes delivered bytes with it, and the two complete records stand.

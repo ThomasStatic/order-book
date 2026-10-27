@@ -150,25 +150,45 @@ namespace order_book::replay {
 
     using ReadResult = std::variant<ReplayRecord, ParseError, EndOfInput>;
 
-    // Reads a replay input one line at a time: the header on the first call, then one data
-    // record per call, enforcing strictly increasing sequence numbers across records. A
+    // Reads a replay input: the header on the first call, then one data record per call, enforcing strictly increasing sequence numbers across records. A
     // record ends with LF or CRLF, and the last may have no line ending; a CR anywhere else
     // stays in its field. Open files in binary mode, so the stream keeps CRs exactly as
     // written. After the first error, or the end, every later call returns it again without
     // reading further (the format fails fast). Throws std::runtime_error if the stream itself
-    // fails to read.
+    // fails to read, once the complete lines read before the failure have been returned.
+    //
+    // It reads the stream a chunk at a time, not a line at a time, so it may consume up to a
+    // chunk beyond the last record or error it has returned: give it a stream of its own,
+    // and do not read the stream afterwards expecting to resume where it stopped.
     class ReplayReader {
     public:
-        explicit ReplayReader(std::istream& source) : input(source) {}
+        // capacity is how many bytes it reads from source at a time (zero is taken as one);
+        // the default suits any input, and tests pass small values to put chunk boundaries
+        // inside records.
+        static constexpr std::size_t defaultChunkCapacity = 64 * 1024;
+        explicit ReplayReader(std::istream& source, std::size_t capacity = defaultChunkCapacity)
+            : input(source), chunkCapacity(capacity > 0 ? capacity : 1) {}
 
         ReadResult next();
 
     private:
         // Reads the next line into the member `line`, reusing its storage; false at the end
-        // of the input, when `line` is left unspecified.
+        // of the input, when `line` is left unspecified. A line ends at an LF, which is
+        // dropped along with a CR directly before it, or at the end of the input, where a
+        // final CR stays.
         bool readLine();
+        // Reads the next chunk of the input into `chunk`; false once the input is exhausted.
+        bool refill();
 
         std::istream& input;
+        std::size_t chunkCapacity;
+        // The input is read a chunk at a time, not a character at a time, so the reader may
+        // have consumed more of the stream than the records it has returned. Give it a stream
+        // of its own.
+        std::vector<char> chunk;
+        std::size_t chunkPosition = 0;
+        std::size_t chunkSize = 0;
+        bool inputExhausted = false;
         // Reused for every record, so reading one allocates nothing once they have grown.
         std::string line;
         CsvRow row;

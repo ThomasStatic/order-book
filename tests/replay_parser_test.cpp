@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -347,8 +348,8 @@ struct ReadOutcome {
     std::optional<ParseError> error;
 };
 
-ReadOutcome readAll(std::istream& input) {
-    ReplayReader reader(input);
+ReadOutcome readAll(std::istream& input, std::size_t chunkCapacity = ReplayReader::defaultChunkCapacity) {
+    ReplayReader reader(input, chunkCapacity);
     ReadOutcome outcome;
     while (true) {
         ReadResult result = reader.next();
@@ -434,12 +435,15 @@ void testReader() {
 
     // Fail fast: once an error or the end is reached, it is returned again and nothing more is read.
     {
+        // One-byte chunks, so the reader reads only as far as it needs and the stream stays
+        // good (tellg reports -1 once a short read sets failbit, which would hide a read).
         std::istringstream input(header + "\n1,ADD,1001,BUY,100,50\n1,ADD,1002,SELL,105,30\n2,CANCEL,1001,,,\n");
-        ReplayReader reader(input);
+        ReplayReader reader(input, 1);
         expect(std::holds_alternative<ReplayRecord>(reader.next()), "the first record reads");
         const ReadResult error = reader.next();
         expect(std::holds_alternative<ParseError>(error), "the repeated sequence fails");
         const std::streampos position = input.tellg();
+        expect(position != std::streampos(-1), "the stream still reports its position after the error");
         expect(reader.next() == error && reader.next() == error, "the error is returned again");
         expect(input.tellg() == position, "nothing is read after an error");
     }
@@ -497,6 +501,54 @@ struct MalformedSample {
     ParseErrorCode code;
     std::size_t recordsBefore;
 };
+
+// Every result a reader returns for text, through the end or first error and one call after.
+std::vector<ReadResult> readResults(const std::string& text, std::size_t chunkCapacity) {
+    std::istringstream input(text);
+    ReplayReader reader(input, chunkCapacity);
+    std::vector<ReadResult> results;
+    while (true) {
+        results.push_back(reader.next());
+        if (!std::holds_alternative<ReplayRecord>(results.back())) {
+            results.push_back(reader.next());
+            return results;
+        }
+    }
+}
+
+// The reader reads its input in chunks; where a chunk boundary falls (inside a field, between
+// a CR and its LF, right after an LF, at the very end) must not change anything it returns.
+// Each input is read with tiny chunks, which put boundaries at every position, and compared
+// with a read in one chunk.
+void testChunkBoundaries(const std::filesystem::path& root) {
+    const std::string header = std::string(expectedHeader);
+    std::vector<std::string> texts = {
+        "",
+        header,
+        header + "\r",
+        header + "\r\n",
+        header + "\n1,ADD,1001,BUY,100,50",
+        header + "\n1,ADD,1001,BUY,100,50\r",
+        header + "\r\n1,ADD,1001,BUY,100,50\r\n2,CANCEL,1001,,,\r\n",
+        header + "\n1,ADD,1001,BUY,100,50\n\n2,CANCEL,1001,,,\n",
+        header + "\n1,ADD,1001,BUY,100,50\r\r\n",
+        header + "\n1,ADD,1001,BUY,100,50\n\n",
+        "\n" + header,
+    };
+    for (const char* directory : {"valid", "malformed"}) {
+        for (const auto& entry : std::filesystem::directory_iterator(root / directory)) {
+            std::ifstream file(entry.path(), std::ios::binary);
+            texts.emplace_back(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+        }
+    }
+    for (const std::string& text : texts) {
+        const std::vector<ReadResult> whole = readResults(text, ReplayReader::defaultChunkCapacity);
+        for (const std::size_t chunk : {std::size_t{1}, std::size_t{2}, std::size_t{3}, std::size_t{5}, std::size_t{7}}) {
+            expect(readResults(text, chunk) == whole,
+                   "reading in chunks of " + std::to_string(chunk) + " should match one chunk for '" + text + "'");
+        }
+    }
+}
 
 void testSampleFiles(const std::filesystem::path& root) {
     using Code = ParseErrorCode;
@@ -652,6 +704,7 @@ int main(int argc, char** argv) {
     testReader();
     testFormatting();
     testSampleFiles(argv[1]);
+    testChunkBoundaries(argv[1]);
 
     std::cout << "replay parser tests passed" << std::endl;
     return EXIT_SUCCESS;
