@@ -7,8 +7,8 @@
 // its remainder, one that fills completely, or a cancellation. A histogram of allocation
 // sizes per kind says which container each allocation came from (a std::list node, an index
 // node, a map node, a result's events vector, a trades vector), since each has a distinct
-// size. The order index is watched for growth (reported as rehashes), and its capacity
-// and load factor are reported at the end.
+// size. The order index is watched for growth, and its capacity (slots) and fill (the share
+// of slots in use) are reported at the end.
 //
 // For the replay path the three stages the benchmark times (parsing the CSV text, running
 // the records, formatting the summary) are counted and timed separately, so the cost of the
@@ -202,8 +202,8 @@ void profileCore(const Workload& workload) {
         }
     }
     const AllocationCounts preloadCounts = difference(beforePreload, snapshotCounts());
-    std::printf("  preload: %zu orders, %zu allocations (%s per order), %zu bytes, %zu index rehashes; "
-                "%zu buckets, load factor %s\n",
+    std::printf("  preload: %zu orders, %zu allocations (%s per order), %zu bytes, %zu index growths; "
+                "%zu slots, fill %s\n",
                 workload.preload.size(), preloadCounts.allocations, fixed(per(preloadCounts.allocations, workload.preload.size()), 3).c_str(),
                 preloadCounts.bytes, preloadRehashes, OrderBookTestAccess::bucketCount(book),
                 fixed(OrderBookTestAccess::loadFactor(book), 3).c_str());
@@ -258,10 +258,10 @@ void profileCore(const Workload& workload) {
                 workload.timed.size(), timedCounts.allocations, fixed(per(timedCounts.allocations, workload.timed.size()), 3).c_str(),
                 timedCounts.frees, fixed(per(timedCounts.frees, workload.timed.size()), 3).c_str(), timedCounts.bytes,
                 fixed(per(timedCounts.bytes, workload.timed.size()), 1).c_str());
-    std::printf("  order index: %zu rehashes during the timed commands, %zu buckets at most, %zu at the end, load "
-                "factor %s (max %s), %zu resting orders\n",
+    std::printf("  order index: %zu growths during the timed commands, %zu slots at most, %zu at the end, fill "
+                "%s (max %s), %zu resting orders\n",
                 rehashes, maxBuckets, OrderBookTestAccess::bucketCount(book),
-                fixed(OrderBookTestAccess::loadFactor(book), 3).c_str(), fixed(OrderBookTestAccess::maxLoadFactor(book), 1).c_str(),
+                fixed(OrderBookTestAccess::loadFactor(book), 3).c_str(), fixed(OrderBookTestAccess::maxLoadFactor(book), 2).c_str(),
                 book.activeOrderCount());
     std::printf("  price levels: %zu created and %zu erased during the timed commands, %zu at the end\n", levelsCreated,
                 levelsErased, OrderBookTestAccess::levelCount(book));
