@@ -167,6 +167,38 @@ Order: 1 and the diagnostic halves of 2 and 3 first, since they are cheap and sh
 
 **Measurement.** `allocation_profile`'s parse stage reports 0 allocations per record and its one-run time under 200 ns per command; the sampling report's `splitRecord` heap rows and `snextc` row vanish and `readReplayInput`'s inclusive share falls below the engine's; every `replay_parser_tests` and `replay_engine_tests` expectation and every `replay_cli_*` expected file passes unchanged; `replay` medians rise by at least 30% on all five workloads with `core` inside its spread.
 
+## Outcome
+
+All nine experiments were run, one at a time, each against the code the previous kept experiment left. Every kept change passed the correctness gate and an independent review before it was committed; every failed or harmful change was reverted and its result is recorded below.
+
+| # | Experiment | Result | Effect on core / replay throughput |
+|---|---|---|---|
+| 1 | Remove no-op work | kept (reduced) | about +2% on `small-book`, otherwise within noise |
+| 2(b) | Load-factor sweep | diagnostic | supported the cache-miss reading; default kept |
+| 2(a) | Reserve the order index | kept | `mostly-resting` +20% at the extended size, +3% at the standard |
+| 3 | Single-lookup resting path | **reverted** | ceiling about +3%, design within noise |
+| 4 | Inline result storage | kept | core +13-19%, replay +3-5% |
+| 5 | Level handle in index entries | kept | `cancellation-heavy` +5-7%, others within noise |
+| 7 | Aggregate computed on demand | null result, as predicted | core within noise, replay -5% on large books |
+| 9(a) | Reuse the replay reader's buffers | kept | replay +35-50% |
+| 9(b) | Read the replay input in chunks | kept | replay +31-52% more |
+| 6 | Node pool for level queues | kept | core +11-29%, replay +7-10% |
+| 8 | Open-addressed order index | kept | core +5-62%, replay +3-17% |
+
+**Cumulative.** The final code against the baseline's code (commit `0677c93`), measured the same paired way. Throughput ratio, final / baseline, with every pair faster at both sizes:
+
+| Workload | core, standard (12 pairs) | core, extended (6 pairs) | replay, standard | replay, extended |
+|---|---:|---:|---:|---:|
+| `small-book` | 1.76 | 1.78 | 2.74 | 2.79 |
+| `deep-book` | 1.85 | 1.95 | 2.46 | 2.49 |
+| `matching-heavy` | 1.44 | 1.43 | 2.34 | 2.38 |
+| `cancellation-heavy` | 2.23 | 2.41 | 2.60 | 2.87 |
+| `mostly-resting` | 1.83 | 1.96 | 2.37 | 2.60 |
+
+Two cautions. The baseline binary runs the earlier benchmark harness, which did not reserve the index (experiment 2), so part of `mostly-resting`'s gain is that harness change rather than the engine. And these are throughput ratios on one machine, one compiler, and these synthetic workloads, with the same limits as [`BENCHMARKS.md`](BENCHMARKS.md): they say nothing about single-command latency or about other systems. The recorded baseline in `BENCHMARKS.md` is left as it was; a new baseline should be recorded with its full protocol before these numbers are quoted as absolute throughput.
+
+**What did not go as planned.** The first measurement protocol could not resolve changes under 10% and was replaced (see How every experiment is measured). Experiment 3's design was built on a single run whose ceiling did not hold on recheck, which is why later experiments were rechecked near the noise floor. Reviews caught real defects before they were committed: a vacuous test (9b), lost allocation-failure coverage (6, 8), a pool that silently did nothing in MSVC Debug builds (6), records lost on a stream failure (9b), and an iterator that visited empty slots (8, caught by the existing tests). GCC and Clang were not available on this machine, so the CI's Linux jobs, including UBSan, have not yet compiled experiments 4, 6, and 8.
+
 ## Results
 
 Each experiment's outcome, in the order run. Comparison summaries are in [`benchmarks/results/2026-10-26-experiments/`](../benchmarks/results/2026-10-26-experiments/). The base binary throughout is the Release build of commit `0677c93`, whose engine code is the baseline's. Every kept change passed the correctness gate before it was committed: the whole suite in Debug (where every public command also checks the whole book's invariants) and Release, the invariant and invariant-boundary tests, and the same suite under MSVC's AddressSanitizer in Debug and Release. UBSan is not available with MSVC, and no GCC or Clang toolchain is installed on this machine, so the UBSan configurations run only in CI.
