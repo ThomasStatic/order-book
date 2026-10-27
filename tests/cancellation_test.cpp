@@ -26,7 +26,7 @@ struct OrderBookTestAccess {
     // The resting order itself (findActiveOrder only returns a copy), to check identity.
     static const Order& indexedOrder(const OrderBook& book, OrderId orderId) { return *book.orderIndex.at(orderId).itr; }
 
-    static const std::list<Order>& orders(const PriceLevel& level) { return level.orders; }
+    static const order_book::OrderQueue& orders(const PriceLevel& level) { return level.orders; }
 };
 
 }  // namespace order_book

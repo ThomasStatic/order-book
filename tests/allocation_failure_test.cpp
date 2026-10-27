@@ -58,7 +58,7 @@ struct OrderBookTestAccess {
     static TradeId nextTradeId(const OrderBook& book) { return book.nextTradeId; }
     static SequenceNum nextSequenceNum(const OrderBook& book) { return book.nextSequenceNum; }
 
-    static const std::list<Order>& orders(const PriceLevel& level) { return level.orders; }
+    static const order_book::OrderQueue& orders(const PriceLevel& level) { return level.orders; }
 };
 
 }  // namespace order_book
@@ -153,6 +153,32 @@ void testAddOrderToNewLevelRollsBack() {
         },
         "addOrder (new level)");
     expect(failures > 0, "addOrder (new level): at least one allocation failure should have been injected");
+}
+
+// On an empty book the first order also needs its queue's first block: the book's node pool
+// takes a chunk from the heap, so this is where a queue node's allocation can fail. (On a
+// book that already holds an order the pool has blocks to spare, and only the level and
+// index allocations can.)
+void testFirstOrderOnEmptyBookRollsBack() {
+    const auto check = [](const OrderBook& book, const std::string& context) {
+        expect(Access::bids(book).empty() && Access::asks(book).empty() && Access::index(book).empty(),
+               context + ": a failed first order should leave the book empty");
+    };
+    const long added = failEachAllocationInTurn(
+        [](OrderBook&) {},
+        [](OrderBook& book) { book.addOrder(Order(1, 100, 5, 1, Side::SELL)); },
+        [check](const OrderBook& book, const std::string& context) {
+            check(book, context);
+            expect(Access::nextSequenceNum(book) == 1, context + ": a failed add should not consume a sequence number");
+        },
+        "addOrder (empty book)");
+    const long submitted = failEachAllocationInTurn(
+        [](OrderBook&) {},
+        [](OrderBook& book) { book.submitOrder(Order(1, 100, 5, 1, Side::SELL)); },
+        [check](const OrderBook& book, const std::string& context) { check(book, context); },
+        "submitOrder (empty book)");
+    expect(added >= 3 && submitted >= 3,
+           "an empty book's first order should fail at its level, its queue's chunk, and its index entry");
 }
 
 void testAddOrderToExistingLevelRollsBack() {
@@ -301,6 +327,7 @@ int main() {
     } else {
         testAddOrderToNewLevelRollsBack();
         testAddOrderToExistingLevelRollsBack();
+        testFirstOrderOnEmptyBookRollsBack();
         testSubmitOrderStaysConsistent();
         testLongSweepStaysConsistent();
         testRestingSubmitRollsBack();

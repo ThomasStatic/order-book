@@ -3,14 +3,15 @@
 #include "order_book/price_level.hpp"
 
 namespace order_book {
-    PriceLevel::PriceLevel(unsigned int price, Side s): tickPrice(price), side(s) {}
+    PriceLevel::PriceLevel(unsigned int price, Side s, NodePool* pool)
+        : tickPrice(price), side(s), orders(PoolAllocator<Order>(pool)) {}
 
     PriceLevel::PriceLevel(unsigned int price, Side s, Order initialOrder): PriceLevel(price, s) {
         addOrder(initialOrder);
     }
 
     OrderLocation PriceLevel::addOrder(Order newOrder) {
-        std::list<Order>::iterator itr = orders.insert(orders.end(), newOrder);
+        OrderQueue::iterator itr = orders.insert(orders.end(), newOrder);
         quantity += newOrder.getRemainingQuantity();
         
         OrderLocation location(tickPrice, side, itr, this);
@@ -63,7 +64,7 @@ namespace order_book {
         return result;
     }
 
-    void PriceLevel::removeOrder(std::list<Order>::iterator itr) {
+    void PriceLevel::removeOrder(OrderQueue::iterator itr) {
         // Read the remaining quantity first: erasing invalidates itr. It is the remaining
         // quantity, not the initial one, that the aggregate holds for this order.
         const unsigned int remaining = itr->getRemainingQuantity();
