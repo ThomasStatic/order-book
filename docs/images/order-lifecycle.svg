@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="606" viewBox="0 0 960 606" role="img" aria-labelledby="title desc">
+<title id="title">Order lifecycle</title>
+<desc id="desc">State diagram of an order: validated, accepted or rejected, matched, filled or resting, cancelled, with the event each step emits.</desc>
+<style>
+  .bg{fill:#fcfcfb} .frame{fill:none;stroke:rgba(11,11,11,.10)}
+  text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;fill:#0b0b0b}
+  .mono{font-family:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace}
+  .t2{fill:#52514e} .t3{fill:#898781} .on{fill:#ffffff}
+  .panel{fill:#f4f3ef} .box{fill:#ffffff;stroke:#c3c2b7} .box2{fill:#fcfcfb;stroke:#c3c2b7}
+  .grid{stroke:#e1e0d9;stroke-width:1} .rule{stroke:#c3c2b7;stroke-width:1}
+  .bid{fill:#2a78d6} .ask{fill:#eb6834}
+  .bidw{fill:rgba(42,120,214,.10);stroke:#2a78d6} .askw{fill:rgba(235,104,52,.10);stroke:#eb6834}
+  .trdw{fill:rgba(27,175,122,.14);stroke:#1baf7a} .accw{fill:rgba(42,120,214,.06);stroke:#2a78d6}
+  .ghost{fill:none;stroke:#b5b4ad;stroke-dasharray:4 3}
+  .edge{fill:none;stroke:#898781;stroke-width:1.5} .head{fill:#898781}
+  .hot{fill:none;stroke:#1baf7a;stroke-width:2} .hothead{fill:#1baf7a}
+  .term{fill:#3a3a36} .termtext{fill:#ffffff}
+  @media (prefers-color-scheme: dark){
+    .bg{fill:#1a1a19} .frame{stroke:rgba(255,255,255,.10)}
+    text{fill:#f0efec} .t2{fill:#c3c2b7} .t3{fill:#898781} .on{fill:#ffffff}
+    .panel{fill:#222220} .box{fill:#262624;stroke:#4a4a44} .box2{fill:#1f1f1d;stroke:#4a4a44}
+    .grid{stroke:#2c2c2a} .rule{stroke:#383835}
+    .bid{fill:#3987e5} .ask{fill:#d95926}
+    .bidw{fill:rgba(57,135,229,.18);stroke:#3987e5} .askw{fill:rgba(217,89,38,.18);stroke:#d95926}
+    .trdw{fill:rgba(25,158,112,.22);stroke:#199e70} .accw{fill:rgba(57,135,229,.08);stroke:#3987e5}
+    .ghost{stroke:#5a5a54} .edge{stroke:#8a8984} .head{fill:#8a8984}
+    .hot{stroke:#199e70} .hothead{fill:#199e70} .term{fill:#dcdbd5} .termtext{fill:#0b0b0b}
+  }
+</style>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 1L10 5L0 9z"/></marker>
+  <marker id="hotarrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="hothead" d="M0 1L10 5L0 9z"/></marker>
+</defs>
+<rect class="bg" width="960" height="606" rx="12"/>
+<rect class="frame" x="0.5" y="0.5" width="959" height="605" rx="12"/>
+<text x="24" y="38" font-size="18" font-weight="600">Order lifecycle: from submission to leaving the book</text>
+<text x="24" y="61" class="t2" font-size="13">What submitOrder and cancelOrder do to one order, and the event each step adds to the command&#x27;s result. The engine never prints; callers read the events.</text>
+<text x="24" y="80" class="t2" font-size="13">Green chips are events. Each command returns its own events in order: OrderAccepted, then one TradeExecuted per fill.</text>
+<rect class="box2" x="24" y="112" width="136" height="112" rx="10"/>
+<text x="38" y="136" font-size="14" font-weight="600">submitOrder</text>
+<text x="38" y="156" class="t2" font-size="12.5">the caller&#x27;s Order:</text>
+<text x="38" y="173" class="t2" font-size="12.5">id, side, limit,</text>
+<text x="38" y="190" class="t2" font-size="12.5">quantity</text>
+<rect class="box" x="190" y="112" width="212" height="112" rx="10"/>
+<text x="204" y="136" font-size="14" font-weight="600">Validate</text>
+<text x="204" y="156" class="t2" font-size="12.5">validateNewOrder only reads:</text>
+<text x="204" y="173" class="t2" font-size="12.5">fields well formed, not</text>
+<text x="204" y="190" class="t2" font-size="12.5">FILLED, ID not already resting</text>
+<rect class="box" x="440" y="112" width="206" height="112" rx="10"/>
+<text x="454" y="136" font-size="14" font-weight="600">Accepted</text>
+<text x="454" y="156" class="t2" font-size="12.5">The book assigns the next</text>
+<text x="454" y="173" class="t2" font-size="12.5">sequence number: its time</text>
+<text x="454" y="190" class="t2" font-size="12.5">priority for life.</text>
+<rect class="trdw" x="454" y="192" width="102.35" height="22" rx="11"/>
+<text x="460" y="207" class="mono" font-size="11.5">OrderAccepted</text>
+<rect class="box" x="728" y="112" width="208" height="112" rx="10"/>
+<text x="742" y="136" font-size="14" font-weight="600">Matching</text>
+<text x="742" y="156" class="t2" font-size="12.5">While it crosses the best</text>
+<text x="742" y="173" class="t2" font-size="12.5">opposing price, fill against</text>
+<text x="742" y="190" class="t2" font-size="12.5">that level&#x27;s oldest order.</text>
+<rect class="trdw" x="742" y="192" width="164.9" height="22" rx="11"/>
+<text x="748" y="207" class="mono" font-size="11.5">TradeExecuted per fill</text>
+<rect class="panel" x="190" y="290" width="212" height="112" rx="10"/>
+<text x="204" y="314" font-size="14" font-weight="600">Rejected</text>
+<text x="204" y="334" class="t2" font-size="12.5">Book unchanged: no sequence</text>
+<text x="204" y="351" class="t2" font-size="12.5">number or trade ID used.</text>
+<rect class="trdw" x="204" y="370" width="164.9" height="22" rx="11"/>
+<text x="210" y="385" class="mono" font-size="11.5">OrderRejected {reason}</text>
+<rect class="panel" x="440" y="290" width="206" height="112" rx="10"/>
+<text x="454" y="314" font-size="14" font-weight="600">Filled</text>
+<text x="454" y="334" class="t2" font-size="12.5">Nothing left: it leaves its</text>
+<text x="454" y="351" class="t2" font-size="12.5">level and the index (or</text>
+<text x="454" y="368" class="t2" font-size="12.5">never rests at all).</text>
+<rect class="accw" x="728" y="290" width="208" height="112" rx="10"/>
+<text x="742" y="314" font-size="14" font-weight="600">Resting</text>
+<text x="742" y="334" class="t2" font-size="12.5">At its own limit, at the back</text>
+<text x="742" y="351" class="t2" font-size="12.5">of the queue. A later order</text>
+<text x="742" y="368" class="t2" font-size="12.5">may fill part: it keeps its place.</text>
+<rect class="box2" x="440" y="468" width="206" height="112" rx="10"/>
+<text x="454" y="492" font-size="14" font-weight="600">ID free again</text>
+<text x="454" y="512" class="t2" font-size="12.5">The ID may be submitted</text>
+<text x="454" y="529" class="t2" font-size="12.5">again: a new order, at the</text>
+<text x="454" y="546" class="t2" font-size="12.5">back of its level&#x27;s queue.</text>
+<rect class="panel" x="728" y="468" width="208" height="112" rx="10"/>
+<text x="742" y="492" font-size="14" font-weight="600">Cancelled</text>
+<text x="742" y="512" class="t2" font-size="12.5">Found through the index and</text>
+<text x="742" y="529" class="t2" font-size="12.5">erased in O(1); no other</text>
+<text x="742" y="546" class="t2" font-size="12.5">order moves.</text>
+<rect class="trdw" x="742" y="548" width="151" height="22" rx="11"/>
+<text x="748" y="563" class="mono" font-size="11.5">OrderCancelled {qty}</text>
+<line class="edge" x1="160" y1="168" x2="186" y2="168" marker-end="url(#arrow)"/>
+<line class="edge" x1="402" y1="168" x2="436" y2="168" marker-end="url(#arrow)"/>
+<text x="421" y="160" class="t2" font-size="12" text-anchor="middle">valid</text>
+<line class="edge" x1="646" y1="168" x2="724" y2="168" marker-end="url(#arrow)"/>
+<line class="edge" x1="296" y1="224" x2="296" y2="286" marker-end="url(#arrow)"/>
+<text x="304" y="261" class="t2" font-size="12">refused</text>
+<line class="edge" x1="768" y1="224" x2="768" y2="286" marker-end="url(#arrow)"/>
+<text x="776" y="261" class="t2" font-size="12">a remainder rests</text>
+<path class="edge" d="M752 224 C738 258 666 260 616 286" marker-end="url(#arrow)"/>
+<text x="620" y="253" class="t2" font-size="12" text-anchor="end">nothing left</text>
+<line class="edge" x1="728" y1="356" x2="650" y2="356" marker-end="url(#arrow)"/>
+<text x="687" y="348" class="t2" font-size="12" text-anchor="middle">a later order</text>
+<text x="687" y="374" class="t2" font-size="12" text-anchor="middle">fills the rest</text>
+<line class="edge" x1="832" y1="402" x2="832" y2="464" marker-end="url(#arrow)"/>
+<text x="840" y="439" class="t2" font-size="12">cancelOrder(id)</text>
+<line class="edge" x1="543" y1="402" x2="543" y2="464" marker-end="url(#arrow)"/>
+<line class="edge" x1="728" y1="524" x2="650" y2="524" marker-end="url(#arrow)"/>
+<path class="edge" d="M876 112 C876 82 926 82 926 108" marker-end="url(#arrow)"/>
+<text x="866" y="96" class="t2" font-size="12" text-anchor="end">next fill</text>
+<path class="edge" d="M936 330 C952 330 952 374 940 374" marker-end="url(#arrow)"/>
+<text x="24" y="478" font-size="12.5" font-weight="600">cancelOrder of an ID that is not resting</text>
+<text x="24" y="495" class="t2" font-size="12.5">returns CancelRejected {ORDER_NOT_FOUND}</text>
+<text x="24" y="512" class="t2" font-size="12.5">and changes nothing.</text>
+<text x="24" y="529" class="t2" font-size="12.5"></text>
+<text x="24" y="546" font-size="12.5" font-weight="600">addOrder runs the same validation, also</text>
+<text x="24" y="563" class="t2" font-size="12.5">refuses WOULD_CROSS_BOOK, throws instead</text>
+<text x="24" y="580" class="t2" font-size="12.5">of returning a rejection, and rests without</text>
+<text x="24" y="597" class="t2" font-size="12.5">matching. It is not used by replay.</text>
+</svg>

@@ -99,16 +99,7 @@ resting orders: 0
 
 The code is split into libraries that depend in one direction only. The book knows nothing about CSV, printing, or benchmarks.
 
-```text
-order_book_cli ─────────┐
-                        ▼
-order_book_benchmarks ─► order_book_replay ─► order_book
-  (order_book_benchmarking)  parser → engine     OrderBook, results, events,
-                             → summary           invariant checker, event_format
-
-randomized_tests ──────► order_book_randomized ─► order_book
-  (tests only)           generator, reference model, replayer, shrinker
-```
+![The library targets and their dependencies; inside OrderBook, the commands within their invariant boundary, the order index whose slots point straight at an order's list node and level, the two price-level maps, and the node pool.](docs/images/architecture.svg)
 
 | Target | Kind | Role |
 |---|---|---|
@@ -120,6 +111,8 @@ randomized_tests ──────► order_book_randomized ─► order_book
 | `sampling_profiler`, `allocation_profile` | optional | Profiling tools (`ORDER_BOOK_BUILD_PROFILING=ON`, which needs the benchmarks). |
 
 ### Life of a command
+
+![An order's lifecycle: validated, then rejected or accepted; matched, then filled or resting; a resting order is filled by later orders or cancelled; either way its ID is free again. Each step names the event it adds to the command's result.](docs/images/order-lifecycle.svg)
 
 `submitOrder(order)`:
 
@@ -167,6 +160,10 @@ OrderBook
 | `NodePool` | Per-book free lists by size class, filled in chunks of 256 nodes, used by the level lists through `PoolAllocator` | A resting order costs no heap allocation in the steady state. A book keeps its peak node memory until it is destroyed. |
 | `SmallVector<T, N>` | Inline storage for `N` elements, falling back to the heap beyond that | A command's result allocates nothing unless a submission makes more than four trades. |
 
+The same structures seen as a trader would, as a price ladder:
+
+![A price ladder of twelve resting orders: three ask levels and three bid levels, each bar a level's aggregate quantity split into its orders in queue order, with the best bid, best ask, and two-tick spread marked.](docs/images/book-ladder.svg)
+
 `price_level.hpp`, `order_location.hpp`, `order_index.hpp`, `node_pool.hpp`, and `small_vector.hpp` are implementation detail. The book never hands one of them out, and they may change in any release.
 
 ## Price-time priority
@@ -183,6 +180,8 @@ The book matches **limit orders** by price, then time:
 8. **Never crossed.** After every public command, the best bid is strictly below the best ask. `submitOrder` guarantees this by matching. `addOrder` rests without matching, so it refuses an order that would cross (`WOULD_CROSS_BOOK`).
 
 Worked example, from [`tests/replay/valid/price_time_priority.csv`](tests/replay/valid/price_time_priority.csv):
+
+![Three snapshots of the book replaying price_time_priority.csv: four orders rest; a buy for 50 at 102 sweeps 101 then 102 and rests its last 5 at 102; a sell for 8 at 99 trades 5 at 102 and 3 at 99. Five numbered trades, in execution order.](docs/images/matching-walkthrough.svg)
 
 | Step | Command | Result |
 |---|---|---|
@@ -448,6 +447,10 @@ asks:
 | 2 | Usage error. stderr names the problem and shows the usage. |
 | 3 | Engine failure: the book threw, or failed an invariant check. |
 
+A valid replay, then a malformed one that stops at its bad line:
+
+![A terminal replaying price_time_priority.csv with --trades --book, printing five trades, the statistics, and the final book, exit status 0; then replaying malformed/price_zero.csv, which prints the statistics of the two commands before line 4 and an error on stderr, exit status 1.](docs/images/replay-terminal.svg)
+
 Output is byte-identical on every platform, with LF line endings. Sample files are in [`tests/replay/valid/`](tests/replay/valid/) and [`tests/replay/malformed/`](tests/replay/malformed/). [`tests/replay/README.md`](tests/replay/README.md) lists each one's expected events, or the line and rule it breaks.
 
 ## Benchmarks and optimization
@@ -462,6 +465,10 @@ cmake --build build/release --target order_book_benchmarks
 ```
 
 The program refuses to run (exit 3) in an unoptimized build, meaning Debug, automatic invariant checks, or sanitizers, unless given `--allow-unoptimized`.
+
+![Strip plot of the recorded baseline: 90 runs per workload for the core and replay paths. Replay sits near 1 million commands per second on every workload; the large-book core runs scatter widely.](docs/images/benchmark-baseline.svg)
+
+![Before and after optimization: nanoseconds per command fell on every workload, 1.44 to 2.23 times faster on the core path and 2.34 to 2.74 times on the replay path; the heap's share of core time fell from 34-47% to 0-5%, and allocations per command from 2.0-2.9 to under 0.17.](docs/images/optimization.svg)
 
 - **Methodology**: [`benchmarks/README.md`](benchmarks/README.md) covers the five workloads, what is and isn't timed, determinism, output formats, and the reference environment.
 - **Baseline**: [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) records the first results. Each run measures one throughput, so the page reports throughput percentiles over runs, never latency percentiles for single commands, and explains why. It also lists the baseline's limitations.
@@ -533,4 +540,5 @@ Roughly in order of how much of the existing design they reuse:
 | [`docs/PROFILING.md`](docs/PROFILING.md) | The baseline's profile and bottleneck hypotheses. |
 | [`docs/OPTIMIZATION-EXPERIMENTS.md`](docs/OPTIMIZATION-EXPERIMENTS.md) | Each optimization experiment's design and outcome. |
 | [`docs/OPTIMIZATION.md`](docs/OPTIMIZATION.md) | The optimization report. |
+| [`docs/images/`](docs/images/) | The figures in this README. `make_figures.py` redraws the benchmark, optimization, and terminal figures from the files they show. |
 | [`CLAUDE.md`](CLAUDE.md) | Detailed contributor notes: every invariant, test convention, and contract, in one place. |

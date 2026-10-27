@@ -13,6 +13,8 @@ The first recorded throughput of the order book, taken with `order_book_benchmar
 
 ## Results
 
+![Strip plot of every measured standard-size run: 90 per workload and kind, with each row's median, CV, and range.](images/benchmark-baseline.svg)
+
 ### Standard size (100,000 timed commands per run)
 
 Three sessions, each with 1 warm-up and 30 measured runs per workload and kind, so 90 measured runs per row. Throughput is in millions of commands per second (Mops/s). Warm-ups are left out.

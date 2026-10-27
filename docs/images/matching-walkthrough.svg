@@ -1,0 +1,167 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+<title id="title">Matching walkthrough</title>
+<desc id="desc">Three snapshots of the book replaying price_time_priority.csv, with five numbered trades.</desc>
+<style>
+  .bg{fill:#fcfcfb} .frame{fill:none;stroke:rgba(11,11,11,.10)}
+  text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;fill:#0b0b0b}
+  .mono{font-family:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace}
+  .t2{fill:#52514e} .t3{fill:#898781} .on{fill:#ffffff}
+  .panel{fill:#f4f3ef} .box{fill:#ffffff;stroke:#c3c2b7} .box2{fill:#fcfcfb;stroke:#c3c2b7}
+  .grid{stroke:#e1e0d9;stroke-width:1} .rule{stroke:#c3c2b7;stroke-width:1}
+  .bid{fill:#2a78d6} .ask{fill:#eb6834}
+  .bidw{fill:rgba(42,120,214,.10);stroke:#2a78d6} .askw{fill:rgba(235,104,52,.10);stroke:#eb6834}
+  .trdw{fill:rgba(27,175,122,.14);stroke:#1baf7a} .accw{fill:rgba(42,120,214,.06);stroke:#2a78d6}
+  .ghost{fill:none;stroke:#b5b4ad;stroke-dasharray:4 3}
+  .edge{fill:none;stroke:#898781;stroke-width:1.5} .head{fill:#898781}
+  .hot{fill:none;stroke:#1baf7a;stroke-width:2} .hothead{fill:#1baf7a}
+  .term{fill:#3a3a36} .termtext{fill:#ffffff}
+  @media (prefers-color-scheme: dark){
+    .bg{fill:#1a1a19} .frame{stroke:rgba(255,255,255,.10)}
+    text{fill:#f0efec} .t2{fill:#c3c2b7} .t3{fill:#898781} .on{fill:#ffffff}
+    .panel{fill:#222220} .box{fill:#262624;stroke:#4a4a44} .box2{fill:#1f1f1d;stroke:#4a4a44}
+    .grid{stroke:#2c2c2a} .rule{stroke:#383835}
+    .bid{fill:#3987e5} .ask{fill:#d95926}
+    .bidw{fill:rgba(57,135,229,.18);stroke:#3987e5} .askw{fill:rgba(217,89,38,.18);stroke:#d95926}
+    .trdw{fill:rgba(25,158,112,.22);stroke:#199e70} .accw{fill:rgba(57,135,229,.08);stroke:#3987e5}
+    .ghost{stroke:#5a5a54} .edge{stroke:#8a8984} .head{fill:#8a8984}
+    .hot{stroke:#199e70} .hothead{fill:#199e70} .term{fill:#dcdbd5} .termtext{fill:#0b0b0b}
+  }
+</style>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 1L10 5L0 9z"/></marker>
+  <marker id="hotarrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="hothead" d="M0 1L10 5L0 9z"/></marker>
+</defs>
+<rect class="bg" width="960" height="540" rx="12"/>
+<rect class="frame" x="0.5" y="0.5" width="959" height="539" rx="12"/>
+<text x="24" y="38" font-size="18" font-weight="600">Matching walkthrough: price first, then time</text>
+<text x="24" y="61" class="t2" font-size="13">tests/replay/valid/price_time_priority.csv through submitOrder. Each trade executes at the resting order&#x27;s price; a remainder rests at its own limit.</text>
+<text x="24" y="100" font-size="15" font-weight="600">After lines 2–5</text>
+<text x="24" y="119" class="t2" font-size="13">Four orders rest. Nothing crosses.</text>
+<text x="336" y="100" font-size="15" font-weight="600">After line 6</text>
+<text x="336" y="119" class="t2" font-size="13">A buy sweeps two price levels.</text>
+<text x="648" y="100" font-size="15" font-weight="600">After line 7</text>
+<text x="648" y="119" class="t2" font-size="13">A sell takes the better bid first.</text>
+<rect class="box2" x="24" y="132" width="288" height="26" rx="13"/>
+<text x="168" y="149" class="t2" font-size="12" text-anchor="middle">best bid 99 &lt; best ask 101</text>
+<rect class="bidw" x="336" y="132" width="147.7" height="26" rx="13"/>
+<text x="409.85" y="149" class="mono" font-size="12" text-anchor="middle" font-weight="600">BUY 2005 · 50 @ 102</text>
+<rect class="askw" x="648" y="132" width="140.4" height="26" rx="13"/>
+<text x="718.2" y="149" class="mono" font-size="12" text-anchor="middle" font-weight="600">SELL 2006 · 8 @ 99</text>
+<text x="82" y="188" class="t3" font-size="12" text-anchor="middle">bids</text>
+<text x="168" y="188" class="t3" font-size="12" text-anchor="middle">price</text>
+<text x="254" y="188" class="t3" font-size="12" text-anchor="middle">asks</text>
+<line class="grid" x1="24" y1="196" x2="312" y2="196"/>
+<text x="168" y="220" class="mono" font-size="13" text-anchor="middle" font-weight="600">102</text>
+<rect class="askw" x="196" y="200" width="54" height="30" rx="5"/>
+<text x="223" y="213" class="mono" font-size="11.5" text-anchor="middle" font-weight="600">2003</text>
+<text x="223" y="225" class="t2" font-size="10.5" text-anchor="middle">20</text>
+<line class="grid" x1="24" y1="234" x2="312" y2="234"/>
+<text x="168" y="258" class="mono" font-size="13" text-anchor="middle" font-weight="600">101</text>
+<rect class="askw" x="196" y="238" width="54" height="30" rx="5"/>
+<text x="223" y="251" class="mono" font-size="11.5" text-anchor="middle" font-weight="600">2001</text>
+<text x="223" y="263" class="t2" font-size="10.5" text-anchor="middle">10</text>
+<rect class="askw" x="256" y="238" width="54" height="30" rx="5"/>
+<text x="283" y="251" class="mono" font-size="11.5" text-anchor="middle" font-weight="600">2002</text>
+<text x="283" y="263" class="t2" font-size="10.5" text-anchor="middle">15</text>
+<line class="grid" x1="24" y1="272" x2="312" y2="272"/>
+<text x="168" y="296" class="mono" font-size="13" text-anchor="middle" font-weight="600">100</text>
+<line class="grid" x1="24" y1="310" x2="312" y2="310"/>
+<text x="168" y="334" class="mono" font-size="13" text-anchor="middle" font-weight="600">99</text>
+<rect class="bidw" x="86" y="314" width="54" height="30" rx="5"/>
+<text x="113" y="327" class="mono" font-size="11.5" text-anchor="middle" font-weight="600">2004</text>
+<text x="113" y="339" class="t2" font-size="10.5" text-anchor="middle">5</text>
+<line class="grid" x1="24" y1="348" x2="312" y2="348"/>
+<rect class="grid" fill="none" x="146" y="197" width="44" height="150" rx="0"/>
+<text x="394" y="188" class="t3" font-size="12" text-anchor="middle">bids</text>
+<text x="480" y="188" class="t3" font-size="12" text-anchor="middle">price</text>
+<text x="566" y="188" class="t3" font-size="12" text-anchor="middle">asks</text>
+<line class="grid" x1="336" y1="196" x2="624" y2="196"/>
+<text x="480" y="220" class="mono" font-size="13" text-anchor="middle" font-weight="600">102</text>
+<rect class="bidw" x="398" y="200" width="54" height="30" rx="5"/>
+<text x="425" y="213" class="mono" font-size="11.5" text-anchor="middle" font-weight="600">2005</text>
+<text x="425" y="225" class="t2" font-size="10.5" text-anchor="middle">5 of 50</text>
+<rect class="ghost" x="508" y="200" width="54" height="30" rx="5"/>
+<text x="535" y="213" class="mono t3" font-size="11.5" text-anchor="middle">2003</text>
+<text x="535" y="225" class="t3" font-size="10.5" text-anchor="middle">0 of 20</text>
+<circle class="trdw" cx="561" cy="201" r="9"/>
+<text x="561" y="205" font-size="11" text-anchor="middle" font-weight="700">3</text>
+<line class="grid" x1="336" y1="234" x2="624" y2="234"/>
+<text x="480" y="258" class="mono" font-size="13" text-anchor="middle" font-weight="600">101</text>
+<rect class="ghost" x="508" y="238" width="54" height="30" rx="5"/>
+<text x="535" y="251" class="mono t3" font-size="11.5" text-anchor="middle">2001</text>
+<text x="535" y="263" class="t3" font-size="10.5" text-anchor="middle">0 of 10</text>
+<circle class="trdw" cx="561" cy="239" r="9"/>
+<text x="561" y="243" font-size="11" text-anchor="middle" font-weight="700">1</text>
+<rect class="ghost" x="568" y="238" width="54" height="30" rx="5"/>
+<text x="595" y="251" class="mono t3" font-size="11.5" text-anchor="middle">2002</text>
+<text x="595" y="263" class="t3" font-size="10.5" text-anchor="middle">0 of 15</text>
+<circle class="trdw" cx="621" cy="239" r="9"/>
+<text x="621" y="243" font-size="11" text-anchor="middle" font-weight="700">2</text>
+<line class="grid" x1="336" y1="272" x2="624" y2="272"/>
+<text x="480" y="296" class="mono" font-size="13" text-anchor="middle" font-weight="600">100</text>
+<line class="grid" x1="336" y1="310" x2="624" y2="310"/>
+<text x="480" y="334" class="mono" font-size="13" text-anchor="middle" font-weight="600">99</text>
+<rect class="bidw" x="398" y="314" width="54" height="30" rx="5"/>
+<text x="425" y="327" class="mono" font-size="11.5" text-anchor="middle" font-weight="600">2004</text>
+<text x="425" y="339" class="t2" font-size="10.5" text-anchor="middle">5</text>
+<line class="grid" x1="336" y1="348" x2="624" y2="348"/>
+<rect class="grid" fill="none" x="458" y="197" width="44" height="150" rx="0"/>
+<text x="706" y="188" class="t3" font-size="12" text-anchor="middle">bids</text>
+<text x="792" y="188" class="t3" font-size="12" text-anchor="middle">price</text>
+<text x="878" y="188" class="t3" font-size="12" text-anchor="middle">asks</text>
+<line class="grid" x1="648" y1="196" x2="936" y2="196"/>
+<text x="792" y="220" class="mono" font-size="13" text-anchor="middle" font-weight="600">102</text>
+<rect class="ghost" x="710" y="200" width="54" height="30" rx="5"/>
+<text x="737" y="213" class="mono t3" font-size="11.5" text-anchor="middle">2005</text>
+<text x="737" y="225" class="t3" font-size="10.5" text-anchor="middle">0 of 5</text>
+<circle class="trdw" cx="763" cy="201" r="9"/>
+<text x="763" y="205" font-size="11" text-anchor="middle" font-weight="700">4</text>
+<line class="grid" x1="648" y1="234" x2="936" y2="234"/>
+<text x="792" y="258" class="mono" font-size="13" text-anchor="middle" font-weight="600">101</text>
+<line class="grid" x1="648" y1="272" x2="936" y2="272"/>
+<text x="792" y="296" class="mono" font-size="13" text-anchor="middle" font-weight="600">100</text>
+<line class="grid" x1="648" y1="310" x2="936" y2="310"/>
+<text x="792" y="334" class="mono" font-size="13" text-anchor="middle" font-weight="600">99</text>
+<rect class="bidw" x="710" y="314" width="54" height="30" rx="5"/>
+<text x="737" y="327" class="mono" font-size="11.5" text-anchor="middle" font-weight="600">2004</text>
+<text x="737" y="339" class="t2" font-size="10.5" text-anchor="middle">2 of 5</text>
+<circle class="trdw" cx="763" cy="315" r="9"/>
+<text x="763" y="319" font-size="11" text-anchor="middle" font-weight="700">5</text>
+<line class="grid" x1="648" y1="348" x2="936" y2="348"/>
+<rect class="grid" fill="none" x="770" y="197" width="44" height="150" rx="0"/>
+<path class="edge" d="M320 266 l8 6 l-8 6"/>
+<path class="edge" d="M632 266 l8 6 l-8 6"/>
+<text x="24" y="378" class="t2" font-size="12.5">Asks at 101 queue 2001, then 2002:</text>
+<text x="24" y="398" class="t2" font-size="12.5">acceptance order. The book is never</text>
+<text x="24" y="418" class="t2" font-size="12.5">crossed after a command: 99 &lt; 101.</text>
+<circle class="trdw" cx="345" cy="374" r="9"/>
+<text x="345" y="378" font-size="11" text-anchor="middle" font-weight="700">1</text>
+<text x="362" y="378" font-size="12.5">10 @ 101 with 2001: best price, oldest</text>
+<circle class="trdw" cx="345" cy="394" r="9"/>
+<text x="345" y="398" font-size="11" text-anchor="middle" font-weight="700">2</text>
+<text x="362" y="398" font-size="12.5">15 @ 101 with 2002: same price, next</text>
+<circle class="trdw" cx="345" cy="414" r="9"/>
+<text x="345" y="418" font-size="11" text-anchor="middle" font-weight="700">3</text>
+<text x="362" y="418" font-size="12.5">20 @ 102 with 2003: 101 is empty</text>
+<text x="362" y="438" class="t2" font-size="12.5">The last 5 rest as a bid at 102, its own</text>
+<text x="362" y="458" class="t2" font-size="12.5">limit, not at a price it traded at.</text>
+<circle class="trdw" cx="657" cy="374" r="9"/>
+<text x="657" y="378" font-size="11" text-anchor="middle" font-weight="700">4</text>
+<text x="674" y="378" font-size="12.5">5 @ 102 with 2005, the best bid: the</text>
+<text x="674" y="398" class="t2" font-size="12.5">seller gets 102, not its limit of 99</text>
+<circle class="trdw" cx="657" cy="414" r="9"/>
+<text x="657" y="418" font-size="11" text-anchor="middle" font-weight="700">5</text>
+<text x="674" y="418" font-size="12.5">3 @ 99 with 2004, a partial fill: 2 left,</text>
+<text x="674" y="438" class="t2" font-size="12.5">still at the front of its queue</text>
+<line class="rule" x1="24" y1="472" x2="936" y2="472"/>
+<rect class="bidw" x="24" y="482" width="30" height="18" rx="4"/>
+<text x="62" y="496" class="t2" font-size="12">bid</text>
+<rect class="askw" x="98" y="482" width="30" height="18" rx="4"/>
+<text x="136" y="496" class="t2" font-size="12">ask (id, quantity left)</text>
+<rect class="ghost" x="298" y="482" width="30" height="18" rx="4"/>
+<text x="336" y="496" class="t2" font-size="12">filled and removed in this step</text>
+<circle class="trdw" cx="548" cy="491" r="9"/>
+<text x="548" y="495" font-size="11" text-anchor="middle" font-weight="700">1</text>
+<text x="564" y="496" class="t2" font-size="12">trade, numbered in execution order (= event order)</text>
+<text x="24" y="520" class="t3" font-size="12">Orders nearest the price column are oldest. The CLI prints these five trades in exactly this order (see replay-terminal.svg).</text>
+</svg>

@@ -1,0 +1,171 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="718" viewBox="0 0 960 718" role="img" aria-labelledby="title desc">
+<title id="title">Optimization: before and after</title>
+<desc id="desc">Dumbbell charts of ns per command, heap share, and allocations per command, before and after optimization.</desc>
+<style>
+  .bg{fill:#fcfcfb} .frame{fill:none;stroke:rgba(11,11,11,.10)}
+  text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;fill:#0b0b0b}
+  .mono{font-family:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace}
+  .t2{fill:#52514e} .t3{fill:#898781}
+  .grid{stroke:#e1e0d9;stroke-width:1} .axis{stroke:#c3c2b7;stroke-width:1}
+  .core{fill:#2a78d6} .replay{fill:#eb6834}
+  .before{fill:#fcfcfb;stroke:#898781;stroke-width:2} .after{fill:#2a78d6;stroke:#fcfcfb;stroke-width:2}
+  .link{stroke:#c3c2b7;stroke-width:2;stroke-linecap:round}
+  .median{stroke:#0b0b0b;stroke-width:2;stroke-linecap:round}
+  @media (prefers-color-scheme: dark){
+    .bg{fill:#1a1a19} .frame{stroke:rgba(255,255,255,.10)}
+    text{fill:#f0efec} .t2{fill:#c3c2b7} .t3{fill:#898781}
+    .grid{stroke:#2c2c2a} .axis{stroke:#383835}
+    .core{fill:#3987e5} .replay{fill:#d95926}
+    .before{fill:#1a1a19;stroke:#898781} .after{fill:#3987e5;stroke:#1a1a19}
+    .link{stroke:#383835} .median{stroke:#f0efec}
+  }
+</style>
+<rect class="bg" width="960" height="718" rx="12"/>
+<rect class="frame" x="0.5" y="0.5" width="959" height="717" rx="12"/>
+<text x="24.0" y="38.0" font-size="18" text-anchor="start" font-weight="600">Optimization: before and after</text>
+<text x="24.0" y="61.0" class="t2" font-size="13" text-anchor="start">The baseline engine against the final code, both binaries interleaved in one session on one machine, 100,000 timed commands per run.</text>
+<circle class="before" cx="30" cy="85" r="5"/>
+<text x="42.0" y="89.0" font-size="13" text-anchor="start">before (baseline engine)</text>
+<circle class="after" cx="222" cy="85" r="6"/>
+<text x="234.0" y="89.0" font-size="13" text-anchor="start">after (final code)</text>
+<text x="24.0" y="134.0" font-size="15" text-anchor="start" font-weight="600">Mean cost per command: every workload got faster</text>
+<text x="24.0" y="154.0" class="t2" font-size="13" text-anchor="start">Nanoseconds per command at each binary&#x27;s median run; lower is faster. Labels are the paired median speed-up; all 12 pairs per row were faster.</text>
+<text x="24.0" y="213.0" class="mono" font-size="13" text-anchor="start">small-book</text>
+<text x="24.0" y="243.0" class="mono" font-size="13" text-anchor="start">deep-book</text>
+<text x="24.0" y="273.0" class="mono" font-size="13" text-anchor="start">matching-heavy</text>
+<text x="24.0" y="303.0" class="mono" font-size="13" text-anchor="start">cancellation-heavy</text>
+<text x="24.0" y="333.0" class="mono" font-size="13" text-anchor="start">mostly-resting</text>
+<text x="196.0" y="182.0" font-size="13" text-anchor="start" font-weight="600">Engine (core), ns per command</text>
+<line class="grid" x1="196.0" y1="194" x2="196.0" y2="342"/>
+<text x="196.0" y="360.0" class="t3" font-size="12" text-anchor="middle">0</text>
+<line class="grid" x1="269.0" y1="194" x2="269.0" y2="342"/>
+<text x="269.0" y="360.0" class="t3" font-size="12" text-anchor="middle">100</text>
+<line class="grid" x1="342.0" y1="194" x2="342.0" y2="342"/>
+<text x="342.0" y="360.0" class="t3" font-size="12" text-anchor="middle">200</text>
+<line class="grid" x1="415.0" y1="194" x2="415.0" y2="342"/>
+<text x="415.0" y="360.0" class="t3" font-size="12" text-anchor="middle">300</text>
+<line class="grid" x1="488.0" y1="194" x2="488.0" y2="342"/>
+<text x="488.0" y="360.0" class="t3" font-size="12" text-anchor="middle">400</text>
+<line class="link" x1="307.7" y1="208" x2="259.5" y2="208"/>
+<circle class="before" cx="307.7" cy="208" r="5"><title>small-book: 153 before, 87 after</title></circle>
+<circle class="after" cx="259.5" cy="208" r="6"><title>small-book: 153 before, 87 after</title></circle>
+<text x="319.7" y="212.0" font-size="12" text-anchor="start" font-weight="600">1.76×</text>
+<line class="link" x1="471.9" y1="238" x2="342.7" y2="238"/>
+<circle class="before" cx="471.9" cy="238" r="5"><title>deep-book: 378 before, 201 after</title></circle>
+<circle class="after" cx="342.7" cy="238" r="6"><title>deep-book: 378 before, 201 after</title></circle>
+<text x="483.9" y="242.0" font-size="12" text-anchor="start" font-weight="600">1.85×</text>
+<line class="link" x1="366.1" y1="268" x2="314.3" y2="268"/>
+<circle class="before" cx="366.1" cy="268" r="5"><title>matching-heavy: 233 before, 162 after</title></circle>
+<circle class="after" cx="314.3" cy="268" r="6"><title>matching-heavy: 233 before, 162 after</title></circle>
+<text x="378.1" y="272.0" font-size="12" text-anchor="start" font-weight="600">1.44×</text>
+<line class="link" x1="376.3" y1="298" x2="277.8" y2="298"/>
+<circle class="before" cx="376.3" cy="298" r="5"><title>cancellation-heavy: 247 before, 112 after</title></circle>
+<circle class="after" cx="277.8" cy="298" r="6"><title>cancellation-heavy: 247 before, 112 after</title></circle>
+<text x="388.3" y="302.0" font-size="12" text-anchor="start" font-weight="600">2.23×</text>
+<line class="link" x1="382.9" y1="328" x2="296.0" y2="328"/>
+<circle class="before" cx="382.9" cy="328" r="5"><title>mostly-resting: 256 before, 137 after</title></circle>
+<circle class="after" cx="296.0" cy="328" r="6"><title>mostly-resting: 256 before, 137 after</title></circle>
+<text x="394.9" y="332.0" font-size="12" text-anchor="start" font-weight="600">1.83×</text>
+<text x="600.0" y="182.0" font-size="13" text-anchor="start" font-weight="600">Replay path (CSV through the engine), ns per command</text>
+<line class="grid" x1="600.0" y1="194" x2="600.0" y2="342"/>
+<text x="600.0" y="360.0" class="t3" font-size="12" text-anchor="middle">0</text>
+<line class="grid" x1="659.1" y1="194" x2="659.1" y2="342"/>
+<text x="659.1" y="360.0" class="t3" font-size="12" text-anchor="middle">250</text>
+<line class="grid" x1="718.2" y1="194" x2="718.2" y2="342"/>
+<text x="718.2" y="360.0" class="t3" font-size="12" text-anchor="middle">500</text>
+<line class="grid" x1="777.3" y1="194" x2="777.3" y2="342"/>
+<text x="777.3" y="360.0" class="t3" font-size="12" text-anchor="middle">750</text>
+<line class="grid" x1="836.4" y1="194" x2="836.4" y2="342"/>
+<text x="836.4" y="360.0" class="t3" font-size="12" text-anchor="middle">1000</text>
+<line class="link" x1="774.2" y1="208" x2="663.6" y2="208"/>
+<circle class="before" cx="774.2" cy="208" r="5"><title>small-book: 737 before, 269 after</title></circle>
+<circle class="after" cx="663.6" cy="208" r="6"><title>small-book: 737 before, 269 after</title></circle>
+<text x="786.2" y="212.0" font-size="12" text-anchor="start" font-weight="600">2.74×</text>
+<line class="link" x1="842.0" y1="238" x2="699.0" y2="238"/>
+<circle class="before" cx="842.0" cy="238" r="5"><title>deep-book: 1024 before, 419 after</title></circle>
+<circle class="after" cx="699.0" cy="238" r="6"><title>deep-book: 1024 before, 419 after</title></circle>
+<text x="854.0" y="242.0" font-size="12" text-anchor="start" font-weight="600">2.46×</text>
+<line class="link" x1="805.4" y1="268" x2="687.9" y2="268"/>
+<circle class="before" cx="805.4" cy="268" r="5"><title>matching-heavy: 869 before, 372 after</title></circle>
+<circle class="after" cx="687.9" cy="268" r="6"><title>matching-heavy: 869 before, 372 after</title></circle>
+<text x="817.4" y="272.0" font-size="12" text-anchor="start" font-weight="600">2.34×</text>
+<line class="link" x1="807.3" y1="298" x2="679.2" y2="298"/>
+<circle class="before" cx="807.3" cy="298" r="5"><title>cancellation-heavy: 877 before, 335 after</title></circle>
+<circle class="after" cx="679.2" cy="298" r="6"><title>cancellation-heavy: 877 before, 335 after</title></circle>
+<text x="819.3" y="302.0" font-size="12" text-anchor="start" font-weight="600">2.60×</text>
+<line class="link" x1="805.6" y1="328" x2="686.7" y2="328"/>
+<circle class="before" cx="805.6" cy="328" r="5"><title>mostly-resting: 870 before, 367 after</title></circle>
+<circle class="after" cx="686.7" cy="328" r="6"><title>mostly-resting: 870 before, 367 after</title></circle>
+<text x="817.6" y="332.0" font-size="12" text-anchor="start" font-weight="600">2.37×</text>
+<text x="24.0" y="406.0" font-size="15" text-anchor="start" font-weight="600">Why: the heap left the hot path</text>
+<text x="24.0" y="426.0" class="t2" font-size="13" text-anchor="start">Most of the gain came from removing per-command allocation: inline result storage, a per-book node pool, an open-addressed index.</text>
+<text x="24.0" y="485.0" class="mono" font-size="13" text-anchor="start">small-book</text>
+<text x="24.0" y="515.0" class="mono" font-size="13" text-anchor="start">deep-book</text>
+<text x="24.0" y="545.0" class="mono" font-size="13" text-anchor="start">matching-heavy</text>
+<text x="24.0" y="575.0" class="mono" font-size="13" text-anchor="start">cancellation-heavy</text>
+<text x="24.0" y="605.0" class="mono" font-size="13" text-anchor="start">mostly-resting</text>
+<text x="196.0" y="454.0" font-size="13" text-anchor="start" font-weight="600">Heap&#x27;s share of core time (sampling profile)</text>
+<line class="grid" x1="196.0" y1="466" x2="196.0" y2="614"/>
+<text x="196.0" y="632.0" class="t3" font-size="12" text-anchor="middle">0%</text>
+<line class="grid" x1="254.4" y1="466" x2="254.4" y2="614"/>
+<text x="254.4" y="632.0" class="t3" font-size="12" text-anchor="middle">10%</text>
+<line class="grid" x1="312.8" y1="466" x2="312.8" y2="614"/>
+<text x="312.8" y="632.0" class="t3" font-size="12" text-anchor="middle">20%</text>
+<line class="grid" x1="371.2" y1="466" x2="371.2" y2="614"/>
+<text x="371.2" y="632.0" class="t3" font-size="12" text-anchor="middle">30%</text>
+<line class="grid" x1="429.6" y1="466" x2="429.6" y2="614"/>
+<text x="429.6" y="632.0" class="t3" font-size="12" text-anchor="middle">40%</text>
+<line class="grid" x1="488.0" y1="466" x2="488.0" y2="614"/>
+<text x="488.0" y="632.0" class="t3" font-size="12" text-anchor="middle">50%</text>
+<line class="link" x1="470.5" y1="480" x2="207.7" y2="480"/>
+<circle class="before" cx="470.5" cy="480" r="5"><title>small-book: 47% before, 2% after</title></circle>
+<circle class="after" cx="207.7" cy="480" r="6"><title>small-book: 47% before, 2% after</title></circle>
+<text x="482.5" y="484.0" font-size="12" text-anchor="start" font-weight="600">47% → 2%</text>
+<line class="link" x1="394.6" y1="510" x2="207.7" y2="510"/>
+<circle class="before" cx="394.6" cy="510" r="5"><title>deep-book: 34% before, 2% after</title></circle>
+<circle class="after" cx="207.7" cy="510" r="6"><title>deep-book: 34% before, 2% after</title></circle>
+<text x="406.6" y="514.0" font-size="12" text-anchor="start" font-weight="600">34% → 2%</text>
+<line class="link" x1="429.6" y1="540" x2="225.2" y2="540"/>
+<circle class="before" cx="429.6" cy="540" r="5"><title>matching-heavy: 40% before, 5% after</title></circle>
+<circle class="after" cx="225.2" cy="540" r="6"><title>matching-heavy: 40% before, 5% after</title></circle>
+<text x="441.6" y="544.0" font-size="12" text-anchor="start" font-weight="600">40% → 5%</text>
+<line class="link" x1="423.8" y1="570" x2="196.0" y2="570"/>
+<circle class="before" cx="423.8" cy="570" r="5"><title>cancellation-heavy: 39% before, 0% after</title></circle>
+<circle class="after" cx="196.0" cy="570" r="6"><title>cancellation-heavy: 39% before, 0% after</title></circle>
+<text x="435.8" y="574.0" font-size="12" text-anchor="start" font-weight="600">39% → 0%</text>
+<line class="link" x1="394.6" y1="600" x2="213.5" y2="600"/>
+<circle class="before" cx="394.6" cy="600" r="5"><title>mostly-resting: 34% before, 3% after</title></circle>
+<circle class="after" cx="213.5" cy="600" r="6"><title>mostly-resting: 34% before, 3% after</title></circle>
+<text x="406.6" y="604.0" font-size="12" text-anchor="start" font-weight="600">34% → 3%</text>
+<text x="600.0" y="454.0" font-size="13" text-anchor="start" font-weight="600">Heap allocations per timed core command (exact)</text>
+<line class="grid" x1="600.0" y1="466" x2="600.0" y2="614"/>
+<text x="600.0" y="632.0" class="t3" font-size="12" text-anchor="middle">0</text>
+<line class="grid" x1="686.7" y1="466" x2="686.7" y2="614"/>
+<text x="686.7" y="632.0" class="t3" font-size="12" text-anchor="middle">1</text>
+<line class="grid" x1="773.3" y1="466" x2="773.3" y2="614"/>
+<text x="773.3" y="632.0" class="t3" font-size="12" text-anchor="middle">2</text>
+<line class="grid" x1="860.0" y1="466" x2="860.0" y2="614"/>
+<text x="860.0" y="632.0" class="t3" font-size="12" text-anchor="middle">3</text>
+<line class="link" x1="796.0" y1="480" x2="603.4" y2="480"/>
+<circle class="before" cx="796.0" cy="480" r="5"><title>small-book: 2.262 before, 0.039 after</title></circle>
+<circle class="after" cx="603.4" cy="480" r="6"><title>small-book: 2.262 before, 0.039 after</title></circle>
+<text x="808.0" y="484.0" font-size="12" text-anchor="start" font-weight="600">2.26 → 0.039</text>
+<line class="link" x1="791.5" y1="510" x2="603.8" y2="510"/>
+<circle class="before" cx="791.5" cy="510" r="5"><title>deep-book: 2.21 before, 0.044 after</title></circle>
+<circle class="after" cx="603.8" cy="510" r="6"><title>deep-book: 2.21 before, 0.044 after</title></circle>
+<text x="803.5" y="514.0" font-size="12" text-anchor="start" font-weight="600">2.21 → 0.044</text>
+<line class="link" x1="833.5" y1="540" x2="614.4" y2="540"/>
+<circle class="before" cx="833.5" cy="540" r="5"><title>matching-heavy: 2.694 before, 0.166 after</title></circle>
+<circle class="after" cx="614.4" cy="540" r="6"><title>matching-heavy: 2.694 before, 0.166 after</title></circle>
+<text x="845.5" y="544.0" font-size="12" text-anchor="start" font-weight="600">2.69 → 0.166</text>
+<line class="link" x1="773.1" y1="570" x2="600.0" y2="570"/>
+<circle class="before" cx="773.1" cy="570" r="5"><title>cancellation-heavy: 1.997 before, 0 after</title></circle>
+<circle class="after" cx="600.0" cy="570" r="6"><title>cancellation-heavy: 1.997 before, 0 after</title></circle>
+<text x="785.1" y="574.0" font-size="12" text-anchor="start" font-weight="600">2.00 → 0.000</text>
+<line class="link" x1="849.9" y1="600" x2="600.7" y2="600"/>
+<circle class="before" cx="849.9" cy="600" r="5"><title>mostly-resting: 2.883 before, 0.008 after</title></circle>
+<circle class="after" cx="600.7" cy="600" r="6"><title>mostly-resting: 2.883 before, 0.008 after</title></circle>
+<text x="861.9" y="604.0" font-size="12" text-anchor="start" font-weight="600">2.88 → 0.008</text>
+<text x="24.0" y="672.0" class="t2" font-size="13" text-anchor="start">Only the ratios are the claim: the absolute figures come from short interleaved runs. One machine, synthetic workloads, throughput only.</text>
+<text x="24.0" y="694.0" class="t3" font-size="12" text-anchor="start">Source: docs/OPTIMIZATION.md · benchmarks/results/2026-10-26-experiments/ · allocations.txt in 2026-10-26-profile/ and 2026-10-26-final-profile/</text>
+</svg>

@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="778" viewBox="0 0 960 778" role="img" aria-labelledby="title desc">
+<title id="title">Replaying a session with order_book_cli</title>
+<desc id="desc">Terminal session replaying a valid file with --trades --book, then a malformed file that stops at line 4 with exit status 1.</desc>
+<style>
+  .bg{fill:#fcfcfb} .frame{fill:none;stroke:rgba(11,11,11,.10)}
+  text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;fill:#0b0b0b}
+  .mono{font-family:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace}
+  .t2{fill:#52514e} .t3{fill:#898781}
+  .grid{stroke:#e1e0d9;stroke-width:1} .axis{stroke:#c3c2b7;stroke-width:1}
+  .core{fill:#2a78d6} .replay{fill:#eb6834}
+  .before{fill:#fcfcfb;stroke:#898781;stroke-width:2} .after{fill:#2a78d6;stroke:#fcfcfb;stroke-width:2}
+  .link{stroke:#c3c2b7;stroke-width:2;stroke-linecap:round}
+  .median{stroke:#0b0b0b;stroke-width:2;stroke-linecap:round}
+  @media (prefers-color-scheme: dark){
+    .bg{fill:#1a1a19} .frame{stroke:rgba(255,255,255,.10)}
+    text{fill:#f0efec} .t2{fill:#c3c2b7} .t3{fill:#898781}
+    .grid{stroke:#2c2c2a} .axis{stroke:#383835}
+    .core{fill:#3987e5} .replay{fill:#d95926}
+    .before{fill:#1a1a19;stroke:#898781} .after{fill:#3987e5;stroke:#1a1a19}
+    .link{stroke:#383835} .median{stroke:#f0efec}
+  }
+
+  .term{fill:#161614} .bar{fill:#262622} .dot{fill:#45453f}
+  .tx{font-family:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace;font-size:13px;fill:#d9d8d2}
+  .prompt{fill:#7fb2f0} .cmd{fill:#f0efec;font-weight:600} .dim{fill:#8e8d86} .err{fill:#f29a9a}
+  .trade{fill:#5fcfa2} .brace{stroke:#c3c2b7;stroke-width:1.5;fill:none}
+  @media (prefers-color-scheme: dark){ .term{fill:#0f0f0e} .brace{stroke:#55554f} }
+</style>
+<rect class="bg" width="960" height="778" rx="12"/>
+<rect class="frame" x="0.5" y="0.5" width="959" height="777" rx="12"/>
+<rect class="term" x="16" y="16" width="600" height="746" rx="10"/>
+<path class="bar" d="M16 26a10 10 0 0 1 10-10h580a10 10 0 0 1 10 10v16h-600z"/>
+<circle class="dot" cx="36" cy="29" r="5"/><circle class="dot" cx="54" cy="29" r="5"/><circle class="dot" cx="72" cy="29" r="5"/>
+<text class="tx dim" x="316.0" y="33" text-anchor="middle" font-size="12">bash</text>
+<text class="tx" x="36" y="70"><tspan class="prompt">$ </tspan><tspan class="cmd">cd tests/replay</tspan></text>
+<text class="tx" x="36" y="88"><tspan class="prompt">$ </tspan><tspan class="cmd">order_book_cli replay valid/price_time_priority.csv --trades --book</tspan></text>
+<text class="tx trade" x="36" y="106" xml:space="preserve">line 6: TradeExecuted incoming=2005 resting=2001 price=101 qty=10</text>
+<text class="tx trade" x="36" y="124" xml:space="preserve">line 6: TradeExecuted incoming=2005 resting=2002 price=101 qty=15</text>
+<text class="tx trade" x="36" y="142" xml:space="preserve">line 6: TradeExecuted incoming=2005 resting=2003 price=102 qty=20</text>
+<text class="tx trade" x="36" y="160" xml:space="preserve">line 7: TradeExecuted incoming=2006 resting=2005 price=102 qty=5</text>
+<text class="tx trade" x="36" y="178" xml:space="preserve">line 7: TradeExecuted incoming=2006 resting=2004 price=99 qty=3</text>
+<text class="tx" x="36" y="214" xml:space="preserve">commands processed: 6</text>
+<text class="tx" x="36" y="232" xml:space="preserve">add commands: 6</text>
+<text class="tx" x="36" y="250" xml:space="preserve">adds accepted: 6</text>
+<text class="tx" x="36" y="268" xml:space="preserve">adds rejected: 0</text>
+<text class="tx" x="36" y="286" xml:space="preserve">cancel commands: 0</text>
+<text class="tx" x="36" y="304" xml:space="preserve">cancels accepted: 0</text>
+<text class="tx" x="36" y="322" xml:space="preserve">cancels rejected: 0</text>
+<text class="tx" x="36" y="340" xml:space="preserve">trades executed: 5</text>
+<text class="tx" x="36" y="358" xml:space="preserve">volume traded: 53</text>
+<text class="tx" x="36" y="376" xml:space="preserve">resting orders: 1</text>
+<text class="tx" x="36" y="394" xml:space="preserve">bids:</text>
+<text class="tx" x="36" y="412" xml:space="preserve">  price=99 qty=2 orders=1</text>
+<text class="tx" x="36" y="430" xml:space="preserve">asks:</text>
+<text class="tx" x="36" y="448" xml:space="preserve">  none</text>
+<text class="tx" x="36" y="466"><tspan class="prompt">$ </tspan><tspan class="cmd">echo $?</tspan></text>
+<text class="tx" x="36" y="484" xml:space="preserve">0</text>
+<text class="tx" x="36" y="502"><tspan class="prompt">$ </tspan><tspan class="cmd">order_book_cli replay malformed/price_zero.csv</tspan></text>
+<text class="tx" x="36" y="520" xml:space="preserve">commands processed: 2</text>
+<text class="tx" x="36" y="538" xml:space="preserve">add commands: 2</text>
+<text class="tx" x="36" y="556" xml:space="preserve">adds accepted: 2</text>
+<text class="tx" x="36" y="574" xml:space="preserve">adds rejected: 0</text>
+<text class="tx" x="36" y="592" xml:space="preserve">cancel commands: 0</text>
+<text class="tx" x="36" y="610" xml:space="preserve">cancels accepted: 0</text>
+<text class="tx" x="36" y="628" xml:space="preserve">cancels rejected: 0</text>
+<text class="tx" x="36" y="646" xml:space="preserve">trades executed: 0</text>
+<text class="tx" x="36" y="664" xml:space="preserve">volume traded: 0</text>
+<text class="tx" x="36" y="682" xml:space="preserve">resting orders: 2</text>
+<text class="tx err" x="36" y="700" xml:space="preserve">malformed/price_zero.csv:4: price: price must be positive, not &#x27;0&#x27;</text>
+<text class="tx" x="36" y="718"><tspan class="prompt">$ </tspan><tspan class="cmd">echo $?</tspan></text>
+<text class="tx" x="36" y="736" xml:space="preserve">1</text>
+<path class="brace" d="M632 94 h6 V181 h-6"/>
+<text x="650.0" y="123.5" font-size="13" text-anchor="start" font-weight="600">--trades: one line per fill</text>
+<text x="650.0" y="141.5" class="t2" font-size="12.5" text-anchor="start">tagged with the file line of the command</text>
+<text x="650.0" y="159.5" class="t2" font-size="12.5" text-anchor="start">that made it (the header is line 1)</text>
+<path class="brace" d="M632 202 h6 V379 h-6"/>
+<text x="650.0" y="276.5" font-size="13" text-anchor="start" font-weight="600">Statistics: always printed</text>
+<text x="650.0" y="294.5" class="t2" font-size="12.5" text-anchor="start">A command the book refuses would</text>
+<text x="650.0" y="312.5" class="t2" font-size="12.5" text-anchor="start">count as rejected; the replay goes on.</text>
+<path class="brace" d="M632 382 h6 V451 h-6"/>
+<text x="650.0" y="411.5" font-size="13" text-anchor="start" font-weight="600">--book: the final book</text>
+<text x="650.0" y="429.5" class="t2" font-size="12.5" text-anchor="start">every level, best price first</text>
+<path class="brace" d="M632 508 h6 V703 h-6"/>
+<text x="650.0" y="564.5" font-size="13" text-anchor="start" font-weight="600">A parse error stops the replay</text>
+<text x="650.0" y="582.5" class="t2" font-size="12.5" text-anchor="start">Line 4 is 3,ADD,1003,BUY,0,20.</text>
+<text x="650.0" y="600.5" class="t2" font-size="12.5" text-anchor="start">The two commands before it ran and</text>
+<text x="650.0" y="618.5" class="t2" font-size="12.5" text-anchor="start">are not rolled back.</text>
+<text x="650.0" y="636.5" class="t2" font-size="12.5" text-anchor="start">The diagnostic goes to stderr,</text>
+<text x="650.0" y="654.5" class="t2" font-size="12.5" text-anchor="start">and the exit status is 1.</text>
+</svg>

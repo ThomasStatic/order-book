@@ -1,0 +1,1034 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="610" viewBox="0 0 960 610" role="img" aria-labelledby="title desc">
+<title id="title">Benchmark baseline</title>
+<desc id="desc">Strip plot of per-run throughput for five workloads, core and replay.</desc>
+<style>
+  .bg{fill:#fcfcfb} .frame{fill:none;stroke:rgba(11,11,11,.10)}
+  text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;fill:#0b0b0b}
+  .mono{font-family:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace}
+  .t2{fill:#52514e} .t3{fill:#898781}
+  .grid{stroke:#e1e0d9;stroke-width:1} .axis{stroke:#c3c2b7;stroke-width:1}
+  .core{fill:#2a78d6} .replay{fill:#eb6834}
+  .before{fill:#fcfcfb;stroke:#898781;stroke-width:2} .after{fill:#2a78d6;stroke:#fcfcfb;stroke-width:2}
+  .link{stroke:#c3c2b7;stroke-width:2;stroke-linecap:round}
+  .median{stroke:#0b0b0b;stroke-width:2;stroke-linecap:round}
+  @media (prefers-color-scheme: dark){
+    .bg{fill:#1a1a19} .frame{stroke:rgba(255,255,255,.10)}
+    text{fill:#f0efec} .t2{fill:#c3c2b7} .t3{fill:#898781}
+    .grid{stroke:#2c2c2a} .axis{stroke:#383835}
+    .core{fill:#3987e5} .replay{fill:#d95926}
+    .before{fill:#1a1a19;stroke:#898781} .after{fill:#3987e5;stroke:#1a1a19}
+    .link{stroke:#383835} .median{stroke:#f0efec}
+  }
+</style>
+<rect class="bg" width="960" height="610" rx="12"/>
+<rect class="frame" x="0.5" y="0.5" width="959" height="609" rx="12"/>
+<text x="24.0" y="38.0" font-size="18" text-anchor="start" font-weight="600">Benchmark baseline: every run, before optimization</text>
+<text x="24.0" y="61.0" class="t2" font-size="13" text-anchor="start">Throughput of each run of 100,000 timed commands, 90 runs per row (3 sessions × 30). Each dot is one run; the bar is the median.</text>
+<text x="24.0" y="80.0" class="t2" font-size="13" text-anchor="start">Recorded 2026-10-25 on one machine (Ryzen 5 5600G, MSVC Release). Higher is faster.</text>
+<circle class="core" cx="30" cy="105" r="5"/>
+<text x="42.0" y="109.0" font-size="13" text-anchor="start">core: OrderBook called directly</text>
+<circle class="replay" cx="262" cy="105" r="5"/>
+<text x="274.0" y="109.0" font-size="13" text-anchor="start">replay: the same commands as in-memory CSV through the replay engine</text>
+<text x="710.0" y="130.0" class="t3" font-size="12" text-anchor="start">median</text>
+<text x="800.0" y="130.0" class="t3" font-size="12" text-anchor="start">CV</text>
+<text x="850.0" y="130.0" class="t3" font-size="12" text-anchor="start">min–max</text>
+<line class="grid" x1="220.0" y1="136" x2="220.0" y2="470"/>
+<text x="220.0" y="488.0" class="t3" font-size="12" text-anchor="middle">0</text>
+<line class="grid" x1="285.7" y1="136" x2="285.7" y2="470"/>
+<text x="285.7" y="488.0" class="t3" font-size="12" text-anchor="middle">1</text>
+<line class="grid" x1="351.4" y1="136" x2="351.4" y2="470"/>
+<text x="351.4" y="488.0" class="t3" font-size="12" text-anchor="middle">2</text>
+<line class="grid" x1="417.1" y1="136" x2="417.1" y2="470"/>
+<text x="417.1" y="488.0" class="t3" font-size="12" text-anchor="middle">3</text>
+<line class="grid" x1="482.9" y1="136" x2="482.9" y2="470"/>
+<text x="482.9" y="488.0" class="t3" font-size="12" text-anchor="middle">4</text>
+<line class="grid" x1="548.6" y1="136" x2="548.6" y2="470"/>
+<text x="548.6" y="488.0" class="t3" font-size="12" text-anchor="middle">5</text>
+<line class="grid" x1="614.3" y1="136" x2="614.3" y2="470"/>
+<text x="614.3" y="488.0" class="t3" font-size="12" text-anchor="middle">6</text>
+<line class="grid" x1="680.0" y1="136" x2="680.0" y2="470"/>
+<text x="680.0" y="488.0" class="t3" font-size="12" text-anchor="middle">7</text>
+<text x="450.0" y="508.0" class="t3" font-size="12" text-anchor="middle">millions of commands per second</text>
+<text x="24.0" y="166.0" class="mono" font-size="13" text-anchor="start" font-weight="600">small-book</text>
+<text x="24.0" y="184.0" class="t3" font-size="12" text-anchor="start">ends with 173 orders</text>
+<text x="24.0" y="199.0" class="t3" font-size="12" text-anchor="start">on 10 levels</text>
+<circle class="core" cx="641.1" cy="156.6" r="3.2" fill-opacity="0.45"><title>small-book core, run 1: 6.41 Mops/s</title></circle>
+<circle class="core" cx="635.2" cy="166.5" r="3.2" fill-opacity="0.45"><title>small-book core, run 2: 6.32 Mops/s</title></circle>
+<circle class="core" cx="634.8" cy="164.7" r="3.2" fill-opacity="0.45"><title>small-book core, run 3: 6.31 Mops/s</title></circle>
+<circle class="core" cx="629.8" cy="162.9" r="3.2" fill-opacity="0.45"><title>small-book core, run 4: 6.24 Mops/s</title></circle>
+<circle class="core" cx="635.5" cy="161.1" r="3.2" fill-opacity="0.45"><title>small-book core, run 5: 6.32 Mops/s</title></circle>
+<circle class="core" cx="641.9" cy="159.3" r="3.2" fill-opacity="0.45"><title>small-book core, run 6: 6.42 Mops/s</title></circle>
+<circle class="core" cx="627.0" cy="157.5" r="3.2" fill-opacity="0.45"><title>small-book core, run 7: 6.19 Mops/s</title></circle>
+<circle class="core" cx="630.2" cy="167.4" r="3.2" fill-opacity="0.45"><title>small-book core, run 8: 6.24 Mops/s</title></circle>
+<circle class="core" cx="631.3" cy="165.6" r="3.2" fill-opacity="0.45"><title>small-book core, run 9: 6.26 Mops/s</title></circle>
+<circle class="core" cx="632.9" cy="163.8" r="3.2" fill-opacity="0.45"><title>small-book core, run 10: 6.28 Mops/s</title></circle>
+<circle class="core" cx="624.4" cy="162.0" r="3.2" fill-opacity="0.45"><title>small-book core, run 11: 6.15 Mops/s</title></circle>
+<circle class="core" cx="631.0" cy="160.2" r="3.2" fill-opacity="0.45"><title>small-book core, run 12: 6.25 Mops/s</title></circle>
+<circle class="core" cx="572.1" cy="158.4" r="3.2" fill-opacity="0.45"><title>small-book core, run 13: 5.36 Mops/s</title></circle>
+<circle class="core" cx="624.5" cy="156.6" r="3.2" fill-opacity="0.45"><title>small-book core, run 14: 6.16 Mops/s</title></circle>
+<circle class="core" cx="629.5" cy="166.5" r="3.2" fill-opacity="0.45"><title>small-book core, run 15: 6.23 Mops/s</title></circle>
+<circle class="core" cx="624.0" cy="164.7" r="3.2" fill-opacity="0.45"><title>small-book core, run 16: 6.15 Mops/s</title></circle>
+<circle class="core" cx="636.9" cy="162.9" r="3.2" fill-opacity="0.45"><title>small-book core, run 17: 6.34 Mops/s</title></circle>
+<circle class="core" cx="641.8" cy="161.1" r="3.2" fill-opacity="0.45"><title>small-book core, run 18: 6.42 Mops/s</title></circle>
+<circle class="core" cx="645.7" cy="159.3" r="3.2" fill-opacity="0.45"><title>small-book core, run 19: 6.48 Mops/s</title></circle>
+<circle class="core" cx="629.6" cy="157.5" r="3.2" fill-opacity="0.45"><title>small-book core, run 20: 6.23 Mops/s</title></circle>
+<circle class="core" cx="627.2" cy="167.4" r="3.2" fill-opacity="0.45"><title>small-book core, run 21: 6.20 Mops/s</title></circle>
+<circle class="core" cx="639.1" cy="165.6" r="3.2" fill-opacity="0.45"><title>small-book core, run 22: 6.38 Mops/s</title></circle>
+<circle class="core" cx="640.3" cy="163.8" r="3.2" fill-opacity="0.45"><title>small-book core, run 23: 6.40 Mops/s</title></circle>
+<circle class="core" cx="631.5" cy="162.0" r="3.2" fill-opacity="0.45"><title>small-book core, run 24: 6.26 Mops/s</title></circle>
+<circle class="core" cx="623.8" cy="160.2" r="3.2" fill-opacity="0.45"><title>small-book core, run 25: 6.15 Mops/s</title></circle>
+<circle class="core" cx="637.9" cy="158.4" r="3.2" fill-opacity="0.45"><title>small-book core, run 26: 6.36 Mops/s</title></circle>
+<circle class="core" cx="600.8" cy="156.6" r="3.2" fill-opacity="0.45"><title>small-book core, run 27: 5.79 Mops/s</title></circle>
+<circle class="core" cx="615.9" cy="166.5" r="3.2" fill-opacity="0.45"><title>small-book core, run 28: 6.02 Mops/s</title></circle>
+<circle class="core" cx="643.8" cy="164.7" r="3.2" fill-opacity="0.45"><title>small-book core, run 29: 6.45 Mops/s</title></circle>
+<circle class="core" cx="637.0" cy="162.9" r="3.2" fill-opacity="0.45"><title>small-book core, run 30: 6.35 Mops/s</title></circle>
+<circle class="core" cx="625.4" cy="161.1" r="3.2" fill-opacity="0.45"><title>small-book core, run 31: 6.17 Mops/s</title></circle>
+<circle class="core" cx="609.3" cy="159.3" r="3.2" fill-opacity="0.45"><title>small-book core, run 32: 5.92 Mops/s</title></circle>
+<circle class="core" cx="608.0" cy="157.5" r="3.2" fill-opacity="0.45"><title>small-book core, run 33: 5.91 Mops/s</title></circle>
+<circle class="core" cx="630.9" cy="167.4" r="3.2" fill-opacity="0.45"><title>small-book core, run 34: 6.25 Mops/s</title></circle>
+<circle class="core" cx="623.2" cy="165.6" r="3.2" fill-opacity="0.45"><title>small-book core, run 35: 6.14 Mops/s</title></circle>
+<circle class="core" cx="639.9" cy="163.8" r="3.2" fill-opacity="0.45"><title>small-book core, run 36: 6.39 Mops/s</title></circle>
+<circle class="core" cx="636.1" cy="162.0" r="3.2" fill-opacity="0.45"><title>small-book core, run 37: 6.33 Mops/s</title></circle>
+<circle class="core" cx="635.8" cy="160.2" r="3.2" fill-opacity="0.45"><title>small-book core, run 38: 6.33 Mops/s</title></circle>
+<circle class="core" cx="629.4" cy="158.4" r="3.2" fill-opacity="0.45"><title>small-book core, run 39: 6.23 Mops/s</title></circle>
+<circle class="core" cx="639.3" cy="156.6" r="3.2" fill-opacity="0.45"><title>small-book core, run 40: 6.38 Mops/s</title></circle>
+<circle class="core" cx="642.6" cy="166.5" r="3.2" fill-opacity="0.45"><title>small-book core, run 41: 6.43 Mops/s</title></circle>
+<circle class="core" cx="629.8" cy="164.7" r="3.2" fill-opacity="0.45"><title>small-book core, run 42: 6.24 Mops/s</title></circle>
+<circle class="core" cx="620.1" cy="162.9" r="3.2" fill-opacity="0.45"><title>small-book core, run 43: 6.09 Mops/s</title></circle>
+<circle class="core" cx="629.3" cy="161.1" r="3.2" fill-opacity="0.45"><title>small-book core, run 44: 6.23 Mops/s</title></circle>
+<circle class="core" cx="637.7" cy="159.3" r="3.2" fill-opacity="0.45"><title>small-book core, run 45: 6.36 Mops/s</title></circle>
+<circle class="core" cx="623.9" cy="157.5" r="3.2" fill-opacity="0.45"><title>small-book core, run 46: 6.15 Mops/s</title></circle>
+<circle class="core" cx="638.3" cy="167.4" r="3.2" fill-opacity="0.45"><title>small-book core, run 47: 6.37 Mops/s</title></circle>
+<circle class="core" cx="632.3" cy="165.6" r="3.2" fill-opacity="0.45"><title>small-book core, run 48: 6.27 Mops/s</title></circle>
+<circle class="core" cx="634.2" cy="163.8" r="3.2" fill-opacity="0.45"><title>small-book core, run 49: 6.30 Mops/s</title></circle>
+<circle class="core" cx="534.9" cy="162.0" r="3.2" fill-opacity="0.45"><title>small-book core, run 50: 4.79 Mops/s</title></circle>
+<circle class="core" cx="622.4" cy="160.2" r="3.2" fill-opacity="0.45"><title>small-book core, run 51: 6.12 Mops/s</title></circle>
+<circle class="core" cx="542.2" cy="158.4" r="3.2" fill-opacity="0.45"><title>small-book core, run 52: 4.90 Mops/s</title></circle>
+<circle class="core" cx="644.2" cy="156.6" r="3.2" fill-opacity="0.45"><title>small-book core, run 53: 6.45 Mops/s</title></circle>
+<circle class="core" cx="642.9" cy="166.5" r="3.2" fill-opacity="0.45"><title>small-book core, run 54: 6.44 Mops/s</title></circle>
+<circle class="core" cx="619.8" cy="164.7" r="3.2" fill-opacity="0.45"><title>small-book core, run 55: 6.08 Mops/s</title></circle>
+<circle class="core" cx="635.8" cy="162.9" r="3.2" fill-opacity="0.45"><title>small-book core, run 56: 6.33 Mops/s</title></circle>
+<circle class="core" cx="635.5" cy="161.1" r="3.2" fill-opacity="0.45"><title>small-book core, run 57: 6.32 Mops/s</title></circle>
+<circle class="core" cx="630.8" cy="159.3" r="3.2" fill-opacity="0.45"><title>small-book core, run 58: 6.25 Mops/s</title></circle>
+<circle class="core" cx="644.0" cy="157.5" r="3.2" fill-opacity="0.45"><title>small-book core, run 59: 6.45 Mops/s</title></circle>
+<circle class="core" cx="642.7" cy="167.4" r="3.2" fill-opacity="0.45"><title>small-book core, run 60: 6.43 Mops/s</title></circle>
+<circle class="core" cx="634.1" cy="165.6" r="3.2" fill-opacity="0.45"><title>small-book core, run 61: 6.30 Mops/s</title></circle>
+<circle class="core" cx="640.9" cy="163.8" r="3.2" fill-opacity="0.45"><title>small-book core, run 62: 6.41 Mops/s</title></circle>
+<circle class="core" cx="643.3" cy="162.0" r="3.2" fill-opacity="0.45"><title>small-book core, run 63: 6.44 Mops/s</title></circle>
+<circle class="core" cx="622.3" cy="160.2" r="3.2" fill-opacity="0.45"><title>small-book core, run 64: 6.12 Mops/s</title></circle>
+<circle class="core" cx="629.2" cy="158.4" r="3.2" fill-opacity="0.45"><title>small-book core, run 65: 6.23 Mops/s</title></circle>
+<circle class="core" cx="615.7" cy="156.6" r="3.2" fill-opacity="0.45"><title>small-book core, run 66: 6.02 Mops/s</title></circle>
+<circle class="core" cx="633.3" cy="166.5" r="3.2" fill-opacity="0.45"><title>small-book core, run 67: 6.29 Mops/s</title></circle>
+<circle class="core" cx="640.4" cy="164.7" r="3.2" fill-opacity="0.45"><title>small-book core, run 68: 6.40 Mops/s</title></circle>
+<circle class="core" cx="643.8" cy="162.9" r="3.2" fill-opacity="0.45"><title>small-book core, run 69: 6.45 Mops/s</title></circle>
+<circle class="core" cx="644.5" cy="161.1" r="3.2" fill-opacity="0.45"><title>small-book core, run 70: 6.46 Mops/s</title></circle>
+<circle class="core" cx="646.5" cy="159.3" r="3.2" fill-opacity="0.45"><title>small-book core, run 71: 6.49 Mops/s</title></circle>
+<circle class="core" cx="642.9" cy="157.5" r="3.2" fill-opacity="0.45"><title>small-book core, run 72: 6.44 Mops/s</title></circle>
+<circle class="core" cx="645.5" cy="167.4" r="3.2" fill-opacity="0.45"><title>small-book core, run 73: 6.48 Mops/s</title></circle>
+<circle class="core" cx="640.8" cy="165.6" r="3.2" fill-opacity="0.45"><title>small-book core, run 74: 6.40 Mops/s</title></circle>
+<circle class="core" cx="642.8" cy="163.8" r="3.2" fill-opacity="0.45"><title>small-book core, run 75: 6.43 Mops/s</title></circle>
+<circle class="core" cx="628.9" cy="162.0" r="3.2" fill-opacity="0.45"><title>small-book core, run 76: 6.22 Mops/s</title></circle>
+<circle class="core" cx="643.9" cy="160.2" r="3.2" fill-opacity="0.45"><title>small-book core, run 77: 6.45 Mops/s</title></circle>
+<circle class="core" cx="629.0" cy="158.4" r="3.2" fill-opacity="0.45"><title>small-book core, run 78: 6.22 Mops/s</title></circle>
+<circle class="core" cx="634.2" cy="156.6" r="3.2" fill-opacity="0.45"><title>small-book core, run 79: 6.30 Mops/s</title></circle>
+<circle class="core" cx="644.8" cy="166.5" r="3.2" fill-opacity="0.45"><title>small-book core, run 80: 6.46 Mops/s</title></circle>
+<circle class="core" cx="610.6" cy="164.7" r="3.2" fill-opacity="0.45"><title>small-book core, run 81: 5.94 Mops/s</title></circle>
+<circle class="core" cx="602.8" cy="162.9" r="3.2" fill-opacity="0.45"><title>small-book core, run 82: 5.83 Mops/s</title></circle>
+<circle class="core" cx="626.6" cy="161.1" r="3.2" fill-opacity="0.45"><title>small-book core, run 83: 6.19 Mops/s</title></circle>
+<circle class="core" cx="633.1" cy="159.3" r="3.2" fill-opacity="0.45"><title>small-book core, run 84: 6.29 Mops/s</title></circle>
+<circle class="core" cx="637.9" cy="157.5" r="3.2" fill-opacity="0.45"><title>small-book core, run 85: 6.36 Mops/s</title></circle>
+<circle class="core" cx="644.5" cy="167.4" r="3.2" fill-opacity="0.45"><title>small-book core, run 86: 6.46 Mops/s</title></circle>
+<circle class="core" cx="635.0" cy="165.6" r="3.2" fill-opacity="0.45"><title>small-book core, run 87: 6.32 Mops/s</title></circle>
+<circle class="core" cx="635.0" cy="163.8" r="3.2" fill-opacity="0.45"><title>small-book core, run 88: 6.31 Mops/s</title></circle>
+<circle class="core" cx="644.9" cy="162.0" r="3.2" fill-opacity="0.45"><title>small-book core, run 89: 6.47 Mops/s</title></circle>
+<circle class="core" cx="637.0" cy="160.2" r="3.2" fill-opacity="0.45"><title>small-book core, run 90: 6.35 Mops/s</title></circle>
+<line class="median" x1="634.2" y1="153" x2="634.2" y2="171"><title>small-book core median: 6.30 Mops/s</title></line>
+<circle class="core" cx="714" cy="162" r="4"/>
+<text x="724.0" y="166.0" font-size="13" text-anchor="start" font-weight="600">6.30</text>
+<text x="760.0" y="166.0" class="t3" font-size="12" text-anchor="start">core</text>
+<text x="800.0" y="166.0" class="t2" font-size="13" text-anchor="start">4.4%</text>
+<text x="850.0" y="166.0" class="t2" font-size="13" text-anchor="start">4.79–6.49</text>
+<circle class="replay" cx="306.9" cy="180.6" r="3.2" fill-opacity="0.45"><title>small-book replay, run 1: 1.32 Mops/s</title></circle>
+<circle class="replay" cx="303.8" cy="190.5" r="3.2" fill-opacity="0.45"><title>small-book replay, run 2: 1.27 Mops/s</title></circle>
+<circle class="replay" cx="296.5" cy="188.7" r="3.2" fill-opacity="0.45"><title>small-book replay, run 3: 1.16 Mops/s</title></circle>
+<circle class="replay" cx="294.5" cy="186.9" r="3.2" fill-opacity="0.45"><title>small-book replay, run 4: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="304.0" cy="185.1" r="3.2" fill-opacity="0.45"><title>small-book replay, run 5: 1.28 Mops/s</title></circle>
+<circle class="replay" cx="303.2" cy="183.3" r="3.2" fill-opacity="0.45"><title>small-book replay, run 6: 1.27 Mops/s</title></circle>
+<circle class="replay" cx="307.4" cy="181.5" r="3.2" fill-opacity="0.45"><title>small-book replay, run 7: 1.33 Mops/s</title></circle>
+<circle class="replay" cx="304.8" cy="191.4" r="3.2" fill-opacity="0.45"><title>small-book replay, run 8: 1.29 Mops/s</title></circle>
+<circle class="replay" cx="305.7" cy="189.6" r="3.2" fill-opacity="0.45"><title>small-book replay, run 9: 1.30 Mops/s</title></circle>
+<circle class="replay" cx="295.3" cy="187.8" r="3.2" fill-opacity="0.45"><title>small-book replay, run 10: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="307.3" cy="186.0" r="3.2" fill-opacity="0.45"><title>small-book replay, run 11: 1.33 Mops/s</title></circle>
+<circle class="replay" cx="306.8" cy="184.2" r="3.2" fill-opacity="0.45"><title>small-book replay, run 12: 1.32 Mops/s</title></circle>
+<circle class="replay" cx="308.6" cy="182.4" r="3.2" fill-opacity="0.45"><title>small-book replay, run 13: 1.35 Mops/s</title></circle>
+<circle class="replay" cx="308.6" cy="180.6" r="3.2" fill-opacity="0.45"><title>small-book replay, run 14: 1.35 Mops/s</title></circle>
+<circle class="replay" cx="308.2" cy="190.5" r="3.2" fill-opacity="0.45"><title>small-book replay, run 15: 1.34 Mops/s</title></circle>
+<circle class="replay" cx="308.7" cy="188.7" r="3.2" fill-opacity="0.45"><title>small-book replay, run 16: 1.35 Mops/s</title></circle>
+<circle class="replay" cx="308.8" cy="186.9" r="3.2" fill-opacity="0.45"><title>small-book replay, run 17: 1.35 Mops/s</title></circle>
+<circle class="replay" cx="299.2" cy="185.1" r="3.2" fill-opacity="0.45"><title>small-book replay, run 18: 1.21 Mops/s</title></circle>
+<circle class="replay" cx="307.0" cy="183.3" r="3.2" fill-opacity="0.45"><title>small-book replay, run 19: 1.32 Mops/s</title></circle>
+<circle class="replay" cx="304.0" cy="181.5" r="3.2" fill-opacity="0.45"><title>small-book replay, run 20: 1.28 Mops/s</title></circle>
+<circle class="replay" cx="307.1" cy="191.4" r="3.2" fill-opacity="0.45"><title>small-book replay, run 21: 1.33 Mops/s</title></circle>
+<circle class="replay" cx="304.5" cy="189.6" r="3.2" fill-opacity="0.45"><title>small-book replay, run 22: 1.29 Mops/s</title></circle>
+<circle class="replay" cx="307.8" cy="187.8" r="3.2" fill-opacity="0.45"><title>small-book replay, run 23: 1.34 Mops/s</title></circle>
+<circle class="replay" cx="306.4" cy="186.0" r="3.2" fill-opacity="0.45"><title>small-book replay, run 24: 1.31 Mops/s</title></circle>
+<circle class="replay" cx="309.5" cy="184.2" r="3.2" fill-opacity="0.45"><title>small-book replay, run 25: 1.36 Mops/s</title></circle>
+<circle class="replay" cx="288.2" cy="182.4" r="3.2" fill-opacity="0.45"><title>small-book replay, run 26: 1.04 Mops/s</title></circle>
+<circle class="replay" cx="303.5" cy="180.6" r="3.2" fill-opacity="0.45"><title>small-book replay, run 27: 1.27 Mops/s</title></circle>
+<circle class="replay" cx="307.9" cy="190.5" r="3.2" fill-opacity="0.45"><title>small-book replay, run 28: 1.34 Mops/s</title></circle>
+<circle class="replay" cx="304.9" cy="188.7" r="3.2" fill-opacity="0.45"><title>small-book replay, run 29: 1.29 Mops/s</title></circle>
+<circle class="replay" cx="306.1" cy="186.9" r="3.2" fill-opacity="0.45"><title>small-book replay, run 30: 1.31 Mops/s</title></circle>
+<circle class="replay" cx="308.6" cy="185.1" r="3.2" fill-opacity="0.45"><title>small-book replay, run 31: 1.35 Mops/s</title></circle>
+<circle class="replay" cx="308.1" cy="183.3" r="3.2" fill-opacity="0.45"><title>small-book replay, run 32: 1.34 Mops/s</title></circle>
+<circle class="replay" cx="307.8" cy="181.5" r="3.2" fill-opacity="0.45"><title>small-book replay, run 33: 1.34 Mops/s</title></circle>
+<circle class="replay" cx="307.9" cy="191.4" r="3.2" fill-opacity="0.45"><title>small-book replay, run 34: 1.34 Mops/s</title></circle>
+<circle class="replay" cx="308.5" cy="189.6" r="3.2" fill-opacity="0.45"><title>small-book replay, run 35: 1.35 Mops/s</title></circle>
+<circle class="replay" cx="300.6" cy="187.8" r="3.2" fill-opacity="0.45"><title>small-book replay, run 36: 1.23 Mops/s</title></circle>
+<circle class="replay" cx="305.4" cy="186.0" r="3.2" fill-opacity="0.45"><title>small-book replay, run 37: 1.30 Mops/s</title></circle>
+<circle class="replay" cx="307.8" cy="184.2" r="3.2" fill-opacity="0.45"><title>small-book replay, run 38: 1.34 Mops/s</title></circle>
+<circle class="replay" cx="307.1" cy="182.4" r="3.2" fill-opacity="0.45"><title>small-book replay, run 39: 1.33 Mops/s</title></circle>
+<circle class="replay" cx="309.2" cy="180.6" r="3.2" fill-opacity="0.45"><title>small-book replay, run 40: 1.36 Mops/s</title></circle>
+<circle class="replay" cx="308.2" cy="190.5" r="3.2" fill-opacity="0.45"><title>small-book replay, run 41: 1.34 Mops/s</title></circle>
+<circle class="replay" cx="308.8" cy="188.7" r="3.2" fill-opacity="0.45"><title>small-book replay, run 42: 1.35 Mops/s</title></circle>
+<circle class="replay" cx="307.3" cy="186.9" r="3.2" fill-opacity="0.45"><title>small-book replay, run 43: 1.33 Mops/s</title></circle>
+<circle class="replay" cx="308.9" cy="185.1" r="3.2" fill-opacity="0.45"><title>small-book replay, run 44: 1.35 Mops/s</title></circle>
+<circle class="replay" cx="308.2" cy="183.3" r="3.2" fill-opacity="0.45"><title>small-book replay, run 45: 1.34 Mops/s</title></circle>
+<circle class="replay" cx="308.6" cy="181.5" r="3.2" fill-opacity="0.45"><title>small-book replay, run 46: 1.35 Mops/s</title></circle>
+<circle class="replay" cx="308.2" cy="191.4" r="3.2" fill-opacity="0.45"><title>small-book replay, run 47: 1.34 Mops/s</title></circle>
+<circle class="replay" cx="304.8" cy="189.6" r="3.2" fill-opacity="0.45"><title>small-book replay, run 48: 1.29 Mops/s</title></circle>
+<circle class="replay" cx="306.7" cy="187.8" r="3.2" fill-opacity="0.45"><title>small-book replay, run 49: 1.32 Mops/s</title></circle>
+<circle class="replay" cx="308.8" cy="186.0" r="3.2" fill-opacity="0.45"><title>small-book replay, run 50: 1.35 Mops/s</title></circle>
+<circle class="replay" cx="307.2" cy="184.2" r="3.2" fill-opacity="0.45"><title>small-book replay, run 51: 1.33 Mops/s</title></circle>
+<circle class="replay" cx="307.1" cy="182.4" r="3.2" fill-opacity="0.45"><title>small-book replay, run 52: 1.33 Mops/s</title></circle>
+<circle class="replay" cx="308.6" cy="180.6" r="3.2" fill-opacity="0.45"><title>small-book replay, run 53: 1.35 Mops/s</title></circle>
+<circle class="replay" cx="309.3" cy="190.5" r="3.2" fill-opacity="0.45"><title>small-book replay, run 54: 1.36 Mops/s</title></circle>
+<circle class="replay" cx="299.3" cy="188.7" r="3.2" fill-opacity="0.45"><title>small-book replay, run 55: 1.21 Mops/s</title></circle>
+<circle class="replay" cx="306.7" cy="186.9" r="3.2" fill-opacity="0.45"><title>small-book replay, run 56: 1.32 Mops/s</title></circle>
+<circle class="replay" cx="308.3" cy="185.1" r="3.2" fill-opacity="0.45"><title>small-book replay, run 57: 1.34 Mops/s</title></circle>
+<circle class="replay" cx="307.6" cy="183.3" r="3.2" fill-opacity="0.45"><title>small-book replay, run 58: 1.33 Mops/s</title></circle>
+<circle class="replay" cx="309.5" cy="181.5" r="3.2" fill-opacity="0.45"><title>small-book replay, run 59: 1.36 Mops/s</title></circle>
+<circle class="replay" cx="307.6" cy="191.4" r="3.2" fill-opacity="0.45"><title>small-book replay, run 60: 1.33 Mops/s</title></circle>
+<circle class="replay" cx="308.8" cy="189.6" r="3.2" fill-opacity="0.45"><title>small-book replay, run 61: 1.35 Mops/s</title></circle>
+<circle class="replay" cx="307.4" cy="187.8" r="3.2" fill-opacity="0.45"><title>small-book replay, run 62: 1.33 Mops/s</title></circle>
+<circle class="replay" cx="307.0" cy="186.0" r="3.2" fill-opacity="0.45"><title>small-book replay, run 63: 1.32 Mops/s</title></circle>
+<circle class="replay" cx="308.8" cy="184.2" r="3.2" fill-opacity="0.45"><title>small-book replay, run 64: 1.35 Mops/s</title></circle>
+<circle class="replay" cx="309.4" cy="182.4" r="3.2" fill-opacity="0.45"><title>small-book replay, run 65: 1.36 Mops/s</title></circle>
+<circle class="replay" cx="301.3" cy="180.6" r="3.2" fill-opacity="0.45"><title>small-book replay, run 66: 1.24 Mops/s</title></circle>
+<circle class="replay" cx="304.1" cy="190.5" r="3.2" fill-opacity="0.45"><title>small-book replay, run 67: 1.28 Mops/s</title></circle>
+<circle class="replay" cx="305.5" cy="188.7" r="3.2" fill-opacity="0.45"><title>small-book replay, run 68: 1.30 Mops/s</title></circle>
+<circle class="replay" cx="306.2" cy="186.9" r="3.2" fill-opacity="0.45"><title>small-book replay, run 69: 1.31 Mops/s</title></circle>
+<circle class="replay" cx="303.4" cy="185.1" r="3.2" fill-opacity="0.45"><title>small-book replay, run 70: 1.27 Mops/s</title></circle>
+<circle class="replay" cx="297.1" cy="183.3" r="3.2" fill-opacity="0.45"><title>small-book replay, run 71: 1.17 Mops/s</title></circle>
+<circle class="replay" cx="305.5" cy="181.5" r="3.2" fill-opacity="0.45"><title>small-book replay, run 72: 1.30 Mops/s</title></circle>
+<circle class="replay" cx="307.2" cy="191.4" r="3.2" fill-opacity="0.45"><title>small-book replay, run 73: 1.33 Mops/s</title></circle>
+<circle class="replay" cx="309.0" cy="189.6" r="3.2" fill-opacity="0.45"><title>small-book replay, run 74: 1.35 Mops/s</title></circle>
+<circle class="replay" cx="308.5" cy="187.8" r="3.2" fill-opacity="0.45"><title>small-book replay, run 75: 1.35 Mops/s</title></circle>
+<circle class="replay" cx="302.2" cy="186.0" r="3.2" fill-opacity="0.45"><title>small-book replay, run 76: 1.25 Mops/s</title></circle>
+<circle class="replay" cx="301.7" cy="184.2" r="3.2" fill-opacity="0.45"><title>small-book replay, run 77: 1.24 Mops/s</title></circle>
+<circle class="replay" cx="298.9" cy="182.4" r="3.2" fill-opacity="0.45"><title>small-book replay, run 78: 1.20 Mops/s</title></circle>
+<circle class="replay" cx="299.7" cy="180.6" r="3.2" fill-opacity="0.45"><title>small-book replay, run 79: 1.21 Mops/s</title></circle>
+<circle class="replay" cx="301.4" cy="190.5" r="3.2" fill-opacity="0.45"><title>small-book replay, run 80: 1.24 Mops/s</title></circle>
+<circle class="replay" cx="300.0" cy="188.7" r="3.2" fill-opacity="0.45"><title>small-book replay, run 81: 1.22 Mops/s</title></circle>
+<circle class="replay" cx="300.4" cy="186.9" r="3.2" fill-opacity="0.45"><title>small-book replay, run 82: 1.22 Mops/s</title></circle>
+<circle class="replay" cx="306.7" cy="185.1" r="3.2" fill-opacity="0.45"><title>small-book replay, run 83: 1.32 Mops/s</title></circle>
+<circle class="replay" cx="307.1" cy="183.3" r="3.2" fill-opacity="0.45"><title>small-book replay, run 84: 1.32 Mops/s</title></circle>
+<circle class="replay" cx="304.1" cy="181.5" r="3.2" fill-opacity="0.45"><title>small-book replay, run 85: 1.28 Mops/s</title></circle>
+<circle class="replay" cx="307.0" cy="191.4" r="3.2" fill-opacity="0.45"><title>small-book replay, run 86: 1.32 Mops/s</title></circle>
+<circle class="replay" cx="302.7" cy="189.6" r="3.2" fill-opacity="0.45"><title>small-book replay, run 87: 1.26 Mops/s</title></circle>
+<circle class="replay" cx="302.9" cy="187.8" r="3.2" fill-opacity="0.45"><title>small-book replay, run 88: 1.26 Mops/s</title></circle>
+<circle class="replay" cx="303.1" cy="186.0" r="3.2" fill-opacity="0.45"><title>small-book replay, run 89: 1.26 Mops/s</title></circle>
+<circle class="replay" cx="296.9" cy="184.2" r="3.2" fill-opacity="0.45"><title>small-book replay, run 90: 1.17 Mops/s</title></circle>
+<line class="median" x1="307.0" y1="177" x2="307.0" y2="195"><title>small-book replay median: 1.32 Mops/s</title></line>
+<circle class="replay" cx="714" cy="186" r="4"/>
+<text x="724.0" y="190.0" font-size="13" text-anchor="start" font-weight="600">1.32</text>
+<text x="760.0" y="190.0" class="t3" font-size="12" text-anchor="start">replay</text>
+<text x="800.0" y="190.0" class="t2" font-size="13" text-anchor="start">4.7%</text>
+<text x="850.0" y="190.0" class="t2" font-size="13" text-anchor="start">1.04–1.36</text>
+<text x="24.0" y="232.0" class="mono" font-size="13" text-anchor="start" font-weight="600">deep-book</text>
+<text x="24.0" y="250.0" class="t3" font-size="12" text-anchor="start">ends with 99,555 orders</text>
+<text x="24.0" y="265.0" class="t3" font-size="12" text-anchor="start">on 2,000 levels</text>
+<line class="axis" x1="24" y1="206" x2="936" y2="206"/>
+<circle class="core" cx="359.6" cy="222.6" r="3.2" fill-opacity="0.45"><title>deep-book core, run 1: 2.12 Mops/s</title></circle>
+<circle class="core" cx="371.0" cy="232.5" r="3.2" fill-opacity="0.45"><title>deep-book core, run 2: 2.30 Mops/s</title></circle>
+<circle class="core" cx="379.6" cy="230.7" r="3.2" fill-opacity="0.45"><title>deep-book core, run 3: 2.43 Mops/s</title></circle>
+<circle class="core" cx="374.8" cy="228.9" r="3.2" fill-opacity="0.45"><title>deep-book core, run 4: 2.36 Mops/s</title></circle>
+<circle class="core" cx="359.0" cy="227.1" r="3.2" fill-opacity="0.45"><title>deep-book core, run 5: 2.12 Mops/s</title></circle>
+<circle class="core" cx="360.9" cy="225.3" r="3.2" fill-opacity="0.45"><title>deep-book core, run 6: 2.14 Mops/s</title></circle>
+<circle class="core" cx="353.0" cy="223.5" r="3.2" fill-opacity="0.45"><title>deep-book core, run 7: 2.02 Mops/s</title></circle>
+<circle class="core" cx="372.4" cy="233.4" r="3.2" fill-opacity="0.45"><title>deep-book core, run 8: 2.32 Mops/s</title></circle>
+<circle class="core" cx="386.7" cy="231.6" r="3.2" fill-opacity="0.45"><title>deep-book core, run 9: 2.54 Mops/s</title></circle>
+<circle class="core" cx="362.0" cy="229.8" r="3.2" fill-opacity="0.45"><title>deep-book core, run 10: 2.16 Mops/s</title></circle>
+<circle class="core" cx="338.7" cy="228.0" r="3.2" fill-opacity="0.45"><title>deep-book core, run 11: 1.81 Mops/s</title></circle>
+<circle class="core" cx="367.2" cy="226.2" r="3.2" fill-opacity="0.45"><title>deep-book core, run 12: 2.24 Mops/s</title></circle>
+<circle class="core" cx="308.4" cy="224.4" r="3.2" fill-opacity="0.45"><title>deep-book core, run 13: 1.34 Mops/s</title></circle>
+<circle class="core" cx="335.9" cy="222.6" r="3.2" fill-opacity="0.45"><title>deep-book core, run 14: 1.76 Mops/s</title></circle>
+<circle class="core" cx="334.1" cy="232.5" r="3.2" fill-opacity="0.45"><title>deep-book core, run 15: 1.74 Mops/s</title></circle>
+<circle class="core" cx="339.4" cy="230.7" r="3.2" fill-opacity="0.45"><title>deep-book core, run 16: 1.82 Mops/s</title></circle>
+<circle class="core" cx="351.0" cy="228.9" r="3.2" fill-opacity="0.45"><title>deep-book core, run 17: 1.99 Mops/s</title></circle>
+<circle class="core" cx="337.0" cy="227.1" r="3.2" fill-opacity="0.45"><title>deep-book core, run 18: 1.78 Mops/s</title></circle>
+<circle class="core" cx="349.7" cy="225.3" r="3.2" fill-opacity="0.45"><title>deep-book core, run 19: 1.97 Mops/s</title></circle>
+<circle class="core" cx="340.3" cy="223.5" r="3.2" fill-opacity="0.45"><title>deep-book core, run 20: 1.83 Mops/s</title></circle>
+<circle class="core" cx="342.4" cy="233.4" r="3.2" fill-opacity="0.45"><title>deep-book core, run 21: 1.86 Mops/s</title></circle>
+<circle class="core" cx="336.3" cy="231.6" r="3.2" fill-opacity="0.45"><title>deep-book core, run 22: 1.77 Mops/s</title></circle>
+<circle class="core" cx="337.4" cy="229.8" r="3.2" fill-opacity="0.45"><title>deep-book core, run 23: 1.79 Mops/s</title></circle>
+<circle class="core" cx="354.8" cy="228.0" r="3.2" fill-opacity="0.45"><title>deep-book core, run 24: 2.05 Mops/s</title></circle>
+<circle class="core" cx="332.5" cy="226.2" r="3.2" fill-opacity="0.45"><title>deep-book core, run 25: 1.71 Mops/s</title></circle>
+<circle class="core" cx="336.5" cy="224.4" r="3.2" fill-opacity="0.45"><title>deep-book core, run 26: 1.77 Mops/s</title></circle>
+<circle class="core" cx="342.1" cy="222.6" r="3.2" fill-opacity="0.45"><title>deep-book core, run 27: 1.86 Mops/s</title></circle>
+<circle class="core" cx="340.3" cy="232.5" r="3.2" fill-opacity="0.45"><title>deep-book core, run 28: 1.83 Mops/s</title></circle>
+<circle class="core" cx="341.2" cy="230.7" r="3.2" fill-opacity="0.45"><title>deep-book core, run 29: 1.84 Mops/s</title></circle>
+<circle class="core" cx="346.7" cy="228.9" r="3.2" fill-opacity="0.45"><title>deep-book core, run 30: 1.93 Mops/s</title></circle>
+<circle class="core" cx="370.0" cy="227.1" r="3.2" fill-opacity="0.45"><title>deep-book core, run 31: 2.28 Mops/s</title></circle>
+<circle class="core" cx="372.0" cy="225.3" r="3.2" fill-opacity="0.45"><title>deep-book core, run 32: 2.31 Mops/s</title></circle>
+<circle class="core" cx="381.0" cy="223.5" r="3.2" fill-opacity="0.45"><title>deep-book core, run 33: 2.45 Mops/s</title></circle>
+<circle class="core" cx="358.1" cy="233.4" r="3.2" fill-opacity="0.45"><title>deep-book core, run 34: 2.10 Mops/s</title></circle>
+<circle class="core" cx="378.9" cy="231.6" r="3.2" fill-opacity="0.45"><title>deep-book core, run 35: 2.42 Mops/s</title></circle>
+<circle class="core" cx="368.2" cy="229.8" r="3.2" fill-opacity="0.45"><title>deep-book core, run 36: 2.26 Mops/s</title></circle>
+<circle class="core" cx="372.8" cy="228.0" r="3.2" fill-opacity="0.45"><title>deep-book core, run 37: 2.32 Mops/s</title></circle>
+<circle class="core" cx="363.3" cy="226.2" r="3.2" fill-opacity="0.45"><title>deep-book core, run 38: 2.18 Mops/s</title></circle>
+<circle class="core" cx="371.1" cy="224.4" r="3.2" fill-opacity="0.45"><title>deep-book core, run 39: 2.30 Mops/s</title></circle>
+<circle class="core" cx="361.6" cy="222.6" r="3.2" fill-opacity="0.45"><title>deep-book core, run 40: 2.15 Mops/s</title></circle>
+<circle class="core" cx="371.8" cy="232.5" r="3.2" fill-opacity="0.45"><title>deep-book core, run 41: 2.31 Mops/s</title></circle>
+<circle class="core" cx="363.8" cy="230.7" r="3.2" fill-opacity="0.45"><title>deep-book core, run 42: 2.19 Mops/s</title></circle>
+<circle class="core" cx="365.5" cy="228.9" r="3.2" fill-opacity="0.45"><title>deep-book core, run 43: 2.21 Mops/s</title></circle>
+<circle class="core" cx="374.4" cy="227.1" r="3.2" fill-opacity="0.45"><title>deep-book core, run 44: 2.35 Mops/s</title></circle>
+<circle class="core" cx="374.5" cy="225.3" r="3.2" fill-opacity="0.45"><title>deep-book core, run 45: 2.35 Mops/s</title></circle>
+<circle class="core" cx="376.8" cy="223.5" r="3.2" fill-opacity="0.45"><title>deep-book core, run 46: 2.39 Mops/s</title></circle>
+<circle class="core" cx="376.4" cy="233.4" r="3.2" fill-opacity="0.45"><title>deep-book core, run 47: 2.38 Mops/s</title></circle>
+<circle class="core" cx="371.0" cy="231.6" r="3.2" fill-opacity="0.45"><title>deep-book core, run 48: 2.30 Mops/s</title></circle>
+<circle class="core" cx="368.6" cy="229.8" r="3.2" fill-opacity="0.45"><title>deep-book core, run 49: 2.26 Mops/s</title></circle>
+<circle class="core" cx="372.9" cy="228.0" r="3.2" fill-opacity="0.45"><title>deep-book core, run 50: 2.33 Mops/s</title></circle>
+<circle class="core" cx="369.2" cy="226.2" r="3.2" fill-opacity="0.45"><title>deep-book core, run 51: 2.27 Mops/s</title></circle>
+<circle class="core" cx="370.9" cy="224.4" r="3.2" fill-opacity="0.45"><title>deep-book core, run 52: 2.30 Mops/s</title></circle>
+<circle class="core" cx="368.5" cy="222.6" r="3.2" fill-opacity="0.45"><title>deep-book core, run 53: 2.26 Mops/s</title></circle>
+<circle class="core" cx="367.3" cy="232.5" r="3.2" fill-opacity="0.45"><title>deep-book core, run 54: 2.24 Mops/s</title></circle>
+<circle class="core" cx="358.5" cy="230.7" r="3.2" fill-opacity="0.45"><title>deep-book core, run 55: 2.11 Mops/s</title></circle>
+<circle class="core" cx="374.4" cy="228.9" r="3.2" fill-opacity="0.45"><title>deep-book core, run 56: 2.35 Mops/s</title></circle>
+<circle class="core" cx="357.4" cy="227.1" r="3.2" fill-opacity="0.45"><title>deep-book core, run 57: 2.09 Mops/s</title></circle>
+<circle class="core" cx="367.8" cy="225.3" r="3.2" fill-opacity="0.45"><title>deep-book core, run 58: 2.25 Mops/s</title></circle>
+<circle class="core" cx="368.6" cy="223.5" r="3.2" fill-opacity="0.45"><title>deep-book core, run 59: 2.26 Mops/s</title></circle>
+<circle class="core" cx="361.9" cy="233.4" r="3.2" fill-opacity="0.45"><title>deep-book core, run 60: 2.16 Mops/s</title></circle>
+<circle class="core" cx="349.0" cy="231.6" r="3.2" fill-opacity="0.45"><title>deep-book core, run 61: 1.96 Mops/s</title></circle>
+<circle class="core" cx="356.9" cy="229.8" r="3.2" fill-opacity="0.45"><title>deep-book core, run 62: 2.08 Mops/s</title></circle>
+<circle class="core" cx="371.2" cy="228.0" r="3.2" fill-opacity="0.45"><title>deep-book core, run 63: 2.30 Mops/s</title></circle>
+<circle class="core" cx="379.1" cy="226.2" r="3.2" fill-opacity="0.45"><title>deep-book core, run 64: 2.42 Mops/s</title></circle>
+<circle class="core" cx="352.1" cy="224.4" r="3.2" fill-opacity="0.45"><title>deep-book core, run 65: 2.01 Mops/s</title></circle>
+<circle class="core" cx="333.2" cy="222.6" r="3.2" fill-opacity="0.45"><title>deep-book core, run 66: 1.72 Mops/s</title></circle>
+<circle class="core" cx="358.9" cy="232.5" r="3.2" fill-opacity="0.45"><title>deep-book core, run 67: 2.11 Mops/s</title></circle>
+<circle class="core" cx="387.0" cy="230.7" r="3.2" fill-opacity="0.45"><title>deep-book core, run 68: 2.54 Mops/s</title></circle>
+<circle class="core" cx="353.1" cy="228.9" r="3.2" fill-opacity="0.45"><title>deep-book core, run 69: 2.03 Mops/s</title></circle>
+<circle class="core" cx="374.6" cy="227.1" r="3.2" fill-opacity="0.45"><title>deep-book core, run 70: 2.35 Mops/s</title></circle>
+<circle class="core" cx="360.6" cy="225.3" r="3.2" fill-opacity="0.45"><title>deep-book core, run 71: 2.14 Mops/s</title></circle>
+<circle class="core" cx="350.6" cy="223.5" r="3.2" fill-opacity="0.45"><title>deep-book core, run 72: 1.99 Mops/s</title></circle>
+<circle class="core" cx="362.5" cy="233.4" r="3.2" fill-opacity="0.45"><title>deep-book core, run 73: 2.17 Mops/s</title></circle>
+<circle class="core" cx="363.3" cy="231.6" r="3.2" fill-opacity="0.45"><title>deep-book core, run 74: 2.18 Mops/s</title></circle>
+<circle class="core" cx="385.7" cy="229.8" r="3.2" fill-opacity="0.45"><title>deep-book core, run 75: 2.52 Mops/s</title></circle>
+<circle class="core" cx="361.5" cy="228.0" r="3.2" fill-opacity="0.45"><title>deep-book core, run 76: 2.15 Mops/s</title></circle>
+<circle class="core" cx="376.1" cy="226.2" r="3.2" fill-opacity="0.45"><title>deep-book core, run 77: 2.38 Mops/s</title></circle>
+<circle class="core" cx="375.1" cy="224.4" r="3.2" fill-opacity="0.45"><title>deep-book core, run 78: 2.36 Mops/s</title></circle>
+<circle class="core" cx="363.6" cy="222.6" r="3.2" fill-opacity="0.45"><title>deep-book core, run 79: 2.18 Mops/s</title></circle>
+<circle class="core" cx="385.0" cy="232.5" r="3.2" fill-opacity="0.45"><title>deep-book core, run 80: 2.51 Mops/s</title></circle>
+<circle class="core" cx="377.4" cy="230.7" r="3.2" fill-opacity="0.45"><title>deep-book core, run 81: 2.40 Mops/s</title></circle>
+<circle class="core" cx="377.4" cy="228.9" r="3.2" fill-opacity="0.45"><title>deep-book core, run 82: 2.39 Mops/s</title></circle>
+<circle class="core" cx="387.6" cy="227.1" r="3.2" fill-opacity="0.45"><title>deep-book core, run 83: 2.55 Mops/s</title></circle>
+<circle class="core" cx="375.3" cy="225.3" r="3.2" fill-opacity="0.45"><title>deep-book core, run 84: 2.36 Mops/s</title></circle>
+<circle class="core" cx="371.2" cy="223.5" r="3.2" fill-opacity="0.45"><title>deep-book core, run 85: 2.30 Mops/s</title></circle>
+<circle class="core" cx="378.7" cy="233.4" r="3.2" fill-opacity="0.45"><title>deep-book core, run 86: 2.41 Mops/s</title></circle>
+<circle class="core" cx="394.5" cy="231.6" r="3.2" fill-opacity="0.45"><title>deep-book core, run 87: 2.65 Mops/s</title></circle>
+<circle class="core" cx="370.2" cy="229.8" r="3.2" fill-opacity="0.45"><title>deep-book core, run 88: 2.29 Mops/s</title></circle>
+<circle class="core" cx="380.9" cy="228.0" r="3.2" fill-opacity="0.45"><title>deep-book core, run 89: 2.45 Mops/s</title></circle>
+<circle class="core" cx="389.9" cy="226.2" r="3.2" fill-opacity="0.45"><title>deep-book core, run 90: 2.59 Mops/s</title></circle>
+<line class="median" x1="367.3" y1="219" x2="367.3" y2="237"><title>deep-book core median: 2.24 Mops/s</title></line>
+<circle class="core" cx="714" cy="228" r="4"/>
+<text x="724.0" y="232.0" font-size="13" text-anchor="start" font-weight="600">2.24</text>
+<text x="760.0" y="232.0" class="t3" font-size="12" text-anchor="start">core</text>
+<text x="800.0" y="232.0" class="t2" font-size="13" text-anchor="start">11.3%</text>
+<text x="850.0" y="232.0" class="t2" font-size="13" text-anchor="start">1.34–2.65</text>
+<circle class="replay" cx="281.5" cy="246.6" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 1: 0.94 Mops/s</title></circle>
+<circle class="replay" cx="282.5" cy="256.5" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 2: 0.95 Mops/s</title></circle>
+<circle class="replay" cx="277.7" cy="254.7" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 3: 0.88 Mops/s</title></circle>
+<circle class="replay" cx="281.7" cy="252.9" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 4: 0.94 Mops/s</title></circle>
+<circle class="replay" cx="277.8" cy="251.1" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 5: 0.88 Mops/s</title></circle>
+<circle class="replay" cx="280.4" cy="249.3" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 6: 0.92 Mops/s</title></circle>
+<circle class="replay" cx="280.4" cy="247.5" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 7: 0.92 Mops/s</title></circle>
+<circle class="replay" cx="280.6" cy="257.4" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 8: 0.92 Mops/s</title></circle>
+<circle class="replay" cx="281.3" cy="255.6" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 9: 0.93 Mops/s</title></circle>
+<circle class="replay" cx="281.7" cy="253.8" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 10: 0.94 Mops/s</title></circle>
+<circle class="replay" cx="279.8" cy="252.0" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 11: 0.91 Mops/s</title></circle>
+<circle class="replay" cx="275.6" cy="250.2" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 12: 0.85 Mops/s</title></circle>
+<circle class="replay" cx="274.4" cy="248.4" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 13: 0.83 Mops/s</title></circle>
+<circle class="replay" cx="269.6" cy="246.6" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 14: 0.76 Mops/s</title></circle>
+<circle class="replay" cx="278.5" cy="256.5" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 15: 0.89 Mops/s</title></circle>
+<circle class="replay" cx="279.9" cy="254.7" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 16: 0.91 Mops/s</title></circle>
+<circle class="replay" cx="279.9" cy="252.9" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 17: 0.91 Mops/s</title></circle>
+<circle class="replay" cx="279.3" cy="251.1" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 18: 0.90 Mops/s</title></circle>
+<circle class="replay" cx="278.0" cy="249.3" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 19: 0.88 Mops/s</title></circle>
+<circle class="replay" cx="280.3" cy="247.5" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 20: 0.92 Mops/s</title></circle>
+<circle class="replay" cx="275.5" cy="257.4" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 21: 0.84 Mops/s</title></circle>
+<circle class="replay" cx="279.7" cy="255.6" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 22: 0.91 Mops/s</title></circle>
+<circle class="replay" cx="279.0" cy="253.8" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 23: 0.90 Mops/s</title></circle>
+<circle class="replay" cx="279.5" cy="252.0" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 24: 0.91 Mops/s</title></circle>
+<circle class="replay" cx="269.9" cy="250.2" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 25: 0.76 Mops/s</title></circle>
+<circle class="replay" cx="274.4" cy="248.4" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 26: 0.83 Mops/s</title></circle>
+<circle class="replay" cx="276.8" cy="246.6" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 27: 0.87 Mops/s</title></circle>
+<circle class="replay" cx="276.6" cy="256.5" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 28: 0.86 Mops/s</title></circle>
+<circle class="replay" cx="278.7" cy="254.7" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 29: 0.89 Mops/s</title></circle>
+<circle class="replay" cx="278.3" cy="252.9" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 30: 0.89 Mops/s</title></circle>
+<circle class="replay" cx="279.5" cy="251.1" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 31: 0.91 Mops/s</title></circle>
+<circle class="replay" cx="270.5" cy="249.3" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 32: 0.77 Mops/s</title></circle>
+<circle class="replay" cx="277.5" cy="247.5" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 33: 0.88 Mops/s</title></circle>
+<circle class="replay" cx="277.1" cy="257.4" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 34: 0.87 Mops/s</title></circle>
+<circle class="replay" cx="271.8" cy="255.6" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 35: 0.79 Mops/s</title></circle>
+<circle class="replay" cx="269.7" cy="253.8" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 36: 0.76 Mops/s</title></circle>
+<circle class="replay" cx="279.4" cy="252.0" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 37: 0.90 Mops/s</title></circle>
+<circle class="replay" cx="277.6" cy="250.2" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 38: 0.88 Mops/s</title></circle>
+<circle class="replay" cx="278.7" cy="248.4" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 39: 0.89 Mops/s</title></circle>
+<circle class="replay" cx="277.5" cy="246.6" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 40: 0.88 Mops/s</title></circle>
+<circle class="replay" cx="278.7" cy="256.5" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 41: 0.89 Mops/s</title></circle>
+<circle class="replay" cx="280.0" cy="254.7" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 42: 0.91 Mops/s</title></circle>
+<circle class="replay" cx="281.8" cy="252.9" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 43: 0.94 Mops/s</title></circle>
+<circle class="replay" cx="280.8" cy="251.1" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 44: 0.93 Mops/s</title></circle>
+<circle class="replay" cx="278.7" cy="249.3" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 45: 0.89 Mops/s</title></circle>
+<circle class="replay" cx="279.9" cy="247.5" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 46: 0.91 Mops/s</title></circle>
+<circle class="replay" cx="279.1" cy="257.4" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 47: 0.90 Mops/s</title></circle>
+<circle class="replay" cx="280.1" cy="255.6" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 48: 0.91 Mops/s</title></circle>
+<circle class="replay" cx="277.9" cy="253.8" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 49: 0.88 Mops/s</title></circle>
+<circle class="replay" cx="277.3" cy="252.0" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 50: 0.87 Mops/s</title></circle>
+<circle class="replay" cx="279.4" cy="250.2" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 51: 0.90 Mops/s</title></circle>
+<circle class="replay" cx="279.7" cy="248.4" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 52: 0.91 Mops/s</title></circle>
+<circle class="replay" cx="276.7" cy="246.6" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 53: 0.86 Mops/s</title></circle>
+<circle class="replay" cx="276.6" cy="256.5" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 54: 0.86 Mops/s</title></circle>
+<circle class="replay" cx="278.9" cy="254.7" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 55: 0.90 Mops/s</title></circle>
+<circle class="replay" cx="281.7" cy="252.9" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 56: 0.94 Mops/s</title></circle>
+<circle class="replay" cx="277.8" cy="251.1" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 57: 0.88 Mops/s</title></circle>
+<circle class="replay" cx="280.8" cy="249.3" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 58: 0.92 Mops/s</title></circle>
+<circle class="replay" cx="274.4" cy="247.5" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 59: 0.83 Mops/s</title></circle>
+<circle class="replay" cx="278.4" cy="257.4" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 60: 0.89 Mops/s</title></circle>
+<circle class="replay" cx="284.3" cy="255.6" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 61: 0.98 Mops/s</title></circle>
+<circle class="replay" cx="283.6" cy="253.8" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 62: 0.97 Mops/s</title></circle>
+<circle class="replay" cx="284.4" cy="252.0" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 63: 0.98 Mops/s</title></circle>
+<circle class="replay" cx="282.3" cy="250.2" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 64: 0.95 Mops/s</title></circle>
+<circle class="replay" cx="283.3" cy="248.4" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 65: 0.96 Mops/s</title></circle>
+<circle class="replay" cx="283.2" cy="246.6" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 66: 0.96 Mops/s</title></circle>
+<circle class="replay" cx="283.9" cy="256.5" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 67: 0.97 Mops/s</title></circle>
+<circle class="replay" cx="282.5" cy="254.7" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 68: 0.95 Mops/s</title></circle>
+<circle class="replay" cx="282.7" cy="252.9" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 69: 0.95 Mops/s</title></circle>
+<circle class="replay" cx="283.0" cy="251.1" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 70: 0.96 Mops/s</title></circle>
+<circle class="replay" cx="280.7" cy="249.3" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 71: 0.92 Mops/s</title></circle>
+<circle class="replay" cx="284.4" cy="247.5" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 72: 0.98 Mops/s</title></circle>
+<circle class="replay" cx="283.3" cy="257.4" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 73: 0.96 Mops/s</title></circle>
+<circle class="replay" cx="283.7" cy="255.6" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 74: 0.97 Mops/s</title></circle>
+<circle class="replay" cx="283.0" cy="253.8" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 75: 0.96 Mops/s</title></circle>
+<circle class="replay" cx="282.8" cy="252.0" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 76: 0.96 Mops/s</title></circle>
+<circle class="replay" cx="283.7" cy="250.2" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 77: 0.97 Mops/s</title></circle>
+<circle class="replay" cx="279.7" cy="248.4" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 78: 0.91 Mops/s</title></circle>
+<circle class="replay" cx="281.4" cy="246.6" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 79: 0.93 Mops/s</title></circle>
+<circle class="replay" cx="282.0" cy="256.5" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 80: 0.94 Mops/s</title></circle>
+<circle class="replay" cx="280.5" cy="254.7" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 81: 0.92 Mops/s</title></circle>
+<circle class="replay" cx="279.8" cy="252.9" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 82: 0.91 Mops/s</title></circle>
+<circle class="replay" cx="282.7" cy="251.1" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 83: 0.95 Mops/s</title></circle>
+<circle class="replay" cx="278.0" cy="249.3" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 84: 0.88 Mops/s</title></circle>
+<circle class="replay" cx="282.6" cy="247.5" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 85: 0.95 Mops/s</title></circle>
+<circle class="replay" cx="278.9" cy="257.4" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 86: 0.90 Mops/s</title></circle>
+<circle class="replay" cx="280.4" cy="255.6" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 87: 0.92 Mops/s</title></circle>
+<circle class="replay" cx="273.5" cy="253.8" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 88: 0.81 Mops/s</title></circle>
+<circle class="replay" cx="271.3" cy="252.0" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 89: 0.78 Mops/s</title></circle>
+<circle class="replay" cx="274.3" cy="250.2" r="3.2" fill-opacity="0.45"><title>deep-book replay, run 90: 0.83 Mops/s</title></circle>
+<line class="median" x1="279.7" y1="243" x2="279.7" y2="261"><title>deep-book replay median: 0.91 Mops/s</title></line>
+<circle class="replay" cx="714" cy="252" r="4"/>
+<text x="724.0" y="256.0" font-size="13" text-anchor="start" font-weight="600">0.91</text>
+<text x="760.0" y="256.0" class="t3" font-size="12" text-anchor="start">replay</text>
+<text x="800.0" y="256.0" class="t2" font-size="13" text-anchor="start">5.8%</text>
+<text x="850.0" y="256.0" class="t2" font-size="13" text-anchor="start">0.76–0.98</text>
+<text x="24.0" y="298.0" class="mono" font-size="13" text-anchor="start" font-weight="600">matching-heavy</text>
+<text x="24.0" y="316.0" class="t3" font-size="12" text-anchor="start">ends with 10,147 orders</text>
+<text x="24.0" y="331.0" class="t3" font-size="12" text-anchor="start">on 194 levels</text>
+<line class="axis" x1="24" y1="272" x2="936" y2="272"/>
+<circle class="core" cx="420.1" cy="288.6" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 1: 3.05 Mops/s</title></circle>
+<circle class="core" cx="465.0" cy="298.5" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 2: 3.73 Mops/s</title></circle>
+<circle class="core" cx="454.5" cy="296.7" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 3: 3.57 Mops/s</title></circle>
+<circle class="core" cx="455.4" cy="294.9" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 4: 3.58 Mops/s</title></circle>
+<circle class="core" cx="421.9" cy="293.1" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 5: 3.07 Mops/s</title></circle>
+<circle class="core" cx="364.0" cy="291.3" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 6: 2.19 Mops/s</title></circle>
+<circle class="core" cx="443.9" cy="289.5" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 7: 3.41 Mops/s</title></circle>
+<circle class="core" cx="473.6" cy="299.4" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 8: 3.86 Mops/s</title></circle>
+<circle class="core" cx="467.3" cy="297.6" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 9: 3.76 Mops/s</title></circle>
+<circle class="core" cx="447.7" cy="295.8" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 10: 3.46 Mops/s</title></circle>
+<circle class="core" cx="445.2" cy="294.0" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 11: 3.43 Mops/s</title></circle>
+<circle class="core" cx="465.3" cy="292.2" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 12: 3.73 Mops/s</title></circle>
+<circle class="core" cx="465.1" cy="290.4" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 13: 3.73 Mops/s</title></circle>
+<circle class="core" cx="451.6" cy="288.6" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 14: 3.52 Mops/s</title></circle>
+<circle class="core" cx="444.8" cy="298.5" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 15: 3.42 Mops/s</title></circle>
+<circle class="core" cx="460.3" cy="296.7" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 16: 3.66 Mops/s</title></circle>
+<circle class="core" cx="471.8" cy="294.9" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 17: 3.83 Mops/s</title></circle>
+<circle class="core" cx="476.0" cy="293.1" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 18: 3.89 Mops/s</title></circle>
+<circle class="core" cx="470.5" cy="291.3" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 19: 3.81 Mops/s</title></circle>
+<circle class="core" cx="472.5" cy="289.5" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 20: 3.84 Mops/s</title></circle>
+<circle class="core" cx="477.8" cy="299.4" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 21: 3.92 Mops/s</title></circle>
+<circle class="core" cx="485.6" cy="297.6" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 22: 4.04 Mops/s</title></circle>
+<circle class="core" cx="498.4" cy="295.8" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 23: 4.24 Mops/s</title></circle>
+<circle class="core" cx="490.6" cy="294.0" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 24: 4.12 Mops/s</title></circle>
+<circle class="core" cx="420.5" cy="292.2" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 25: 3.05 Mops/s</title></circle>
+<circle class="core" cx="446.8" cy="290.4" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 26: 3.45 Mops/s</title></circle>
+<circle class="core" cx="468.8" cy="288.6" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 27: 3.79 Mops/s</title></circle>
+<circle class="core" cx="484.8" cy="298.5" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 28: 4.03 Mops/s</title></circle>
+<circle class="core" cx="477.6" cy="296.7" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 29: 3.92 Mops/s</title></circle>
+<circle class="core" cx="475.1" cy="294.9" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 30: 3.88 Mops/s</title></circle>
+<circle class="core" cx="488.6" cy="293.1" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 31: 4.09 Mops/s</title></circle>
+<circle class="core" cx="492.5" cy="291.3" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 32: 4.15 Mops/s</title></circle>
+<circle class="core" cx="486.4" cy="289.5" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 33: 4.05 Mops/s</title></circle>
+<circle class="core" cx="480.0" cy="299.4" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 34: 3.96 Mops/s</title></circle>
+<circle class="core" cx="496.4" cy="297.6" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 35: 4.21 Mops/s</title></circle>
+<circle class="core" cx="490.6" cy="295.8" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 36: 4.12 Mops/s</title></circle>
+<circle class="core" cx="450.7" cy="294.0" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 37: 3.51 Mops/s</title></circle>
+<circle class="core" cx="435.8" cy="292.2" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 38: 3.28 Mops/s</title></circle>
+<circle class="core" cx="477.2" cy="290.4" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 39: 3.91 Mops/s</title></circle>
+<circle class="core" cx="450.2" cy="288.6" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 40: 3.50 Mops/s</title></circle>
+<circle class="core" cx="462.9" cy="298.5" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 41: 3.70 Mops/s</title></circle>
+<circle class="core" cx="464.8" cy="296.7" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 42: 3.72 Mops/s</title></circle>
+<circle class="core" cx="472.0" cy="294.9" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 43: 3.83 Mops/s</title></circle>
+<circle class="core" cx="474.3" cy="293.1" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 44: 3.87 Mops/s</title></circle>
+<circle class="core" cx="459.5" cy="291.3" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 45: 3.64 Mops/s</title></circle>
+<circle class="core" cx="477.3" cy="289.5" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 46: 3.92 Mops/s</title></circle>
+<circle class="core" cx="456.2" cy="299.4" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 47: 3.59 Mops/s</title></circle>
+<circle class="core" cx="475.5" cy="297.6" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 48: 3.89 Mops/s</title></circle>
+<circle class="core" cx="400.8" cy="295.8" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 49: 2.75 Mops/s</title></circle>
+<circle class="core" cx="430.1" cy="294.0" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 50: 3.20 Mops/s</title></circle>
+<circle class="core" cx="490.9" cy="292.2" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 51: 4.12 Mops/s</title></circle>
+<circle class="core" cx="487.5" cy="290.4" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 52: 4.07 Mops/s</title></circle>
+<circle class="core" cx="483.0" cy="288.6" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 53: 4.00 Mops/s</title></circle>
+<circle class="core" cx="471.2" cy="298.5" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 54: 3.82 Mops/s</title></circle>
+<circle class="core" cx="469.1" cy="296.7" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 55: 3.79 Mops/s</title></circle>
+<circle class="core" cx="491.6" cy="294.9" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 56: 4.13 Mops/s</title></circle>
+<circle class="core" cx="459.1" cy="293.1" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 57: 3.64 Mops/s</title></circle>
+<circle class="core" cx="428.0" cy="291.3" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 58: 3.16 Mops/s</title></circle>
+<circle class="core" cx="448.9" cy="289.5" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 59: 3.48 Mops/s</title></circle>
+<circle class="core" cx="479.7" cy="299.4" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 60: 3.95 Mops/s</title></circle>
+<circle class="core" cx="493.1" cy="297.6" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 61: 4.16 Mops/s</title></circle>
+<circle class="core" cx="496.8" cy="295.8" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 62: 4.21 Mops/s</title></circle>
+<circle class="core" cx="479.9" cy="294.0" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 63: 3.96 Mops/s</title></circle>
+<circle class="core" cx="474.6" cy="292.2" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 64: 3.87 Mops/s</title></circle>
+<circle class="core" cx="439.1" cy="290.4" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 65: 3.33 Mops/s</title></circle>
+<circle class="core" cx="495.4" cy="288.6" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 66: 4.19 Mops/s</title></circle>
+<circle class="core" cx="483.5" cy="298.5" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 67: 4.01 Mops/s</title></circle>
+<circle class="core" cx="493.3" cy="296.7" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 68: 4.16 Mops/s</title></circle>
+<circle class="core" cx="467.6" cy="294.9" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 69: 3.77 Mops/s</title></circle>
+<circle class="core" cx="423.7" cy="293.1" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 70: 3.10 Mops/s</title></circle>
+<circle class="core" cx="492.1" cy="291.3" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 71: 4.14 Mops/s</title></circle>
+<circle class="core" cx="476.4" cy="289.5" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 72: 3.90 Mops/s</title></circle>
+<circle class="core" cx="485.8" cy="299.4" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 73: 4.05 Mops/s</title></circle>
+<circle class="core" cx="482.4" cy="297.6" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 74: 3.99 Mops/s</title></circle>
+<circle class="core" cx="457.0" cy="295.8" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 75: 3.61 Mops/s</title></circle>
+<circle class="core" cx="479.1" cy="294.0" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 76: 3.94 Mops/s</title></circle>
+<circle class="core" cx="496.3" cy="292.2" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 77: 4.20 Mops/s</title></circle>
+<circle class="core" cx="488.0" cy="290.4" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 78: 4.08 Mops/s</title></circle>
+<circle class="core" cx="454.3" cy="288.6" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 79: 3.57 Mops/s</title></circle>
+<circle class="core" cx="440.1" cy="298.5" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 80: 3.35 Mops/s</title></circle>
+<circle class="core" cx="463.8" cy="296.7" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 81: 3.71 Mops/s</title></circle>
+<circle class="core" cx="466.9" cy="294.9" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 82: 3.76 Mops/s</title></circle>
+<circle class="core" cx="454.0" cy="293.1" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 83: 3.56 Mops/s</title></circle>
+<circle class="core" cx="450.3" cy="291.3" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 84: 3.50 Mops/s</title></circle>
+<circle class="core" cx="490.7" cy="289.5" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 85: 4.12 Mops/s</title></circle>
+<circle class="core" cx="489.9" cy="299.4" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 86: 4.11 Mops/s</title></circle>
+<circle class="core" cx="498.4" cy="297.6" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 87: 4.24 Mops/s</title></circle>
+<circle class="core" cx="493.1" cy="295.8" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 88: 4.16 Mops/s</title></circle>
+<circle class="core" cx="493.1" cy="294.0" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 89: 4.16 Mops/s</title></circle>
+<circle class="core" cx="491.0" cy="292.2" r="3.2" fill-opacity="0.45"><title>matching-heavy core, run 90: 4.12 Mops/s</title></circle>
+<line class="median" x1="472.3" y1="285" x2="472.3" y2="303"><title>matching-heavy core median: 3.84 Mops/s</title></line>
+<circle class="core" cx="714" cy="294" r="4"/>
+<text x="724.0" y="298.0" font-size="13" text-anchor="start" font-weight="600">3.84</text>
+<text x="760.0" y="298.0" class="t3" font-size="12" text-anchor="start">core</text>
+<text x="800.0" y="298.0" class="t2" font-size="13" text-anchor="start">9.7%</text>
+<text x="850.0" y="298.0" class="t2" font-size="13" text-anchor="start">2.19–4.24</text>
+<circle class="replay" cx="286.7" cy="312.6" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 1: 1.02 Mops/s</title></circle>
+<circle class="replay" cx="289.6" cy="322.5" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 2: 1.06 Mops/s</title></circle>
+<circle class="replay" cx="293.5" cy="320.7" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 3: 1.12 Mops/s</title></circle>
+<circle class="replay" cx="293.0" cy="318.9" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 4: 1.11 Mops/s</title></circle>
+<circle class="replay" cx="285.4" cy="317.1" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 5: 1.00 Mops/s</title></circle>
+<circle class="replay" cx="294.8" cy="315.3" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 6: 1.14 Mops/s</title></circle>
+<circle class="replay" cx="294.1" cy="313.5" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 7: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="293.7" cy="323.4" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 8: 1.12 Mops/s</title></circle>
+<circle class="replay" cx="294.4" cy="321.6" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 9: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="293.5" cy="319.8" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 10: 1.12 Mops/s</title></circle>
+<circle class="replay" cx="293.5" cy="318.0" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 11: 1.12 Mops/s</title></circle>
+<circle class="replay" cx="294.2" cy="316.2" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 12: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="293.7" cy="314.4" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 13: 1.12 Mops/s</title></circle>
+<circle class="replay" cx="294.0" cy="312.6" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 14: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="292.3" cy="322.5" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 15: 1.10 Mops/s</title></circle>
+<circle class="replay" cx="293.9" cy="320.7" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 16: 1.12 Mops/s</title></circle>
+<circle class="replay" cx="293.0" cy="318.9" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 17: 1.11 Mops/s</title></circle>
+<circle class="replay" cx="293.7" cy="317.1" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 18: 1.12 Mops/s</title></circle>
+<circle class="replay" cx="295.6" cy="315.3" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 19: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="294.4" cy="313.5" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 20: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="293.9" cy="323.4" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 21: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="294.2" cy="321.6" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 22: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="295.6" cy="319.8" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 23: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="295.1" cy="318.0" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 24: 1.14 Mops/s</title></circle>
+<circle class="replay" cx="295.0" cy="316.2" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 25: 1.14 Mops/s</title></circle>
+<circle class="replay" cx="294.8" cy="314.4" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 26: 1.14 Mops/s</title></circle>
+<circle class="replay" cx="294.1" cy="312.6" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 27: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="294.4" cy="322.5" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 28: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="293.5" cy="320.7" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 29: 1.12 Mops/s</title></circle>
+<circle class="replay" cx="293.9" cy="318.9" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 30: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="294.1" cy="317.1" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 31: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="293.8" cy="315.3" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 32: 1.12 Mops/s</title></circle>
+<circle class="replay" cx="293.1" cy="313.5" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 33: 1.11 Mops/s</title></circle>
+<circle class="replay" cx="292.4" cy="323.4" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 34: 1.10 Mops/s</title></circle>
+<circle class="replay" cx="291.9" cy="321.6" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 35: 1.09 Mops/s</title></circle>
+<circle class="replay" cx="293.9" cy="319.8" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 36: 1.12 Mops/s</title></circle>
+<circle class="replay" cx="294.3" cy="318.0" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 37: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="292.9" cy="316.2" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 38: 1.11 Mops/s</title></circle>
+<circle class="replay" cx="295.4" cy="314.4" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 39: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="292.7" cy="312.6" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 40: 1.11 Mops/s</title></circle>
+<circle class="replay" cx="292.6" cy="322.5" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 41: 1.11 Mops/s</title></circle>
+<circle class="replay" cx="295.9" cy="320.7" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 42: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="295.0" cy="318.9" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 43: 1.14 Mops/s</title></circle>
+<circle class="replay" cx="294.4" cy="317.1" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 44: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="295.1" cy="315.3" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 45: 1.14 Mops/s</title></circle>
+<circle class="replay" cx="293.2" cy="313.5" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 46: 1.11 Mops/s</title></circle>
+<circle class="replay" cx="294.5" cy="323.4" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 47: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="294.0" cy="321.6" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 48: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="293.5" cy="319.8" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 49: 1.12 Mops/s</title></circle>
+<circle class="replay" cx="291.3" cy="318.0" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 50: 1.08 Mops/s</title></circle>
+<circle class="replay" cx="293.7" cy="316.2" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 51: 1.12 Mops/s</title></circle>
+<circle class="replay" cx="294.1" cy="314.4" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 52: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="291.1" cy="312.6" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 53: 1.08 Mops/s</title></circle>
+<circle class="replay" cx="282.6" cy="322.5" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 54: 0.95 Mops/s</title></circle>
+<circle class="replay" cx="290.9" cy="320.7" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 55: 1.08 Mops/s</title></circle>
+<circle class="replay" cx="293.9" cy="318.9" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 56: 1.12 Mops/s</title></circle>
+<circle class="replay" cx="290.7" cy="317.1" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 57: 1.08 Mops/s</title></circle>
+<circle class="replay" cx="293.7" cy="315.3" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 58: 1.12 Mops/s</title></circle>
+<circle class="replay" cx="292.9" cy="313.5" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 59: 1.11 Mops/s</title></circle>
+<circle class="replay" cx="285.5" cy="323.4" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 60: 1.00 Mops/s</title></circle>
+<circle class="replay" cx="279.9" cy="321.6" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 61: 0.91 Mops/s</title></circle>
+<circle class="replay" cx="283.0" cy="319.8" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 62: 0.96 Mops/s</title></circle>
+<circle class="replay" cx="281.4" cy="318.0" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 63: 0.93 Mops/s</title></circle>
+<circle class="replay" cx="280.6" cy="316.2" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 64: 0.92 Mops/s</title></circle>
+<circle class="replay" cx="282.9" cy="314.4" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 65: 0.96 Mops/s</title></circle>
+<circle class="replay" cx="291.9" cy="312.6" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 66: 1.09 Mops/s</title></circle>
+<circle class="replay" cx="292.0" cy="322.5" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 67: 1.10 Mops/s</title></circle>
+<circle class="replay" cx="291.4" cy="320.7" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 68: 1.09 Mops/s</title></circle>
+<circle class="replay" cx="285.3" cy="318.9" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 69: 0.99 Mops/s</title></circle>
+<circle class="replay" cx="276.8" cy="317.1" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 70: 0.86 Mops/s</title></circle>
+<circle class="replay" cx="284.3" cy="315.3" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 71: 0.98 Mops/s</title></circle>
+<circle class="replay" cx="275.8" cy="313.5" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 72: 0.85 Mops/s</title></circle>
+<circle class="replay" cx="279.4" cy="323.4" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 73: 0.90 Mops/s</title></circle>
+<circle class="replay" cx="288.9" cy="321.6" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 74: 1.05 Mops/s</title></circle>
+<circle class="replay" cx="288.6" cy="319.8" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 75: 1.04 Mops/s</title></circle>
+<circle class="replay" cx="291.9" cy="318.0" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 76: 1.09 Mops/s</title></circle>
+<circle class="replay" cx="289.9" cy="316.2" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 77: 1.06 Mops/s</title></circle>
+<circle class="replay" cx="295.6" cy="314.4" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 78: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="295.4" cy="312.6" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 79: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="294.0" cy="322.5" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 80: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="294.5" cy="320.7" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 81: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="294.2" cy="318.9" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 82: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="293.1" cy="317.1" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 83: 1.11 Mops/s</title></circle>
+<circle class="replay" cx="292.3" cy="315.3" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 84: 1.10 Mops/s</title></circle>
+<circle class="replay" cx="294.3" cy="313.5" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 85: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="295.3" cy="323.4" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 86: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="294.9" cy="321.6" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 87: 1.14 Mops/s</title></circle>
+<circle class="replay" cx="294.6" cy="319.8" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 88: 1.14 Mops/s</title></circle>
+<circle class="replay" cx="294.4" cy="318.0" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 89: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="294.2" cy="316.2" r="3.2" fill-opacity="0.45"><title>matching-heavy replay, run 90: 1.13 Mops/s</title></circle>
+<line class="median" x1="293.7" y1="309" x2="293.7" y2="327"><title>matching-heavy replay median: 1.12 Mops/s</title></line>
+<circle class="replay" cx="714" cy="318" r="4"/>
+<text x="724.0" y="322.0" font-size="13" text-anchor="start" font-weight="600">1.12</text>
+<text x="760.0" y="322.0" class="t3" font-size="12" text-anchor="start">replay</text>
+<text x="800.0" y="322.0" class="t2" font-size="13" text-anchor="start">6.4%</text>
+<text x="850.0" y="322.0" class="t2" font-size="13" text-anchor="start">0.85–1.15</text>
+<text x="24.0" y="364.0" class="mono" font-size="13" text-anchor="start" font-weight="600">cancellation-heavy</text>
+<text x="24.0" y="382.0" class="t3" font-size="12" text-anchor="start">ends with 49,692 orders</text>
+<text x="24.0" y="397.0" class="t3" font-size="12" text-anchor="start">on 500 levels</text>
+<line class="axis" x1="24" y1="338" x2="936" y2="338"/>
+<circle class="core" cx="444.4" cy="354.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 1: 3.41 Mops/s</title></circle>
+<circle class="core" cx="421.1" cy="364.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 2: 3.06 Mops/s</title></circle>
+<circle class="core" cx="440.9" cy="362.7" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 3: 3.36 Mops/s</title></circle>
+<circle class="core" cx="405.5" cy="360.9" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 4: 2.82 Mops/s</title></circle>
+<circle class="core" cx="444.1" cy="359.1" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 5: 3.41 Mops/s</title></circle>
+<circle class="core" cx="418.4" cy="357.3" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 6: 3.02 Mops/s</title></circle>
+<circle class="core" cx="447.9" cy="355.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 7: 3.47 Mops/s</title></circle>
+<circle class="core" cx="413.2" cy="365.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 8: 2.94 Mops/s</title></circle>
+<circle class="core" cx="433.8" cy="363.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 9: 3.25 Mops/s</title></circle>
+<circle class="core" cx="443.0" cy="361.8" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 10: 3.39 Mops/s</title></circle>
+<circle class="core" cx="441.7" cy="360.0" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 11: 3.37 Mops/s</title></circle>
+<circle class="core" cx="400.2" cy="358.2" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 12: 2.74 Mops/s</title></circle>
+<circle class="core" cx="367.3" cy="356.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 13: 2.24 Mops/s</title></circle>
+<circle class="core" cx="392.7" cy="354.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 14: 2.63 Mops/s</title></circle>
+<circle class="core" cx="395.4" cy="364.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 15: 2.67 Mops/s</title></circle>
+<circle class="core" cx="411.5" cy="362.7" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 16: 2.91 Mops/s</title></circle>
+<circle class="core" cx="381.0" cy="360.9" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 17: 2.45 Mops/s</title></circle>
+<circle class="core" cx="391.2" cy="359.1" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 18: 2.61 Mops/s</title></circle>
+<circle class="core" cx="387.7" cy="357.3" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 19: 2.55 Mops/s</title></circle>
+<circle class="core" cx="403.6" cy="355.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 20: 2.79 Mops/s</title></circle>
+<circle class="core" cx="377.5" cy="365.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 21: 2.40 Mops/s</title></circle>
+<circle class="core" cx="371.6" cy="363.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 22: 2.31 Mops/s</title></circle>
+<circle class="core" cx="388.7" cy="361.8" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 23: 2.57 Mops/s</title></circle>
+<circle class="core" cx="356.4" cy="360.0" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 24: 2.08 Mops/s</title></circle>
+<circle class="core" cx="387.7" cy="358.2" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 25: 2.55 Mops/s</title></circle>
+<circle class="core" cx="412.0" cy="356.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 26: 2.92 Mops/s</title></circle>
+<circle class="core" cx="410.6" cy="354.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 27: 2.90 Mops/s</title></circle>
+<circle class="core" cx="428.3" cy="364.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 28: 3.17 Mops/s</title></circle>
+<circle class="core" cx="422.5" cy="362.7" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 29: 3.08 Mops/s</title></circle>
+<circle class="core" cx="411.7" cy="360.9" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 30: 2.92 Mops/s</title></circle>
+<circle class="core" cx="438.1" cy="359.1" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 31: 3.32 Mops/s</title></circle>
+<circle class="core" cx="405.7" cy="357.3" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 32: 2.83 Mops/s</title></circle>
+<circle class="core" cx="417.8" cy="355.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 33: 3.01 Mops/s</title></circle>
+<circle class="core" cx="369.0" cy="365.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 34: 2.27 Mops/s</title></circle>
+<circle class="core" cx="350.1" cy="363.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 35: 1.98 Mops/s</title></circle>
+<circle class="core" cx="311.0" cy="361.8" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 36: 1.38 Mops/s</title></circle>
+<circle class="core" cx="376.0" cy="360.0" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 37: 2.37 Mops/s</title></circle>
+<circle class="core" cx="376.0" cy="358.2" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 38: 2.37 Mops/s</title></circle>
+<circle class="core" cx="368.8" cy="356.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 39: 2.26 Mops/s</title></circle>
+<circle class="core" cx="372.2" cy="354.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 40: 2.32 Mops/s</title></circle>
+<circle class="core" cx="346.9" cy="364.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 41: 1.93 Mops/s</title></circle>
+<circle class="core" cx="342.1" cy="362.7" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 42: 1.86 Mops/s</title></circle>
+<circle class="core" cx="394.1" cy="360.9" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 43: 2.65 Mops/s</title></circle>
+<circle class="core" cx="418.0" cy="359.1" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 44: 3.01 Mops/s</title></circle>
+<circle class="core" cx="389.7" cy="357.3" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 45: 2.58 Mops/s</title></circle>
+<circle class="core" cx="383.3" cy="355.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 46: 2.49 Mops/s</title></circle>
+<circle class="core" cx="359.6" cy="365.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 47: 2.12 Mops/s</title></circle>
+<circle class="core" cx="381.9" cy="363.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 48: 2.46 Mops/s</title></circle>
+<circle class="core" cx="385.2" cy="361.8" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 49: 2.51 Mops/s</title></circle>
+<circle class="core" cx="397.7" cy="360.0" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 50: 2.70 Mops/s</title></circle>
+<circle class="core" cx="418.3" cy="358.2" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 51: 3.02 Mops/s</title></circle>
+<circle class="core" cx="391.1" cy="356.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 52: 2.60 Mops/s</title></circle>
+<circle class="core" cx="419.4" cy="354.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 53: 3.03 Mops/s</title></circle>
+<circle class="core" cx="403.8" cy="364.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 54: 2.80 Mops/s</title></circle>
+<circle class="core" cx="420.4" cy="362.7" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 55: 3.05 Mops/s</title></circle>
+<circle class="core" cx="414.1" cy="360.9" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 56: 2.95 Mops/s</title></circle>
+<circle class="core" cx="410.5" cy="359.1" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 57: 2.90 Mops/s</title></circle>
+<circle class="core" cx="394.9" cy="357.3" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 58: 2.66 Mops/s</title></circle>
+<circle class="core" cx="365.9" cy="355.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 59: 2.22 Mops/s</title></circle>
+<circle class="core" cx="349.1" cy="365.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 60: 1.96 Mops/s</title></circle>
+<circle class="core" cx="456.1" cy="363.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 61: 3.59 Mops/s</title></circle>
+<circle class="core" cx="461.4" cy="361.8" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 62: 3.67 Mops/s</title></circle>
+<circle class="core" cx="420.5" cy="360.0" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 63: 3.05 Mops/s</title></circle>
+<circle class="core" cx="447.8" cy="358.2" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 64: 3.47 Mops/s</title></circle>
+<circle class="core" cx="423.4" cy="356.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 65: 3.10 Mops/s</title></circle>
+<circle class="core" cx="466.8" cy="354.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 66: 3.76 Mops/s</title></circle>
+<circle class="core" cx="442.9" cy="364.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 67: 3.39 Mops/s</title></circle>
+<circle class="core" cx="434.8" cy="362.7" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 68: 3.27 Mops/s</title></circle>
+<circle class="core" cx="448.7" cy="360.9" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 69: 3.48 Mops/s</title></circle>
+<circle class="core" cx="438.9" cy="359.1" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 70: 3.33 Mops/s</title></circle>
+<circle class="core" cx="466.4" cy="357.3" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 71: 3.75 Mops/s</title></circle>
+<circle class="core" cx="449.5" cy="355.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 72: 3.49 Mops/s</title></circle>
+<circle class="core" cx="425.6" cy="365.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 73: 3.13 Mops/s</title></circle>
+<circle class="core" cx="450.0" cy="363.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 74: 3.50 Mops/s</title></circle>
+<circle class="core" cx="443.5" cy="361.8" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 75: 3.40 Mops/s</title></circle>
+<circle class="core" cx="432.8" cy="360.0" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 76: 3.24 Mops/s</title></circle>
+<circle class="core" cx="434.1" cy="358.2" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 77: 3.26 Mops/s</title></circle>
+<circle class="core" cx="458.3" cy="356.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 78: 3.63 Mops/s</title></circle>
+<circle class="core" cx="422.3" cy="354.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 79: 3.08 Mops/s</title></circle>
+<circle class="core" cx="432.9" cy="364.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 80: 3.24 Mops/s</title></circle>
+<circle class="core" cx="446.5" cy="362.7" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 81: 3.45 Mops/s</title></circle>
+<circle class="core" cx="477.6" cy="360.9" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 82: 3.92 Mops/s</title></circle>
+<circle class="core" cx="438.9" cy="359.1" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 83: 3.33 Mops/s</title></circle>
+<circle class="core" cx="458.2" cy="357.3" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 84: 3.62 Mops/s</title></circle>
+<circle class="core" cx="441.3" cy="355.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 85: 3.37 Mops/s</title></circle>
+<circle class="core" cx="438.0" cy="365.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 86: 3.32 Mops/s</title></circle>
+<circle class="core" cx="463.1" cy="363.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 87: 3.70 Mops/s</title></circle>
+<circle class="core" cx="429.5" cy="361.8" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 88: 3.19 Mops/s</title></circle>
+<circle class="core" cx="461.6" cy="360.0" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 89: 3.68 Mops/s</title></circle>
+<circle class="core" cx="444.0" cy="358.2" r="3.2" fill-opacity="0.45"><title>cancellation-heavy core, run 90: 3.41 Mops/s</title></circle>
+<line class="median" x1="418.2" y1="351" x2="418.2" y2="369"><title>cancellation-heavy core median: 3.02 Mops/s</title></line>
+<circle class="core" cx="714" cy="360" r="4"/>
+<text x="724.0" y="364.0" font-size="13" text-anchor="start" font-weight="600">3.02</text>
+<text x="760.0" y="364.0" class="t3" font-size="12" text-anchor="start">core</text>
+<text x="800.0" y="364.0" class="t2" font-size="13" text-anchor="start">17.6%</text>
+<text x="850.0" y="364.0" class="t2" font-size="13" text-anchor="start">1.38–3.92</text>
+<circle class="replay" cx="291.1" cy="378.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 1: 1.08 Mops/s</title></circle>
+<circle class="replay" cx="292.5" cy="388.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 2: 1.10 Mops/s</title></circle>
+<circle class="replay" cx="293.3" cy="386.7" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 3: 1.12 Mops/s</title></circle>
+<circle class="replay" cx="292.2" cy="384.9" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 4: 1.10 Mops/s</title></circle>
+<circle class="replay" cx="292.3" cy="383.1" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 5: 1.10 Mops/s</title></circle>
+<circle class="replay" cx="293.5" cy="381.3" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 6: 1.12 Mops/s</title></circle>
+<circle class="replay" cx="285.5" cy="379.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 7: 1.00 Mops/s</title></circle>
+<circle class="replay" cx="291.0" cy="389.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 8: 1.08 Mops/s</title></circle>
+<circle class="replay" cx="291.4" cy="387.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 9: 1.09 Mops/s</title></circle>
+<circle class="replay" cx="292.7" cy="385.8" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 10: 1.11 Mops/s</title></circle>
+<circle class="replay" cx="292.9" cy="384.0" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 11: 1.11 Mops/s</title></circle>
+<circle class="replay" cx="291.0" cy="382.2" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 12: 1.08 Mops/s</title></circle>
+<circle class="replay" cx="289.5" cy="380.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 13: 1.06 Mops/s</title></circle>
+<circle class="replay" cx="246.0" cy="378.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 14: 0.40 Mops/s</title></circle>
+<circle class="replay" cx="288.8" cy="388.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 15: 1.05 Mops/s</title></circle>
+<circle class="replay" cx="289.9" cy="386.7" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 16: 1.06 Mops/s</title></circle>
+<circle class="replay" cx="294.1" cy="384.9" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 17: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="291.7" cy="383.1" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 18: 1.09 Mops/s</title></circle>
+<circle class="replay" cx="292.7" cy="381.3" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 19: 1.11 Mops/s</title></circle>
+<circle class="replay" cx="295.1" cy="379.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 20: 1.14 Mops/s</title></circle>
+<circle class="replay" cx="293.2" cy="389.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 21: 1.11 Mops/s</title></circle>
+<circle class="replay" cx="294.2" cy="387.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 22: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="291.7" cy="385.8" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 23: 1.09 Mops/s</title></circle>
+<circle class="replay" cx="284.6" cy="384.0" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 24: 0.98 Mops/s</title></circle>
+<circle class="replay" cx="278.1" cy="382.2" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 25: 0.88 Mops/s</title></circle>
+<circle class="replay" cx="281.0" cy="380.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 26: 0.93 Mops/s</title></circle>
+<circle class="replay" cx="278.3" cy="378.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 27: 0.89 Mops/s</title></circle>
+<circle class="replay" cx="278.6" cy="388.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 28: 0.89 Mops/s</title></circle>
+<circle class="replay" cx="289.7" cy="386.7" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 29: 1.06 Mops/s</title></circle>
+<circle class="replay" cx="280.0" cy="384.9" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 30: 0.91 Mops/s</title></circle>
+<circle class="replay" cx="283.9" cy="383.1" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 31: 0.97 Mops/s</title></circle>
+<circle class="replay" cx="285.9" cy="381.3" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 32: 1.00 Mops/s</title></circle>
+<circle class="replay" cx="286.0" cy="379.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 33: 1.00 Mops/s</title></circle>
+<circle class="replay" cx="278.1" cy="389.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 34: 0.88 Mops/s</title></circle>
+<circle class="replay" cx="284.8" cy="387.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 35: 0.99 Mops/s</title></circle>
+<circle class="replay" cx="287.0" cy="385.8" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 36: 1.02 Mops/s</title></circle>
+<circle class="replay" cx="283.1" cy="384.0" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 37: 0.96 Mops/s</title></circle>
+<circle class="replay" cx="288.1" cy="382.2" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 38: 1.04 Mops/s</title></circle>
+<circle class="replay" cx="284.1" cy="380.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 39: 0.97 Mops/s</title></circle>
+<circle class="replay" cx="288.6" cy="378.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 40: 1.04 Mops/s</title></circle>
+<circle class="replay" cx="289.8" cy="388.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 41: 1.06 Mops/s</title></circle>
+<circle class="replay" cx="287.0" cy="386.7" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 42: 1.02 Mops/s</title></circle>
+<circle class="replay" cx="285.9" cy="384.9" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 43: 1.00 Mops/s</title></circle>
+<circle class="replay" cx="288.2" cy="383.1" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 44: 1.04 Mops/s</title></circle>
+<circle class="replay" cx="284.1" cy="381.3" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 45: 0.97 Mops/s</title></circle>
+<circle class="replay" cx="282.8" cy="379.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 46: 0.96 Mops/s</title></circle>
+<circle class="replay" cx="287.1" cy="389.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 47: 1.02 Mops/s</title></circle>
+<circle class="replay" cx="285.0" cy="387.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 48: 0.99 Mops/s</title></circle>
+<circle class="replay" cx="288.5" cy="385.8" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 49: 1.04 Mops/s</title></circle>
+<circle class="replay" cx="288.1" cy="384.0" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 50: 1.04 Mops/s</title></circle>
+<circle class="replay" cx="288.2" cy="382.2" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 51: 1.04 Mops/s</title></circle>
+<circle class="replay" cx="287.0" cy="380.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 52: 1.02 Mops/s</title></circle>
+<circle class="replay" cx="287.5" cy="378.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 53: 1.03 Mops/s</title></circle>
+<circle class="replay" cx="284.5" cy="388.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 54: 0.98 Mops/s</title></circle>
+<circle class="replay" cx="275.9" cy="386.7" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 55: 0.85 Mops/s</title></circle>
+<circle class="replay" cx="269.5" cy="384.9" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 56: 0.75 Mops/s</title></circle>
+<circle class="replay" cx="281.3" cy="383.1" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 57: 0.93 Mops/s</title></circle>
+<circle class="replay" cx="281.3" cy="381.3" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 58: 0.93 Mops/s</title></circle>
+<circle class="replay" cx="279.1" cy="379.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 59: 0.90 Mops/s</title></circle>
+<circle class="replay" cx="278.7" cy="389.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 60: 0.89 Mops/s</title></circle>
+<circle class="replay" cx="295.6" cy="387.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 61: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="291.1" cy="385.8" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 62: 1.08 Mops/s</title></circle>
+<circle class="replay" cx="293.1" cy="384.0" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 63: 1.11 Mops/s</title></circle>
+<circle class="replay" cx="292.3" cy="382.2" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 64: 1.10 Mops/s</title></circle>
+<circle class="replay" cx="293.0" cy="380.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 65: 1.11 Mops/s</title></circle>
+<circle class="replay" cx="292.7" cy="378.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 66: 1.11 Mops/s</title></circle>
+<circle class="replay" cx="293.9" cy="388.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 67: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="284.4" cy="386.7" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 68: 0.98 Mops/s</title></circle>
+<circle class="replay" cx="286.4" cy="384.9" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 69: 1.01 Mops/s</title></circle>
+<circle class="replay" cx="285.2" cy="383.1" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 70: 0.99 Mops/s</title></circle>
+<circle class="replay" cx="284.4" cy="381.3" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 71: 0.98 Mops/s</title></circle>
+<circle class="replay" cx="276.7" cy="379.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 72: 0.86 Mops/s</title></circle>
+<circle class="replay" cx="291.0" cy="389.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 73: 1.08 Mops/s</title></circle>
+<circle class="replay" cx="295.8" cy="387.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 74: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="295.1" cy="385.8" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 75: 1.14 Mops/s</title></circle>
+<circle class="replay" cx="293.2" cy="384.0" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 76: 1.11 Mops/s</title></circle>
+<circle class="replay" cx="289.2" cy="382.2" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 77: 1.05 Mops/s</title></circle>
+<circle class="replay" cx="293.1" cy="380.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 78: 1.11 Mops/s</title></circle>
+<circle class="replay" cx="292.2" cy="378.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 79: 1.10 Mops/s</title></circle>
+<circle class="replay" cx="295.8" cy="388.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 80: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="295.4" cy="386.7" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 81: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="290.3" cy="384.9" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 82: 1.07 Mops/s</title></circle>
+<circle class="replay" cx="294.9" cy="383.1" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 83: 1.14 Mops/s</title></circle>
+<circle class="replay" cx="292.0" cy="381.3" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 84: 1.10 Mops/s</title></circle>
+<circle class="replay" cx="295.8" cy="379.5" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 85: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="294.8" cy="389.4" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 86: 1.14 Mops/s</title></circle>
+<circle class="replay" cx="294.6" cy="387.6" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 87: 1.14 Mops/s</title></circle>
+<circle class="replay" cx="294.4" cy="385.8" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 88: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="292.6" cy="384.0" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 89: 1.10 Mops/s</title></circle>
+<circle class="replay" cx="294.9" cy="382.2" r="3.2" fill-opacity="0.45"><title>cancellation-heavy replay, run 90: 1.14 Mops/s</title></circle>
+<line class="median" x1="289.6" y1="375" x2="289.6" y2="393"><title>cancellation-heavy replay median: 1.06 Mops/s</title></line>
+<circle class="replay" cx="714" cy="384" r="4"/>
+<text x="724.0" y="388.0" font-size="13" text-anchor="start" font-weight="600">1.06</text>
+<text x="760.0" y="388.0" class="t3" font-size="12" text-anchor="start">replay</text>
+<text x="800.0" y="388.0" class="t2" font-size="13" text-anchor="start">10.5%</text>
+<text x="850.0" y="388.0" class="t2" font-size="13" text-anchor="start">0.40–1.15</text>
+<text x="24.0" y="430.0" class="mono" font-size="13" text-anchor="start" font-weight="600">mostly-resting</text>
+<text x="24.0" y="448.0" class="t3" font-size="12" text-anchor="start">ends with 86,874 orders</text>
+<text x="24.0" y="463.0" class="t3" font-size="12" text-anchor="start">on 100 levels</text>
+<line class="axis" x1="24" y1="404" x2="936" y2="404"/>
+<circle class="core" cx="387.3" cy="420.6" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 1: 2.55 Mops/s</title></circle>
+<circle class="core" cx="433.5" cy="430.5" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 2: 3.25 Mops/s</title></circle>
+<circle class="core" cx="426.2" cy="428.7" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 3: 3.14 Mops/s</title></circle>
+<circle class="core" cx="455.3" cy="426.9" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 4: 3.58 Mops/s</title></circle>
+<circle class="core" cx="384.8" cy="425.1" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 5: 2.51 Mops/s</title></circle>
+<circle class="core" cx="367.1" cy="423.3" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 6: 2.24 Mops/s</title></circle>
+<circle class="core" cx="390.8" cy="421.5" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 7: 2.60 Mops/s</title></circle>
+<circle class="core" cx="399.6" cy="431.4" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 8: 2.73 Mops/s</title></circle>
+<circle class="core" cx="331.8" cy="429.6" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 9: 1.70 Mops/s</title></circle>
+<circle class="core" cx="381.2" cy="427.8" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 10: 2.45 Mops/s</title></circle>
+<circle class="core" cx="391.1" cy="426.0" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 11: 2.60 Mops/s</title></circle>
+<circle class="core" cx="402.3" cy="424.2" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 12: 2.77 Mops/s</title></circle>
+<circle class="core" cx="399.2" cy="422.4" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 13: 2.73 Mops/s</title></circle>
+<circle class="core" cx="364.4" cy="420.6" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 14: 2.20 Mops/s</title></circle>
+<circle class="core" cx="345.2" cy="430.5" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 15: 1.91 Mops/s</title></circle>
+<circle class="core" cx="326.1" cy="428.7" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 16: 1.61 Mops/s</title></circle>
+<circle class="core" cx="381.9" cy="426.9" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 17: 2.46 Mops/s</title></circle>
+<circle class="core" cx="421.8" cy="425.1" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 18: 3.07 Mops/s</title></circle>
+<circle class="core" cx="425.6" cy="423.3" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 19: 3.13 Mops/s</title></circle>
+<circle class="core" cx="409.7" cy="421.5" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 20: 2.89 Mops/s</title></circle>
+<circle class="core" cx="415.9" cy="431.4" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 21: 2.98 Mops/s</title></circle>
+<circle class="core" cx="409.9" cy="429.6" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 22: 2.89 Mops/s</title></circle>
+<circle class="core" cx="427.0" cy="427.8" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 23: 3.15 Mops/s</title></circle>
+<circle class="core" cx="413.5" cy="426.0" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 24: 2.94 Mops/s</title></circle>
+<circle class="core" cx="386.5" cy="424.2" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 25: 2.53 Mops/s</title></circle>
+<circle class="core" cx="351.4" cy="422.4" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 26: 2.00 Mops/s</title></circle>
+<circle class="core" cx="436.9" cy="420.6" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 27: 3.30 Mops/s</title></circle>
+<circle class="core" cx="428.7" cy="430.5" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 28: 3.18 Mops/s</title></circle>
+<circle class="core" cx="443.0" cy="428.7" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 29: 3.39 Mops/s</title></circle>
+<circle class="core" cx="451.1" cy="426.9" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 30: 3.52 Mops/s</title></circle>
+<circle class="core" cx="444.0" cy="425.1" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 31: 3.41 Mops/s</title></circle>
+<circle class="core" cx="493.8" cy="423.3" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 32: 4.17 Mops/s</title></circle>
+<circle class="core" cx="393.3" cy="421.5" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 33: 2.64 Mops/s</title></circle>
+<circle class="core" cx="428.1" cy="431.4" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 34: 3.17 Mops/s</title></circle>
+<circle class="core" cx="426.0" cy="429.6" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 35: 3.13 Mops/s</title></circle>
+<circle class="core" cx="393.9" cy="427.8" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 36: 2.65 Mops/s</title></circle>
+<circle class="core" cx="413.2" cy="426.0" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 37: 2.94 Mops/s</title></circle>
+<circle class="core" cx="366.4" cy="424.2" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 38: 2.23 Mops/s</title></circle>
+<circle class="core" cx="363.2" cy="422.4" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 39: 2.18 Mops/s</title></circle>
+<circle class="core" cx="374.0" cy="420.6" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 40: 2.34 Mops/s</title></circle>
+<circle class="core" cx="397.9" cy="430.5" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 41: 2.71 Mops/s</title></circle>
+<circle class="core" cx="460.3" cy="428.7" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 42: 3.66 Mops/s</title></circle>
+<circle class="core" cx="498.8" cy="426.9" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 43: 4.24 Mops/s</title></circle>
+<circle class="core" cx="478.2" cy="425.1" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 44: 3.93 Mops/s</title></circle>
+<circle class="core" cx="393.0" cy="423.3" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 45: 2.63 Mops/s</title></circle>
+<circle class="core" cx="384.1" cy="421.5" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 46: 2.50 Mops/s</title></circle>
+<circle class="core" cx="374.8" cy="431.4" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 47: 2.36 Mops/s</title></circle>
+<circle class="core" cx="401.2" cy="429.6" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 48: 2.76 Mops/s</title></circle>
+<circle class="core" cx="392.7" cy="427.8" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 49: 2.63 Mops/s</title></circle>
+<circle class="core" cx="437.4" cy="426.0" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 50: 3.31 Mops/s</title></circle>
+<circle class="core" cx="428.8" cy="424.2" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 51: 3.18 Mops/s</title></circle>
+<circle class="core" cx="437.8" cy="422.4" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 52: 3.31 Mops/s</title></circle>
+<circle class="core" cx="506.6" cy="420.6" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 53: 4.36 Mops/s</title></circle>
+<circle class="core" cx="457.6" cy="430.5" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 54: 3.62 Mops/s</title></circle>
+<circle class="core" cx="457.6" cy="428.7" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 55: 3.62 Mops/s</title></circle>
+<circle class="core" cx="428.4" cy="426.9" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 56: 3.17 Mops/s</title></circle>
+<circle class="core" cx="437.5" cy="425.1" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 57: 3.31 Mops/s</title></circle>
+<circle class="core" cx="486.6" cy="423.3" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 58: 4.06 Mops/s</title></circle>
+<circle class="core" cx="479.6" cy="421.5" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 59: 3.95 Mops/s</title></circle>
+<circle class="core" cx="474.0" cy="431.4" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 60: 3.87 Mops/s</title></circle>
+<circle class="core" cx="450.8" cy="429.6" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 61: 3.51 Mops/s</title></circle>
+<circle class="core" cx="472.0" cy="427.8" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 62: 3.83 Mops/s</title></circle>
+<circle class="core" cx="478.3" cy="426.0" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 63: 3.93 Mops/s</title></circle>
+<circle class="core" cx="438.3" cy="424.2" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 64: 3.32 Mops/s</title></circle>
+<circle class="core" cx="501.2" cy="422.4" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 65: 4.28 Mops/s</title></circle>
+<circle class="core" cx="485.7" cy="420.6" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 66: 4.04 Mops/s</title></circle>
+<circle class="core" cx="468.0" cy="430.5" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 67: 3.77 Mops/s</title></circle>
+<circle class="core" cx="506.9" cy="428.7" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 68: 4.37 Mops/s</title></circle>
+<circle class="core" cx="504.3" cy="426.9" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 69: 4.33 Mops/s</title></circle>
+<circle class="core" cx="483.4" cy="425.1" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 70: 4.01 Mops/s</title></circle>
+<circle class="core" cx="501.3" cy="423.3" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 71: 4.28 Mops/s</title></circle>
+<circle class="core" cx="487.2" cy="421.5" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 72: 4.07 Mops/s</title></circle>
+<circle class="core" cx="494.2" cy="431.4" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 73: 4.17 Mops/s</title></circle>
+<circle class="core" cx="493.4" cy="429.6" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 74: 4.16 Mops/s</title></circle>
+<circle class="core" cx="504.0" cy="427.8" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 75: 4.32 Mops/s</title></circle>
+<circle class="core" cx="495.1" cy="426.0" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 76: 4.19 Mops/s</title></circle>
+<circle class="core" cx="454.7" cy="424.2" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 77: 3.57 Mops/s</title></circle>
+<circle class="core" cx="499.6" cy="422.4" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 78: 4.25 Mops/s</title></circle>
+<circle class="core" cx="495.4" cy="420.6" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 79: 4.19 Mops/s</title></circle>
+<circle class="core" cx="489.3" cy="430.5" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 80: 4.10 Mops/s</title></circle>
+<circle class="core" cx="481.5" cy="428.7" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 81: 3.98 Mops/s</title></circle>
+<circle class="core" cx="488.9" cy="426.9" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 82: 4.09 Mops/s</title></circle>
+<circle class="core" cx="441.7" cy="425.1" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 83: 3.37 Mops/s</title></circle>
+<circle class="core" cx="502.0" cy="423.3" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 84: 4.29 Mops/s</title></circle>
+<circle class="core" cx="503.8" cy="421.5" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 85: 4.32 Mops/s</title></circle>
+<circle class="core" cx="475.3" cy="431.4" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 86: 3.88 Mops/s</title></circle>
+<circle class="core" cx="421.0" cy="429.6" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 87: 3.06 Mops/s</title></circle>
+<circle class="core" cx="484.6" cy="427.8" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 88: 4.03 Mops/s</title></circle>
+<circle class="core" cx="488.2" cy="426.0" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 89: 4.08 Mops/s</title></circle>
+<circle class="core" cx="467.7" cy="424.2" r="3.2" fill-opacity="0.45"><title>mostly-resting core, run 90: 3.77 Mops/s</title></circle>
+<line class="median" x1="437.5" y1="417" x2="437.5" y2="435"><title>mostly-resting core median: 3.31 Mops/s</title></line>
+<circle class="core" cx="714" cy="426" r="4"/>
+<text x="724.0" y="430.0" font-size="13" text-anchor="start" font-weight="600">3.31</text>
+<text x="760.0" y="430.0" class="t3" font-size="12" text-anchor="start">core</text>
+<text x="800.0" y="430.0" class="t2" font-size="13" text-anchor="start">22.0%</text>
+<text x="850.0" y="430.0" class="t2" font-size="13" text-anchor="start">1.61–4.37</text>
+<circle class="replay" cx="288.4" cy="444.6" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 1: 1.04 Mops/s</title></circle>
+<circle class="replay" cx="292.3" cy="454.5" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 2: 1.10 Mops/s</title></circle>
+<circle class="replay" cx="282.2" cy="452.7" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 3: 0.95 Mops/s</title></circle>
+<circle class="replay" cx="286.0" cy="450.9" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 4: 1.00 Mops/s</title></circle>
+<circle class="replay" cx="288.7" cy="449.1" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 5: 1.04 Mops/s</title></circle>
+<circle class="replay" cx="295.2" cy="447.3" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 6: 1.14 Mops/s</title></circle>
+<circle class="replay" cx="297.1" cy="445.5" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 7: 1.17 Mops/s</title></circle>
+<circle class="replay" cx="283.1" cy="455.4" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 8: 0.96 Mops/s</title></circle>
+<circle class="replay" cx="289.3" cy="453.6" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 9: 1.05 Mops/s</title></circle>
+<circle class="replay" cx="297.9" cy="451.8" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 10: 1.19 Mops/s</title></circle>
+<circle class="replay" cx="297.6" cy="450.0" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 11: 1.18 Mops/s</title></circle>
+<circle class="replay" cx="287.7" cy="448.2" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 12: 1.03 Mops/s</title></circle>
+<circle class="replay" cx="295.4" cy="446.4" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 13: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="295.9" cy="444.6" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 14: 1.16 Mops/s</title></circle>
+<circle class="replay" cx="296.7" cy="454.5" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 15: 1.17 Mops/s</title></circle>
+<circle class="replay" cx="295.7" cy="452.7" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 16: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="296.3" cy="450.9" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 17: 1.16 Mops/s</title></circle>
+<circle class="replay" cx="297.3" cy="449.1" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 18: 1.18 Mops/s</title></circle>
+<circle class="replay" cx="294.3" cy="447.3" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 19: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="290.2" cy="445.5" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 20: 1.07 Mops/s</title></circle>
+<circle class="replay" cx="286.4" cy="455.4" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 21: 1.01 Mops/s</title></circle>
+<circle class="replay" cx="283.2" cy="453.6" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 22: 0.96 Mops/s</title></circle>
+<circle class="replay" cx="285.4" cy="451.8" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 23: 1.00 Mops/s</title></circle>
+<circle class="replay" cx="283.2" cy="450.0" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 24: 0.96 Mops/s</title></circle>
+<circle class="replay" cx="289.9" cy="448.2" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 25: 1.06 Mops/s</title></circle>
+<circle class="replay" cx="293.0" cy="446.4" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 26: 1.11 Mops/s</title></circle>
+<circle class="replay" cx="292.9" cy="444.6" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 27: 1.11 Mops/s</title></circle>
+<circle class="replay" cx="296.8" cy="454.5" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 28: 1.17 Mops/s</title></circle>
+<circle class="replay" cx="297.2" cy="452.7" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 29: 1.17 Mops/s</title></circle>
+<circle class="replay" cx="295.3" cy="450.9" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 30: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="295.4" cy="449.1" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 31: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="291.6" cy="447.3" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 32: 1.09 Mops/s</title></circle>
+<circle class="replay" cx="296.3" cy="445.5" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 33: 1.16 Mops/s</title></circle>
+<circle class="replay" cx="291.8" cy="455.4" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 34: 1.09 Mops/s</title></circle>
+<circle class="replay" cx="293.5" cy="453.6" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 35: 1.12 Mops/s</title></circle>
+<circle class="replay" cx="297.0" cy="451.8" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 36: 1.17 Mops/s</title></circle>
+<circle class="replay" cx="290.6" cy="450.0" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 37: 1.07 Mops/s</title></circle>
+<circle class="replay" cx="295.8" cy="448.2" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 38: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="294.3" cy="446.4" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 39: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="289.3" cy="444.6" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 40: 1.05 Mops/s</title></circle>
+<circle class="replay" cx="283.1" cy="454.5" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 41: 0.96 Mops/s</title></circle>
+<circle class="replay" cx="294.5" cy="452.7" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 42: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="294.2" cy="450.9" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 43: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="296.2" cy="449.1" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 44: 1.16 Mops/s</title></circle>
+<circle class="replay" cx="296.0" cy="447.3" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 45: 1.16 Mops/s</title></circle>
+<circle class="replay" cx="293.6" cy="445.5" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 46: 1.12 Mops/s</title></circle>
+<circle class="replay" cx="281.4" cy="455.4" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 47: 0.93 Mops/s</title></circle>
+<circle class="replay" cx="287.2" cy="453.6" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 48: 1.02 Mops/s</title></circle>
+<circle class="replay" cx="295.3" cy="451.8" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 49: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="294.7" cy="450.0" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 50: 1.14 Mops/s</title></circle>
+<circle class="replay" cx="295.7" cy="448.2" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 51: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="294.5" cy="446.4" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 52: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="291.8" cy="444.6" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 53: 1.09 Mops/s</title></circle>
+<circle class="replay" cx="295.9" cy="454.5" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 54: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="288.4" cy="452.7" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 55: 1.04 Mops/s</title></circle>
+<circle class="replay" cx="295.2" cy="450.9" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 56: 1.14 Mops/s</title></circle>
+<circle class="replay" cx="293.6" cy="449.1" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 57: 1.12 Mops/s</title></circle>
+<circle class="replay" cx="292.2" cy="447.3" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 58: 1.10 Mops/s</title></circle>
+<circle class="replay" cx="294.9" cy="445.5" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 59: 1.14 Mops/s</title></circle>
+<circle class="replay" cx="282.1" cy="455.4" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 60: 0.94 Mops/s</title></circle>
+<circle class="replay" cx="287.2" cy="453.6" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 61: 1.02 Mops/s</title></circle>
+<circle class="replay" cx="291.2" cy="451.8" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 62: 1.08 Mops/s</title></circle>
+<circle class="replay" cx="294.0" cy="450.0" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 63: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="291.2" cy="448.2" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 64: 1.08 Mops/s</title></circle>
+<circle class="replay" cx="294.8" cy="446.4" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 65: 1.14 Mops/s</title></circle>
+<circle class="replay" cx="298.5" cy="444.6" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 66: 1.19 Mops/s</title></circle>
+<circle class="replay" cx="291.0" cy="454.5" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 67: 1.08 Mops/s</title></circle>
+<circle class="replay" cx="288.6" cy="452.7" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 68: 1.04 Mops/s</title></circle>
+<circle class="replay" cx="295.6" cy="450.9" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 69: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="297.3" cy="449.1" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 70: 1.18 Mops/s</title></circle>
+<circle class="replay" cx="292.5" cy="447.3" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 71: 1.10 Mops/s</title></circle>
+<circle class="replay" cx="297.6" cy="445.5" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 72: 1.18 Mops/s</title></circle>
+<circle class="replay" cx="295.0" cy="455.4" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 73: 1.14 Mops/s</title></circle>
+<circle class="replay" cx="295.5" cy="453.6" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 74: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="297.4" cy="451.8" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 75: 1.18 Mops/s</title></circle>
+<circle class="replay" cx="297.9" cy="450.0" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 76: 1.19 Mops/s</title></circle>
+<circle class="replay" cx="296.6" cy="448.2" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 77: 1.17 Mops/s</title></circle>
+<circle class="replay" cx="297.0" cy="446.4" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 78: 1.17 Mops/s</title></circle>
+<circle class="replay" cx="295.2" cy="444.6" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 79: 1.14 Mops/s</title></circle>
+<circle class="replay" cx="292.3" cy="454.5" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 80: 1.10 Mops/s</title></circle>
+<circle class="replay" cx="292.6" cy="452.7" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 81: 1.11 Mops/s</title></circle>
+<circle class="replay" cx="294.4" cy="450.9" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 82: 1.13 Mops/s</title></circle>
+<circle class="replay" cx="295.4" cy="449.1" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 83: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="295.6" cy="447.3" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 84: 1.15 Mops/s</title></circle>
+<circle class="replay" cx="296.6" cy="445.5" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 85: 1.17 Mops/s</title></circle>
+<circle class="replay" cx="297.1" cy="455.4" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 86: 1.17 Mops/s</title></circle>
+<circle class="replay" cx="297.7" cy="453.6" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 87: 1.18 Mops/s</title></circle>
+<circle class="replay" cx="297.8" cy="451.8" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 88: 1.18 Mops/s</title></circle>
+<circle class="replay" cx="296.2" cy="450.0" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 89: 1.16 Mops/s</title></circle>
+<circle class="replay" cx="297.4" cy="448.2" r="3.2" fill-opacity="0.45"><title>mostly-resting replay, run 90: 1.18 Mops/s</title></circle>
+<line class="median" x1="294.6" y1="441" x2="294.6" y2="459"><title>mostly-resting replay median: 1.14 Mops/s</title></line>
+<circle class="replay" cx="714" cy="450" r="4"/>
+<text x="724.0" y="454.0" font-size="13" text-anchor="start" font-weight="600">1.14</text>
+<text x="760.0" y="454.0" class="t3" font-size="12" text-anchor="start">replay</text>
+<text x="800.0" y="454.0" class="t2" font-size="13" text-anchor="start">6.0%</text>
+<text x="850.0" y="454.0" class="t2" font-size="13" text-anchor="start">0.93–1.19</text>
+<text x="24.0" y="544.0" class="t2" font-size="13" text-anchor="start">Replay sits near 1 Mops/s on every workload: CSV parsing and event collection cost about 600 ns per command, 1.5–4× the engine&#x27;s own cost.</text>
+<text x="24.0" y="564.0" class="t2" font-size="13" text-anchor="start">The large-book core rows scatter widely (CV 11–22%), so later changes were judged by interleaved A/B pairs, not against these runs.</text>
+<text x="24.0" y="588.0" class="t3" font-size="12" text-anchor="start">Source: benchmarks/results/2026-10-25-baseline/ · tables in docs/BENCHMARKS.md</text>
+</svg>

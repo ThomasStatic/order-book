@@ -38,6 +38,8 @@ The profile also exposed a problem with the measurements. The first A/B protocol
 
 ## Before and after
 
+![Before and after: nanoseconds per command, the heap's share of core time, and allocations per timed core command, for each workload.](images/optimization.svg)
+
 ### Throughput
 
 The final code against the baseline engine, both binaries interleaved in one session. The ratio is the paired median, with its 95% interval in parentheses. The nanosecond figures are each binary's median over the same runs: 60 runs per binary at the standard size, 18 at the extended size.
