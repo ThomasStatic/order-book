@@ -49,7 +49,7 @@ An order that trades its whole quantity at once or not at all, and then its whol
 _Avoid_: all-or-none
 
 **Expire**:
-Said of an accepted order's unfilled remainder that the book drops instead of resting, because the order may not wait, or because resting it would mean taking liquidity it may not take. Expiring is not cancelling: nobody asked for it, and the remainder never rested.
+Said of an accepted order's unfilled remainder that the book drops instead of resting, because the order may not wait, because resting it would mean taking liquidity it may not take, or because self-trade prevention stopped it. Expiring is not cancelling: no cancel was requested, and the remainder never rested.
 _Avoid_: cancel, kill, eliminate
 
 **Post-only**:
@@ -58,6 +58,10 @@ _Avoid_: maker-only, book-or-cancel, add-liquidity-only
 
 **Owner**:
 Whoever an order belongs to, for self-trade prevention only: two orders with the same owner may not trade with each other. An order may have no owner, and then it can trade with anyone. The book gives the owner no other meaning.
+
+**Self-trade prevention (STP)**:
+Stopping an incoming order from trading with a resting order that has the same owner. The incoming order's instruction says which order gives way: the resting order is cancelled whole and the incoming order goes on matching, the incoming order's remainder expires, or both. A prevented match is not a trade.
+_Avoid_: self-match prevention, SMP, wash-trade prevention
 _Avoid_: account, trader, firm, participant
 
 **Malformed**:
