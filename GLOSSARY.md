@@ -23,15 +23,23 @@ An order that trades only at its limit price or better.
 An order with no limit price, which takes the best prices available. It never rests: whatever it cannot trade at once expires.
 
 **Stop order**:
-An order that waits until the market trades at its stop price, then becomes a market order.
+An order that waits until it triggers, then becomes a market order.
 _Avoid_: stop-loss, stop-market
 
 **Stop-limit order**:
-An order that waits until the market trades at its stop price, then becomes a limit order at its limit price.
+An order that waits until it triggers, then becomes a limit order at its limit price. Its stop price and limit price may stand in any relation.
 
 **Stop price**:
 The price at which a stop or stop-limit order triggers (FIX StopPx). Distinct from the limit price.
 _Avoid_: trigger price, stop limit
+
+**Last trade price**:
+The price of the most recent trade on this book. It is what stop and stop-limit orders trigger on. A prevented self-trade is not a trade and does not set it.
+_Avoid_: last price, market price, reference price
+
+**Trigger**:
+Said of a stop or stop-limit order when a trade on this book is at or through its stop price: at or above it for a buy, at or below it for a sell.
+_Avoid_: activate, elect, fire
 
 **Time in force**:
 How long an order may remain working: good-till-cancelled, immediate-or-cancel, or fill-or-kill (FIX TimeInForce).
@@ -49,7 +57,7 @@ An order that trades its whole quantity at once or not at all, and then its whol
 _Avoid_: all-or-none
 
 **Expire**:
-Said of an accepted order's unfilled remainder that the book drops instead of resting, because the order may not wait, because resting it would mean taking liquidity it may not take, or because self-trade prevention stopped it. Expiring is not cancelling: no cancel was requested, and the remainder never rested.
+Said of an accepted order's unfilled remainder that the book drops instead of resting, because the order may not wait, because resting it would mean taking liquidity it may not take, because self-trade prevention stopped it, or because it is a stop or stop-limit order that arrived already past its trigger. Expiring is not cancelling: no cancel was requested, and the remainder never rested.
 _Avoid_: cancel, kill, eliminate
 
 **Post-only**:
@@ -67,3 +75,25 @@ _Avoid_: account, trader, firm, participant
 **Malformed**:
 Said of an order or order request whose fields, alone or in combination, could never be accepted, whatever the book holds.
 _Avoid_: invalid (too broad: a well-formed order can still be rejected)
+
+## Books and records
+
+**Instrument**:
+One tradable thing, with its own book. Orders never cross instruments, and the book gives an instrument no other meaning: no tick size, lot size, or decimal price.
+_Avoid_: product, security, market, symbol (a symbol names an instrument)
+
+**Snapshot**:
+A summary of a book's depth at one moment: its best levels on each side, with their aggregate quantities. It describes a book; it cannot rebuild one.
+_Avoid_: checkpoint, dump
+
+**Checkpoint**:
+A complete image of a book's state at one moment, from which an identical book can be rebuilt.
+_Avoid_: snapshot, dump, state image
+
+**Command log**:
+The sequence of commands a book or engine was given, recorded so that replaying it reproduces the same books and events. It records commands only, never their results.
+_Avoid_: journal, event log, audit log
+
+**Replay**:
+Feeding a recorded sequence of commands to fresh books, which produces the same books and events as the original run.
+_Avoid_: recovery (recovery is a replay that starts from a checkpoint)
