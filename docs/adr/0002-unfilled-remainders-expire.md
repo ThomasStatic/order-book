@@ -14,3 +14,4 @@ A market order's remainder never rests, and neither does an IOC order's. We acce
 - `OrderExpired` is a new `BookEvent` alternative, so code that visits every alternative must handle it.
 - An order that expires still consumes a sequence number, as any accepted submission does.
 - A fill-or-kill order that cannot fill completely is handled the same way. It is accepted, makes no trades, and its whole quantity expires. It is not rejected, so FOK has no liquidity-dependent rejection either.
+- A post-only order that would take liquidity on arrival is handled the same way. It is accepted, makes no trades, and its whole quantity expires. It is not rejected and not repriced.

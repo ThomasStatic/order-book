@@ -49,11 +49,11 @@ An order that trades its whole quantity at once or not at all, and then its whol
 _Avoid_: all-or-none
 
 **Expire**:
-Said of an accepted order's unfilled remainder that the book drops instead of resting, because the order may not wait. Expiring is not cancelling: nobody asked for it, and the remainder never rested.
+Said of an accepted order's unfilled remainder that the book drops instead of resting, because the order may not wait, or because resting it would mean taking liquidity it may not take. Expiring is not cancelling: nobody asked for it, and the remainder never rested.
 _Avoid_: cancel, kill, eliminate
 
 **Post-only**:
-An instruction that the order may only add liquidity, never take it (FIX ExecInst "participate, don't initiate").
+An instruction that the order may only add liquidity, never take it (FIX ExecInst "participate, don't initiate"). A post-only order that would take liquidity on arrival expires whole; it is never repriced.
 _Avoid_: maker-only, book-or-cancel, add-liquidity-only
 
 **Owner**:
