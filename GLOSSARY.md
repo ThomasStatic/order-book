@@ -64,7 +64,7 @@ An order that trades its whole quantity at once or not at all, and then its whol
 _Avoid_: all-or-none
 
 **Expire**:
-Said of an accepted order's unfilled remainder that the book drops instead of resting, because the order may not wait, because resting it would mean taking liquidity it may not take, because self-trade prevention stopped it, or because it is a stop or stop-limit order that arrived already past its trigger. Expiring is not cancelling: no cancel was requested, and the remainder never rested.
+Said of an accepted order's unfilled remainder that the book drops instead of resting, because the order may not wait, because resting it would mean taking liquidity it may not take, because self-trade prevention stopped it, or because it is a stop or stop-limit order that arrived already past its trigger. Expiring is not cancelling: no cancel was requested, and the remainder never rested since the order was accepted or last replaced.
 _Avoid_: cancel, kill, eliminate
 
 **Post-only**:
@@ -78,6 +78,14 @@ Whoever an order belongs to, for self-trade prevention only: two orders with the
 Stopping an incoming order from trading with a resting order that has the same owner. The incoming order's instruction says which order gives way: the resting order is cancelled whole and the incoming order goes on matching, the incoming order's remainder expires, or both. A prevented match is not a trade.
 _Avoid_: self-match prevention, SMP, wash-trade prevention
 _Avoid_: account, trader, firm, participant
+
+**Time priority**:
+An order's place in the queue at its price level: among resting orders at one price, the one that has held its place longest trades first.
+_Avoid_: queue priority, FIFO position
+
+**Replace**:
+Changing a resting order's price, quantity, or instructions in one command, under the same order ID (FIX cancel/replace). The quantity given is the new total, including what has already traded. The order keeps its time priority only when its price is unchanged and its quantity is not increased; otherwise it goes to the back of the queue at its new price, and may trade on the way, as if it had just arrived. Its side never changes.
+_Avoid_: amend, modify, cancel-replace (except when citing FIX)
 
 **Malformed**:
 Said of an order or order request whose fields, alone or in combination, could never be accepted, whatever the book holds.
