@@ -20,7 +20,7 @@ _Avoid_: kind
 An order that trades only at its limit price or better.
 
 **Market order**:
-An order with no limit price, which takes the best prices available.
+An order with no limit price, which takes the best prices available. It never rests: whatever it cannot trade at once expires.
 
 **Stop order**:
 An order that waits until the market trades at its stop price, then becomes a market order.
@@ -41,16 +41,24 @@ _Avoid_: validity, duration
 An order whose unfilled remainder rests until it is filled or cancelled. Every resting order is GTC.
 
 **Immediate-or-cancel (IOC)**:
-An order that trades what it can at once; the rest never rests.
+An order that trades what it can at once; the rest expires.
 _Avoid_: fill-and-kill, FAK
 
 **Fill-or-kill (FOK)**:
-An order that trades its whole quantity at once or not at all.
+An order that trades its whole quantity at once or not at all, and then its whole quantity expires.
 _Avoid_: all-or-none
+
+**Expire**:
+Said of an accepted order's unfilled remainder that the book drops instead of resting, because the order may not wait. Expiring is not cancelling: nobody asked for it, and the remainder never rested.
+_Avoid_: cancel, kill, eliminate
 
 **Post-only**:
 An instruction that the order may only add liquidity, never take it (FIX ExecInst "participate, don't initiate").
 _Avoid_: maker-only, book-or-cancel, add-liquidity-only
+
+**Owner**:
+Whoever an order belongs to, for self-trade prevention only: two orders with the same owner may not trade with each other. An order may have no owner, and then it can trade with anyone. The book gives the owner no other meaning.
+_Avoid_: account, trader, firm, participant
 
 **Malformed**:
 Said of an order or order request whose fields, alone or in combination, could never be accepted, whatever the book holds.
