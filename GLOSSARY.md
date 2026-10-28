@@ -29,6 +29,13 @@ _Avoid_: stop-loss, stop-market
 **Stop-limit order**:
 An order that waits until it triggers, then becomes a limit order at its limit price. Its stop price and limit price may stand in any relation.
 
+**Pending stop**:
+A stop or stop-limit order the book holds until it triggers or is cancelled. It is not a resting order: it sits at no price level and has no place in time priority until it triggers.
+_Avoid_: waiting stop, untriggered stop, resting stop
+
+**Cascade**:
+The stops a single command triggers and runs after the submitting order has finished, including those triggered by each other's trades. The command reports the cascade's events together with its own.
+
 **Stop price**:
 The price at which a stop or stop-limit order triggers (FIX StopPx). Distinct from the limit price.
 _Avoid_: trigger price, stop limit
