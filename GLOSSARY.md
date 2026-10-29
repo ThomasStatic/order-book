@@ -79,6 +79,10 @@ _Avoid_: account, trader, firm, participant
 Stopping an incoming order from trading with a resting order that has the same owner. The incoming order's instruction says which order gives way: the resting order is cancelled whole and the incoming order goes on matching, the incoming order's remainder expires, or both. A prevented match is not a trade.
 _Avoid_: self-match prevention, SMP, wash-trade prevention
 
+**Open quantity**:
+What an order may still trade: its total quantity less what has already traded. A replace sets a new total, so it sets a new open quantity too.
+_Avoid_: leaves quantity, outstanding quantity
+
 **Time priority**:
 An order's place in the queue at its price level: among resting orders at one price, the one that has held its place longest trades first.
 _Avoid_: queue priority, FIFO position
