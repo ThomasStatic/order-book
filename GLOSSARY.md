@@ -73,11 +73,11 @@ _Avoid_: maker-only, book-or-cancel, add-liquidity-only
 
 **Owner**:
 Whoever an order belongs to, for self-trade prevention only: two orders with the same owner may not trade with each other. An order may have no owner, and then it can trade with anyone. The book gives the owner no other meaning.
+_Avoid_: account, trader, firm, participant
 
 **Self-trade prevention (STP)**:
 Stopping an incoming order from trading with a resting order that has the same owner. The incoming order's instruction says which order gives way: the resting order is cancelled whole and the incoming order goes on matching, the incoming order's remainder expires, or both. A prevented match is not a trade.
 _Avoid_: self-match prevention, SMP, wash-trade prevention
-_Avoid_: account, trader, firm, participant
 
 **Time priority**:
 An order's place in the queue at its price level: among resting orders at one price, the one that has held its place longest trades first.
