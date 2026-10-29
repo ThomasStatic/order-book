@@ -30,7 +30,7 @@ _Avoid_: stop-loss, stop-market
 An order that waits until it triggers, then becomes a limit order at its limit price. Its stop price and limit price may stand in any relation.
 
 **Pending stop**:
-A stop or stop-limit order the book holds until it triggers or is cancelled. It is not a resting order: it sits at no price level and has no place in time priority until it triggers.
+A stop or stop-limit order the book holds until it triggers or is cancelled. It is not a resting order: it sits at no price level and has no place in time priority until it triggers. Its ID is live, as a resting order's is, so no other order may use it meanwhile.
 _Avoid_: waiting stop, untriggered stop, resting stop
 
 **Cascade**:
