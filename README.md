@@ -497,18 +497,18 @@ Output is byte-identical on every platform, with LF line endings. Sample files a
 ```bash
 cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DORDER_BOOK_BUILD_BENCHMARKS=ON
 cmake --build build/release --target order_book_benchmarks
-./build/release/order_book_benchmarks                                   # five workloads, 100k timed commands, 5 runs each
+./build/release/order_book_benchmarks                                   # all eleven workloads, 100k timed commands, 5 runs each
 ./build/release/order_book_benchmarks --size smoke --kind both --json results.json
 ```
 
 The program refuses to run (exit 3) in an unoptimized build, meaning Debug, automatic invariant checks, or sanitizers, unless given `--allow-unoptimized`.
 
-![Strip plot of the recorded baseline: 90 runs per workload for the core and replay paths. Replay sits near 1 million commands per second on every workload; the large-book core runs scatter widely.](docs/images/benchmark-baseline.svg)
+![Strip plot of the v2.0.0 baseline: 90 runs per workload for the core and replay paths, all eleven workloads. The v1 workloads run 1.5 to 1.8 times their first baseline on core and 2.0 to 2.4 times on replay.](docs/images/benchmark-v2-baseline.svg)
 
 ![Before and after optimization: nanoseconds per command fell on every workload, 1.44 to 2.23 times faster on the core path and 2.34 to 2.74 times on the replay path; the heap's share of core time fell from 34-47% to 0-5%, and allocations per command from 2.0-2.9 to under 0.17.](docs/images/optimization.svg)
 
-- **Methodology**: [`benchmarks/README.md`](benchmarks/README.md) covers the five workloads, what is and isn't timed, determinism, output formats, and the reference environment.
-- **Baseline**: [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) records the first results. Each run measures one throughput, so the page reports throughput percentiles over runs, never latency percentiles for single commands, and explains why. It also lists the baseline's limitations.
+- **Methodology**: [`benchmarks/README.md`](benchmarks/README.md) covers the five v1 workloads and the six behavior workloads, what is and isn't timed, determinism, output formats, and the reference environment.
+- **Baselines**: [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) records the v2.0.0 baseline of all eleven workloads, and the first results (before optimization, [figure](docs/images/benchmark-baseline.svg)) as history. Each run measures one throughput, so the page reports throughput percentiles over runs, never latency percentiles for single commands, and explains why. It also lists the baseline's limitations.
 - **Profile**: [`docs/PROFILING.md`](docs/PROFILING.md) shows where the baseline spent its time and gives the three strongest bottleneck hypotheses.
 - **Experiments**: [`docs/OPTIMIZATION-EXPERIMENTS.md`](docs/OPTIMIZATION-EXPERIMENTS.md) gives each candidate change a hypothesis, a prediction, a paired ABBA measurement protocol, and an outcome, including the reverted and null experiments.
 - **Findings**: [`docs/OPTIMIZATION.md`](docs/OPTIMIZATION.md) is the report.

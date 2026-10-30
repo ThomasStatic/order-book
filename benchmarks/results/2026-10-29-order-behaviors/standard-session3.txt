@@ -1,0 +1,731 @@
+order_book_benchmarks: generator v3, seed 42, size standard (100000 timed commands), 1 warm-up and 30 measured runs each
+build: Release, MSVC 194435228
+
+small-book: 100 preloaded orders, 100000 timed commands (cancellation rate 0.353, 26552 trades, ending with 173 orders on 10 levels); generated in 11.133 ms, untimed
+  core warm-up 1: 100000 commands in 8.675 ms, 11527510 ops/s
+  core run 1: 100000 commands in 8.780 ms, 11389132 ops/s
+  core run 2: 100000 commands in 8.712 ms, 11478289 ops/s
+  core run 3: 100000 commands in 9.051 ms, 11048381 ops/s
+  core run 4: 100000 commands in 8.820 ms, 11337997 ops/s
+  core run 5: 100000 commands in 9.296 ms, 10757315 ops/s
+  core run 6: 100000 commands in 9.223 ms, 10842106 ops/s
+  core run 7: 100000 commands in 8.754 ms, 11422827 ops/s
+  core run 8: 100000 commands in 8.777 ms, 11393674 ops/s
+  core run 9: 100000 commands in 8.752 ms, 11426221 ops/s
+  core run 10: 100000 commands in 8.701 ms, 11492536 ops/s
+  core run 11: 100000 commands in 8.839 ms, 11312857 ops/s
+  core run 12: 100000 commands in 8.724 ms, 11462500 ops/s
+  core run 13: 100000 commands in 8.768 ms, 11405109 ops/s
+  core run 14: 100000 commands in 8.755 ms, 11422175 ops/s
+  core run 15: 100000 commands in 8.722 ms, 11465918 ops/s
+  core run 16: 100000 commands in 8.794 ms, 11370872 ops/s
+  core run 17: 100000 commands in 8.790 ms, 11376953 ops/s
+  core run 18: 100000 commands in 8.831 ms, 11324259 ops/s
+  core run 19: 100000 commands in 8.990 ms, 11123718 ops/s
+  core run 20: 100000 commands in 8.829 ms, 11326568 ops/s
+  core run 21: 100000 commands in 8.982 ms, 11132882 ops/s
+  core run 22: 100000 commands in 9.136 ms, 10945350 ops/s
+  core run 23: 100000 commands in 8.781 ms, 11388225 ops/s
+  core run 24: 100000 commands in 8.751 ms, 11427788 ops/s
+  core run 25: 100000 commands in 8.793 ms, 11372165 ops/s
+  core run 26: 100000 commands in 9.430 ms, 10604229 ops/s
+  core run 27: 100000 commands in 8.994 ms, 11118771 ops/s
+  core run 28: 100000 commands in 8.725 ms, 11461844 ops/s
+  core run 29: 100000 commands in 9.030 ms, 11073829 ops/s
+  core run 30: 100000 commands in 8.971 ms, 11146905 ops/s
+  replay warm-up 1: 100000 commands in 30.920 ms, 3234142 ops/s
+  replay run 1: 100000 commands in 30.189 ms, 3312443 ops/s
+  replay run 2: 100000 commands in 30.306 ms, 3299720 ops/s
+  replay run 3: 100000 commands in 34.478 ms, 2900375 ops/s
+  replay run 4: 100000 commands in 35.037 ms, 2854158 ops/s
+  replay run 5: 100000 commands in 30.261 ms, 3304638 ops/s
+  replay run 6: 100000 commands in 31.944 ms, 3130488 ops/s
+  replay run 7: 100000 commands in 32.151 ms, 3110313 ops/s
+  replay run 8: 100000 commands in 30.280 ms, 3302466 ops/s
+  replay run 9: 100000 commands in 30.081 ms, 3324413 ops/s
+  replay run 10: 100000 commands in 30.064 ms, 3326293 ops/s
+  replay run 11: 100000 commands in 30.268 ms, 3303786 ops/s
+  replay run 12: 100000 commands in 30.610 ms, 3266885 ops/s
+  replay run 13: 100000 commands in 30.077 ms, 3324844 ops/s
+  replay run 14: 100000 commands in 30.893 ms, 3236979 ops/s
+  replay run 15: 100000 commands in 30.134 ms, 3318555 ops/s
+  replay run 16: 100000 commands in 30.258 ms, 3304878 ops/s
+  replay run 17: 100000 commands in 30.608 ms, 3267098 ops/s
+  replay run 18: 100000 commands in 29.957 ms, 3338062 ops/s
+  replay run 19: 100000 commands in 30.573 ms, 3270828 ops/s
+  replay run 20: 100000 commands in 29.770 ms, 3359052 ops/s
+  replay run 21: 100000 commands in 30.035 ms, 3329427 ops/s
+  replay run 22: 100000 commands in 30.299 ms, 3300493 ops/s
+  replay run 23: 100000 commands in 29.766 ms, 3359515 ops/s
+  replay run 24: 100000 commands in 30.203 ms, 3310951 ops/s
+  replay run 25: 100000 commands in 30.787 ms, 3248135 ops/s
+  replay run 26: 100000 commands in 30.228 ms, 3308213 ops/s
+  replay run 27: 100000 commands in 30.825 ms, 3244141 ops/s
+  replay run 28: 100000 commands in 30.468 ms, 3282143 ops/s
+  replay run 29: 100000 commands in 30.668 ms, 3260770 ops/s
+  replay run 30: 100000 commands in 30.157 ms, 3315925 ops/s
+
+deep-book: 100000 preloaded orders, 100000 timed commands (cancellation rate 0.353, 29628 trades, ending with 99555 orders on 2000 levels); generated in 60.857 ms, untimed
+  core warm-up 1: 100000 commands in 23.235 ms, 4303796 ops/s
+  core run 1: 100000 commands in 23.607 ms, 4236032 ops/s
+  core run 2: 100000 commands in 24.287 ms, 4117514 ops/s
+  core run 3: 100000 commands in 23.565 ms, 4243618 ops/s
+  core run 4: 100000 commands in 22.991 ms, 4349490 ops/s
+  core run 5: 100000 commands in 23.554 ms, 4245599 ops/s
+  core run 6: 100000 commands in 23.352 ms, 4282197 ops/s
+  core run 7: 100000 commands in 23.360 ms, 4280730 ops/s
+  core run 8: 100000 commands in 24.001 ms, 4166441 ops/s
+  core run 9: 100000 commands in 23.063 ms, 4335987 ops/s
+  core run 10: 100000 commands in 23.823 ms, 4197659 ops/s
+  core run 11: 100000 commands in 24.624 ms, 4061128 ops/s
+  core run 12: 100000 commands in 24.314 ms, 4112924 ops/s
+  core run 13: 100000 commands in 24.228 ms, 4127490 ops/s
+  core run 14: 100000 commands in 23.285 ms, 4294684 ops/s
+  core run 15: 100000 commands in 23.201 ms, 4310196 ops/s
+  core run 16: 100000 commands in 23.528 ms, 4250327 ops/s
+  core run 17: 100000 commands in 23.200 ms, 4310438 ops/s
+  core run 18: 100000 commands in 24.224 ms, 4128206 ops/s
+  core run 19: 100000 commands in 23.951 ms, 4175121 ops/s
+  core run 20: 100000 commands in 23.682 ms, 4222563 ops/s
+  core run 21: 100000 commands in 24.015 ms, 4164064 ops/s
+  core run 22: 100000 commands in 23.739 ms, 4212442 ops/s
+  core run 23: 100000 commands in 24.906 ms, 4015081 ops/s
+  core run 24: 100000 commands in 26.515 ms, 3771422 ops/s
+  core run 25: 100000 commands in 24.309 ms, 4113635 ops/s
+  core run 26: 100000 commands in 24.241 ms, 4125259 ops/s
+  core run 27: 100000 commands in 24.031 ms, 4161292 ops/s
+  core run 28: 100000 commands in 24.357 ms, 4105529 ops/s
+  core run 29: 100000 commands in 25.171 ms, 3972826 ops/s
+  core run 30: 100000 commands in 24.602 ms, 4064727 ops/s
+  replay warm-up 1: 100000 commands in 48.822 ms, 2048244 ops/s
+  replay run 1: 100000 commands in 48.472 ms, 2063055 ops/s
+  replay run 2: 100000 commands in 49.004 ms, 2040646 ops/s
+  replay run 3: 100000 commands in 49.083 ms, 2037349 ops/s
+  replay run 4: 100000 commands in 49.435 ms, 2022846 ops/s
+  replay run 5: 100000 commands in 51.240 ms, 1951604 ops/s
+  replay run 6: 100000 commands in 48.472 ms, 2063059 ops/s
+  replay run 7: 100000 commands in 51.014 ms, 1960239 ops/s
+  replay run 8: 100000 commands in 50.780 ms, 1969291 ops/s
+  replay run 9: 100000 commands in 51.505 ms, 1941570 ops/s
+  replay run 10: 100000 commands in 53.727 ms, 1861244 ops/s
+  replay run 11: 100000 commands in 49.582 ms, 2016865 ops/s
+  replay run 12: 100000 commands in 51.144 ms, 1955256 ops/s
+  replay run 13: 100000 commands in 51.877 ms, 1927648 ops/s
+  replay run 14: 100000 commands in 52.782 ms, 1894582 ops/s
+  replay run 15: 100000 commands in 50.125 ms, 1995024 ops/s
+  replay run 16: 100000 commands in 49.032 ms, 2039484 ops/s
+  replay run 17: 100000 commands in 49.708 ms, 2011765 ops/s
+  replay run 18: 100000 commands in 48.747 ms, 2051400 ops/s
+  replay run 19: 100000 commands in 50.104 ms, 1995857 ops/s
+  replay run 20: 100000 commands in 49.778 ms, 2008916 ops/s
+  replay run 21: 100000 commands in 48.856 ms, 2046840 ops/s
+  replay run 22: 100000 commands in 50.352 ms, 1985999 ops/s
+  replay run 23: 100000 commands in 50.223 ms, 1991116 ops/s
+  replay run 24: 100000 commands in 52.232 ms, 1914520 ops/s
+  replay run 25: 100000 commands in 48.803 ms, 2049046 ops/s
+  replay run 26: 100000 commands in 48.756 ms, 2051030 ops/s
+  replay run 27: 100000 commands in 48.534 ms, 2060420 ops/s
+  replay run 28: 100000 commands in 48.570 ms, 2058884 ops/s
+  replay run 29: 100000 commands in 53.799 ms, 1858771 ops/s
+  replay run 30: 100000 commands in 49.485 ms, 2020827 ops/s
+
+matching-heavy: 10000 preloaded orders, 100000 timed commands (cancellation rate 0.080, 83586 trades, ending with 10147 orders on 194 levels); generated in 17.328 ms, untimed
+  core warm-up 1: 100000 commands in 17.761 ms, 5630219 ops/s
+  core run 1: 100000 commands in 17.464 ms, 5726032 ops/s
+  core run 2: 100000 commands in 16.961 ms, 5895844 ops/s
+  core run 3: 100000 commands in 17.640 ms, 5668934 ops/s
+  core run 4: 100000 commands in 17.209 ms, 5810980 ops/s
+  core run 5: 100000 commands in 17.764 ms, 5629394 ops/s
+  core run 6: 100000 commands in 17.662 ms, 5661745 ops/s
+  core run 7: 100000 commands in 17.007 ms, 5879966 ops/s
+  core run 8: 100000 commands in 16.876 ms, 5925715 ops/s
+  core run 9: 100000 commands in 16.918 ms, 5911039 ops/s
+  core run 10: 100000 commands in 16.713 ms, 5983509 ops/s
+  core run 11: 100000 commands in 17.414 ms, 5742572 ops/s
+  core run 12: 100000 commands in 16.840 ms, 5938313 ops/s
+  core run 13: 100000 commands in 16.607 ms, 6021412 ops/s
+  core run 14: 100000 commands in 19.762 ms, 5060140 ops/s
+  core run 15: 100000 commands in 17.624 ms, 5674016 ops/s
+  core run 16: 100000 commands in 17.700 ms, 5649877 ops/s
+  core run 17: 100000 commands in 17.074 ms, 5856858 ops/s
+  core run 18: 100000 commands in 17.059 ms, 5862043 ops/s
+  core run 19: 100000 commands in 18.078 ms, 5531555 ops/s
+  core run 20: 100000 commands in 16.775 ms, 5961358 ops/s
+  core run 21: 100000 commands in 17.142 ms, 5833693 ops/s
+  core run 22: 100000 commands in 17.318 ms, 5774339 ops/s
+  core run 23: 100000 commands in 17.245 ms, 5798614 ops/s
+  core run 24: 100000 commands in 17.805 ms, 5616558 ops/s
+  core run 25: 100000 commands in 18.708 ms, 5345335 ops/s
+  core run 26: 100000 commands in 19.791 ms, 5052674 ops/s
+  core run 27: 100000 commands in 17.071 ms, 5857991 ops/s
+  core run 28: 100000 commands in 17.419 ms, 5741022 ops/s
+  core run 29: 100000 commands in 17.438 ms, 5734570 ops/s
+  core run 30: 100000 commands in 16.647 ms, 6007088 ops/s
+  replay warm-up 1: 100000 commands in 42.299 ms, 2364128 ops/s
+  replay run 1: 100000 commands in 44.931 ms, 2225660 ops/s
+  replay run 2: 100000 commands in 41.990 ms, 2381502 ops/s
+  replay run 3: 100000 commands in 43.020 ms, 2324479 ops/s
+  replay run 4: 100000 commands in 43.351 ms, 2306741 ops/s
+  replay run 5: 100000 commands in 44.029 ms, 2271210 ops/s
+  replay run 6: 100000 commands in 42.263 ms, 2366119 ops/s
+  replay run 7: 100000 commands in 42.676 ms, 2343215 ops/s
+  replay run 8: 100000 commands in 42.686 ms, 2342672 ops/s
+  replay run 9: 100000 commands in 42.401 ms, 2358435 ops/s
+  replay run 10: 100000 commands in 42.156 ms, 2372158 ops/s
+  replay run 11: 100000 commands in 42.914 ms, 2330226 ops/s
+  replay run 12: 100000 commands in 43.659 ms, 2290489 ops/s
+  replay run 13: 100000 commands in 43.814 ms, 2282355 ops/s
+  replay run 14: 100000 commands in 42.206 ms, 2369309 ops/s
+  replay run 15: 100000 commands in 42.719 ms, 2340862 ops/s
+  replay run 16: 100000 commands in 43.156 ms, 2317159 ops/s
+  replay run 17: 100000 commands in 41.798 ms, 2392465 ops/s
+  replay run 18: 100000 commands in 43.126 ms, 2318787 ops/s
+  replay run 19: 100000 commands in 41.849 ms, 2389566 ops/s
+  replay run 20: 100000 commands in 45.641 ms, 2191022 ops/s
+  replay run 21: 100000 commands in 42.737 ms, 2339882 ops/s
+  replay run 22: 100000 commands in 42.834 ms, 2334572 ops/s
+  replay run 23: 100000 commands in 42.072 ms, 2376895 ops/s
+  replay run 24: 100000 commands in 43.701 ms, 2288256 ops/s
+  replay run 25: 100000 commands in 43.299 ms, 2309511 ops/s
+  replay run 26: 100000 commands in 43.143 ms, 2317873 ops/s
+  replay run 27: 100000 commands in 43.828 ms, 2281662 ops/s
+  replay run 28: 100000 commands in 42.689 ms, 2342546 ops/s
+  replay run 29: 100000 commands in 43.024 ms, 2324273 ops/s
+  replay run 30: 100000 commands in 42.394 ms, 2358835 ops/s
+
+cancellation-heavy: 50000 preloaded orders, 100000 timed commands (cancellation rate 0.502, 0 trades, ending with 49692 orders on 500 levels); generated in 37.003 ms, untimed
+  core warm-up 1: 100000 commands in 19.870 ms, 5032611 ops/s
+  core run 1: 100000 commands in 18.229 ms, 5485885 ops/s
+  core run 2: 100000 commands in 16.978 ms, 5889975 ops/s
+  core run 3: 100000 commands in 16.168 ms, 6185057 ops/s
+  core run 4: 100000 commands in 17.099 ms, 5848295 ops/s
+  core run 5: 100000 commands in 19.097 ms, 5236479 ops/s
+  core run 6: 100000 commands in 18.398 ms, 5435521 ops/s
+  core run 7: 100000 commands in 18.674 ms, 5355010 ops/s
+  core run 8: 100000 commands in 19.537 ms, 5118441 ops/s
+  core run 9: 100000 commands in 24.068 ms, 4154825 ops/s
+  core run 10: 100000 commands in 20.889 ms, 4787254 ops/s
+  core run 11: 100000 commands in 22.157 ms, 4513165 ops/s
+  core run 12: 100000 commands in 21.366 ms, 4680246 ops/s
+  core run 13: 100000 commands in 23.641 ms, 4229868 ops/s
+  core run 14: 100000 commands in 26.728 ms, 3741395 ops/s
+  core run 15: 100000 commands in 20.738 ms, 4822159 ops/s
+  core run 16: 100000 commands in 22.880 ms, 4370572 ops/s
+  core run 17: 100000 commands in 21.463 ms, 4659094 ops/s
+  core run 18: 100000 commands in 19.052 ms, 5248683 ops/s
+  core run 19: 100000 commands in 19.282 ms, 5186050 ops/s
+  core run 20: 100000 commands in 18.934 ms, 5281588 ops/s
+  core run 21: 100000 commands in 18.423 ms, 5427998 ops/s
+  core run 22: 100000 commands in 16.299 ms, 6135459 ops/s
+  core run 23: 100000 commands in 20.673 ms, 4837274 ops/s
+  core run 24: 100000 commands in 17.434 ms, 5735820 ops/s
+  core run 25: 100000 commands in 17.988 ms, 5559416 ops/s
+  core run 26: 100000 commands in 17.406 ms, 5745145 ops/s
+  core run 27: 100000 commands in 18.515 ms, 5400968 ops/s
+  core run 28: 100000 commands in 15.957 ms, 6266999 ops/s
+  core run 29: 100000 commands in 17.108 ms, 5845389 ops/s
+  core run 30: 100000 commands in 16.748 ms, 5970791 ops/s
+  replay warm-up 1: 100000 commands in 39.373 ms, 2539805 ops/s
+  replay run 1: 100000 commands in 41.660 ms, 2400361 ops/s
+  replay run 2: 100000 commands in 40.512 ms, 2468404 ops/s
+  replay run 3: 100000 commands in 41.404 ms, 2415231 ops/s
+  replay run 4: 100000 commands in 52.346 ms, 1910373 ops/s
+  replay run 5: 100000 commands in 40.659 ms, 2459474 ops/s
+  replay run 6: 100000 commands in 40.224 ms, 2486072 ops/s
+  replay run 7: 100000 commands in 40.474 ms, 2470716 ops/s
+  replay run 8: 100000 commands in 40.845 ms, 2448256 ops/s
+  replay run 9: 100000 commands in 40.831 ms, 2449132 ops/s
+  replay run 10: 100000 commands in 41.960 ms, 2383245 ops/s
+  replay run 11: 100000 commands in 39.898 ms, 2506398 ops/s
+  replay run 12: 100000 commands in 40.017 ms, 2498925 ops/s
+  replay run 13: 100000 commands in 41.474 ms, 2411149 ops/s
+  replay run 14: 100000 commands in 40.176 ms, 2489017 ops/s
+  replay run 15: 100000 commands in 39.587 ms, 2526050 ops/s
+  replay run 16: 100000 commands in 41.107 ms, 2432652 ops/s
+  replay run 17: 100000 commands in 40.657 ms, 2459607 ops/s
+  replay run 18: 100000 commands in 45.121 ms, 2216268 ops/s
+  replay run 19: 100000 commands in 40.254 ms, 2484219 ops/s
+  replay run 20: 100000 commands in 40.321 ms, 2480128 ops/s
+  replay run 21: 100000 commands in 40.578 ms, 2464359 ops/s
+  replay run 22: 100000 commands in 39.825 ms, 2511017 ops/s
+  replay run 23: 100000 commands in 40.739 ms, 2454638 ops/s
+  replay run 24: 100000 commands in 40.230 ms, 2485689 ops/s
+  replay run 25: 100000 commands in 40.391 ms, 2475775 ops/s
+  replay run 26: 100000 commands in 39.566 ms, 2527442 ops/s
+  replay run 27: 100000 commands in 40.689 ms, 2457679 ops/s
+  replay run 28: 100000 commands in 49.088 ms, 2037145 ops/s
+  replay run 29: 100000 commands in 40.747 ms, 2454156 ops/s
+  replay run 30: 100000 commands in 39.476 ms, 2533210 ops/s
+
+mostly-resting: 1000 preloaded orders, 100000 timed commands (cancellation rate 0.050, 4073 trades, ending with 86874 orders on 100 levels); generated in 27.525 ms, untimed
+  core warm-up 1: 100000 commands in 19.932 ms, 5017033 ops/s
+  core run 1: 100000 commands in 16.965 ms, 5894454 ops/s
+  core run 2: 100000 commands in 18.578 ms, 5382740 ops/s
+  core run 3: 100000 commands in 18.288 ms, 5468156 ops/s
+  core run 4: 100000 commands in 16.618 ms, 6017716 ops/s
+  core run 5: 100000 commands in 17.588 ms, 5685824 ops/s
+  core run 6: 100000 commands in 17.894 ms, 5588372 ops/s
+  core run 7: 100000 commands in 16.729 ms, 5977787 ops/s
+  core run 8: 100000 commands in 17.622 ms, 5674757 ops/s
+  core run 9: 100000 commands in 17.469 ms, 5724295 ops/s
+  core run 10: 100000 commands in 16.325 ms, 6125462 ops/s
+  core run 11: 100000 commands in 16.616 ms, 6018187 ops/s
+  core run 12: 100000 commands in 17.295 ms, 5782085 ops/s
+  core run 13: 100000 commands in 20.194 ms, 4951941 ops/s
+  core run 14: 100000 commands in 16.139 ms, 6196171 ops/s
+  core run 15: 100000 commands in 17.890 ms, 5589559 ops/s
+  core run 16: 100000 commands in 18.620 ms, 5370540 ops/s
+  core run 17: 100000 commands in 17.358 ms, 5760866 ops/s
+  core run 18: 100000 commands in 16.862 ms, 5930565 ops/s
+  core run 19: 100000 commands in 19.845 ms, 5039103 ops/s
+  core run 20: 100000 commands in 17.554 ms, 5696577 ops/s
+  core run 21: 100000 commands in 16.565 ms, 6036861 ops/s
+  core run 22: 100000 commands in 16.402 ms, 6096632 ops/s
+  core run 23: 100000 commands in 19.924 ms, 5019072 ops/s
+  core run 24: 100000 commands in 18.717 ms, 5342651 ops/s
+  core run 25: 100000 commands in 19.273 ms, 5188687 ops/s
+  core run 26: 100000 commands in 17.618 ms, 5676078 ops/s
+  core run 27: 100000 commands in 18.730 ms, 5338886 ops/s
+  core run 28: 100000 commands in 18.522 ms, 5398868 ops/s
+  core run 29: 100000 commands in 18.257 ms, 5477291 ops/s
+  core run 30: 100000 commands in 17.229 ms, 5804033 ops/s
+  replay warm-up 1: 100000 commands in 41.259 ms, 2423696 ops/s
+  replay run 1: 100000 commands in 41.370 ms, 2417199 ops/s
+  replay run 2: 100000 commands in 41.279 ms, 2422569 ops/s
+  replay run 3: 100000 commands in 41.457 ms, 2412161 ops/s
+  replay run 4: 100000 commands in 42.132 ms, 2373476 ops/s
+  replay run 5: 100000 commands in 40.765 ms, 2453109 ops/s
+  replay run 6: 100000 commands in 41.963 ms, 2383074 ops/s
+  replay run 7: 100000 commands in 41.004 ms, 2438769 ops/s
+  replay run 8: 100000 commands in 41.458 ms, 2412103 ops/s
+  replay run 9: 100000 commands in 42.670 ms, 2343583 ops/s
+  replay run 10: 100000 commands in 44.646 ms, 2239857 ops/s
+  replay run 11: 100000 commands in 41.317 ms, 2420317 ops/s
+  replay run 12: 100000 commands in 41.952 ms, 2383699 ops/s
+  replay run 13: 100000 commands in 43.386 ms, 2304875 ops/s
+  replay run 14: 100000 commands in 40.959 ms, 2441442 ops/s
+  replay run 15: 100000 commands in 42.693 ms, 2342282 ops/s
+  replay run 16: 100000 commands in 41.664 ms, 2400177 ops/s
+  replay run 17: 100000 commands in 40.696 ms, 2457244 ops/s
+  replay run 18: 100000 commands in 41.094 ms, 2433422 ops/s
+  replay run 19: 100000 commands in 43.296 ms, 2309661 ops/s
+  replay run 20: 100000 commands in 43.950 ms, 2275323 ops/s
+  replay run 21: 100000 commands in 42.028 ms, 2379383 ops/s
+  replay run 22: 100000 commands in 42.693 ms, 2342304 ops/s
+  replay run 23: 100000 commands in 47.566 ms, 2102351 ops/s
+  replay run 24: 100000 commands in 42.622 ms, 2346228 ops/s
+  replay run 25: 100000 commands in 42.315 ms, 2363251 ops/s
+  replay run 26: 100000 commands in 42.894 ms, 2331356 ops/s
+  replay run 27: 100000 commands in 44.218 ms, 2261528 ops/s
+  replay run 28: 100000 commands in 42.251 ms, 2366802 ops/s
+  replay run 29: 100000 commands in 41.598 ms, 2403985 ops/s
+  replay run 30: 100000 commands in 41.030 ms, 2437229 ops/s
+
+quote-refresh: 2000 preloaded orders, 100000 timed commands (cancellation rate 0.271, 15932 trades, ending with 1805 orders on 101 levels); generated in 46.004 ms, untimed
+  core warm-up 1: 100000 commands in 9.912 ms, 10088679 ops/s
+  core run 1: 100000 commands in 9.617 ms, 10397929 ops/s
+  core run 2: 100000 commands in 9.302 ms, 10750492 ops/s
+  core run 3: 100000 commands in 11.184 ms, 8941665 ops/s
+  core run 4: 100000 commands in 11.384 ms, 8783873 ops/s
+  core run 5: 100000 commands in 9.580 ms, 10438195 ops/s
+  core run 6: 100000 commands in 9.664 ms, 10347254 ops/s
+  core run 7: 100000 commands in 9.862 ms, 10140240 ops/s
+  core run 8: 100000 commands in 10.523 ms, 9502903 ops/s
+  core run 9: 100000 commands in 9.539 ms, 10483389 ops/s
+  core run 10: 100000 commands in 10.604 ms, 9430226 ops/s
+  core run 11: 100000 commands in 9.845 ms, 10157750 ops/s
+  core run 12: 100000 commands in 9.378 ms, 10662800 ops/s
+  core run 13: 100000 commands in 11.735 ms, 8521807 ops/s
+  core run 14: 100000 commands in 9.909 ms, 10091836 ops/s
+  core run 15: 100000 commands in 9.948 ms, 10051969 ops/s
+  core run 16: 100000 commands in 9.827 ms, 10176356 ops/s
+  core run 17: 100000 commands in 10.274 ms, 9733497 ops/s
+  core run 18: 100000 commands in 9.817 ms, 10186100 ops/s
+  core run 19: 100000 commands in 9.420 ms, 10615824 ops/s
+  core run 20: 100000 commands in 9.664 ms, 10348110 ops/s
+  core run 21: 100000 commands in 10.113 ms, 9887969 ops/s
+  core run 22: 100000 commands in 9.304 ms, 10747834 ops/s
+  core run 23: 100000 commands in 9.802 ms, 10202312 ops/s
+  core run 24: 100000 commands in 9.609 ms, 10407235 ops/s
+  core run 25: 100000 commands in 9.595 ms, 10421878 ops/s
+  core run 26: 100000 commands in 9.581 ms, 10436888 ops/s
+  core run 27: 100000 commands in 10.111 ms, 9889827 ops/s
+  core run 28: 100000 commands in 10.097 ms, 9904128 ops/s
+  core run 29: 100000 commands in 9.790 ms, 10213983 ops/s
+  core run 30: 100000 commands in 10.149 ms, 9853188 ops/s
+  replay warm-up 1: 100000 commands in 42.763 ms, 2338465 ops/s
+  replay run 1: 100000 commands in 44.943 ms, 2225055 ops/s
+  replay run 2: 100000 commands in 43.031 ms, 2323906 ops/s
+  replay run 3: 100000 commands in 42.916 ms, 2330150 ops/s
+  replay run 4: 100000 commands in 42.792 ms, 2336874 ops/s
+  replay run 5: 100000 commands in 41.328 ms, 2419661 ops/s
+  replay run 6: 100000 commands in 42.521 ms, 2351801 ops/s
+  replay run 7: 100000 commands in 51.019 ms, 1960054 ops/s
+  replay run 8: 100000 commands in 47.799 ms, 2092094 ops/s
+  replay run 9: 100000 commands in 41.038 ms, 2436748 ops/s
+  replay run 10: 100000 commands in 41.646 ms, 2401203 ops/s
+  replay run 11: 100000 commands in 40.909 ms, 2444462 ops/s
+  replay run 12: 100000 commands in 41.773 ms, 2393891 ops/s
+  replay run 13: 100000 commands in 40.899 ms, 2445071 ops/s
+  replay run 14: 100000 commands in 41.045 ms, 2436321 ops/s
+  replay run 15: 100000 commands in 41.877 ms, 2387946 ops/s
+  replay run 16: 100000 commands in 41.508 ms, 2409180 ops/s
+  replay run 17: 100000 commands in 44.683 ms, 2237973 ops/s
+  replay run 18: 100000 commands in 41.431 ms, 2413622 ops/s
+  replay run 19: 100000 commands in 41.509 ms, 2409104 ops/s
+  replay run 20: 100000 commands in 41.668 ms, 2399940 ops/s
+  replay run 21: 100000 commands in 41.612 ms, 2403130 ops/s
+  replay run 22: 100000 commands in 44.441 ms, 2250190 ops/s
+  replay run 23: 100000 commands in 41.666 ms, 2400067 ops/s
+  replay run 24: 100000 commands in 42.330 ms, 2362413 ops/s
+  replay run 25: 100000 commands in 42.962 ms, 2327655 ops/s
+  replay run 26: 100000 commands in 41.749 ms, 2395267 ops/s
+  replay run 27: 100000 commands in 41.818 ms, 2391326 ops/s
+  replay run 28: 100000 commands in 41.634 ms, 2401872 ops/s
+  replay run 29: 100000 commands in 42.487 ms, 2353650 ops/s
+  replay run 30: 100000 commands in 40.741 ms, 2454554 ops/s
+
+pending-stops: 15000 preloaded orders, 100000 timed commands (cancellation rate 0.104, 75650 trades, ending with 9002 orders on 112 levels); generated in 110.484 ms, untimed
+  core warm-up 1: 100000 commands in 28.263 ms, 3538182 ops/s, 29750 stops triggered
+  core run 1: 100000 commands in 29.537 ms, 3385561 ops/s, 29750 stops triggered
+  core run 2: 100000 commands in 31.112 ms, 3214153 ops/s, 29750 stops triggered
+  core run 3: 100000 commands in 28.492 ms, 3509757 ops/s, 29750 stops triggered
+  core run 4: 100000 commands in 29.226 ms, 3421611 ops/s, 29750 stops triggered
+  core run 5: 100000 commands in 28.619 ms, 3494243 ops/s, 29750 stops triggered
+  core run 6: 100000 commands in 27.919 ms, 3581739 ops/s, 29750 stops triggered
+  core run 7: 100000 commands in 28.308 ms, 3532633 ops/s, 29750 stops triggered
+  core run 8: 100000 commands in 29.026 ms, 3445175 ops/s, 29750 stops triggered
+  core run 9: 100000 commands in 27.968 ms, 3575579 ops/s, 29750 stops triggered
+  core run 10: 100000 commands in 28.340 ms, 3528582 ops/s, 29750 stops triggered
+  core run 11: 100000 commands in 28.541 ms, 3503682 ops/s, 29750 stops triggered
+  core run 12: 100000 commands in 30.542 ms, 3274158 ops/s, 29750 stops triggered
+  core run 13: 100000 commands in 27.953 ms, 3577446 ops/s, 29750 stops triggered
+  core run 14: 100000 commands in 29.463 ms, 3394134 ops/s, 29750 stops triggered
+  core run 15: 100000 commands in 28.610 ms, 3495257 ops/s, 29750 stops triggered
+  core run 16: 100000 commands in 28.368 ms, 3525086 ops/s, 29750 stops triggered
+  core run 17: 100000 commands in 28.893 ms, 3461034 ops/s, 29750 stops triggered
+  core run 18: 100000 commands in 29.114 ms, 3434715 ops/s, 29750 stops triggered
+  core run 19: 100000 commands in 31.013 ms, 3224454 ops/s, 29750 stops triggered
+  core run 20: 100000 commands in 27.715 ms, 3608115 ops/s, 29750 stops triggered
+  core run 21: 100000 commands in 28.655 ms, 3489805 ops/s, 29750 stops triggered
+  core run 22: 100000 commands in 28.091 ms, 3559834 ops/s, 29750 stops triggered
+  core run 23: 100000 commands in 28.065 ms, 3563182 ops/s, 29750 stops triggered
+  core run 24: 100000 commands in 28.825 ms, 3469247 ops/s, 29750 stops triggered
+  core run 25: 100000 commands in 28.980 ms, 3450668 ops/s, 29750 stops triggered
+  core run 26: 100000 commands in 29.176 ms, 3427498 ops/s, 29750 stops triggered
+  core run 27: 100000 commands in 27.681 ms, 3612599 ops/s, 29750 stops triggered
+  core run 28: 100000 commands in 27.615 ms, 3621233 ops/s, 29750 stops triggered
+  core run 29: 100000 commands in 29.326 ms, 3409967 ops/s, 29750 stops triggered
+  core run 30: 100000 commands in 28.231 ms, 3542180 ops/s, 29750 stops triggered
+  replay warm-up 1: 100000 commands in 67.120 ms, 1489862 ops/s, 29750 stops triggered
+  replay run 1: 100000 commands in 69.765 ms, 1433375 ops/s, 29750 stops triggered
+  replay run 2: 100000 commands in 67.954 ms, 1471595 ops/s, 29750 stops triggered
+  replay run 3: 100000 commands in 66.870 ms, 1495439 ops/s, 29750 stops triggered
+  replay run 4: 100000 commands in 78.269 ms, 1277652 ops/s, 29750 stops triggered
+  replay run 5: 100000 commands in 68.065 ms, 1469177 ops/s, 29750 stops triggered
+  replay run 6: 100000 commands in 66.102 ms, 1512816 ops/s, 29750 stops triggered
+  replay run 7: 100000 commands in 80.113 ms, 1248231 ops/s, 29750 stops triggered
+  replay run 8: 100000 commands in 68.061 ms, 1469264 ops/s, 29750 stops triggered
+  replay run 9: 100000 commands in 67.909 ms, 1472568 ops/s, 29750 stops triggered
+  replay run 10: 100000 commands in 67.356 ms, 1484660 ops/s, 29750 stops triggered
+  replay run 11: 100000 commands in 66.524 ms, 1503210 ops/s, 29750 stops triggered
+  replay run 12: 100000 commands in 67.512 ms, 1481218 ops/s, 29750 stops triggered
+  replay run 13: 100000 commands in 68.178 ms, 1466747 ops/s, 29750 stops triggered
+  replay run 14: 100000 commands in 70.031 ms, 1427935 ops/s, 29750 stops triggered
+  replay run 15: 100000 commands in 67.073 ms, 1490906 ops/s, 29750 stops triggered
+  replay run 16: 100000 commands in 71.977 ms, 1389333 ops/s, 29750 stops triggered
+  replay run 17: 100000 commands in 75.837 ms, 1318612 ops/s, 29750 stops triggered
+  replay run 18: 100000 commands in 69.752 ms, 1433659 ops/s, 29750 stops triggered
+  replay run 19: 100000 commands in 74.053 ms, 1350381 ops/s, 29750 stops triggered
+  replay run 20: 100000 commands in 70.276 ms, 1422969 ops/s, 29750 stops triggered
+  replay run 21: 100000 commands in 67.958 ms, 1471493 ops/s, 29750 stops triggered
+  replay run 22: 100000 commands in 68.057 ms, 1469354 ops/s, 29750 stops triggered
+  replay run 23: 100000 commands in 68.608 ms, 1457556 ops/s, 29750 stops triggered
+  replay run 24: 100000 commands in 68.480 ms, 1460287 ops/s, 29750 stops triggered
+  replay run 25: 100000 commands in 69.632 ms, 1436115 ops/s, 29750 stops triggered
+  replay run 26: 100000 commands in 66.960 ms, 1493424 ops/s, 29750 stops triggered
+  replay run 27: 100000 commands in 68.055 ms, 1469406 ops/s, 29750 stops triggered
+  replay run 28: 100000 commands in 69.701 ms, 1434693 ops/s, 29750 stops triggered
+  replay run 29: 100000 commands in 69.355 ms, 1441853 ops/s, 29750 stops triggered
+  replay run 30: 100000 commands in 67.145 ms, 1489312 ops/s, 29750 stops triggered
+
+self-trade: 10000 preloaded orders, 100000 timed commands (cancellation rate 0.079, 65076 trades, ending with 8003 orders on 186 levels); generated in 87.538 ms, untimed
+  core warm-up 1: 100000 commands in 21.647 ms, 4619535 ops/s
+  core run 1: 100000 commands in 24.359 ms, 4105191 ops/s
+  core run 2: 100000 commands in 19.491 ms, 5130547 ops/s
+  core run 3: 100000 commands in 18.101 ms, 5524648 ops/s
+  core run 4: 100000 commands in 18.674 ms, 5354953 ops/s
+  core run 5: 100000 commands in 19.474 ms, 5135157 ops/s
+  core run 6: 100000 commands in 18.948 ms, 5277574 ops/s
+  core run 7: 100000 commands in 18.425 ms, 5427408 ops/s
+  core run 8: 100000 commands in 18.636 ms, 5365901 ops/s
+  core run 9: 100000 commands in 18.418 ms, 5429353 ops/s
+  core run 10: 100000 commands in 19.141 ms, 5224387 ops/s
+  core run 11: 100000 commands in 18.344 ms, 5451493 ops/s
+  core run 12: 100000 commands in 18.674 ms, 5355068 ops/s
+  core run 13: 100000 commands in 18.653 ms, 5361097 ops/s
+  core run 14: 100000 commands in 18.336 ms, 5453633 ops/s
+  core run 15: 100000 commands in 18.890 ms, 5293806 ops/s
+  core run 16: 100000 commands in 18.454 ms, 5418879 ops/s
+  core run 17: 100000 commands in 18.837 ms, 5308616 ops/s
+  core run 18: 100000 commands in 18.925 ms, 5283876 ops/s
+  core run 19: 100000 commands in 18.518 ms, 5400035 ops/s
+  core run 20: 100000 commands in 18.606 ms, 5374639 ops/s
+  core run 21: 100000 commands in 18.068 ms, 5534769 ops/s
+  core run 22: 100000 commands in 18.581 ms, 5381871 ops/s
+  core run 23: 100000 commands in 18.290 ms, 5467349 ops/s
+  core run 24: 100000 commands in 18.550 ms, 5390690 ops/s
+  core run 25: 100000 commands in 18.623 ms, 5369791 ops/s
+  core run 26: 100000 commands in 18.018 ms, 5550067 ops/s
+  core run 27: 100000 commands in 19.243 ms, 5196722 ops/s
+  core run 28: 100000 commands in 18.340 ms, 5452444 ops/s
+  core run 29: 100000 commands in 20.168 ms, 4958301 ops/s
+  core run 30: 100000 commands in 18.427 ms, 5426908 ops/s
+  replay warm-up 1: 100000 commands in 60.211 ms, 1660821 ops/s
+  replay run 1: 100000 commands in 61.047 ms, 1638093 ops/s
+  replay run 2: 100000 commands in 58.337 ms, 1714193 ops/s
+  replay run 3: 100000 commands in 59.636 ms, 1676845 ops/s
+  replay run 4: 100000 commands in 58.020 ms, 1723555 ops/s
+  replay run 5: 100000 commands in 57.560 ms, 1737302 ops/s
+  replay run 6: 100000 commands in 57.619 ms, 1735545 ops/s
+  replay run 7: 100000 commands in 58.199 ms, 1718243 ops/s
+  replay run 8: 100000 commands in 58.199 ms, 1718248 ops/s
+  replay run 9: 100000 commands in 59.472 ms, 1681461 ops/s
+  replay run 10: 100000 commands in 60.932 ms, 1641182 ops/s
+  replay run 11: 100000 commands in 58.997 ms, 1695007 ops/s
+  replay run 12: 100000 commands in 75.596 ms, 1322828 ops/s
+  replay run 13: 100000 commands in 58.300 ms, 1715257 ops/s
+  replay run 14: 100000 commands in 59.132 ms, 1691132 ops/s
+  replay run 15: 100000 commands in 60.318 ms, 1657872 ops/s
+  replay run 16: 100000 commands in 58.014 ms, 1723737 ops/s
+  replay run 17: 100000 commands in 59.860 ms, 1670556 ops/s
+  replay run 18: 100000 commands in 63.843 ms, 1566335 ops/s
+  replay run 19: 100000 commands in 58.531 ms, 1708508 ops/s
+  replay run 20: 100000 commands in 58.854 ms, 1699117 ops/s
+  replay run 21: 100000 commands in 57.352 ms, 1743624 ops/s
+  replay run 22: 100000 commands in 58.685 ms, 1704007 ops/s
+  replay run 23: 100000 commands in 60.839 ms, 1643672 ops/s
+  replay run 24: 100000 commands in 57.497 ms, 1739218 ops/s
+  replay run 25: 100000 commands in 57.242 ms, 1746972 ops/s
+  replay run 26: 100000 commands in 57.642 ms, 1734858 ops/s
+  replay run 27: 100000 commands in 59.063 ms, 1693102 ops/s
+  replay run 28: 100000 commands in 58.587 ms, 1706852 ops/s
+  replay run 29: 100000 commands in 57.015 ms, 1753924 ops/s
+  replay run 30: 100000 commands in 60.852 ms, 1643326 ops/s
+
+immediate: 10000 preloaded orders, 100000 timed commands (cancellation rate 0.049, 74551 trades, ending with 11081 orders on 86 levels); generated in 80.838 ms, untimed
+  core warm-up 1: 100000 commands in 18.409 ms, 5432185 ops/s
+  core run 1: 100000 commands in 18.187 ms, 5498433 ops/s
+  core run 2: 100000 commands in 18.243 ms, 5481494 ops/s
+  core run 3: 100000 commands in 19.641 ms, 5091390 ops/s
+  core run 4: 100000 commands in 19.009 ms, 5260583 ops/s
+  core run 5: 100000 commands in 18.379 ms, 5440933 ops/s
+  core run 6: 100000 commands in 21.910 ms, 4564168 ops/s
+  core run 7: 100000 commands in 19.009 ms, 5260694 ops/s
+  core run 8: 100000 commands in 18.245 ms, 5480834 ops/s
+  core run 9: 100000 commands in 18.836 ms, 5308926 ops/s
+  core run 10: 100000 commands in 18.510 ms, 5402602 ops/s
+  core run 11: 100000 commands in 18.292 ms, 5466901 ops/s
+  core run 12: 100000 commands in 18.262 ms, 5475941 ops/s
+  core run 13: 100000 commands in 18.246 ms, 5480773 ops/s
+  core run 14: 100000 commands in 18.620 ms, 5370512 ops/s
+  core run 15: 100000 commands in 18.066 ms, 5535413 ops/s
+  core run 16: 100000 commands in 19.318 ms, 5176493 ops/s
+  core run 17: 100000 commands in 20.284 ms, 4930043 ops/s
+  core run 18: 100000 commands in 18.156 ms, 5507760 ops/s
+  core run 19: 100000 commands in 18.136 ms, 5514047 ops/s
+  core run 20: 100000 commands in 18.137 ms, 5513530 ops/s
+  core run 21: 100000 commands in 18.494 ms, 5407071 ops/s
+  core run 22: 100000 commands in 17.552 ms, 5697389 ops/s
+  core run 23: 100000 commands in 17.338 ms, 5767711 ops/s
+  core run 24: 100000 commands in 17.435 ms, 5735688 ops/s
+  core run 25: 100000 commands in 17.814 ms, 5613562 ops/s
+  core run 26: 100000 commands in 18.274 ms, 5472166 ops/s
+  core run 27: 100000 commands in 18.661 ms, 5358856 ops/s
+  core run 28: 100000 commands in 18.473 ms, 5413335 ops/s
+  core run 29: 100000 commands in 18.102 ms, 5524404 ops/s
+  core run 30: 100000 commands in 18.470 ms, 5414156 ops/s
+  replay warm-up 1: 100000 commands in 56.340 ms, 1774947 ops/s
+  replay run 1: 100000 commands in 56.804 ms, 1760436 ops/s
+  replay run 2: 100000 commands in 54.761 ms, 1826104 ops/s
+  replay run 3: 100000 commands in 55.958 ms, 1787051 ops/s
+  replay run 4: 100000 commands in 55.251 ms, 1809922 ops/s
+  replay run 5: 100000 commands in 55.813 ms, 1791710 ops/s
+  replay run 6: 100000 commands in 55.427 ms, 1804181 ops/s
+  replay run 7: 100000 commands in 54.929 ms, 1820525 ops/s
+  replay run 8: 100000 commands in 55.847 ms, 1790613 ops/s
+  replay run 9: 100000 commands in 55.538 ms, 1800556 ops/s
+  replay run 10: 100000 commands in 57.076 ms, 1752062 ops/s
+  replay run 11: 100000 commands in 56.191 ms, 1779638 ops/s
+  replay run 12: 100000 commands in 56.929 ms, 1756580 ops/s
+  replay run 13: 100000 commands in 56.530 ms, 1768972 ops/s
+  replay run 14: 100000 commands in 56.741 ms, 1762397 ops/s
+  replay run 15: 100000 commands in 69.714 ms, 1434438 ops/s
+  replay run 16: 100000 commands in 55.071 ms, 1815848 ops/s
+  replay run 17: 100000 commands in 56.265 ms, 1777307 ops/s
+  replay run 18: 100000 commands in 55.822 ms, 1791415 ops/s
+  replay run 19: 100000 commands in 59.488 ms, 1681006 ops/s
+  replay run 20: 100000 commands in 58.728 ms, 1702777 ops/s
+  replay run 21: 100000 commands in 54.831 ms, 1823799 ops/s
+  replay run 22: 100000 commands in 56.670 ms, 1764611 ops/s
+  replay run 23: 100000 commands in 54.956 ms, 1819638 ops/s
+  replay run 24: 100000 commands in 58.281 ms, 1715825 ops/s
+  replay run 25: 100000 commands in 55.242 ms, 1810204 ops/s
+  replay run 26: 100000 commands in 54.995 ms, 1818347 ops/s
+  replay run 27: 100000 commands in 55.075 ms, 1815689 ops/s
+  replay run 28: 100000 commands in 55.709 ms, 1795055 ops/s
+  replay run 29: 100000 commands in 55.346 ms, 1806802 ops/s
+  replay run 30: 100000 commands in 55.702 ms, 1795271 ops/s
+
+matching-heavy-request: 10000 preloaded orders, 100000 timed commands (cancellation rate 0.080, 83586 trades, ending with 10147 orders on 194 levels); generated in 91.943 ms, untimed
+  core warm-up 1: 100000 commands in 18.148 ms, 5510371 ops/s
+  core run 1: 100000 commands in 18.094 ms, 5526816 ops/s
+  core run 2: 100000 commands in 17.419 ms, 5741022 ops/s
+  core run 3: 100000 commands in 17.950 ms, 5570906 ops/s
+  core run 4: 100000 commands in 18.156 ms, 5507821 ops/s
+  core run 5: 100000 commands in 18.330 ms, 5455508 ops/s
+  core run 6: 100000 commands in 18.353 ms, 5448611 ops/s
+  core run 7: 100000 commands in 17.217 ms, 5808247 ops/s
+  core run 8: 100000 commands in 17.751 ms, 5633454 ops/s
+  core run 9: 100000 commands in 17.326 ms, 5771739 ops/s
+  core run 10: 100000 commands in 17.345 ms, 5765217 ops/s
+  core run 11: 100000 commands in 17.452 ms, 5729969 ops/s
+  core run 12: 100000 commands in 20.049 ms, 4987730 ops/s
+  core run 13: 100000 commands in 18.946 ms, 5278215 ops/s
+  core run 14: 100000 commands in 17.954 ms, 5569634 ops/s
+  core run 15: 100000 commands in 17.453 ms, 5729838 ops/s
+  core run 16: 100000 commands in 17.309 ms, 5777174 ops/s
+  core run 17: 100000 commands in 18.576 ms, 5383203 ops/s
+  core run 18: 100000 commands in 17.566 ms, 5692913 ops/s
+  core run 19: 100000 commands in 18.082 ms, 5530331 ops/s
+  core run 20: 100000 commands in 17.777 ms, 5625151 ops/s
+  core run 21: 100000 commands in 17.605 ms, 5680366 ops/s
+  core run 22: 100000 commands in 18.739 ms, 5336350 ops/s
+  core run 23: 100000 commands in 17.701 ms, 5649398 ops/s
+  core run 24: 100000 commands in 20.132 ms, 4967216 ops/s
+  core run 25: 100000 commands in 17.216 ms, 5808516 ops/s
+  core run 26: 100000 commands in 17.543 ms, 5700279 ops/s
+  core run 27: 100000 commands in 17.294 ms, 5782453 ops/s
+  core run 28: 100000 commands in 17.323 ms, 5772705 ops/s
+  core run 29: 100000 commands in 18.266 ms, 5474622 ops/s
+  core run 30: 100000 commands in 17.613 ms, 5677624 ops/s
+  replay warm-up 1: 100000 commands in 54.328 ms, 1840655 ops/s
+  replay run 1: 100000 commands in 59.061 ms, 1693168 ops/s
+  replay run 2: 100000 commands in 55.701 ms, 1795290 ops/s
+  replay run 3: 100000 commands in 56.536 ms, 1768797 ops/s
+  replay run 4: 100000 commands in 53.735 ms, 1860984 ops/s
+  replay run 5: 100000 commands in 56.587 ms, 1767181 ops/s
+  replay run 6: 100000 commands in 55.478 ms, 1802529 ops/s
+  replay run 7: 100000 commands in 55.651 ms, 1796913 ops/s
+  replay run 8: 100000 commands in 53.119 ms, 1882558 ops/s
+  replay run 9: 100000 commands in 53.443 ms, 1871170 ops/s
+  replay run 10: 100000 commands in 54.056 ms, 1849916 ops/s
+  replay run 11: 100000 commands in 52.818 ms, 1893301 ops/s
+  replay run 12: 100000 commands in 53.764 ms, 1859967 ops/s
+  replay run 13: 100000 commands in 53.175 ms, 1880590 ops/s
+  replay run 14: 100000 commands in 53.715 ms, 1861684 ops/s
+  replay run 15: 100000 commands in 53.302 ms, 1876109 ops/s
+  replay run 16: 100000 commands in 54.060 ms, 1849793 ops/s
+  replay run 17: 100000 commands in 54.043 ms, 1850375 ops/s
+  replay run 18: 100000 commands in 55.222 ms, 1810859 ops/s
+  replay run 19: 100000 commands in 52.850 ms, 1892162 ops/s
+  replay run 20: 100000 commands in 54.413 ms, 1837796 ops/s
+  replay run 21: 100000 commands in 54.900 ms, 1821507 ops/s
+  replay run 22: 100000 commands in 55.119 ms, 1814266 ops/s
+  replay run 23: 100000 commands in 54.882 ms, 1822081 ops/s
+  replay run 24: 100000 commands in 54.125 ms, 1847572 ops/s
+  replay run 25: 100000 commands in 59.312 ms, 1685997 ops/s
+  replay run 26: 100000 commands in 58.263 ms, 1716358 ops/s
+  replay run 27: 100000 commands in 55.949 ms, 1787358 ops/s
+  replay run 28: 100000 commands in 52.091 ms, 1919725 ops/s
+  replay run 29: 100000 commands in 52.836 ms, 1892649 ops/s
+  replay run 30: 100000 commands in 54.075 ms, 1849297 ops/s
+
+matching-heavy-owned: 10000 preloaded orders, 100000 timed commands (cancellation rate 0.080, 83586 trades, ending with 10147 orders on 194 levels); generated in 90.108 ms, untimed
+  core warm-up 1: 100000 commands in 18.489 ms, 5408709 ops/s
+  core run 1: 100000 commands in 19.239 ms, 5197883 ops/s
+  core run 2: 100000 commands in 18.587 ms, 5379989 ops/s
+  core run 3: 100000 commands in 18.680 ms, 5353376 ops/s
+  core run 4: 100000 commands in 18.453 ms, 5419173 ops/s
+  core run 5: 100000 commands in 17.663 ms, 5661392 ops/s
+  core run 6: 100000 commands in 17.271 ms, 5790086 ops/s
+  core run 7: 100000 commands in 17.236 ms, 5801676 ops/s
+  core run 8: 100000 commands in 18.839 ms, 5308053 ops/s
+  core run 9: 100000 commands in 17.508 ms, 5711577 ops/s
+  core run 10: 100000 commands in 17.722 ms, 5642640 ops/s
+  core run 11: 100000 commands in 18.135 ms, 5514108 ops/s
+  core run 12: 100000 commands in 17.364 ms, 5758942 ops/s
+  core run 13: 100000 commands in 17.618 ms, 5676110 ops/s
+  core run 14: 100000 commands in 17.900 ms, 5586561 ops/s
+  core run 15: 100000 commands in 18.704 ms, 5346536 ops/s
+  core run 16: 100000 commands in 19.122 ms, 5229606 ops/s
+  core run 17: 100000 commands in 18.201 ms, 5494053 ops/s
+  core run 18: 100000 commands in 19.351 ms, 5167692 ops/s
+  core run 19: 100000 commands in 17.713 ms, 5645635 ops/s
+  core run 20: 100000 commands in 21.007 ms, 4760386 ops/s
+  core run 21: 100000 commands in 20.171 ms, 4957539 ops/s
+  core run 22: 100000 commands in 17.292 ms, 5783155 ops/s
+  core run 23: 100000 commands in 17.830 ms, 5608619 ops/s
+  core run 24: 100000 commands in 18.313 ms, 5460691 ops/s
+  core run 25: 100000 commands in 21.837 ms, 4579300 ops/s
+  core run 26: 100000 commands in 17.617 ms, 5676303 ops/s
+  core run 27: 100000 commands in 17.687 ms, 5653998 ops/s
+  core run 28: 100000 commands in 18.989 ms, 5266151 ops/s
+  core run 29: 100000 commands in 19.142 ms, 5223978 ops/s
+  core run 30: 100000 commands in 18.530 ms, 5396625 ops/s
+  replay warm-up 1: 100000 commands in 56.849 ms, 1759037 ops/s
+  replay run 1: 100000 commands in 55.979 ms, 1786394 ops/s
+  replay run 2: 100000 commands in 56.060 ms, 1783809 ops/s
+  replay run 3: 100000 commands in 55.290 ms, 1808645 ops/s
+  replay run 4: 100000 commands in 56.019 ms, 1785109 ops/s
+  replay run 5: 100000 commands in 65.062 ms, 1536995 ops/s
+  replay run 6: 100000 commands in 55.721 ms, 1794656 ops/s
+  replay run 7: 100000 commands in 59.822 ms, 1671626 ops/s
+  replay run 8: 100000 commands in 53.958 ms, 1853307 ops/s
+  replay run 9: 100000 commands in 55.891 ms, 1789210 ops/s
+  replay run 10: 100000 commands in 65.364 ms, 1529894 ops/s
+  replay run 11: 100000 commands in 55.154 ms, 1813108 ops/s
+  replay run 12: 100000 commands in 55.659 ms, 1796668 ops/s
+  replay run 13: 100000 commands in 55.431 ms, 1804041 ops/s
+  replay run 14: 100000 commands in 59.337 ms, 1685292 ops/s
+  replay run 15: 100000 commands in 55.669 ms, 1796319 ops/s
+  replay run 16: 100000 commands in 55.311 ms, 1807946 ops/s
+  replay run 17: 100000 commands in 56.016 ms, 1785204 ops/s
+  replay run 18: 100000 commands in 55.763 ms, 1793317 ops/s
+  replay run 19: 100000 commands in 57.903 ms, 1727035 ops/s
+  replay run 20: 100000 commands in 56.824 ms, 1759823 ops/s
+  replay run 21: 100000 commands in 59.816 ms, 1671788 ops/s
+  replay run 22: 100000 commands in 55.174 ms, 1812451 ops/s
+  replay run 23: 100000 commands in 56.158 ms, 1780681 ops/s
+  replay run 24: 100000 commands in 55.203 ms, 1811506 ops/s
+  replay run 25: 100000 commands in 55.969 ms, 1786687 ops/s
+  replay run 26: 100000 commands in 55.253 ms, 1809850 ops/s
+  replay run 27: 100000 commands in 56.059 ms, 1783838 ops/s
+  replay run 28: 100000 commands in 55.229 ms, 1810656 ops/s
+  replay run 29: 100000 commands in 54.497 ms, 1834960 ops/s
+  replay run 30: 100000 commands in 55.862 ms, 1790113 ops/s
+
+summary of measured runs (warm-ups excluded):
+workload            kind     reps  commands   median ops/s      min ops/s      max ops/s   ns/cmd      cv
+small-book          core       30    100000       11371519       10604229       11492536     87.9    2.1%
+small-book          replay     30    100000        3303126        2854158        3359515    302.7    3.6%
+deep-book           core       30    100000        4170781        3771422        4349490    239.8    2.9%
+deep-book           replay     30    100000        2010340        1858771        2063059    497.4    3.0%
+matching-heavy      core       30    100000        5786476        5052674        6021412    172.8    4.2%
+matching-heavy      replay     30    100000        2332399        2191022        2392465    428.7    2.0%
+cancellation-heavy  core       30    100000        5318299        3741395        6266999    188.0   12.4%
+cancellation-heavy  replay     30    100000        2461983        1910373        2533210    406.2    5.7%
+mostly-resting      core       30    100000        5680951        4951941        6196171    176.0    6.1%
+mostly-resting      replay     30    100000        2381229        2102351        2457244    420.0    3.2%
+quote-refresh       core       30    100000       10181228        8521807       10750492     98.2    5.5%
+quote-refresh       replay     30    100000        2394579        1960054        2454554    417.6    4.6%
+pending-stops       core       30    100000        3494750        3214153        3621233    286.1    3.0%
+pending-stops       replay     30    100000        1467962        1248231        1512816    681.2    4.5%
+self-trade          core       30    100000        5372215        4105191        5550067    186.1    4.9%
+self-trade          replay     30    100000        1705429        1322828        1753924    586.4    4.7%
+immediate           core       30    100000        5469533        4564168        5767711    182.8    4.4%
+immediate           replay     30    100000        1791562        1434438        1826104    558.2    4.1%
+matching-heavy-requestcore       30    100000        5641426        4967216        5808516    177.3    3.9%
+matching-heavy-requestreplay     30    100000        1848434        1685997        1919725    541.0    3.2%
+matching-heavy-ownedcore       30    100000        5477372        4579300        5801676    182.6    5.5%
+matching-heavy-ownedreplay     30    100000        1789661        1529894        1853307    558.8    4.3%

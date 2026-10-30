@@ -114,7 +114,7 @@ A result means little without the machine and build that produced it. Compare re
 | Compiler flags | no | see below |
 | Build type | yes (`build_config`, `optimized`; JSON also `ndebug`, `invariant_checks`, sanitizers) | Release; `ORDER_BOOK_INVARIANT_CHECKS=AUTO`, so off; no sanitizers |
 | Number of commands | yes (`size`, `commands`) | standard: 100,000 timed commands per run, after each workload's untimed preload |
-| Workload distribution | yes (workload name, `generator_version`, `seed`; JSON also each workload's configuration and fingerprint) | the five built-in workloads ([Workloads](#workloads)), generator version from `workload.hpp`, seed 42 |
+| Workload distribution | yes (workload name, `generator_version`, `seed`; JSON also each workload's configuration and fingerprint) | the eleven workloads ([Workloads](#workloads), [Behavior workloads](#behavior-workloads)), generator version from `workload.hpp`, seed 42 |
 | Number of repetitions | yes (`repetition`, `warmup`; JSON also the totals) | 1 warm-up, then 5 measured runs per workload and kind |
 | Machine conditions | no | see below |
 
@@ -148,4 +148,4 @@ Record any departure from these, and anything else that could move the numbers: 
 
 These are built into the `order_book_benchmarking` library (linking `order_book_replay` and `order_book_reference`) when `ORDER_BOOK_BUILD_BENCHMARKS` is on. `tests/benchmark_harness_test.cpp` (`benchmark_harness_tests`) tests the library. `benchmark_cli_smoke` runs the program once on a tiny workload, writing both files.
 
-Recorded results live in `results/`, one directory per session set, kept byte for byte as the program wrote them. The baseline is `results/2026-10-25-baseline/`, written up in [`docs/BENCHMARKS.md`](../docs/BENCHMARKS.md); its `summarize.py` recomputes that page's tables from the raw CSV files.
+Recorded results live in `results/`, one directory per session set, kept byte for byte as the program wrote them. The current baseline is `results/2026-10-29-order-behaviors/` (v2.0.0, all eleven workloads, with the paired regression check against v1.0.0), and the first is `results/2026-10-25-baseline/`, both written up in [`docs/BENCHMARKS.md`](../docs/BENCHMARKS.md); each one's `summarize.py` recomputes its tables from the raw CSV files. Paired comparisons are merged into one `runs.csv` per comparison.

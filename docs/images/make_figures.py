@@ -4,6 +4,8 @@ Usage: python docs/images/make_figures.py   (Python 3.8+, standard library only)
 
 - benchmark-baseline.svg: every measured standard-size run of the recorded baseline, from
   benchmarks/results/2026-10-25-baseline/standard-session{1,2,3}.csv (warm-ups excluded).
+- benchmark-v2-baseline.svg: the same for the v2.0.0 baseline's eleven workloads, from
+  benchmarks/results/2026-10-29-order-behaviors/standard-session{1,2,3}.csv.
 - optimization.svg: the before-and-after tables of docs/OPTIMIZATION.md (ns per command and
   the heap's share of core time), and allocations per timed command from the two
   allocations.txt profiles in benchmarks/results/.
@@ -23,6 +25,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 WORKLOADS = ["small-book", "deep-book", "matching-heavy", "cancellation-heavy", "mostly-resting"]
+BEHAVIOR_WORKLOADS = ["quote-refresh", "pending-stops", "self-trade", "immediate", "matching-heavy-request",
+                      "matching-heavy-owned"]
 
 # Light values first; the dark block restates them for a dark viewer. Text never takes a
 # series color: marks carry identity, and labels stay in the ink tones.
@@ -70,36 +74,35 @@ def write(name, content):
 
 # ---- benchmark-baseline.svg ---------------------------------------------------------------
 
-def benchmark_baseline():
+def strip_plot(results, workloads, xmax, heading, recorded, notes, filename, desc):
+    """Every measured standard-size run in benchmarks/results/<results>/, one row per workload."""
     rows = []
     for s in (1, 2, 3):
-        with open(ROOT / f"benchmarks/results/2026-10-25-baseline/standard-session{s}.csv", newline="") as f:
+        with open(ROOT / f"benchmarks/results/{results}/standard-session{s}.csv", newline="") as f:
             rows += [r for r in csv.DictReader(f) if r["warmup"] == "false"]
 
     width, x0, x1, top, band = 960, 220, 680, 140, 66
-    xmax = 7.0
     scale = (x1 - x0) / xmax
-    bottom = top + band * len(WORKLOADS)
+    bottom = top + band * len(workloads)
     body = [
-        text(24, 38, "Benchmark baseline: every run, before optimization", size=18, weight=600),
+        text(24, 38, heading, size=18, weight=600),
         text(24, 61, "Throughput of each run of 100,000 timed commands, 90 runs per row (3 sessions × 30). "
                      "Each dot is one run; the bar is the median.", cls="t2"),
-        text(24, 80, "Recorded 2026-10-25 on one machine (Ryzen 5 5600G, MSVC Release). Higher is faster.",
-             cls="t2"),
+        text(24, 80, recorded, cls="t2"),
         '<circle class="core" cx="30" cy="105" r="5"/>', text(42, 109, "core: OrderBook called directly"),
         '<circle class="replay" cx="262" cy="105" r="5"/>',
         text(274, 109, "replay: the same commands as in-memory CSV through the replay engine"),
         text(x1 + 30, top - 10, "median", cls="t3", size=12), text(x1 + 120, top - 10, "CV", cls="t3", size=12),
         text(x1 + 170, top - 10, "min–max", cls="t3", size=12),
     ]
-    for tick in range(0, 8):
+    for tick in range(0, int(xmax) + 1):
         x = x0 + tick * scale
         body.append(f'<line class="grid" x1="{x:.1f}" y1="{top - 4}" x2="{x:.1f}" y2="{bottom}"/>')
         body.append(text(x, bottom + 18, str(tick), cls="t3", size=12, anchor="middle"))
     body.append(text((x0 + x1) / 2, bottom + 38, "millions of commands per second", cls="t3", size=12,
                      anchor="middle"))
 
-    for i, w in enumerate(WORKLOADS):
+    for i, w in enumerate(workloads):
         y = top + i * band
         last = next(r for r in rows if r["workload"] == w and r["kind"] == "core")
         body.append(text(24, y + 26, w, cls="mono", size=13, weight=600))
@@ -125,17 +128,38 @@ def benchmark_baseline():
             body.append(text(x1 + 170, cy + 4, f"{min(v):.2f}–{max(v):.2f}", cls="t2", size=13))
 
     y = bottom + 74
-    body += [
-        text(24, y, "Replay sits near 1 Mops/s on every workload: CSV parsing and event collection cost about "
-                    "600 ns per command, 1.5–4× the engine's own cost.", cls="t2"),
-        text(24, y + 20, "The large-book core rows scatter widely (CV 11–22%), so later changes were judged by "
-                         "interleaved A/B pairs, not against these runs.", cls="t2"),
-        text(24, y + 44, "Source: benchmarks/results/2026-10-25-baseline/ · tables in docs/BENCHMARKS.md",
-             cls="t3", size=12),
-    ]
-    write("benchmark-baseline.svg", svg(width, y + 66, "Benchmark baseline",
-                                        "Strip plot of per-run throughput for five workloads, core and replay.",
-                                        body))
+    for k, note in enumerate(notes):
+        body.append(text(24, y + 20 * k, note, cls="t2"))
+    y += 20 * (len(notes) - 1)
+    body.append(text(24, y + 24, f"Source: benchmarks/results/{results}/ · tables in docs/BENCHMARKS.md",
+                     cls="t3", size=12))
+    write(filename, svg(width, y + 46, "Benchmark baseline", desc, body))
+
+
+def benchmark_baseline():
+    strip_plot("2026-10-25-baseline", WORKLOADS, 7.0, "Benchmark baseline: every run, before optimization",
+               "Recorded 2026-10-25 on one machine (Ryzen 5 5600G, MSVC Release). Higher is faster.",
+               ["Replay sits near 1 Mops/s on every workload: CSV parsing and event collection cost about "
+                "600 ns per command, 1.5–4× the engine's own cost.",
+                "The large-book core rows scatter widely (CV 11–22%), so later changes were judged by "
+                "interleaved A/B pairs, not against these runs."],
+               "benchmark-baseline.svg", "Strip plot of per-run throughput for five workloads, core and replay.")
+
+
+V2_XMAX = 12.0
+V2_NOTES = [
+    "The v1 workloads run 1.5–1.8× their first baseline on core and 2.0–2.4× on replay (docs/OPTIMIZATION.md).",
+    "The behavior workloads' replay rows are slower: twelve-column v2 rows, and more events per command to collect.",
+]
+
+
+def behaviors_baseline():
+    strip_plot("2026-10-29-order-behaviors", WORKLOADS + BEHAVIOR_WORKLOADS, V2_XMAX,
+               "Benchmark baseline, v2.0.0: every run, all eleven workloads",
+               "Recorded 2026-10-29 on the same machine (Ryzen 5 5600G, MSVC Release), after optimization and "
+               "the order behaviors. Higher is faster.",
+               V2_NOTES, "benchmark-v2-baseline.svg",
+               "Strip plot of per-run throughput for eleven workloads, core and replay.")
 
 
 # ---- optimization.svg ---------------------------------------------------------------------
@@ -295,5 +319,6 @@ def replay_terminal():
 
 if __name__ == "__main__":
     benchmark_baseline()
+    behaviors_baseline()
     optimization()
     replay_terminal()

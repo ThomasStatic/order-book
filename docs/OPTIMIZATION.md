@@ -209,6 +209,44 @@ Raw output in [`benchmarks/results/2026-10-29-owner-probe/`](../benchmarks/resul
 - **What it cost the rest.** Against the slot-owner build (16 pairs each, `core`): `matching-heavy-owned` 1.055 (1.044-1.061, every pair faster), `matching-heavy-request` 1.001, and the five v1 workloads 0.976-1.002. `cancellation-heavy` and `mostly-resting` are the two at 0.976, inside the protocol's ±3% no-change band, and they are where a larger node would show: both touch a cancelled or newly rested node on nearly every command. The owner probe now costs nothing measurable (0.999).
 - **Correctness.** The whole suite in Debug and Release, `allocation_failure_tests` included; the workload fingerprints are unchanged, since the generator is untouched.
 
+## The v2.0.0 regression check
+
+Spec #40's P3 asked whether the order behaviors slowed v1 traffic: a paired, interleaved before-and-after run on the five v1 workloads, both kinds, at the standard and extended sizes, with no regression beyond ±3% on `core`, or anything beyond that explained and explicitly accepted here. "Before" is `f22a8f4`, the parent of the first behavior commit, whose code is v1.0.0's. The five workloads' commands are identical under both binaries (`testV1WorkloadsUnchanged`), and their `core` path still calls `submitOrder(Order)` and `cancelOrder`. Raw output, merged per comparison, is in [`benchmarks/results/2026-10-29-order-behaviors/`](../benchmarks/results/2026-10-29-order-behaviors/).
+
+**The first run failed the budget.** Against `a4809ff` (every behavior, and P2's queue-node owner), 16 pairs at the standard size: `core` 0.897 on `small-book` and 0.898 on `matching-heavy` in every pair, 0.91-0.99 on the others; `replay` 0.85-0.87 everywhere (`before-recovery/`).
+
+**Where it went.** The same `matching-heavy` `core` run, sampled, took 14% more samples than v1.0.0's, without a single extra allocation per command (`allocation_profile`):
+
+- **Building results.** A submission's result is now assembled by `ResultRecorder` as the book works (each trade checked against the order it belongs to), where v1 built it once from a finished trades vector. Its construction, `trade`, `checkTrade`, `finish`, and the result's constructor were 8% of samples against v1's 3% for `SubmissionResults::accepted`, and `memmove` doubled, to 5%: `BookEvent` grew from 20 to 28 bytes with the new events, so a result's six inline events are 48 bytes larger. The recorder lives in its own translation unit, so without LTO each of its several calls per trade was a real call.
+- **On replay**, the same, plus parsing: `allocation_profile`'s stage timings put `ReplayEngine::run` at v1's cost once the engine was fixed, and parsing at about 186 ns per command against v1's 166, on identical CSV text.
+
+**Two changes were kept**, each measured against the code before it, 16 and 12 pairs (`experiments/`):
+
+| Change | Workloads | Ratio, new / old |
+|---|---|---:|
+| A. `ResultRecorder`'s per-trade path inline in its header; the result constructors take their vectors by rvalue reference, so `finish()` moves them once | `small-book`, `matching-heavy` `core` | 1.088 (1.079-1.100), 1.088 (1.074-1.099), every pair faster |
+| B. `ReplayEngine::run` reserves one event per record (every command makes at least one) | `small-book`, `matching-heavy` `replay` | 1.071 (1.044-1.078), 1.051 (1.034-1.066) |
+
+**One was tried and reverted.** Making `AddCommand`'s new fields pack (one-byte storage for `TimeInForce` and `SelfTradePrevention`, the tail reordered) cut a parsed record from 64 to 56 bytes and measured 1.000 and 0.996 on `replay` (`experiments/c-compact-record-reverted/`). Record size is not what the parser lost. Its remaining cost is spread thin: the bigger record built through two variants (`ParseResult`, then `ReadResult`), the v1 row's extra dispatch through `parseV1Tail`, and `std::string::assign` in `splitRecordInto`, whose source is unchanged since v1 but which MSVC no longer inlines.
+
+**The final run** (`f7db5b5`, the code released as v2.0.0), against v1.0.0's:
+
+| Workload | `core`, standard (16 pairs) | `core`, extended (8 pairs) | `replay`, standard | `replay`, extended |
+|---|---:|---:|---:|---:|
+| `small-book` | 0.981 (0.963-0.992) | 0.980 (0.978-0.985) | 0.913 | 0.923 |
+| `deep-book` | 0.985 (0.952-1.050) | **0.953 (0.901-0.989)** | 0.924 | 0.917 |
+| `matching-heavy` | 0.992 (0.986-0.998) | 0.991 (0.991-0.993) | 0.931 | 0.930 |
+| `cancellation-heavy` | **0.947 (0.873-1.029)** | 0.977 (0.933-1.086) | 0.945 | 0.951 |
+| `mostly-resting` | 0.978 (0.874-1.032) | 1.002 (0.991-1.057) | 0.910 | 0.930 |
+
+Median ratio v2.0.0 / v1.0.0, with its bootstrap 95% interval for `core`.
+
+**Accepted, with these explanations:**
+
+- **`core` is within the budget on 8 of its 10 rows.** The two beyond it are the large-book workloads. `cancellation-heavy`'s standard-size median of 0.947 has an interval reaching 1.029, and at the extended size it is 0.977: that workload is among the noisiest on this machine (CV 24% in the new baseline, whose first session's median was a third below the other two; session medians 34% apart in the first baseline), and its difference is not distinguishable from no change. `deep-book`'s 4.7% at the extended size is real (interval 0.901-0.989). Both workloads touch a cold queue node on nearly every command, and P2 made every node 56 bytes instead of 48 (0.976 on those two in P2's own measurement); `cancelOrder`'s result also grew, from 64 to 72 bytes, with `BookEvent`.
+- **`replay` is 5-9% slower everywhere.** About 20 ns per command of parsing, as above, on paths whose replay layers are 215-255 ns per command. The replay CLI is a tool for checking sessions, not a throughput path, and recovering this would mean restructuring the parser's record path for a few percent.
+- **What v2.0.0 bought for it**: every order behavior of spec #40, with v1 commands' results and events unchanged.
+
 ## What remains unoptimized
 
 From the final profile and allocation counts. These are opportunities, not plans; none has been measured.
