@@ -164,7 +164,7 @@ The same structures seen as a trader would, as a price ladder:
 
 ![A price ladder of twelve resting orders: three ask levels and three bid levels, each bar a level's aggregate quantity split into its orders in queue order, with the best bid, best ask, and two-tick spread marked.](docs/images/book-ladder.svg)
 
-`price_level.hpp`, `order_location.hpp`, `order_index.hpp`, `node_pool.hpp`, and `small_vector.hpp` are implementation detail. The book never hands one of them out, and they may change in any release.
+`price_level.hpp`, `order_location.hpp`, `order_index.hpp`, `node_pool.hpp`, `small_vector.hpp`, and `result_recorder.hpp` are implementation detail. The book never hands one of them out (a result's trades and events come back as `SmallVector`s, which the API names only through `SubmissionTrades`, `SubmissionEvents`, and `CancellationEvents`), and they may change in any release.
 
 ## Price-time priority
 
@@ -233,10 +233,14 @@ Everything is in namespace `order_book`, with headers in `include/order_book/`. 
   - `reserve`, a capacity hint.
   - Move-only, and not thread-safe.
 - **`order.hpp`, `side.hpp`, `order_type.hpp`, `fill_status.hpp`, `types.hpp`**: the `Order` a caller submits, and the types it is built from.
-- **`submission_result.hpp`, `cancellation_result.hpp`, `trade.hpp`, `book_event.hpp`, `rejection_reason.hpp`**: what each command returns. Each result is built only through its factories, and holds its trades and lifecycle events (`OrderAccepted`, `OrderRejected`, `TradeExecuted`, `OrderCancelled`, `CancelRejected`). A rejected submission or cancellation is a result, not an exception.
+- **`submission_result.hpp`, `cancellation_result.hpp`, `trade.hpp`, `book_event.hpp`, `rejection_reason.hpp`**: what each command returns. Each result is built only through its factories (and the book's internal `ResultRecorder`, which checks every trade and event as it is appended), and holds its trades and lifecycle events in execution order. A rejected submission or cancellation is a result, not an exception.
+  - Events: `OrderAccepted`, `OrderRejected`, `TradeExecuted`, `OrderCancelled`, `CancelRejected`, and, for the order behaviors being built toward v2.0.0, `OrderExpired`, `SelfTradePrevented`, `StopTriggered`, `OrderReplaced`, and `ReplaceRejected`. No command produces the last five yet.
+  - An `OrderAccepted` at price 0 is an order with no limit price (a market or `STOP` order), and prints as `price=MARKET`.
 - **`event_format.hpp`**: one line of text per event, for callers that print them. The engine itself never prints.
 - **`invariants.hpp`**: `InvariantResult`, `formatInvariantResult`, and the `ORDER_BOOK_INVARIANT_CHECKS` switch.
 - **`replay_parser.hpp`, `replay_engine.hpp`, `replay_summary.hpp`**: the replay format, in namespace `order_book::replay` and library `order_book_replay`.
+
+**Open sets.** `BookEvent`, `RejectionReason`, replay's `Command`, and replay's `ParseErrorCode` are open: a later release may append alternatives or enumerators, but never reorders, renumbers, or removes one. Code that visits or switches over them should keep a fallback for one it does not know. From v2.0.0 on, such an addition is a minor release. (Adding to them was not promised by v1.0.0, which is why the order behaviors ship as v2.0.0; `main` is unreleased development toward it.)
 
 Error policy:
 

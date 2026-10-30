@@ -3,6 +3,7 @@
 #include "book_event.hpp"
 #include "fill_status.hpp"
 #include "rejection_reason.hpp"
+#include "result_recorder.hpp"
 #include "small_vector.hpp"
 #include "trade.hpp"
 #include "types.hpp"
@@ -14,16 +15,13 @@ namespace order_book {
         REJECTED
     };
 
-    // A submission's trades and events, held inline for up to four trades, so reporting one
-    // allocates nothing in the common case: a submission that trades makes 1.2-2.1 trades on
-    // average in the benchmark workloads (benchmarks/results/2026-10-26-profile/allocations.txt).
-    using SubmissionTrades = SmallVector<Trade, 4>;
-    using SubmissionEvents = SmallVector<BookEvent, 5>;  // the acceptance, then one per trade
-
-    // Returned by OrderBook::submitOrder and addOrder. Built only through its factories, so
-    // its status, trades, fill status, and events always agree.
+    // Returned by OrderBook::submitOrder and addOrder. Built only through its factories and
+    // ResultRecorder, which check what they are given, so its status, trades, fill status, and
+    // events always agree. SubmissionTrades and SubmissionEvents are in result_recorder.hpp.
     class SubmissionResult {
     private:
+        friend class ResultRecorder;
+
         OrderId submissionId;
 
         SubmissionTrades generatedTrades;
@@ -35,8 +33,9 @@ namespace order_book {
 
         SubmissionEvents events;
 
-        // An accepted result with no trades; throws std::invalid_argument on a zero ID.
-        explicit SubmissionResult(OrderId sId);
+        // An accepted result, as ResultRecorder::finish has checked it.
+        SubmissionResult(OrderId sId, SubmissionTrades trades, SubmissionEvents recordedEvents, Quantity remaining,
+                         FillStatus fill);
         // Unchecked, so a rejection can echo whatever ID was submitted, including zero.
         SubmissionResult(OrderId sId, Quantity remaining, RejectionReason reason);
 
@@ -47,7 +46,7 @@ namespace order_book {
         // TradeExecuted per trade, in the trades' order. Throws std::invalid_argument on a
         // zero ID, quantity, or price, or unless every trade is for this order, on its side,
         // and within its limit price, and the traded quantities plus what is left sum to the
-        // accepted quantity.
+        // accepted quantity. Shorthand for a ResultRecorder fed only these trades.
         static SubmissionResult accepted(const OrderAccepted& acceptance, SubmissionTrades trades,
                                          Quantity remaining);
 

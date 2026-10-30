@@ -122,6 +122,7 @@ add_library(order_book STATIC
     src/order.cpp
     src/trade.cpp
     src/submission_result.cpp
+    src/result_recorder.cpp
     src/cancellation_result.cpp
     src/price_level.cpp
     src/event_format.cpp
