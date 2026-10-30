@@ -122,7 +122,7 @@ Which shard each instrument belongs to. It never changes while the engine runs, 
 _Avoid_: assignment, allocation, mapping
 
 **Command sequence**:
-The order in which an instrument's matching thread executes that instrument's commands. It alone determines the instrument's book and events, and the command log records it. It includes commands the book rejects. Nothing orders one instrument's commands against another's.
+The order in which an instrument's matching thread executes that instrument's commands. It alone determines the instrument's book and events, and the command log records it. It includes well-formed commands the book rejects, never malformed ones, which are refused before they enter it. Nothing orders one instrument's commands against another's.
 _Avoid_: accepted commands, order flow
 
 **Snapshot**:
@@ -142,8 +142,12 @@ The sequence of commands a book or engine was given, recorded so that replaying 
 _Avoid_: journal, event log, audit log
 
 **Log position**:
-A place in a command log. A checkpoint at a log position reflects every command for its instrument before that place, and none at or after it.
+A place in a command log, counted in commands from the log's start. A checkpoint at a log position reflects every command for its instrument before that place, and none at or after it.
 _Avoid_: offset, sequence
+
+**Torn tail**:
+The incomplete end a crash can leave on a command log: a record cut short, or anything else with no valid record after it. It is expected after a crash, unlike damage with valid records following.
+_Avoid_: truncated log, corrupt tail
 
 **Replay**:
 Feeding a recorded sequence of commands to fresh books, which produces the same books and events as the original run.
