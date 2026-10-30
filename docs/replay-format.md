@@ -226,11 +226,75 @@ It replays the file on an empty book and prints, on stdout with LF line endings 
 
 `tests/replay/expected/` holds the exact output for each valid sample (with `--events --book`), each output selection, a few failing files, help, the demo, and each usage error; the `replay_cli_*` tests compare it byte for byte.
 
+## Version 2
+
+Version 2 ([ADR 0005](adr/0005-replay-format-v2-is-a-second-exact-header.md)) records the order behaviors: market, IOC, FOK, post-only, self-trade prevention, stops, and replaces. It is a second exact header, v1's six columns followed by six more:
+
+```text
+sequence,command,order_id,side,price,quantity,order_type,time_in_force,stop_price,post_only,owner,self_trade_prevention
+```
+
+The reader picks the layout from line 1. A v1 file parses and replays exactly as before and means v1's defaults (`LIMIT`, `GTC`, no stop price, not post-only, no owner, `CANCEL_RESTING`); it knows only `ADD` and `CANCEL`, so `REPLACE` in a v1 file is `UNKNOWN_COMMAND`. Every v2 record has exactly twelve fields. `MISSING_HEADER` means a first line that is a valid data record in either layout. Converting a v1 file is mechanical: append `LIMIT,GTC,,,,` to each `ADD` and `,,,,,,` to each `CANCEL`.
+
+### Columns (v2)
+
+Empty means absent, and zero is still refused in every numeric column.
+
+| Column | `ADD` | `REPLACE` | `CANCEL` |
+|---|---|---|---|
+| `side` | required | empty | empty |
+| `price` | required on `LIMIT`/`STOP_LIMIT`, empty on `MARKET`/`STOP` | required | empty |
+| `quantity` | required | required: the new total | empty |
+| `order_type` | required: `LIMIT`, `MARKET`, `STOP`, `STOP_LIMIT` | empty | empty |
+| `time_in_force` | required: `GTC`, `IOC`, `FOK` | empty | empty |
+| `stop_price` | required on `STOP`/`STOP_LIMIT`, empty otherwise | empty | empty |
+| `post_only` | empty (no) or `Y` | empty or `Y` | empty |
+| `owner` | empty (no owner) or a positive `OwnerId` | the same; empty clears the stored owner | empty |
+| `self_trade_prevention` | required exactly when `owner` is set: `CANCEL_RESTING`, `CANCEL_INCOMING`, `CANCEL_BOTH` | the same | empty |
+
+Keywords are exact upper case, one spelling each: `N`, case variants, padding, and FIX wire codes are invalid. `0` for an owner or a stop price is `INVALID_VALUE`, so a missing owner is written empty. Two combinations are parse errors, `INVALID_COMBINATION`: `MARKET` or `STOP` with `GTC` (reported at `time_in_force`), and `Y` on an `ADD` that is not a GTC `LIMIT` (at `post_only`). With the presence rules above, that covers every request check a row alone decides, so **a parsed `ADD` is always a well-formed request**, and a replay never produces an `OrderRejected` for a malformed request.
+
+### Checking order (v2)
+
+1. empty record, `"`, field count (twelve);
+2. `sequence`, `command` (`ADD`, `CANCEL`, or `REPLACE`), `order_id`;
+3. `order_type`, then `time_in_force` (its keyword, then the GTC combination);
+4. `side`, `price`, `quantity`, `stop_price`;
+5. `post_only` (its keyword, then the combination);
+6. `owner`, then `self_trade_prevention`.
+
+Within a column: present or empty as the command and type require, then syntax, then range and zero, then the combination. The type comes before `side` because a price's rule depends on it. A v1 record goes through exactly v1's order.
+
+`ParseErrorCode` appends `INVALID_ORDER_TYPE`, `INVALID_TIME_IN_FORCE`, `INVALID_POST_ONLY`, `INVALID_SELF_TRADE_PREVENTION`, and `INVALID_COMBINATION`, and it is an open set: later versions only append. `UNEXPECTED_FIELD` also covers a field filled in where the command, the order type, or a missing owner needs it empty; `MISSING_REQUIRED_FIELD` covers a missing stop price, or a missing mode with an owner; `UNKNOWN_COMMAND` covers `REPLACE` in a v1 file.
+
+### Commands (v2)
+
+| Command | Engine call | Notes |
+|---|---|---|
+| `ADD` | `OrderBook::submitOrder(OrderRequest{...})` | Always the request, in either layout; for v1's fields that is exactly `submitOrder(Order)`. |
+| `REPLACE` | `OrderBook::replaceOrder(ReplaceRequest{...})` | A `ReplaceRejected` (not found, a total too low, `ORDER_NOT_REPLACEABLE` for a pending stop) is a book refusal, and the replay continues. |
+| `CANCEL` | `OrderBook::cancelOrder(order_id)` | May name a pending stop: one `OrderCancelled` with its whole quantity. |
+
+A command's events include its cascade (`StopTriggered`, then that stop's trades, preventions, and expiry), all tagged with the line of the command that ran it.
+
+### API (v2)
+
+- `enum class ReplayFormat { V1, V2 }`; `expectedHeaderV2`, `columnCountV2`, and the six new column indices and `columnNamesV2`.
+- `checkHeader` accepts either header, and `headerFormat(text)` returns the `ReplayFormat` or a `ParseError`.
+- `parseRow(row, ReplayFormat, previousSequence)`; the two-argument `parseRow` still means v1. `ReplayReader::format()` is the layout its header named.
+- `AddCommand` gains `orderType`, `timeInForce`, `stopPrice`, `postOnly`, `owner`, and `selfTradePrevention` after `quantity`, with v1's defaults, so existing initializers still compile. `ReplaceCommand { orderId, price, quantity, postOnly, owner, selfTradePrevention }` is appended to `Command`, which is an open set like `BookEvent`.
+- `ReplayStatistics` gains `replaceCommands`, `replacesAccepted`, `replacesRejected`, `selfTradesPrevented`, `ordersExpired`, and `stopsTriggered` (appended, so v1 initializers keep their meaning); commands processed = adds + cancels + replaces. The engine counts them from events, so it still implements no trading rules, and an `ADD` accepted then expired counts as accepted.
+- `ReplayResult` gains `pendingStops` and `lastTradePrice`, the book's at the end.
+
+### Output (v2)
+
+The statistics always print every line, in this order: commands processed; the `ADD`, `CANCEL`, and then `REPLACE` counts; trades executed and volume traded; self-trades prevented, orders expired, and stops triggered; resting orders; pending stops. `--book` adds `last trade price: <ticks>` (or `none`) after the asks (`formatFinalBook(result)`; the snapshot-only `formatFinalBook(book)` prints the two sides alone). Pending stops are not listed: the book offers no query for them beyond `pendingStopCount` and `findPendingStop`. `--trades` prints every `TradeExecuted`, the cascade's included, and never a `SelfTradePrevented`; `--events` prints everything.
+
 ## Versioning and scope
 
-The format has no version field. The exact header acts as its version marker. If a later version adds or renames a column, its header changes, and a reader that doesn't know it fails at line 1 instead of misreading rows.
+The format has no version field. The exact header acts as its version marker: v1 and v2 are two exact headers. A later layout would be a third, and a reader that doesn't know it fails at line 1 instead of misreading rows.
 
-These are out of scope for this version: quoting, comments, order types other than `LIMIT`, modify/replace commands, timestamps, and lifecycle events as input.
+These are out of scope: quoting, comments, timestamps, lifecycle events as input, and a listing of pending stops in the output.
 
 This format is separate from the randomized-test stream format (`SUBMIT id=17 ...`, see `tests/randomized/regressions/README.md`). That format is internal test tooling, and it records generator intent alongside each command.
 

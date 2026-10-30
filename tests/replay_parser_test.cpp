@@ -20,9 +20,14 @@
 
 namespace {
 
+using order_book::OrderType;
+using order_book::SelfTradePrevention;
 using order_book::Side;
+using order_book::TimeInForce;
 using order_book::replay::AddCommand;
 using order_book::replay::CancelCommand;
+using order_book::replay::ReplaceCommand;
+using order_book::replay::ReplayFormat;
 using order_book::replay::checkHeader;
 using order_book::replay::columnNames;
 using order_book::replay::commandColumn;
@@ -490,7 +495,9 @@ void testFormatting() {
            "the field count diagnostic: " + formatParseError(count, "orders.csv"));
     const ParseError header = *checkHeader("sequence,command");
     expect(formatParseError(header, "orders.csv")
-               == "orders.csv:1: header must be 'sequence,command,order_id,side,price,quantity'",
+               == "orders.csv:1: header must be 'sequence,command,order_id,side,price,quantity' (v1) or "
+                  "'sequence,command,order_id,side,price,quantity,order_type,time_in_force,stop_price,post_only,owner,"
+                  "self_trade_prevention' (v2)",
            "the header diagnostic: " + formatParseError(header, "orders.csv"));
 }
 
@@ -584,6 +591,60 @@ void testSampleFiles(const std::filesystem::path& root) {
                                ReplayRecord{3, 20, AddCommand{4002, Side::SELL, 200, 5}},
                                ReplayRecord{4, 35, CancelCommand{4001}},
                                ReplayRecord{5, 36, AddCommand{4003, Side::BUY, 200, 5}}}},
+        {"v2_header_only.csv", {}},
+        {"market_orders.csv", {ReplayRecord{2, 1, AddCommand{1, Side::SELL, 100, 5, OrderType::LIMIT, TimeInForce::GTC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{3, 2, AddCommand{2, Side::SELL, 101, 5, OrderType::LIMIT, TimeInForce::GTC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{4, 3, AddCommand{3, Side::BUY, 0, 12, OrderType::MARKET, TimeInForce::IOC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{5, 4, AddCommand{4, Side::SELL, 0, 3, OrderType::MARKET, TimeInForce::IOC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{6, 5, AddCommand{5, Side::SELL, 102, 4, OrderType::LIMIT, TimeInForce::GTC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{7, 6, AddCommand{6, Side::BUY, 0, 5, OrderType::MARKET, TimeInForce::FOK, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{8, 7, AddCommand{7, Side::BUY, 0, 4, OrderType::MARKET, TimeInForce::FOK, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}}}},
+        {"ioc_fok.csv", {ReplayRecord{2, 1, AddCommand{1, Side::SELL, 100, 4, OrderType::LIMIT, TimeInForce::GTC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{3, 2, AddCommand{2, Side::SELL, 101, 6, OrderType::LIMIT, TimeInForce::GTC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{4, 3, AddCommand{3, Side::BUY, 100, 10, OrderType::LIMIT, TimeInForce::IOC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{5, 4, AddCommand{4, Side::BUY, 101, 6, OrderType::LIMIT, TimeInForce::FOK, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{6, 5, AddCommand{5, Side::SELL, 99, 3, OrderType::LIMIT, TimeInForce::GTC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{7, 6, AddCommand{6, Side::BUY, 99, 5, OrderType::LIMIT, TimeInForce::FOK, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{8, 7, CancelCommand{5}}}},
+        {"post_only.csv", {ReplayRecord{2, 1, AddCommand{1, Side::SELL, 101, 5, OrderType::LIMIT, TimeInForce::GTC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{3, 2, AddCommand{2, Side::BUY, 100, 4, OrderType::LIMIT, TimeInForce::GTC, 0, true, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{4, 3, AddCommand{3, Side::BUY, 101, 3, OrderType::LIMIT, TimeInForce::GTC, 0, true, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{5, 4, AddCommand{4, Side::BUY, 102, 2, OrderType::LIMIT, TimeInForce::GTC, 0, true, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{6, 5, AddCommand{5, Side::SELL, 100, 1, OrderType::LIMIT, TimeInForce::GTC, 0, true, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{7, 6, AddCommand{6, Side::SELL, 102, 2, OrderType::LIMIT, TimeInForce::GTC, 0, true, 0, SelfTradePrevention::CANCEL_RESTING}}}},
+        {"self_trade_prevention.csv", {ReplayRecord{2, 1, AddCommand{1, Side::SELL, 100, 3, OrderType::LIMIT, TimeInForce::GTC, 0, false, 7, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{3, 2, AddCommand{2, Side::SELL, 100, 4, OrderType::LIMIT, TimeInForce::GTC, 0, false, 8, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{4, 3, AddCommand{3, Side::SELL, 101, 5, OrderType::LIMIT, TimeInForce::GTC, 0, false, 7, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{5, 4, AddCommand{4, Side::SELL, 102, 6, OrderType::LIMIT, TimeInForce::GTC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{6, 5, AddCommand{10, Side::BUY, 100, 1, OrderType::LIMIT, TimeInForce::GTC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{7, 6, AddCommand{11, Side::BUY, 101, 20, OrderType::LIMIT, TimeInForce::GTC, 0, false, 7, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{8, 7, AddCommand{12, Side::SELL, 101, 3, OrderType::LIMIT, TimeInForce::GTC, 0, false, 7, SelfTradePrevention::CANCEL_INCOMING}},
+                ReplayRecord{9, 8, AddCommand{13, Side::SELL, 101, 2, OrderType::LIMIT, TimeInForce::GTC, 0, false, 7, SelfTradePrevention::CANCEL_BOTH}}}},
+        {"stops.csv", {ReplayRecord{2, 1, AddCommand{1, Side::SELL, 100, 1, OrderType::LIMIT, TimeInForce::GTC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{3, 2, AddCommand{2, Side::BUY, 100, 1, OrderType::LIMIT, TimeInForce::GTC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{4, 3, AddCommand{20, Side::BUY, 0, 2, OrderType::STOP, TimeInForce::IOC, 102, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{5, 4, AddCommand{21, Side::BUY, 103, 2, OrderType::STOP_LIMIT, TimeInForce::GTC, 103, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{6, 5, AddCommand{22, Side::SELL, 0, 1, OrderType::STOP, TimeInForce::IOC, 95, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{7, 6, CancelCommand{22}},
+                ReplayRecord{8, 7, AddCommand{23, Side::BUY, 0, 1, OrderType::STOP, TimeInForce::FOK, 100, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{9, 8, AddCommand{20, Side::SELL, 99, 1, OrderType::LIMIT, TimeInForce::GTC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{10, 9, AddCommand{3, Side::SELL, 102, 1, OrderType::LIMIT, TimeInForce::GTC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{11, 10, AddCommand{4, Side::SELL, 103, 1, OrderType::LIMIT, TimeInForce::GTC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{12, 11, AddCommand{5, Side::BUY, 102, 1, OrderType::LIMIT, TimeInForce::GTC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{13, 12, AddCommand{20, Side::SELL, 103, 2, OrderType::LIMIT, TimeInForce::GTC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}}}},
+        {"replace.csv", {ReplayRecord{2, 1, AddCommand{1, Side::SELL, 101, 10, OrderType::LIMIT, TimeInForce::GTC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{3, 2, AddCommand{2, Side::SELL, 101, 5, OrderType::LIMIT, TimeInForce::GTC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{4, 3, AddCommand{3, Side::BUY, 100, 4, OrderType::LIMIT, TimeInForce::GTC, 0, false, 6, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{5, 4, AddCommand{4, Side::BUY, 101, 3, OrderType::LIMIT, TimeInForce::GTC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{6, 5, ReplaceCommand{1, 101, 8, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{7, 6, ReplaceCommand{2, 101, 6, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{8, 7, AddCommand{30, Side::SELL, 0, 2, OrderType::STOP, TimeInForce::IOC, 100, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{9, 8, ReplaceCommand{1, 101, 3, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{10, 9, ReplaceCommand{99, 101, 3, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{11, 10, ReplaceCommand{30, 100, 2, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{12, 11, ReplaceCommand{2, 100, 6, true, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{13, 12, ReplaceCommand{3, 99, 4, false, 0, SelfTradePrevention::CANCEL_RESTING}},
+                ReplayRecord{14, 13, ReplaceCommand{1, 99, 8, false, 6, SelfTradePrevention::CANCEL_RESTING}}}},
         {"sweep_and_rest.csv", {ReplayRecord{2, 1, AddCommand{8001, Side::SELL, 10125, 50}},
                                 ReplayRecord{3, 2, AddCommand{8002, Side::SELL, 10125, 30}},
                                 ReplayRecord{4, 3, AddCommand{8003, Side::SELL, 10126, 100}},
@@ -637,6 +698,33 @@ void testSampleFiles(const std::filesystem::path& root) {
         {"cancel_with_price.csv", {4, "price", Code::UNEXPECTED_FIELD, 2}},
         {"cancel_with_quantity.csv", {4, "quantity", Code::UNEXPECTED_FIELD, 2}},
         {"cancel_with_space.csv", {4, "side", Code::UNEXPECTED_FIELD, 2}},
+        {"v2_header_wrong_case.csv", {1, "", Code::INVALID_HEADER, 0}},
+        {"v2_six_fields.csv", {4, "", Code::WRONG_COLUMN_COUNT, 2}},
+        {"v1_replace.csv", {4, "command", Code::UNKNOWN_COMMAND, 2}},
+        {"order_type_unknown.csv", {4, "order_type", Code::INVALID_ORDER_TYPE, 2}},
+        {"order_type_lowercase.csv", {4, "order_type", Code::INVALID_ORDER_TYPE, 2}},
+        {"add_missing_order_type.csv", {4, "order_type", Code::MISSING_REQUIRED_FIELD, 2}},
+        {"time_in_force_unknown.csv", {4, "time_in_force", Code::INVALID_TIME_IN_FORCE, 2}},
+        {"add_missing_time_in_force.csv", {4, "time_in_force", Code::MISSING_REQUIRED_FIELD, 2}},
+        {"market_gtc.csv", {4, "time_in_force", Code::INVALID_COMBINATION, 2}},
+        {"stop_gtc.csv", {4, "time_in_force", Code::INVALID_COMBINATION, 2}},
+        {"market_with_price.csv", {4, "price", Code::UNEXPECTED_FIELD, 2}},
+        {"stop_limit_missing_price.csv", {4, "price", Code::MISSING_REQUIRED_FIELD, 2}},
+        {"stop_missing_stop_price.csv", {4, "stop_price", Code::MISSING_REQUIRED_FIELD, 2}},
+        {"limit_with_stop_price.csv", {4, "stop_price", Code::UNEXPECTED_FIELD, 2}},
+        {"stop_price_zero.csv", {4, "stop_price", Code::INVALID_VALUE, 2}},
+        {"post_only_n.csv", {4, "post_only", Code::INVALID_POST_ONLY, 2}},
+        {"post_only_ioc.csv", {4, "post_only", Code::INVALID_COMBINATION, 2}},
+        {"owner_zero.csv", {4, "owner", Code::INVALID_VALUE, 2}},
+        {"owner_without_mode.csv", {4, "self_trade_prevention", Code::MISSING_REQUIRED_FIELD, 2}},
+        {"mode_without_owner.csv", {4, "self_trade_prevention", Code::UNEXPECTED_FIELD, 2}},
+        {"mode_unknown.csv", {4, "self_trade_prevention", Code::INVALID_SELF_TRADE_PREVENTION, 2}},
+        {"v2_cancel_with_order_type.csv", {4, "order_type", Code::UNEXPECTED_FIELD, 2}},
+        {"replace_with_side.csv", {4, "side", Code::UNEXPECTED_FIELD, 2}},
+        {"replace_with_order_type.csv", {4, "order_type", Code::UNEXPECTED_FIELD, 2}},
+        {"replace_missing_price.csv", {4, "price", Code::MISSING_REQUIRED_FIELD, 2}},
+        {"replace_missing_quantity.csv", {4, "quantity", Code::MISSING_REQUIRED_FIELD, 2}},
+        {"replace_with_stop_price.csv", {4, "stop_price", Code::UNEXPECTED_FIELD, 2}},
     };
 
     // Binary mode, so CRs reach the reader exactly as written.
@@ -685,6 +773,77 @@ void testSampleFiles(const std::filesystem::path& root) {
 
 }  // namespace
 
+// v2 rows parse to commands with their instructions; the layout is the header's, and the
+// two-argument parseRow means v1.
+void testVersion2() {
+    using order_book::replay::headerFormat;
+    expect(std::get<ReplayFormat>(headerFormat(std::string(expectedHeader))) == ReplayFormat::V1, "the v1 header");
+    expect(std::get<ReplayFormat>(headerFormat(std::string(order_book::replay::expectedHeaderV2))) == ReplayFormat::V2,
+           "the v2 header");
+    const auto missing = headerFormat("1,ADD,1,BUY,,5,MARKET,IOC,,,,");
+    expect(std::holds_alternative<ParseError>(missing) &&
+               std::get<ParseError>(missing).code == ParseErrorCode::MISSING_HEADER,
+           "a v2 data record on line 1 is a missing header");
+    const auto row = [](const std::string& text) { return parseRow(splitRecord(text, 2), ReplayFormat::V2, std::nullopt); };
+    expect(std::get<ReplayRecord>(row("1,ADD,7,SELL,,5,STOP,FOK,95,,3,CANCEL_BOTH")).command ==
+               order_book::replay::Command{AddCommand{7, Side::SELL, 0, 5, OrderType::STOP, TimeInForce::FOK, 95, false, 3,
+                                                      SelfTradePrevention::CANCEL_BOTH}},
+           "a v2 STOP row");
+    expect(std::get<ReplayRecord>(row("1,REPLACE,7,,101,9,,,,Y,,")).command ==
+               order_book::replay::Command{ReplaceCommand{7, 101, 9, true, 0, SelfTradePrevention::CANCEL_RESTING}},
+           "a v2 REPLACE row");
+    expect(std::holds_alternative<ParseError>(parseRow(splitRecord("1,ADD,7,SELL,95,5", 2), ReplayFormat::V2, std::nullopt)),
+           "a six-field row under the v2 header");
+    expect(std::holds_alternative<ParseError>(parseRow(splitRecord("1,REPLACE,7,,101,9", 2))),
+           "REPLACE is not a v1 command");
+    std::istringstream input(std::string(order_book::replay::expectedHeaderV2) + "\n1,CANCEL,4,,,,,,,,,\n");
+    ReplayReader reader(input);
+    expect(reader.format() == ReplayFormat::V1, "a reader is V1 until it reads a header");
+    expect(std::get<ReplayRecord>(reader.next()).command == order_book::replay::Command{CancelCommand{4}},
+           "a v2 CANCEL row");
+    expect(reader.format() == ReplayFormat::V2, "the reader takes its layout from the header");
+}
+
+// Every v1 sample, rewritten as v2 (LIMIT,GTC,,,, after each ADD, ,,,,,, after each CANCEL),
+// parses to the same records.
+void testVersion1SamplesAsVersion2(const std::filesystem::path& root) {
+    for (const auto& entry : std::filesystem::directory_iterator(root / "valid")) {
+        std::ifstream file(entry.path(), std::ios::binary);
+        const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        if (!text.starts_with(std::string(expectedHeader) + "\n") && !text.starts_with(std::string(expectedHeader) + "\r")) {
+            continue;  // already v2
+        }
+        std::istringstream original(text);
+        const ReadOutcome v1 = readAll(original);
+        std::string rewritten;
+        std::size_t start = 0;
+        bool header = true;
+        while (start < text.size()) {
+            const std::size_t newline = text.find('\n', start);
+            const std::size_t end = newline == std::string::npos ? text.size() : newline;
+            std::string line = text.substr(start, end - start);
+            const bool cr = !line.empty() && line.back() == '\r';
+            if (cr) {
+                line.pop_back();
+            }
+            if (header) {
+                line = std::string(order_book::replay::expectedHeaderV2);
+                header = false;
+            } else if (line.find(",ADD,") != std::string::npos) {
+                line += ",LIMIT,GTC,,,,";
+            } else if (line.find(",CANCEL,") != std::string::npos) {
+                line += ",,,,,,";
+            }
+            rewritten += line + (cr ? "\r" : "") + (newline == std::string::npos ? "" : "\n");
+            start = end + 1;
+        }
+        std::istringstream converted(rewritten);
+        const ReadOutcome v2 = readAll(converted);
+        const std::string name = entry.path().filename().string();
+        expect(!v1.error && !v2.error && v1.records == v2.records, name + " rewritten as v2 should parse the same");
+    }
+}
+
 int main(int argc, char** argv) {
     if (argc != 2) {
         std::cerr << "FAILED: usage: replay_parser_tests <path to tests/replay>" << std::endl;
@@ -703,7 +862,9 @@ int main(int argc, char** argv) {
     testHeader();
     testReader();
     testFormatting();
+    testVersion2();
     testSampleFiles(argv[1]);
+    testVersion1SamplesAsVersion2(argv[1]);
     testChunkBoundaries(argv[1]);
 
     std::cout << "replay parser tests passed" << std::endl;

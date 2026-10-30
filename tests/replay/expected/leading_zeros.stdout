@@ -10,10 +10,18 @@ adds rejected: 0
 cancel commands: 1
 cancels accepted: 1
 cancels rejected: 0
+replace commands: 0
+replaces accepted: 0
+replaces rejected: 0
 trades executed: 1
 volume traded: 4
+self-trades prevented: 0
+orders expired: 0
+stops triggered: 0
 resting orders: 0
+pending stops: 0
 bids:
   none
 asks:
   none
+last trade price: 100

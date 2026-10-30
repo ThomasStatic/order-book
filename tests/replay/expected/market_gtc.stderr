@@ -1,0 +1,1 @@
+malformed/market_gtc.csv:4: time_in_force: a MARKET order must be IOC or FOK, not GTC

@@ -15,16 +15,30 @@
 
 namespace order_book::replay {
     namespace {
-        void collectEvents(std::span<const BookEvent> events, std::size_t lineNumber,
-                           std::vector<ReplayEvent>& replayEvents) {
+        // Every event a command produced, its cascade's included, tagged with the command's
+        // line, and the statistics that count events.
+        void collectEvents(std::span<const BookEvent> events, std::size_t lineNumber, ReplayResult& result) {
+            ReplayStatistics& statistics = result.statistics;
             for (const BookEvent& event : events) {
-                replayEvents.push_back(ReplayEvent{lineNumber, event});
+                if (const auto* trade = std::get_if<TradeExecuted>(&event)) {
+                    ++statistics.tradesExecuted;
+                    statistics.volumeTraded += trade->executionQuantity;
+                } else if (std::holds_alternative<SelfTradePrevented>(event)) {
+                    ++statistics.selfTradesPrevented;
+                } else if (std::holds_alternative<OrderExpired>(event)) {
+                    ++statistics.ordersExpired;
+                } else if (std::holds_alternative<StopTriggered>(event)) {
+                    ++statistics.stopsTriggered;
+                }
+                result.events.push_back(ReplayEvent{lineNumber, event});
             }
         }
 
         void runAdd(const AddCommand& add, std::size_t lineNumber, OrderBook& book, ReplayResult& result) {
-            // The book assigns the real sequence number on acceptance; 1 is a placeholder.
-            const SubmissionResult submission = book.submitOrder(Order(add.orderId, add.price, add.quantity, 1, add.side));
+            // Always the request: for v1's fields it is exactly submitOrder(Order).
+            const SubmissionResult submission =
+                book.submitOrder(OrderRequest{add.orderId, add.side, add.price, add.quantity, add.orderType, add.timeInForce,
+                                              add.stopPrice, add.postOnly, add.owner, add.selfTradePrevention});
 
             ReplayStatistics& statistics = result.statistics;
             ++statistics.addCommands;
@@ -33,11 +47,21 @@ namespace order_book::replay {
             } else {
                 ++statistics.addsRejected;
             }
-            for (const Trade& trade : submission.getGeneratedTrades()) {
-                ++statistics.tradesExecuted;
-                statistics.volumeTraded += trade.getExecutionQuantity();
+            collectEvents(submission.getEvents(), lineNumber, result);
+        }
+
+        void runReplace(const ReplaceCommand& replace, std::size_t lineNumber, OrderBook& book, ReplayResult& result) {
+            const ReplaceResult replacement = book.replaceOrder(ReplaceRequest{
+                replace.orderId, replace.price, replace.quantity, replace.postOnly, replace.owner, replace.selfTradePrevention});
+
+            ReplayStatistics& statistics = result.statistics;
+            ++statistics.replaceCommands;
+            if (replacement.isSuccess()) {
+                ++statistics.replacesAccepted;
+            } else {
+                ++statistics.replacesRejected;
             }
-            collectEvents(submission.getEvents(), lineNumber, result.events);
+            collectEvents(replacement.getEvents(), lineNumber, result);
         }
 
         void runCancel(const CancelCommand& cancel, std::size_t lineNumber, OrderBook& book, ReplayResult& result) {
@@ -50,7 +74,7 @@ namespace order_book::replay {
             } else {
                 ++statistics.cancelsRejected;
             }
-            collectEvents(cancellation.getEvents(), lineNumber, result.events);
+            collectEvents(cancellation.getEvents(), lineNumber, result);
         }
 
         // An INVARIANT_VIOLATION if the book is broken; when names the point checked.
@@ -76,9 +100,11 @@ namespace order_book::replay {
                     using Kind = std::decay_t<decltype(command)>;
                     if constexpr (std::is_same_v<Kind, AddCommand>) {
                         runAdd(command, record.lineNumber, book, result);
-                    } else {
-                        static_assert(std::is_same_v<Kind, CancelCommand>, "every Command alternative needs a dispatch");
+                    } else if constexpr (std::is_same_v<Kind, CancelCommand>) {
                         runCancel(command, record.lineNumber, book, result);
+                    } else {
+                        static_assert(std::is_same_v<Kind, ReplaceCommand>, "every Command alternative needs a dispatch");
+                        runReplace(command, record.lineNumber, book, result);
                     }
                 }, record.command);
             } catch (const std::exception& e) {
@@ -103,6 +129,8 @@ namespace order_book::replay {
         }
 
         result.finalBook = book.snapshot(std::numeric_limits<unsigned int>::max());
+        result.pendingStops = book.pendingStopCount();
+        result.lastTradePrice = book.getLastTradePrice();
         return result;
     }
 

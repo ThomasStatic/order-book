@@ -1,0 +1,43 @@
+line 2: OrderAccepted id=1 side=SELL price=100 qty=1
+line 3: OrderAccepted id=2 side=BUY price=100 qty=1
+line 3: TradeExecuted incoming=2 resting=1 price=100 qty=1
+line 4: OrderAccepted id=20 side=BUY price=MARKET qty=2
+line 5: OrderAccepted id=21 side=BUY price=103 qty=2
+line 6: OrderAccepted id=22 side=SELL price=MARKET qty=1
+line 7: OrderCancelled id=22 qty=1
+line 8: OrderAccepted id=23 side=BUY price=MARKET qty=1
+line 8: OrderExpired id=23 qty=1
+line 9: OrderRejected id=20 reason=DUPLICATE_ORDER_ID
+line 10: OrderAccepted id=3 side=SELL price=102 qty=1
+line 11: OrderAccepted id=4 side=SELL price=103 qty=1
+line 12: OrderAccepted id=5 side=BUY price=102 qty=1
+line 12: TradeExecuted incoming=5 resting=3 price=102 qty=1
+line 12: StopTriggered id=20 stop_price=102 trade_price=102
+line 12: TradeExecuted incoming=20 resting=4 price=103 qty=1
+line 12: OrderExpired id=20 qty=1
+line 12: StopTriggered id=21 stop_price=103 trade_price=103
+line 13: OrderAccepted id=20 side=SELL price=103 qty=2
+line 13: TradeExecuted incoming=20 resting=21 price=103 qty=2
+
+commands processed: 12
+add commands: 11
+adds accepted: 10
+adds rejected: 1
+cancel commands: 1
+cancels accepted: 1
+cancels rejected: 0
+replace commands: 0
+replaces accepted: 0
+replaces rejected: 0
+trades executed: 4
+volume traded: 5
+self-trades prevented: 0
+orders expired: 2
+stops triggered: 2
+resting orders: 0
+pending stops: 0
+bids:
+  none
+asks:
+  none
+last trade price: 103

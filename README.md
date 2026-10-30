@@ -426,7 +426,7 @@ Every test runs in at least one job.
 
 ## Replaying a session
 
-A replay file is a six-column CSV of `ADD` and `CANCEL` commands. [`docs/replay-format.md`](docs/replay-format.md) specifies it in full: field syntax, sequence ordering, which layer rejects what, and the fail-fast error policy.
+A replay file is a CSV of `ADD` and `CANCEL` commands in six columns (v1), or of `ADD`, `CANCEL`, and `REPLACE` commands in twelve (v2, whose six extra columns carry the order type, time in force, stop price, post-only flag, owner, and self-trade prevention mode). The header names the layout, and every v1 file replays exactly as before. [`docs/replay-format.md`](docs/replay-format.md) specifies both in full: field syntax, sequence ordering, which layer rejects what, and the fail-fast error policy.
 
 ```csv
 sequence,command,order_id,side,price,quantity
@@ -438,7 +438,7 @@ sequence,command,order_id,side,price,quantity
 
 - Prices are integer ticks.
 - Numbers are digits only, and zero is invalid in every column.
-- `ADD` maps to `submitOrder`, so it matches.
+- `ADD` maps to `submitOrder(OrderRequest)`, so it matches; `REPLACE` maps to `replaceOrder`. Every request check a row alone decides (a price on a market order, a GTC stop, post-only on an IOC) is a parse error, so a parsed `ADD` is always well formed.
 - A well-formed row the book refuses, such as a duplicate active ID or a cancel of an unknown ID, becomes a rejection event, and the replay continues.
 - Any parse error stops the replay at that line. Commands that already ran are not rolled back.
 
@@ -451,8 +451,8 @@ order_book_cli --help
 | Option | Effect |
 |---|---|
 | `--trades` | Print each trade, tagged with the line of the command that made it, before the statistics. |
-| `--events` | Print every event instead: acceptances, rejections, trades, and cancels. |
-| `--book` | Print the final book after the statistics: every level, best price first. |
+| `--events` | Print every event instead, each tagged with its command's line, a cascade's included. |
+| `--book` | Print the final book after the statistics: every level, best price first, then the last trade price. |
 | `--validate none\|final\|per-command` | How often to check the book's invariants (default `final`). |
 | `--` | The next argument is the file, even if it starts with `-`. |
 | `-h`, `--help` | Print help to stdout and exit 0. |
@@ -544,7 +544,7 @@ All figures come from one machine (Ryzen 5 5600G, Windows 11, MSVC Release) and 
 
 **Tooling**
 
-- **Replay format.** Only `ADD` and `CANCEL` commands; no quoting or comments; and a parse error stops the replay, with no skip-and-continue mode.
+- **Replay format.** `ADD`, `CANCEL`, and (in v2) `REPLACE` commands; no quoting or comments; pending stops are not listed in the output; and a parse error stops the replay, with no skip-and-continue mode.
 - **Performance evidence.** Throughput only, from one machine and compiler, on synthetic workloads. Single-command latency has never been measured.
 - **Packaging.** There are no CMake install or package-config rules. Consume the library with `add_subdirectory`.
 

@@ -1,6 +1,6 @@
 # Replay sample files
 
-Sample input for the CSV replay format defined in [`docs/replay-format.md`](../../docs/replay-format.md). `replay_parser_tests` reads every file here and checks the parsed records of each valid file and the line, column, and rule (`ParseErrorCode`) of each malformed one; it fails on a file it has no expectation for. `replay_engine_tests` replays every file and checks the events, statistics, and final book of each valid one and, for each malformed one, the error line and how many commands ran before it; it fails on a valid file it has no expectation for. The `replay_cli_*` tests run `order_book_cli replay --events --book` on every valid file (`<name>.stdout`) and on `price_zero.csv`, `empty_file.csv`, and a missing file; they also cover each output selection (statistics only, `--trades`, `--book`), option order and `--`, help, the demo, and every usage error. Each compares the exit status, stdout, and stderr byte for byte with `expected/` (`*.stdout`, `*.stderr`, also `-text`), written by hand from the events below. A failing case with no command run prints the empty book's statistics (`empty_statistics.stdout`), or with `--events --book` its summary (`header_only.stdout`).
+Sample input for the CSV replay format defined in [`docs/replay-format.md`](../../docs/replay-format.md). `replay_parser_tests` reads every file here and checks the parsed records of each valid file and the line, column, and rule (`ParseErrorCode`) of each malformed one; it fails on a file it has no expectation for. `replay_engine_tests` replays every file and checks the events, statistics, and final book of each valid one and, for each malformed one, the error line and how many commands ran before it; it fails on a valid file it has no expectation for. The `replay_cli_*` tests run `order_book_cli replay --events --book` on every valid file (`<name>.stdout`) and on `price_zero.csv`, `market_gtc.csv`, `empty_file.csv`, and a missing file, and `--trades` on `stops.csv` (cascade trades tagged with the line that ran the cascade); they also cover each output selection (statistics only, `--trades`, `--book`), option order and `--`, help, the demo, and every usage error. Each compares the exit status, stdout, and stderr byte for byte with `expected/` (`*.stdout`, `*.stderr`, also `-text`), written by hand from the events below. A failing case with no command run prints the empty book's statistics (`empty_statistics.stdout`), or with `--events --book` its summary (`header_only.stdout`).
 
 `.gitattributes` marks every `*.csv` here `-text`, so Git keeps the bytes exactly as committed, whatever `core.autocrlf` says. Several files depend on that: `crlf_line_endings.csv`, `no_final_newline.csv`, `header_with_bom.csv`, and `trailing_blank_line.csv`. Don't re-save these files in an editor that normalizes line endings or encoding.
 
@@ -20,6 +20,13 @@ Every file here should replay to the end with exit status 0. The events are the 
 | `header_only.csv` | header and no commands: replays nothing |
 | `crlf_line_endings.csv` | CRLF record terminators |
 | `no_final_newline.csv` | last record without a line ending |
+| `v2_header_only.csv` | v2: the v2 header and no commands: replays nothing |
+| `market_orders.csv` | v2: a market sweep with an expiring remainder, a market order facing an empty side, a market FOK that cannot fill (the book untouched) and one that does |
+| `ioc_fok.csv` | v2: an IOC that trades what it can and expires the rest, a FOK that fills, a FOK that cannot fill (accepted, then expired, the book untouched) |
+| `post_only.csv` | v2: post-only orders: one rests, ones at and through the touch on either side expire whole |
+| `self_trade_prevention.csv` | v2: an owner-less order trading freely with an owned one; CANCEL_RESTING sweeping past its own orders into a deeper level; CANCEL_INCOMING; CANCEL_BOTH |
+| `stops.csv` | v2: stops pending, cancelled while pending, past their trigger on arrival, a duplicate ID against a pending stop, a two-stop cascade tagged with the line that ran it, a triggered stop-limit resting, and an ID reused after its stop triggered |
+| `replace.csv` | v2: replaces: a decrease keeping priority, an increase losing it, three refused (total too low, not found, a pending stop), a post-only replace that would take, a price change that clears the owner by omitting it, and a crossing replace whose trade triggers a stop |
 
 ### Expected events
 
@@ -127,11 +134,136 @@ line 3  OrderCancelled id=6001 qty=7
 final   empty
 ```
 
+`v2_header_only.csv`: the v2 header and no commands; the book stays empty.
+
+`market_orders.csv`
+
+```text
+line 2  OrderAccepted id=1 side=SELL price=100 qty=5
+line 3  OrderAccepted id=2 side=SELL price=101 qty=5
+line 4  OrderAccepted id=3 side=BUY price=MARKET qty=12
+        TradeExecuted incoming=3 resting=1 price=100 qty=5
+        TradeExecuted incoming=3 resting=2 price=101 qty=5
+        OrderExpired id=3 qty=2
+line 5  OrderAccepted id=4 side=SELL price=MARKET qty=3
+        OrderExpired id=4 qty=3
+line 6  OrderAccepted id=5 side=SELL price=102 qty=4
+line 7  OrderAccepted id=6 side=BUY price=MARKET qty=5
+        OrderExpired id=6 qty=5
+line 8  OrderAccepted id=7 side=BUY price=MARKET qty=4
+        TradeExecuted incoming=7 resting=5 price=102 qty=4
+final   empty   last trade: 102
+```
+
+`ioc_fok.csv`
+
+```text
+line 2  OrderAccepted id=1 side=SELL price=100 qty=4
+line 3  OrderAccepted id=2 side=SELL price=101 qty=6
+line 4  OrderAccepted id=3 side=BUY price=100 qty=10
+        TradeExecuted incoming=3 resting=1 price=100 qty=4
+        OrderExpired id=3 qty=6
+line 5  OrderAccepted id=4 side=BUY price=101 qty=6
+        TradeExecuted incoming=4 resting=2 price=101 qty=6
+line 6  OrderAccepted id=5 side=SELL price=99 qty=3
+line 7  OrderAccepted id=6 side=BUY price=99 qty=5
+        OrderExpired id=6 qty=5
+line 8  OrderCancelled id=5 qty=3
+final   empty   last trade: 101
+```
+
+`post_only.csv`
+
+```text
+line 2  OrderAccepted id=1 side=SELL price=101 qty=5
+line 3  OrderAccepted id=2 side=BUY price=100 qty=4
+line 4  OrderAccepted id=3 side=BUY price=101 qty=3
+        OrderExpired id=3 qty=3
+line 5  OrderAccepted id=4 side=BUY price=102 qty=2
+        OrderExpired id=4 qty=2
+line 6  OrderAccepted id=5 side=SELL price=100 qty=1
+        OrderExpired id=5 qty=1
+line 7  OrderAccepted id=6 side=SELL price=102 qty=2
+final   bids: 100 x 4   asks: 101 x 5, 102 x 2   last trade: none
+```
+
+`self_trade_prevention.csv`
+
+```text
+line 2  OrderAccepted id=1 side=SELL price=100 qty=3
+line 3  OrderAccepted id=2 side=SELL price=100 qty=4
+line 4  OrderAccepted id=3 side=SELL price=101 qty=5
+line 5  OrderAccepted id=4 side=SELL price=102 qty=6
+line 6  OrderAccepted id=10 side=BUY price=100 qty=1
+        TradeExecuted incoming=10 resting=1 price=100 qty=1
+line 7  OrderAccepted id=11 side=BUY price=101 qty=20
+        SelfTradePrevented incoming=11 resting=1 price=100 qty=2
+        TradeExecuted incoming=11 resting=2 price=100 qty=4
+        SelfTradePrevented incoming=11 resting=3 price=101 qty=5
+line 8  OrderAccepted id=12 side=SELL price=101 qty=3
+        SelfTradePrevented incoming=12 resting=11 price=101 qty=0
+        OrderExpired id=12 qty=3
+line 9  OrderAccepted id=13 side=SELL price=101 qty=2
+        SelfTradePrevented incoming=13 resting=11 price=101 qty=16
+        OrderExpired id=13 qty=2
+final   bids: none   asks: 102 x 6   last trade: 100
+```
+
+`stops.csv`
+
+```text
+line 2  OrderAccepted id=1 side=SELL price=100 qty=1
+line 3  OrderAccepted id=2 side=BUY price=100 qty=1
+        TradeExecuted incoming=2 resting=1 price=100 qty=1
+line 4  OrderAccepted id=20 side=BUY price=MARKET qty=2
+line 5  OrderAccepted id=21 side=BUY price=103 qty=2
+line 6  OrderAccepted id=22 side=SELL price=MARKET qty=1
+line 7  OrderCancelled id=22 qty=1
+line 8  OrderAccepted id=23 side=BUY price=MARKET qty=1
+        OrderExpired id=23 qty=1
+line 9  OrderRejected id=20 reason=DUPLICATE_ORDER_ID
+line 10 OrderAccepted id=3 side=SELL price=102 qty=1
+line 11 OrderAccepted id=4 side=SELL price=103 qty=1
+line 12 OrderAccepted id=5 side=BUY price=102 qty=1
+        TradeExecuted incoming=5 resting=3 price=102 qty=1
+        StopTriggered id=20 stop_price=102 trade_price=102
+        TradeExecuted incoming=20 resting=4 price=103 qty=1
+        OrderExpired id=20 qty=1
+        StopTriggered id=21 stop_price=103 trade_price=103
+line 13 OrderAccepted id=20 side=SELL price=103 qty=2
+        TradeExecuted incoming=20 resting=21 price=103 qty=2
+final   empty   last trade: 103
+```
+
+`replace.csv`
+
+```text
+line 2  OrderAccepted id=1 side=SELL price=101 qty=10
+line 3  OrderAccepted id=2 side=SELL price=101 qty=5
+line 4  OrderAccepted id=3 side=BUY price=100 qty=4
+line 5  OrderAccepted id=4 side=BUY price=101 qty=3
+        TradeExecuted incoming=4 resting=1 price=101 qty=3
+line 6  OrderReplaced id=1 side=SELL price=101 qty=8 open=5 priority=KEPT
+line 7  OrderReplaced id=2 side=SELL price=101 qty=6 open=6 priority=LOST
+line 8  OrderAccepted id=30 side=SELL price=MARKET qty=2
+line 9  ReplaceRejected id=1 reason=REPLACE_QUANTITY_TOO_LOW
+line 10 ReplaceRejected id=99 reason=ORDER_NOT_FOUND
+line 11 ReplaceRejected id=30 reason=ORDER_NOT_REPLACEABLE
+line 12 OrderReplaced id=2 side=SELL price=100 qty=6 open=6 priority=LOST
+        OrderExpired id=2 qty=6
+line 13 OrderReplaced id=3 side=BUY price=99 qty=4 open=4 priority=LOST
+line 14 OrderReplaced id=1 side=SELL price=99 qty=8 open=5 priority=LOST
+        TradeExecuted incoming=1 resting=3 price=99 qty=4
+        StopTriggered id=30 stop_price=100 trade_price=99
+        OrderExpired id=30 qty=2
+final   bids: none   asks: 99 x 1   last trade: 99
+```
+
 ## `malformed/`
 
 Every file has exactly one error. The replay must stop there with exit status 1 and report the line and column below. It must not dispatch the bad record or anything after it, and it must not roll back what already ran.
 
-Most files share one layout. Lines 2 and 3 are valid and get dispatched (`OrderAccepted` for 1001 BUY 100 x 50, then for 1002 SELL 105 x 30, with no trade). Line 4 is the bad record. Line 5, `4,CANCEL,1001,,,`, must never run, so after the stop both 1001 and 1002 are still resting. "Dispatched" below counts the commands that ran before the stop.
+Most files share one layout (in v2's columns for the v2 files, each of which uses the v2 header). Lines 2 and 3 are valid and get dispatched (`OrderAccepted` for 1001 BUY 100 x 50, then for 1002 SELL 105 x 30, with no trade). Line 4 is the bad record. Line 5, `4,CANCEL,1001,,,`, must never run, so after the stop both 1001 and 1002 are still resting. "Dispatched" below counts the commands that ran before the stop.
 
 "—" means a record- or file-level error that names no column.
 
@@ -199,3 +331,37 @@ Most files share one layout. Lines 2 and 3 are valid and get dispatched (`OrderA
 | `cancel_with_price.csv` | 4 | `price` | 2 | `CANCEL` with `0` (any value counts as filled in) |
 | `cancel_with_quantity.csv` | 4 | `quantity` | 2 | `CANCEL` with `50` |
 | `cancel_with_space.csv` | 4 | `side` | 2 | `CANCEL` with ` `: a space is not empty |
+
+### Version 2
+
+Each breaks one v2 rule (`v1_replace.csv` uses the v1 header). The last column is the `ParseErrorCode`.
+
+| File | Line | Column | Dispatched | Code |
+|---|---|---|---|---|
+| `v2_header_wrong_case.csv` | 1 | — | 0 | `INVALID_HEADER` |
+| `v2_six_fields.csv` | 4 | — | 2 | `WRONG_COLUMN_COUNT` |
+| `v1_replace.csv` | 4 | `command` | 2 | `UNKNOWN_COMMAND` |
+| `order_type_unknown.csv` | 4 | `order_type` | 2 | `INVALID_ORDER_TYPE` |
+| `order_type_lowercase.csv` | 4 | `order_type` | 2 | `INVALID_ORDER_TYPE` |
+| `add_missing_order_type.csv` | 4 | `order_type` | 2 | `MISSING_REQUIRED_FIELD` |
+| `time_in_force_unknown.csv` | 4 | `time_in_force` | 2 | `INVALID_TIME_IN_FORCE` |
+| `add_missing_time_in_force.csv` | 4 | `time_in_force` | 2 | `MISSING_REQUIRED_FIELD` |
+| `market_gtc.csv` | 4 | `time_in_force` | 2 | `INVALID_COMBINATION` |
+| `stop_gtc.csv` | 4 | `time_in_force` | 2 | `INVALID_COMBINATION` |
+| `market_with_price.csv` | 4 | `price` | 2 | `UNEXPECTED_FIELD` |
+| `stop_limit_missing_price.csv` | 4 | `price` | 2 | `MISSING_REQUIRED_FIELD` |
+| `stop_missing_stop_price.csv` | 4 | `stop_price` | 2 | `MISSING_REQUIRED_FIELD` |
+| `limit_with_stop_price.csv` | 4 | `stop_price` | 2 | `UNEXPECTED_FIELD` |
+| `stop_price_zero.csv` | 4 | `stop_price` | 2 | `INVALID_VALUE` |
+| `post_only_n.csv` | 4 | `post_only` | 2 | `INVALID_POST_ONLY` |
+| `post_only_ioc.csv` | 4 | `post_only` | 2 | `INVALID_COMBINATION` |
+| `owner_zero.csv` | 4 | `owner` | 2 | `INVALID_VALUE` |
+| `owner_without_mode.csv` | 4 | `self_trade_prevention` | 2 | `MISSING_REQUIRED_FIELD` |
+| `mode_without_owner.csv` | 4 | `self_trade_prevention` | 2 | `UNEXPECTED_FIELD` |
+| `mode_unknown.csv` | 4 | `self_trade_prevention` | 2 | `INVALID_SELF_TRADE_PREVENTION` |
+| `v2_cancel_with_order_type.csv` | 4 | `order_type` | 2 | `UNEXPECTED_FIELD` |
+| `replace_with_side.csv` | 4 | `side` | 2 | `UNEXPECTED_FIELD` |
+| `replace_with_order_type.csv` | 4 | `order_type` | 2 | `UNEXPECTED_FIELD` |
+| `replace_missing_price.csv` | 4 | `price` | 2 | `MISSING_REQUIRED_FIELD` |
+| `replace_missing_quantity.csv` | 4 | `quantity` | 2 | `MISSING_REQUIRED_FIELD` |
+| `replace_with_stop_price.csv` | 4 | `stop_price` | 2 | `UNEXPECTED_FIELD` |

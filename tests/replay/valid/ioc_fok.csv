@@ -1,0 +1,8 @@
+sequence,command,order_id,side,price,quantity,order_type,time_in_force,stop_price,post_only,owner,self_trade_prevention
+1,ADD,1,SELL,100,4,LIMIT,GTC,,,,
+2,ADD,2,SELL,101,6,LIMIT,GTC,,,,
+3,ADD,3,BUY,100,10,LIMIT,IOC,,,,
+4,ADD,4,BUY,101,6,LIMIT,FOK,,,,
+5,ADD,5,SELL,99,3,LIMIT,GTC,,,,
+6,ADD,6,BUY,99,5,LIMIT,FOK,,,,
+7,CANCEL,5,,,,,,,,,

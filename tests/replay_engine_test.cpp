@@ -2,6 +2,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <iterator>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -37,6 +39,14 @@ struct OrderBookTestAccess {
 namespace {
 
 using order_book::CancelRejected;
+using order_book::OrderExpired;
+using order_book::OrderReplaced;
+using order_book::OrderType;
+using order_book::ReplaceRejected;
+using order_book::SelfTradePrevented;
+using order_book::SelfTradePrevention;
+using order_book::StopTriggered;
+using order_book::TimeInForce;
 using order_book::Order;
 using order_book::OrderAccepted;
 using order_book::OrderBook;
@@ -297,13 +307,21 @@ void testSummaryFormatting() {
                    "cancel commands: 1\n"
                    "cancels accepted: 1\n"
                    "cancels rejected: 0\n"
+                   "replace commands: 0\n"
+                   "replaces accepted: 0\n"
+                   "replaces rejected: 0\n"
                    "trades executed: 1\n"
                    "volume traded: 20\n"
+                   "self-trades prevented: 0\n"
+                   "orders expired: 0\n"
+                   "stops triggered: 0\n"
                    "resting orders: 1\n"
+                   "pending stops: 0\n"
                    "bids:\n"
                    "  none\n"
                    "asks:\n"
-                   "  price=105 qty=10 orders=1\n",
+                   "  price=105 qty=10 orders=1\n"
+                   "last trade price: 105\n",
                    "basic summary");
     }
     {
@@ -312,9 +330,13 @@ void testSummaryFormatting() {
         const ReplayResult result = expectResult(ReplayEngine::run(basicRecords, book), "basic parts");
         const std::string statistics = order_book::replay::formatReplayStatistics(result);
         const std::string finalBook = order_book::replay::formatFinalBook(result.finalBook);
-        expect(statistics.ends_with("resting orders: 1\n"), "statistics end with resting orders: " + statistics);
+        expect(statistics.ends_with("resting orders: 1\npending stops: 0\n"),
+               "statistics end with resting orders and pending stops: " + statistics);
         expectText(finalBook, "bids:\n  none\nasks:\n  price=105 qty=10 orders=1\n", "basic final book");
-        expectText(formatReplaySummary(result), statistics + finalBook, "summary is statistics then book");
+        expectText(order_book::replay::formatFinalBook(result), finalBook + "last trade price: 105\n",
+                   "the replay's final book adds the last trade price");
+        expectText(formatReplaySummary(result), statistics + finalBook + "last trade price: 105\n",
+                   "summary is statistics then book");
     }
     {
         OrderBook book;
@@ -326,13 +348,21 @@ void testSummaryFormatting() {
                    "cancel commands: 0\n"
                    "cancels accepted: 0\n"
                    "cancels rejected: 0\n"
+                   "replace commands: 0\n"
+                   "replaces accepted: 0\n"
+                   "replaces rejected: 0\n"
                    "trades executed: 0\n"
                    "volume traded: 0\n"
+                   "self-trades prevented: 0\n"
+                   "orders expired: 0\n"
+                   "stops triggered: 0\n"
                    "resting orders: 0\n"
+                   "pending stops: 0\n"
                    "bids:\n"
                    "  none\n"
                    "asks:\n"
-                   "  none\n",
+                   "  none\n"
+                   "last trade price: none\n",
                    "empty summary");
     }
     {
@@ -349,6 +379,7 @@ void testSummaryFormatting() {
         const std::string summary = formatReplaySummary(expectResult(ReplayEngine::run(records, book), "levels"));
         expectText(summary.substr(summary.find("resting orders")),
                    "resting orders: 7\n"
+                   "pending stops: 0\n"
                    "bids:\n"
                    "  price=100 qty=10 orders=2\n"
                    "  price=99 qty=5 orders=1\n"
@@ -356,7 +387,8 @@ void testSummaryFormatting() {
                    "asks:\n"
                    "  price=101 qty=4 orders=1\n"
                    "  price=102 qty=6 orders=1\n"
-                   "  price=103 qty=2 orders=1\n",
+                   "  price=103 qty=2 orders=1\n"
+                   "last trade price: none\n",
                    "level order");
     }
     {
@@ -458,10 +490,114 @@ void testValidSampleFiles(const std::filesystem::path& root) {
                                     {3, OrderAccepted{5002, Side::SELL, 100, 4}},
                                     {3, TradeExecuted{5002, 5001, 100, 4}}},
                                    {2, 2, 0, 2, 0, 0, 0, 1, 4}, {{100, 6, 1}}, {}}},
+        {"v2_header_only.csv", {{},
+                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {}, {}}},
+        {"market_orders.csv", {{{2, OrderAccepted{1, Side::SELL, 100, 5}},
+                {3, OrderAccepted{2, Side::SELL, 101, 5}},
+                {4, OrderAccepted{3, Side::BUY, 0, 12}},
+                {4, TradeExecuted{3, 1, 100, 5}},
+                {4, TradeExecuted{3, 2, 101, 5}},
+                {4, OrderExpired{3, 2}},
+                {5, OrderAccepted{4, Side::SELL, 0, 3}},
+                {5, OrderExpired{4, 3}},
+                {6, OrderAccepted{5, Side::SELL, 102, 4}},
+                {7, OrderAccepted{6, Side::BUY, 0, 5}},
+                {7, OrderExpired{6, 5}},
+                {8, OrderAccepted{7, Side::BUY, 0, 4}},
+                {8, TradeExecuted{7, 5, 102, 4}}},
+                {7, 7, 0, 7, 0, 0, 0, 3, 14, 0, 0, 0, 0, 3, 0}, {}, {}}},
+        {"ioc_fok.csv", {{{2, OrderAccepted{1, Side::SELL, 100, 4}},
+                {3, OrderAccepted{2, Side::SELL, 101, 6}},
+                {4, OrderAccepted{3, Side::BUY, 100, 10}},
+                {4, TradeExecuted{3, 1, 100, 4}},
+                {4, OrderExpired{3, 6}},
+                {5, OrderAccepted{4, Side::BUY, 101, 6}},
+                {5, TradeExecuted{4, 2, 101, 6}},
+                {6, OrderAccepted{5, Side::SELL, 99, 3}},
+                {7, OrderAccepted{6, Side::BUY, 99, 5}},
+                {7, OrderExpired{6, 5}},
+                {8, OrderCancelled{5, 3}}},
+                {7, 6, 1, 6, 0, 1, 0, 2, 10, 0, 0, 0, 0, 2, 0}, {}, {}}},
+        {"post_only.csv", {{{2, OrderAccepted{1, Side::SELL, 101, 5}},
+                {3, OrderAccepted{2, Side::BUY, 100, 4}},
+                {4, OrderAccepted{3, Side::BUY, 101, 3}},
+                {4, OrderExpired{3, 3}},
+                {5, OrderAccepted{4, Side::BUY, 102, 2}},
+                {5, OrderExpired{4, 2}},
+                {6, OrderAccepted{5, Side::SELL, 100, 1}},
+                {6, OrderExpired{5, 1}},
+                {7, OrderAccepted{6, Side::SELL, 102, 2}}},
+                {6, 6, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0}, {{100, 4, 1}}, {{101, 5, 1}, {102, 2, 1}}}},
+        {"self_trade_prevention.csv", {{{2, OrderAccepted{1, Side::SELL, 100, 3}},
+                {3, OrderAccepted{2, Side::SELL, 100, 4}},
+                {4, OrderAccepted{3, Side::SELL, 101, 5}},
+                {5, OrderAccepted{4, Side::SELL, 102, 6}},
+                {6, OrderAccepted{10, Side::BUY, 100, 1}},
+                {6, TradeExecuted{10, 1, 100, 1}},
+                {7, OrderAccepted{11, Side::BUY, 101, 20}},
+                {7, SelfTradePrevented{11, 1, 100, 2}},
+                {7, TradeExecuted{11, 2, 100, 4}},
+                {7, SelfTradePrevented{11, 3, 101, 5}},
+                {8, OrderAccepted{12, Side::SELL, 101, 3}},
+                {8, SelfTradePrevented{12, 11, 101, 0}},
+                {8, OrderExpired{12, 3}},
+                {9, OrderAccepted{13, Side::SELL, 101, 2}},
+                {9, SelfTradePrevented{13, 11, 101, 16}},
+                {9, OrderExpired{13, 2}}},
+                {8, 8, 0, 8, 0, 0, 0, 2, 5, 0, 0, 0, 4, 2, 0}, {}, {{102, 6, 1}}}},
+        {"stops.csv", {{{2, OrderAccepted{1, Side::SELL, 100, 1}},
+                {3, OrderAccepted{2, Side::BUY, 100, 1}},
+                {3, TradeExecuted{2, 1, 100, 1}},
+                {4, OrderAccepted{20, Side::BUY, 0, 2}},
+                {5, OrderAccepted{21, Side::BUY, 103, 2}},
+                {6, OrderAccepted{22, Side::SELL, 0, 1}},
+                {7, OrderCancelled{22, 1}},
+                {8, OrderAccepted{23, Side::BUY, 0, 1}},
+                {8, OrderExpired{23, 1}},
+                {9, OrderRejected{20, RejectionReason::DUPLICATE_ORDER_ID}},
+                {10, OrderAccepted{3, Side::SELL, 102, 1}},
+                {11, OrderAccepted{4, Side::SELL, 103, 1}},
+                {12, OrderAccepted{5, Side::BUY, 102, 1}},
+                {12, TradeExecuted{5, 3, 102, 1}},
+                {12, StopTriggered{20, 102, 102}},
+                {12, TradeExecuted{20, 4, 103, 1}},
+                {12, OrderExpired{20, 1}},
+                {12, StopTriggered{21, 103, 103}},
+                {13, OrderAccepted{20, Side::SELL, 103, 2}},
+                {13, TradeExecuted{20, 21, 103, 2}}},
+                {12, 11, 1, 10, 1, 1, 0, 4, 5, 0, 0, 0, 0, 2, 2}, {}, {}}},
+        {"replace.csv", {{{2, OrderAccepted{1, Side::SELL, 101, 10}},
+                {3, OrderAccepted{2, Side::SELL, 101, 5}},
+                {4, OrderAccepted{3, Side::BUY, 100, 4}},
+                {5, OrderAccepted{4, Side::BUY, 101, 3}},
+                {5, TradeExecuted{4, 1, 101, 3}},
+                {6, OrderReplaced{1, Side::SELL, 101, 8, 5, true}},
+                {7, OrderReplaced{2, Side::SELL, 101, 6, 6, false}},
+                {8, OrderAccepted{30, Side::SELL, 0, 2}},
+                {9, ReplaceRejected{1, RejectionReason::REPLACE_QUANTITY_TOO_LOW}},
+                {10, ReplaceRejected{99, RejectionReason::ORDER_NOT_FOUND}},
+                {11, ReplaceRejected{30, RejectionReason::ORDER_NOT_REPLACEABLE}},
+                {12, OrderReplaced{2, Side::SELL, 100, 6, 6, false}},
+                {12, OrderExpired{2, 6}},
+                {13, OrderReplaced{3, Side::BUY, 99, 4, 4, false}},
+                {14, OrderReplaced{1, Side::SELL, 99, 8, 5, false}},
+                {14, TradeExecuted{1, 3, 99, 4}},
+                {14, StopTriggered{30, 100, 99}},
+                {14, OrderExpired{30, 2}}},
+                {13, 5, 0, 5, 0, 0, 0, 2, 7, 8, 5, 3, 0, 2, 1}, {}, {{99, 1, 1}}}},
         {"no_final_newline.csv", {{{2, OrderAccepted{6001, Side::SELL, 300, 7}},
                                    {3, OrderCancelled{6001, 7}}},
                                   {2, 1, 1, 1, 0, 1, 0, 0, 0}, {}, {}}},
     };
+
+    // The last trade price each sample ends on, worked out from its events.
+    const std::map<std::string, std::optional<order_book::Price>> lastTrade = {
+        {"basic.csv", 105}, {"price_time_priority.csv", 99}, {"sweep_and_rest.csv", 10126},
+        {"book_rejections.csv", std::nullopt}, {"sequence_gaps.csv", 200}, {"limits.csv", std::nullopt},
+        {"leading_zeros.csv", 100}, {"header_only.csv", std::nullopt}, {"crlf_line_endings.csv", 100},
+        {"no_final_newline.csv", std::nullopt}, {"v2_header_only.csv", std::nullopt}, {"market_orders.csv", 102},
+        {"ioc_fok.csv", 101}, {"post_only.csv", std::nullopt}, {"self_trade_prevention.csv", 100}, {"stops.csv", 103},
+        {"replace.csv", 99}};
 
     std::size_t validSeen = 0;
     for (const auto& entry : std::filesystem::directory_iterator(root / "valid")) {
@@ -480,6 +616,8 @@ void testValidSampleFiles(const std::filesystem::path& root) {
         expectEvents(result, expected.events, context);
         expectStatistics(result, expected.statistics, context);
         expectFinalBook(result, expected.bids, expected.asks, context);
+        expect(result.lastTradePrice == lastTrade.at(name), context + ": wrong last trade price");
+        expect(result.pendingStops == 0, context + ": no stop should be left pending");
         ++validSeen;
     }
     expect(validSeen == valid.size(), "a listed valid sample is missing from " + (root / "valid").string());
@@ -499,7 +637,8 @@ void testMalformedSampleFiles(const std::filesystem::path& root) {
         {"header_wrong_order.csv", {1, 0}}, {"header_missing_column.csv", {1, 0}},
         {"header_duplicate_column.csv", {1, 0}}, {"header_extra_column.csv", {1, 0}},
         {"header_wrong_case.csv", {1, 0}}, {"header_with_bom.csv", {1, 0}},
-        {"trailing_blank_line.csv", {5, 3}}, {"sequence_zero.csv", {2, 0}}};
+        {"trailing_blank_line.csv", {5, 3}}, {"sequence_zero.csv", {2, 0}},
+        {"v2_header_wrong_case.csv", {1, 0}}};
 
     std::size_t unusualSeen = 0;
     for (const auto& entry : std::filesystem::directory_iterator(root / "malformed")) {
@@ -587,6 +726,57 @@ void testUnreadableInput(const std::filesystem::path& root) {
 
 }  // namespace
 
+// Every v1 sample rewritten as v2 replays to the same events; and the book accepts every ADD
+// the parser accepts as well formed, so a replay never produces a malformed-request rejection.
+void testVersion2Compatibility(const std::filesystem::path& root) {
+    for (const auto& entry : std::filesystem::directory_iterator(root / "valid")) {
+        const std::string name = entry.path().filename().string();
+        const ReplayInput input = readReplayFile(entry.path());
+        expect(!input.error.has_value(), name + ": should read");
+        for (const ReplayRecord& record : input.records) {
+            if (const auto* add = std::get_if<AddCommand>(&record.command)) {
+                OrderBook fresh;
+                const order_book::SubmissionResult submission = fresh.submitOrder(order_book::OrderRequest{
+                    add->orderId, add->side, add->price, add->quantity, add->orderType, add->timeInForce, add->stopPrice,
+                    add->postOnly, add->owner, add->selfTradePrevention});
+                expect(submission.getStatus() == order_book::SubmissionStatus::ACCEPTED,
+                       name + ": the book should accept every parsed ADD on a fresh book, line " +
+                           std::to_string(record.lineNumber));
+            }
+        }
+        std::ifstream file(entry.path(), std::ios::binary);
+        const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        if (!text.starts_with(std::string(order_book::replay::expectedHeader) + "\n") &&
+            !text.starts_with(std::string(order_book::replay::expectedHeader) + "\r")) {
+            continue;
+        }
+        std::string rewritten = std::string(order_book::replay::expectedHeaderV2);
+        rewritten += text.substr(order_book::replay::expectedHeader.size(), text.find('\n') - order_book::replay::expectedHeader.size());
+        for (std::size_t start = text.find('\n'); start != std::string::npos && start + 1 < text.size();) {
+            const std::size_t next = text.find('\n', start + 1);
+            std::string line = text.substr(start + 1, (next == std::string::npos ? text.size() : next) - start - 1);
+            const bool cr = !line.empty() && line.back() == '\r';
+            if (cr) {
+                line.pop_back();
+            }
+            line += line.find(",ADD,") != std::string::npos ? ",LIMIT,GTC,,,," : ",,,,,,";
+            rewritten += "\n" + line + (cr ? "\r" : "");
+            start = next;
+        }
+        if (text.ends_with("\n")) {
+            rewritten += "\n";
+        }
+        std::istringstream converted(rewritten);
+        const ReplayInput v2 = readReplayInput(converted);
+        expect(!v2.error.has_value(), name + " rewritten as v2 should read");
+        OrderBook first;
+        OrderBook second;
+        const ReplayResult a = expectResult(ReplayEngine::run(input.records, first), name);
+        const ReplayResult b = expectResult(ReplayEngine::run(v2.records, second), name + " as v2");
+        expect(a.events == b.events && a.statistics == b.statistics, name + " rewritten as v2 should replay the same");
+    }
+}
+
 int main(int argc, char** argv) {
     if (argc != 2) {
         std::cerr << "FAILED: usage: replay_engine_tests <path to tests/replay>" << std::endl;
@@ -603,6 +793,7 @@ int main(int argc, char** argv) {
     testSummaryFormatting();
     testErrorFormatting();
     testValidSampleFiles(root);
+    testVersion2Compatibility(root);
     testMalformedSampleFiles(root);
     testUnreadableInput(root);
 

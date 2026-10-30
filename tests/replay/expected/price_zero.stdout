@@ -8,10 +8,18 @@ adds rejected: 0
 cancel commands: 0
 cancels accepted: 0
 cancels rejected: 0
+replace commands: 0
+replaces accepted: 0
+replaces rejected: 0
 trades executed: 0
 volume traded: 0
+self-trades prevented: 0
+orders expired: 0
+stops triggered: 0
 resting orders: 2
+pending stops: 0
 bids:
   price=100 qty=50 orders=1
 asks:
   price=105 qty=30 orders=1
+last trade price: none

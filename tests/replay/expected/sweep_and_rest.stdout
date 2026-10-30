@@ -15,11 +15,19 @@ adds rejected: 0
 cancel commands: 0
 cancels accepted: 0
 cancels rejected: 0
+replace commands: 0
+replaces accepted: 0
+replaces rejected: 0
 trades executed: 3
 volume traded: 180
+self-trades prevented: 0
+orders expired: 0
+stops triggered: 0
 resting orders: 3
+pending stops: 0
 bids:
   price=10127 qty=20 orders=1
   price=10120 qty=100 orders=1
 asks:
   price=10128 qty=200 orders=1
+last trade price: 10126

@@ -11,7 +11,7 @@
 namespace order_book::replay {
     namespace {
         std::string columnName(std::size_t column) {
-            return std::string(columnNames[column]);
+            return std::string(columnNamesV2[column]);
         }
 
         // Exact, since splitRecord splits on every comma.
@@ -39,7 +39,8 @@ namespace order_book::replay {
             if (command.empty()) {
                 return fieldError(row, column, ParseErrorCode::MISSING_REQUIRED_FIELD, columnName(column) + " is required");
             }
-            const char* article = column == orderIdColumn ? "an " : "a ";
+            const char first = columnNamesV2[column].front();
+            const char* article = first == 'o' || first == 'a' || first == 'e' || first == 'i' || first == 'u' ? "an " : "a ";
             return fieldError(row, column, ParseErrorCode::MISSING_REQUIRED_FIELD,
                               command + " requires " + article + columnName(column));
         }
@@ -59,7 +60,8 @@ namespace order_book::replay {
             }
             for (char c : text) {
                 if (c < '0' || c > '9') {
-                    const char* expected = column == priceColumn ? "a whole number of ticks" : "an unsigned whole number";
+                    const char* expected = column == priceColumn || column == stopPriceColumn ? "a whole number of ticks"
+                                                                                              : "an unsigned whole number";
                     return {0, fieldError(row, column, ParseErrorCode::INVALID_NUMBER,
                                           "'" + text + "' is not " + expected)};
                 }
@@ -118,19 +120,281 @@ namespace order_book::replay {
         return row;
     }
 
-    std::optional<ParseError> checkHeader(std::string_view text) {
+    std::variant<ReplayFormat, ParseError> headerFormat(std::string_view text) {
         if (text == expectedHeader) {
-            return std::nullopt;
+            return ReplayFormat::V1;
         }
-        const std::string expected = "'" + std::string(expectedHeader) + "'";
-        if (std::holds_alternative<ReplayRecord>(parseRow(splitRecord(text, 1)))) {
-            return ParseError{1, ParseErrorCode::MISSING_HEADER, "", std::string(text),
-                              "missing header: line 1 is a data record; the first line must be " + expected};
+        if (text == expectedHeaderV2) {
+            return ReplayFormat::V2;
+        }
+        const std::string expected = "'" + std::string(expectedHeader) + "' (v1) or '" + std::string(expectedHeaderV2) + "' (v2)";
+        for (const ReplayFormat format : {ReplayFormat::V1, ReplayFormat::V2}) {
+            if (std::holds_alternative<ReplayRecord>(parseRow(splitRecord(text, 1), format, std::nullopt))) {
+                return ParseError{1, ParseErrorCode::MISSING_HEADER, "", std::string(text),
+                                  "missing header: line 1 is a data record; the first line must be " + expected};
+            }
         }
         return ParseError{1, ParseErrorCode::INVALID_HEADER, "", std::string(text), "header must be " + expected};
     }
 
+    std::optional<ParseError> checkHeader(std::string_view text) {
+        std::variant<ReplayFormat, ParseError> format = headerFormat(text);
+        if (ParseError* error = std::get_if<ParseError>(&format)) {
+            return std::move(*error);
+        }
+        return std::nullopt;
+    }
+
+    namespace {
+        // v1's rules for side, price, and quantity on an ADD, or their absence on a CANCEL.
+        ParseResult parseV1Tail(const CsvRow& row, std::uint64_t sequence, const std::string& commandText,
+                                OrderId orderId) {
+            if (commandText == "CANCEL") {
+                for (std::size_t column : {sideColumn, priceColumn, quantityColumn}) {
+                    if (!row.fields[column].empty()) {
+                        return fieldError(row, column, ParseErrorCode::UNEXPECTED_FIELD,
+                                          "CANCEL must leave " + columnName(column) + " empty");
+                    }
+                }
+                return ReplayRecord{row.lineNumber, sequence, CancelCommand{orderId}};
+            }
+
+            const std::string& sideText = row.fields[sideColumn];
+            if (sideText.empty()) {
+                return missingField(row, sideColumn, commandText);
+            }
+            if (sideText != "BUY" && sideText != "SELL") {
+                return fieldError(row, sideColumn, ParseErrorCode::INVALID_SIDE,
+                                  "'" + sideText + "' is not a side (expected BUY or SELL)");
+            }
+            const Side side = sideText == "BUY" ? Side::BUY : Side::SELL;
+
+            const NumberResult price = parseRequiredNumber(row, priceColumn, engineFieldMax, commandText);
+            if (price.error) {
+                return *price.error;
+            }
+
+            const NumberResult quantity = parseRequiredNumber(row, quantityColumn, engineFieldMax, commandText);
+            if (quantity.error) {
+                return *quantity.error;
+            }
+
+            return ReplayRecord{row.lineNumber, sequence,
+                                AddCommand{orderId, side, static_cast<Price>(price.value),
+                                           static_cast<Quantity>(quantity.value)}};
+        }
+
+        std::optional<ParseError> expectEmpty(const CsvRow& row, std::size_t column, const std::string& why) {
+            if (row.fields[column].empty()) {
+                return std::nullopt;
+            }
+            return fieldError(row, column, ParseErrorCode::UNEXPECTED_FIELD, why + " must leave " + columnName(column) + " empty");
+        }
+
+        struct OwnershipResult {
+            OwnerId owner = 0;
+            SelfTradePrevention mode = SelfTradePrevention::CANCEL_RESTING;
+            bool postOnly = false;
+            std::optional<ParseError> error;
+        };
+
+        // post_only (empty or Y), then owner (empty or positive), then self_trade_prevention,
+        // required exactly when there is an owner. postOnlyAllowed is false for an ADD that is
+        // not a GTC LIMIT order, which may not be post-only.
+        OwnershipResult parseInstructions(const CsvRow& row, bool postOnlyAllowed) {
+            OwnershipResult result;
+            const std::string& postOnlyText = row.fields[postOnlyColumn];
+            if (!postOnlyText.empty() && postOnlyText != "Y") {
+                result.error = fieldError(row, postOnlyColumn, ParseErrorCode::INVALID_POST_ONLY,
+                                          "'" + postOnlyText + "' is not post_only (expected Y or empty)");
+                return result;
+            }
+            result.postOnly = postOnlyText == "Y";
+            if (result.postOnly && !postOnlyAllowed) {
+                result.error = fieldError(row, postOnlyColumn, ParseErrorCode::INVALID_COMBINATION,
+                                          "post_only needs a GTC LIMIT order");
+                return result;
+            }
+
+            if (!row.fields[ownerColumn].empty()) {
+                const NumberResult owner =
+                    parseRequiredNumber(row, ownerColumn, std::numeric_limits<OwnerId>::max(), "");
+                if (owner.error) {
+                    result.error = owner.error;
+                    return result;
+                }
+                result.owner = static_cast<OwnerId>(owner.value);
+            }
+
+            const std::string& modeText = row.fields[selfTradePreventionColumn];
+            if (result.owner == 0) {
+                if (!modeText.empty()) {
+                    result.error = fieldError(row, selfTradePreventionColumn, ParseErrorCode::UNEXPECTED_FIELD,
+                                              "self_trade_prevention needs an owner; leave it empty without one");
+                }
+                return result;
+            }
+            if (modeText.empty()) {
+                result.error = fieldError(row, selfTradePreventionColumn, ParseErrorCode::MISSING_REQUIRED_FIELD,
+                                          "an owner requires a self_trade_prevention");
+                return result;
+            }
+            if (modeText == "CANCEL_RESTING") {
+                result.mode = SelfTradePrevention::CANCEL_RESTING;
+            } else if (modeText == "CANCEL_INCOMING") {
+                result.mode = SelfTradePrevention::CANCEL_INCOMING;
+            } else if (modeText == "CANCEL_BOTH") {
+                result.mode = SelfTradePrevention::CANCEL_BOTH;
+            } else {
+                result.error = fieldError(row, selfTradePreventionColumn, ParseErrorCode::INVALID_SELF_TRADE_PREVENTION,
+                                          "'" + modeText + "' is not a mode (expected CANCEL_RESTING, CANCEL_INCOMING, or CANCEL_BOTH)");
+            }
+            return result;
+        }
+
+        ParseResult parseV2Add(const CsvRow& row, std::uint64_t sequence, OrderId orderId) {
+            const std::string command = "ADD";
+            const std::string& typeText = row.fields[orderTypeColumn];
+            if (typeText.empty()) {
+                return missingField(row, orderTypeColumn, command);
+            }
+            OrderType type = OrderType::LIMIT;
+            if (typeText == "LIMIT") {
+                type = OrderType::LIMIT;
+            } else if (typeText == "MARKET") {
+                type = OrderType::MARKET;
+            } else if (typeText == "STOP") {
+                type = OrderType::STOP;
+            } else if (typeText == "STOP_LIMIT") {
+                type = OrderType::STOP_LIMIT;
+            } else {
+                return fieldError(row, orderTypeColumn, ParseErrorCode::INVALID_ORDER_TYPE,
+                                  "'" + typeText + "' is not an order type (expected LIMIT, MARKET, STOP, or STOP_LIMIT)");
+            }
+            const bool priceless = type == OrderType::MARKET || type == OrderType::STOP;
+            const bool stop = type == OrderType::STOP || type == OrderType::STOP_LIMIT;
+
+            const std::string& timeInForceText = row.fields[timeInForceColumn];
+            if (timeInForceText.empty()) {
+                return missingField(row, timeInForceColumn, command);
+            }
+            TimeInForce timeInForce = TimeInForce::GTC;
+            if (timeInForceText == "GTC") {
+                timeInForce = TimeInForce::GTC;
+            } else if (timeInForceText == "IOC") {
+                timeInForce = TimeInForce::IOC;
+            } else if (timeInForceText == "FOK") {
+                timeInForce = TimeInForce::FOK;
+            } else {
+                return fieldError(row, timeInForceColumn, ParseErrorCode::INVALID_TIME_IN_FORCE,
+                                  "'" + timeInForceText + "' is not a time in force (expected GTC, IOC, or FOK)");
+            }
+            if (priceless && timeInForce == TimeInForce::GTC) {
+                return fieldError(row, timeInForceColumn, ParseErrorCode::INVALID_COMBINATION,
+                                  "a " + typeText + " order must be IOC or FOK, not GTC");
+            }
+
+            const std::string& sideText = row.fields[sideColumn];
+            if (sideText.empty()) {
+                return missingField(row, sideColumn, command);
+            }
+            if (sideText != "BUY" && sideText != "SELL") {
+                return fieldError(row, sideColumn, ParseErrorCode::INVALID_SIDE,
+                                  "'" + sideText + "' is not a side (expected BUY or SELL)");
+            }
+            const Side side = sideText == "BUY" ? Side::BUY : Side::SELL;
+
+            Price price = 0;
+            if (priceless) {
+                if (std::optional<ParseError> error = expectEmpty(row, priceColumn, "a " + typeText + " ADD")) {
+                    return *error;
+                }
+            } else {
+                const NumberResult parsed = parseRequiredNumber(row, priceColumn, engineFieldMax, command);
+                if (parsed.error) {
+                    return *parsed.error;
+                }
+                price = static_cast<Price>(parsed.value);
+            }
+
+            const NumberResult quantity = parseRequiredNumber(row, quantityColumn, engineFieldMax, command);
+            if (quantity.error) {
+                return *quantity.error;
+            }
+
+            Price stopPrice = 0;
+            if (stop) {
+                const NumberResult parsed = parseRequiredNumber(row, stopPriceColumn, engineFieldMax, "a " + typeText + " ADD");
+                if (parsed.error) {
+                    return *parsed.error;
+                }
+                stopPrice = static_cast<Price>(parsed.value);
+            } else if (std::optional<ParseError> error = expectEmpty(row, stopPriceColumn, "a " + typeText + " ADD")) {
+                return *error;
+            }
+
+            const OwnershipResult instructions =
+                parseInstructions(row, type == OrderType::LIMIT && timeInForce == TimeInForce::GTC);
+            if (instructions.error) {
+                return *instructions.error;
+            }
+            return ReplayRecord{row.lineNumber, sequence,
+                                AddCommand{orderId, side, price, static_cast<Quantity>(quantity.value), type, timeInForce,
+                                           stopPrice, instructions.postOnly, instructions.owner, instructions.mode}};
+        }
+
+        ParseResult parseV2Replace(const CsvRow& row, std::uint64_t sequence, OrderId orderId) {
+            const std::string command = "REPLACE";
+            for (std::size_t column : {orderTypeColumn, timeInForceColumn, sideColumn}) {
+                if (std::optional<ParseError> error = expectEmpty(row, column, command)) {
+                    return *error;
+                }
+            }
+            const NumberResult price = parseRequiredNumber(row, priceColumn, engineFieldMax, command);
+            if (price.error) {
+                return *price.error;
+            }
+            const NumberResult quantity = parseRequiredNumber(row, quantityColumn, engineFieldMax, command);
+            if (quantity.error) {
+                return *quantity.error;
+            }
+            if (std::optional<ParseError> error = expectEmpty(row, stopPriceColumn, command)) {
+                return *error;
+            }
+            // A replacement is always a GTC limit order, so post-only is always allowed.
+            const OwnershipResult instructions = parseInstructions(row, true);
+            if (instructions.error) {
+                return *instructions.error;
+            }
+            return ReplayRecord{row.lineNumber, sequence,
+                                ReplaceCommand{orderId, static_cast<Price>(price.value),
+                                               static_cast<Quantity>(quantity.value), instructions.postOnly,
+                                               instructions.owner, instructions.mode}};
+        }
+
+        ParseResult parseV2Tail(const CsvRow& row, std::uint64_t sequence, const std::string& commandText,
+                                OrderId orderId) {
+            if (commandText == "CANCEL") {
+                for (std::size_t column : {orderTypeColumn, timeInForceColumn, sideColumn, priceColumn, quantityColumn,
+                                           stopPriceColumn, postOnlyColumn, ownerColumn, selfTradePreventionColumn}) {
+                    if (std::optional<ParseError> error = expectEmpty(row, column, "CANCEL")) {
+                        return *error;
+                    }
+                }
+                return ReplayRecord{row.lineNumber, sequence, CancelCommand{orderId}};
+            }
+            if (commandText == "REPLACE") {
+                return parseV2Replace(row, sequence, orderId);
+            }
+            return parseV2Add(row, sequence, orderId);
+        }
+    }  // namespace
+
     ParseResult parseRow(const CsvRow& row, std::optional<std::uint64_t> previousSequence) {
+        return parseRow(row, ReplayFormat::V1, previousSequence);
+    }
+
+    ParseResult parseRow(const CsvRow& row, ReplayFormat format, std::optional<std::uint64_t> previousSequence) {
         if (row.fields.empty() || (row.fields.size() == 1 && row.fields[0].empty())) {
             return recordError(row, ParseErrorCode::EMPTY_RECORD, "empty record (blank lines are not allowed)");
         }
@@ -139,9 +403,10 @@ namespace order_book::replay {
                 return recordError(row, ParseErrorCode::QUOTE_CHARACTER, "quote characters are not allowed (fields are never quoted)");
             }
         }
-        if (row.fields.size() != columnCount) {
+        const std::size_t fields = format == ReplayFormat::V1 ? columnCount : columnCountV2;
+        if (row.fields.size() != fields) {
             return recordError(row, ParseErrorCode::WRONG_COLUMN_COUNT,
-                               "expected " + std::to_string(columnCount) + " fields, found " + std::to_string(row.fields.size()));
+                               "expected " + std::to_string(fields) + " fields, found " + std::to_string(row.fields.size()));
         }
 
         const NumberResult sequence = parseRequiredNumber(row, sequenceColumn, std::numeric_limits<std::uint64_t>::max(), "");
@@ -158,49 +423,21 @@ namespace order_book::replay {
         if (commandText.empty()) {
             return missingField(row, commandColumn, "");
         }
-        if (commandText != "ADD" && commandText != "CANCEL") {
+        const bool known = commandText == "ADD" || commandText == "CANCEL" ||
+                           (format == ReplayFormat::V2 && commandText == "REPLACE");
+        if (!known) {
             return fieldError(row, commandColumn, ParseErrorCode::UNKNOWN_COMMAND,
-                              "'" + commandText + "' is not a command (expected ADD or CANCEL)");
+                              "'" + commandText + "' is not a command (expected "
+                                  + (format == ReplayFormat::V1 ? "ADD or CANCEL" : "ADD, CANCEL, or REPLACE") + ")");
         }
 
         const NumberResult orderId = parseRequiredNumber(row, orderIdColumn, engineFieldMax, commandText);
         if (orderId.error) {
             return *orderId.error;
         }
-
-        if (commandText == "CANCEL") {
-            for (std::size_t column : {sideColumn, priceColumn, quantityColumn}) {
-                if (!row.fields[column].empty()) {
-                    return fieldError(row, column, ParseErrorCode::UNEXPECTED_FIELD,
-                                      "CANCEL must leave " + columnName(column) + " empty");
-                }
-            }
-            return ReplayRecord{row.lineNumber, sequence.value, CancelCommand{static_cast<OrderId>(orderId.value)}};
-        }
-
-        const std::string& sideText = row.fields[sideColumn];
-        if (sideText.empty()) {
-            return missingField(row, sideColumn, commandText);
-        }
-        if (sideText != "BUY" && sideText != "SELL") {
-            return fieldError(row, sideColumn, ParseErrorCode::INVALID_SIDE,
-                              "'" + sideText + "' is not a side (expected BUY or SELL)");
-        }
-        const Side side = sideText == "BUY" ? Side::BUY : Side::SELL;
-
-        const NumberResult price = parseRequiredNumber(row, priceColumn, engineFieldMax, commandText);
-        if (price.error) {
-            return *price.error;
-        }
-
-        const NumberResult quantity = parseRequiredNumber(row, quantityColumn, engineFieldMax, commandText);
-        if (quantity.error) {
-            return *quantity.error;
-        }
-
-        return ReplayRecord{row.lineNumber, sequence.value,
-                            AddCommand{static_cast<OrderId>(orderId.value), side, static_cast<Price>(price.value),
-                                       static_cast<Quantity>(quantity.value)}};
+        const auto id = static_cast<OrderId>(orderId.value);
+        return format == ReplayFormat::V1 ? parseV1Tail(row, sequence.value, commandText, id)
+                                          : parseV2Tail(row, sequence.value, commandText, id);
     }
 
     ReadResult ReplayReader::next() {
@@ -212,13 +449,16 @@ namespace order_book::replay {
             headerChecked = true;
             if (!readLine()) {
                 finalResult = ReadResult{ParseError{1, ParseErrorCode::MISSING_HEADER, "", "",
-                    "missing header: the input is empty; the first line must be '" + std::string(expectedHeader) + "'"}};
+                    "missing header: the input is empty; the first line must be '" + std::string(expectedHeader)
+                        + "' (v1) or '" + std::string(expectedHeaderV2) + "' (v2)"}};
                 return *finalResult;
             }
-            if (std::optional<ParseError> error = checkHeader(line)) {
+            std::variant<ReplayFormat, ParseError> format = headerFormat(line);
+            if (ParseError* error = std::get_if<ParseError>(&format)) {
                 finalResult = ReadResult{std::move(*error)};
                 return *finalResult;
             }
+            layout = std::get<ReplayFormat>(format);
         }
 
         if (!readLine()) {
@@ -226,7 +466,7 @@ namespace order_book::replay {
             return *finalResult;
         }
         splitRecordInto(line, linesRead, row);
-        ParseResult result = parseRow(row, previousSequence);
+        ParseResult result = parseRow(row, layout, previousSequence);
         if (ReplayRecord* record = std::get_if<ReplayRecord>(&result)) {
             previousSequence = record->sequence;
             return std::move(*record);

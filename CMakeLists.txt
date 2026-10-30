@@ -384,7 +384,8 @@ if(BUILD_TESTING)
 
     # --events --book prints everything: each event, the statistics, and the final book.
     foreach(sample basic price_time_priority sweep_and_rest book_rejections sequence_gaps limits
-                   leading_zeros header_only crlf_line_endings no_final_newline)
+                   leading_zeros header_only crlf_line_endings no_final_newline v2_header_only market_orders
+                   ioc_fok post_only self_trade_prevention stops replace)
         order_book_add_replay_cli_test(${sample}
             ARGS replay valid/${sample}.csv --events --book EXIT 0 STDOUT ${sample}.stdout)
     endforeach()
@@ -416,6 +417,11 @@ if(BUILD_TESTING)
         ARGS replay malformed/price_zero.csv EXIT 1 STDOUT price_zero_statistics.stdout STDERR price_zero.stderr)
     order_book_add_replay_cli_test(empty_file
         ARGS replay malformed/empty_file.csv --book EXIT 1 STDOUT header_only.stdout STDERR empty_file.stderr)
+    # v2: cascade trades are tagged with the line that ran the cascade; a combination the row
+    # alone decides is a parse error.
+    order_book_add_replay_cli_test(stops_trades ARGS replay valid/stops.csv --trades EXIT 0 STDOUT stops_trades.stdout)
+    order_book_add_replay_cli_test(market_gtc
+        ARGS replay malformed/market_gtc.csv EXIT 1 STDOUT market_gtc_statistics.stdout STDERR market_gtc.stderr)
     order_book_add_replay_cli_test(missing_file
         ARGS replay no_such_file.csv EXIT 1 STDOUT empty_statistics.stdout STDERR missing_file.stderr)
     # Help goes to stdout and exits 0, wherever the option appears before "--".

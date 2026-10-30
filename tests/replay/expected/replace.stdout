@@ -1,0 +1,41 @@
+line 2: OrderAccepted id=1 side=SELL price=101 qty=10
+line 3: OrderAccepted id=2 side=SELL price=101 qty=5
+line 4: OrderAccepted id=3 side=BUY price=100 qty=4
+line 5: OrderAccepted id=4 side=BUY price=101 qty=3
+line 5: TradeExecuted incoming=4 resting=1 price=101 qty=3
+line 6: OrderReplaced id=1 side=SELL price=101 qty=8 open=5 priority=KEPT
+line 7: OrderReplaced id=2 side=SELL price=101 qty=6 open=6 priority=LOST
+line 8: OrderAccepted id=30 side=SELL price=MARKET qty=2
+line 9: ReplaceRejected id=1 reason=REPLACE_QUANTITY_TOO_LOW
+line 10: ReplaceRejected id=99 reason=ORDER_NOT_FOUND
+line 11: ReplaceRejected id=30 reason=ORDER_NOT_REPLACEABLE
+line 12: OrderReplaced id=2 side=SELL price=100 qty=6 open=6 priority=LOST
+line 12: OrderExpired id=2 qty=6
+line 13: OrderReplaced id=3 side=BUY price=99 qty=4 open=4 priority=LOST
+line 14: OrderReplaced id=1 side=SELL price=99 qty=8 open=5 priority=LOST
+line 14: TradeExecuted incoming=1 resting=3 price=99 qty=4
+line 14: StopTriggered id=30 stop_price=100 trade_price=99
+line 14: OrderExpired id=30 qty=2
+
+commands processed: 13
+add commands: 5
+adds accepted: 5
+adds rejected: 0
+cancel commands: 0
+cancels accepted: 0
+cancels rejected: 0
+replace commands: 8
+replaces accepted: 5
+replaces rejected: 3
+trades executed: 2
+volume traded: 7
+self-trades prevented: 0
+orders expired: 2
+stops triggered: 1
+resting orders: 1
+pending stops: 0
+bids:
+  none
+asks:
+  price=99 qty=1 orders=1
+last trade price: 99

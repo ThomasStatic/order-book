@@ -44,9 +44,10 @@ namespace {
         "\n"
         "replay options, in any order before or after the file:\n"
         "  --trades           print each trade, tagged with its command's line, before the statistics\n"
-        "  --events           print every event (acceptances, rejections, trades, and cancels)\n"
-        "                     instead; this includes the trades\n"
-        "  --book             print the final book after the statistics, best price first\n"
+        "  --events           print every event instead, tagged with its command's line; this\n"
+        "                     includes the trades\n"
+        "  --book             print the final book after the statistics, best price first, then\n"
+        "                     the last trade price\n"
         "  --validate MODE    check the book's invariants: none, final (the default), or\n"
         "                     per-command (after every command; slower)\n"
         "  --                 treat the next argument as the file, even if it starts with '-'\n"
@@ -157,7 +158,7 @@ namespace {
         }
         std::cout << replay::formatReplayStatistics(result);
         if (settings.printBook) {
-            std::cout << replay::formatFinalBook(result.finalBook);
+            std::cout << replay::formatFinalBook(result);
         }
         std::cout.flush();
 

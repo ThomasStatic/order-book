@@ -1,0 +1,14 @@
+sequence,command,order_id,side,price,quantity,order_type,time_in_force,stop_price,post_only,owner,self_trade_prevention
+1,ADD,1,SELL,101,10,LIMIT,GTC,,,,
+2,ADD,2,SELL,101,5,LIMIT,GTC,,,,
+3,ADD,3,BUY,100,4,LIMIT,GTC,,,6,CANCEL_RESTING
+4,ADD,4,BUY,101,3,LIMIT,GTC,,,,
+5,REPLACE,1,,101,8,,,,,,
+6,REPLACE,2,,101,6,,,,,,
+7,ADD,30,SELL,,2,STOP,IOC,100,,,
+8,REPLACE,1,,101,3,,,,,,
+9,REPLACE,99,,101,3,,,,,,
+10,REPLACE,30,,100,2,,,,,,
+11,REPLACE,2,,100,6,,,,Y,,
+12,REPLACE,3,,99,4,,,,,,
+13,REPLACE,1,,99,8,,,,,6,CANCEL_RESTING

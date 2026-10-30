@@ -43,9 +43,16 @@ namespace order_book::replay {
         appendLine(text, "cancel commands", statistics.cancelCommands);
         appendLine(text, "cancels accepted", statistics.cancelsAccepted);
         appendLine(text, "cancels rejected", statistics.cancelsRejected);
+        appendLine(text, "replace commands", statistics.replaceCommands);
+        appendLine(text, "replaces accepted", statistics.replacesAccepted);
+        appendLine(text, "replaces rejected", statistics.replacesRejected);
         appendLine(text, "trades executed", statistics.tradesExecuted);
         appendLine(text, "volume traded", statistics.volumeTraded);
+        appendLine(text, "self-trades prevented", statistics.selfTradesPrevented);
+        appendLine(text, "orders expired", statistics.ordersExpired);
+        appendLine(text, "stops triggered", statistics.stopsTriggered);
         appendLine(text, "resting orders", result.finalBook.totalActiveVisibleOrders);
+        appendLine(text, "pending stops", result.pendingStops);
         return text;
     }
 
@@ -57,8 +64,16 @@ namespace order_book::replay {
         return text;
     }
 
+    std::string formatFinalBook(const ReplayResult& result) {
+        std::string text = formatFinalBook(result.finalBook);
+        text += "last trade price: ";
+        text += result.lastTradePrice ? std::to_string(*result.lastTradePrice) : std::string("none");
+        text += '\n';
+        return text;
+    }
+
     std::string formatReplaySummary(const ReplayResult& result) {
-        return formatReplayStatistics(result) + formatFinalBook(result.finalBook);
+        return formatReplayStatistics(result) + formatFinalBook(result);
     }
 
     std::string formatReplayError(const ReplayError& error, std::string_view path) {

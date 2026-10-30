@@ -12,9 +12,10 @@ commands:
 
 replay options, in any order before or after the file:
   --trades           print each trade, tagged with its command's line, before the statistics
-  --events           print every event (acceptances, rejections, trades, and cancels)
-                     instead; this includes the trades
-  --book             print the final book after the statistics, best price first
+  --events           print every event instead, tagged with its command's line; this
+                     includes the trades
+  --book             print the final book after the statistics, best price first, then
+                     the last trade price
   --validate MODE    check the book's invariants: none, final (the default), or
                      per-command (after every command; slower)
   --                 treat the next argument as the file, even if it starts with '-'

@@ -1,0 +1,36 @@
+line 2: OrderAccepted id=1 side=SELL price=100 qty=5
+line 3: OrderAccepted id=2 side=SELL price=101 qty=5
+line 4: OrderAccepted id=3 side=BUY price=MARKET qty=12
+line 4: TradeExecuted incoming=3 resting=1 price=100 qty=5
+line 4: TradeExecuted incoming=3 resting=2 price=101 qty=5
+line 4: OrderExpired id=3 qty=2
+line 5: OrderAccepted id=4 side=SELL price=MARKET qty=3
+line 5: OrderExpired id=4 qty=3
+line 6: OrderAccepted id=5 side=SELL price=102 qty=4
+line 7: OrderAccepted id=6 side=BUY price=MARKET qty=5
+line 7: OrderExpired id=6 qty=5
+line 8: OrderAccepted id=7 side=BUY price=MARKET qty=4
+line 8: TradeExecuted incoming=7 resting=5 price=102 qty=4
+
+commands processed: 7
+add commands: 7
+adds accepted: 7
+adds rejected: 0
+cancel commands: 0
+cancels accepted: 0
+cancels rejected: 0
+replace commands: 0
+replaces accepted: 0
+replaces rejected: 0
+trades executed: 3
+volume traded: 14
+self-trades prevented: 0
+orders expired: 3
+stops triggered: 0
+resting orders: 0
+pending stops: 0
+bids:
+  none
+asks:
+  none
+last trade price: 102

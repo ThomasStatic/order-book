@@ -47,6 +47,16 @@ namespace order_book::replay {
         std::size_t tradesExecuted = 0;
         std::uint64_t volumeTraded = 0;  // the sum of every trade's quantity, which can exceed one Quantity
 
+        // v2's commands and outcomes, appended so v1's initializers keep their meaning;
+        // processed = adds + cancels + replaces. Counted from events, so the engine implements
+        // no trading rules; an ADD accepted then expired still counts as accepted.
+        std::size_t replaceCommands = 0;
+        std::size_t replacesAccepted = 0;
+        std::size_t replacesRejected = 0;
+        std::size_t selfTradesPrevented = 0;
+        std::size_t ordersExpired = 0;
+        std::size_t stopsTriggered = 0;
+
         bool operator==(const ReplayStatistics&) const = default;
     };
 
@@ -54,6 +64,8 @@ namespace order_book::replay {
         std::vector<ReplayEvent> events;  // in the order the book produced them
         ReplayStatistics statistics;
         BookSnapshot finalBook;           // every level of both sides, best price first
+        std::size_t pendingStops = 0;     // the book's pendingStopCount at the end
+        std::optional<Price> lastTradePrice;  // the book's at the end; none before any trade
     };
 
     enum class ReplayErrorCode {
