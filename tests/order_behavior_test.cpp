@@ -28,6 +28,8 @@ struct OrderBookTestAccess {
     static SequenceNum nextSequenceNum(const OrderBook& book) { return book.nextSequenceNum; }
     static const OrderQueue& orders(const PriceLevel& level) { return level.orders; }
     static OwnerId owner(const OrderBook& book, OrderId id) { return book.orderIndex.find(id)->owner; }
+    static const auto& buyStops(const OrderBook& book) { return book.buyStops; }
+    static const auto& sellStops(const OrderBook& book) { return book.sellStops; }
 };
 
 }  // namespace order_book
@@ -96,9 +98,14 @@ struct LevelState {
     bool operator==(const LevelState&) const = default;
 };
 
+// Pending stops by stop price, each queue as (ID, sequence number), oldest first.
+using StopState = std::vector<std::pair<Price, std::vector<std::pair<OrderId, SequenceNum>>>>;
+
 struct BookState {
     std::vector<LevelState> bids;
     std::vector<LevelState> asks;
+    StopState buyStops;
+    StopState sellStops;
     std::vector<OrderId> index;
     SequenceNum nextSequenceNum;
     TradeId nextTradeId;
@@ -119,14 +126,26 @@ std::vector<LevelState> captureLevels(const Levels& levels) {
     return captured;
 }
 
+template <typename StopLevels>
+StopState captureStops(const StopLevels& levels) {
+    StopState captured;
+    for (const auto& [price, level] : levels) {
+        captured.emplace_back(price, std::vector<std::pair<OrderId, SequenceNum>>{});
+        for (const auto& stop : level.stops) {
+            captured.back().second.emplace_back(stop.request.id, stop.sequenceNum);
+        }
+    }
+    return captured;
+}
+
 BookState capture(const OrderBook& book) {
     std::vector<OrderId> index;
     for (const auto& entry : Access::index(book)) {
         index.push_back(entry.first);
     }
     std::sort(index.begin(), index.end());
-    return {captureLevels(Access::bids(book)), captureLevels(Access::asks(book)), index, Access::nextSequenceNum(book),
-            Access::nextTradeId(book)};
+    return {captureLevels(Access::bids(book)), captureLevels(Access::asks(book)), captureStops(Access::buyStops(book)),
+            captureStops(Access::sellStops(book)), index, Access::nextSequenceNum(book), Access::nextTradeId(book)};
 }
 
 void expectSound(const OrderBook& book, const std::string& context) {
@@ -524,6 +543,138 @@ void testFillOrKillWithOwner(Side side) {
     }
 }
 
+OrderRequest stopOrder(OrderId id, Side side, Price stopPrice, unsigned int quantity,
+                       TimeInForce timeInForce = TimeInForce::IOC) {
+    OrderRequest request{id, side, 0, quantity, OrderType::STOP, timeInForce};
+    request.stopPrice = stopPrice;
+    return request;
+}
+
+OrderRequest stopLimit(OrderId id, Side side, Price stopPrice, Price limitPrice, unsigned int quantity,
+                       TimeInForce timeInForce = TimeInForce::GTC) {
+    OrderRequest request{id, side, limitPrice, quantity, OrderType::STOP_LIMIT, timeInForce};
+    request.stopPrice = stopPrice;
+    return request;
+}
+
+// A book whose last trade was at 100: a sell at 100 filled by a buy.
+OrderBook tradedAt100() {
+    OrderBook book;
+    book.submitOrder(Order(90, 100, 1, 1, Side::SELL));
+    book.submitOrder(Order(91, 100, 1, 1, Side::BUY));
+    expect(book.getLastTradePrice() == Price{100}, "the setup should trade at 100");
+    return book;
+}
+
+// A stop that is not past its trigger pends: its result holds only its acceptance (at its
+// limit price, or 0 for a STOP), it consumes a sequence number, and it is no resting order.
+void testPendingStops(Side side) {
+    const std::string context = "pending stop " + sideName(side);
+    const Price beyond = side == Side::BUY ? 110 : 90;  // not yet triggered by a trade at 100
+    OrderBook book = tradedAt100();
+    book.submitOrder(Order(1, side == Side::BUY ? 95 : 105, 4, 1, side));
+    const BookState before = capture(book);
+    const order_book::BookSnapshot snapshot = book.snapshot();
+
+    const OrderRequest market = stopOrder(20, side, beyond, 5, TimeInForce::FOK);
+    expectAcceptedWith(book.submitOrder(market), Events{OrderAccepted{20, side, 0, 5}}, 5, FillStatus::NONE, 0,
+                       context + " STOP");
+    const OrderRequest limited = stopLimit(21, side, beyond, beyond, 6);
+    expectAcceptedWith(book.submitOrder(limited), Events{OrderAccepted{21, side, beyond, 6}}, 6, FillStatus::NONE, 0,
+                       context + " STOP_LIMIT");
+    OrderRequest owned = stopLimit(22, side, beyond, side == Side::BUY ? 120 : 80, 7, TimeInForce::IOC);
+    owned.owner = 3;
+    owned.selfTradePrevention = SelfTradePrevention::CANCEL_BOTH;
+    book.submitOrder(owned);
+
+    expect(book.pendingStopCount() == 3 && book.activeOrderCount() == 1, context + ": stops pend, and do not rest");
+    expect(book.findPendingStop(20) == market && book.findPendingStop(21) == limited && book.findPendingStop(22) == owned,
+           context + ": a pending stop should be found as the request accepted, every field included");
+    expect(!book.findPendingStop(1) && !book.findPendingStop(99), context + ": only a pending stop is found");
+    const order_book::BookSnapshot after = book.snapshot();
+    expect(after.totalActiveVisibleOrders == snapshot.totalActiveVisibleOrders && after.bids.size() == snapshot.bids.size() &&
+               after.asks.size() == snapshot.asks.size(),
+           context + ": pending stops are in no snapshot");
+    expect(Access::nextSequenceNum(book) == before.nextSequenceNum + 3 && Access::nextTradeId(book) == before.nextTradeId,
+           context + ": each stop should consume one sequence number and no trade ID");
+    expectSound(book, context);
+
+    // Cancelling a pending stop reports its whole quantity and moves nothing else.
+    BookState withStops = capture(book);
+    const order_book::CancellationResult cancelled = book.cancelOrder(21);
+    expect(cancelled.isSuccess() && cancelled.getEvents() == std::vector<BookEvent>{order_book::OrderCancelled{21, 6}},
+           context + ": cancelling a pending stop should report its whole quantity");
+    auto& stops = side == Side::BUY ? withStops.buyStops : withStops.sellStops;
+    auto& queue = stops.front().second;
+    queue.erase(queue.begin() + 1);
+    withStops.index.clear();
+    BookState now = capture(book);
+    now.index.clear();
+    expect(now == withStops && book.pendingStopCount() == 2, context + ": cancelling a stop should move nothing else");
+    expect(book.cancelOrder(21).getRejectionReason() == order_book::RejectionReason::ORDER_NOT_FOUND,
+           context + ": a cancelled stop is no longer live");
+    expect(book.submitOrder(OrderRequest{21, side, side == Side::BUY ? Price{94} : Price{106}, 1}).getStatus() == SubmissionStatus::ACCEPTED,
+           context + ": a cancelled stop's ID should be free");
+    expect(book.cancelOrder(20).isSuccess() && book.cancelOrder(22).isSuccess() && book.pendingStopCount() == 0,
+           context + ": every stop should cancel");
+    expect(Access::buyStops(book).empty() && Access::sellStops(book).empty(), context + ": emptied stop levels are erased");
+    expectSound(book, context + " after cancels");
+}
+
+// A stop already past its trigger on arrival (a buy stop at or below the last trade price, a
+// sell stop at or above it) is accepted and wholly expired; before the first trade, none is.
+void testStopsPastTheirTrigger(Side side) {
+    const std::string context = "stop past its trigger " + sideName(side);
+    for (const Price stopPrice : {Price{100}, side == Side::BUY ? Price{99} : Price{101}}) {
+        OrderBook book = tradedAt100();
+        BookState before = capture(book);
+        expectAcceptedWith(book.submitOrder(stopOrder(20, side, stopPrice, 5)),
+                           Events{OrderAccepted{20, side, 0, 5}, OrderExpired{20, 5}}, 5, FillStatus::NONE, 0,
+                           context + " STOP at " + std::to_string(stopPrice));
+        expectAcceptedWith(book.submitOrder(stopLimit(21, side, stopPrice, 100, 6)),
+                           Events{OrderAccepted{21, side, 100, 6}, OrderExpired{21, 6}}, 6, FillStatus::NONE, 0,
+                           context + " STOP_LIMIT at " + std::to_string(stopPrice));
+        before.nextSequenceNum += 2;
+        expect(capture(book) == before && book.pendingStopCount() == 0,
+               context + ": only two sequence numbers should be consumed");
+    }
+    OrderBook fresh;
+    expectAcceptedWith(fresh.submitOrder(stopOrder(20, side, 100, 5)), Events{OrderAccepted{20, side, 0, 5}}, 5,
+                       FillStatus::NONE, 0, context + " before the first trade");
+    expect(fresh.pendingStopCount() == 1, context + ": before the first trade every stop should pend");
+}
+
+// The last trade price is set by every trade and by nothing else, and travels with the book.
+void testLastTradePrice() {
+    OrderBook book;
+    expect(!book.getLastTradePrice(), "no last trade price before the first trade");
+    book.addOrder(Order(1, 100, 5, 1, Side::SELL));
+    book.addOrder(Order(2, 99, 5, 1, Side::BUY));
+    expect(!book.getLastTradePrice(), "addOrder sets no last trade price");
+    book.submitOrder(OrderRequest{3, Side::BUY, 101, 2});
+    expect(book.getLastTradePrice() == Price{100}, "a trade sets the last trade price");
+    book.cancelOrder(2);
+    book.submitOrder(OrderRequest{4, Side::SELL, 100, 1, OrderType::LIMIT, TimeInForce::IOC});
+    expect(book.getLastTradePrice() == Price{100}, "an expiry or a cancel leaves it");
+    book.cancelOrder(1);
+    book.submitOrder(owned(OrderRequest{5, Side::SELL, 200, 1}, 9));
+    book.submitOrder(owned(OrderRequest{6, Side::BUY, 200, 1}, 9));
+    expect(book.findActiveOrder(6).getRemainingQuantity() == 1 && book.getLastTradePrice() == Price{100},
+           "a prevented self-trade sets no last trade price");
+    book.submitOrder(stopOrder(7, Side::SELL, 50, 1));
+
+    OrderBook moved(std::move(book));
+    expect(moved.getLastTradePrice() == Price{100} && moved.pendingStopCount() == 1 && moved.findPendingStop(7),
+           "moving a book carries its last trade price and pending stops");
+    OrderBook assigned;
+    assigned.submitOrder(stopOrder(8, Side::BUY, 300, 1));
+    assigned = std::move(moved);
+    expect(assigned.getLastTradePrice() == Price{100} && assigned.pendingStopCount() == 1 && !assigned.findPendingStop(8),
+           "move-assigning a book replaces its last trade price and pending stops");
+    expect(assigned.cancelOrder(7).isSuccess(), "a moved book's pending stop should cancel");
+    expectSound(assigned, "moved book");
+}
+
 // An expired order's ID is free again, as a filled one's is.
 void testExpiredIdIsFree() {
     OrderBook book;
@@ -585,7 +736,10 @@ int main() {
         testPostOnly(side);
         testSelfTradePrevention(side);
         testFillOrKillWithOwner(side);
+        testPendingStops(side);
+        testStopsPastTheirTrigger(side);
     }
+    testLastTradePrice();
     testExpiredIdIsFree();
     testGoodTillCancelledRests();
     testScriptIsDeterministic();

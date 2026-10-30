@@ -40,6 +40,12 @@ struct OrderBookTestAccess {
     static void setSequenceNum(Order& order, SequenceNum sequenceNum) { order.sequenceNum = sequenceNum; }
     static void setSide(Order& order, Side side) { order.side = side; }
     static void setPrice(Order& order, Price price) { order.priceTick = price; }
+
+    static auto& pendingIndex(OrderBook& book) { return book.pendingIndex; }
+    static auto& stopLevel(OrderBook& book, Side side, Price stopPrice) {
+        return side == Side::BUY ? book.buyStops.at(stopPrice) : book.sellStops.at(stopPrice);
+    }
+    static auto& stops(OrderBook& book, Side side, Price stopPrice) { return stopLevel(book, side, stopPrice).stops; }
 };
 
 }  // namespace order_book
@@ -54,6 +60,7 @@ using order_book::Order;
 using order_book::OrderBook;
 using order_book::OrderId;
 using order_book::OrderLocation;
+using order_book::OrderRequest;
 using order_book::Price;
 using order_book::RejectionReason;
 using order_book::SequenceNum;
@@ -360,6 +367,135 @@ void testIndexChecks() {
     }
 }
 
+OrderRequest stopRequest(OrderId id, Side side, Price stopPrice) {
+    OrderRequest request{id, side, 0, 5, order_book::OrderType::STOP, order_book::TimeInForce::IOC};
+    request.stopPrice = stopPrice;
+    return request;
+}
+
+// The resting book, plus buy stops 20, 21 at 110 and 22 at 115, and sell stops 23 at 90 and 24
+// at 85, numbered 7 to 11.
+OrderBook bookWithStops() {
+    OrderBook book = restingBook();
+    for (const OrderRequest& request : {stopRequest(20, Side::BUY, 110), stopRequest(21, Side::BUY, 110),
+                                        stopRequest(22, Side::BUY, 115), stopRequest(23, Side::SELL, 90),
+                                        stopRequest(24, Side::SELL, 85)}) {
+        book.submitOrder(request);
+    }
+    expect(book.pendingStopCount() == 5, "the setup should leave five stops pending");
+    expectSound(book, "book with stops");
+    return book;
+}
+
+// Each pending-stop structure broken in turn: the stop levels, the stops in them, and their
+// index entries. As for price levels, the orderings cannot be broken through std::map.
+void testPendingStopChecks() {
+    using enum InvariantViolation;
+    {
+        OrderBook book = bookWithStops();
+        Access::stopLevel(book, Side::BUY, 115).stopPrice = 116;
+        expectViolation(book, {.violation = MISPLACED_STOP_LEVEL, .side = Side::BUY, .price = 115, .expected = 115, .actual = 116},
+                        "stop level with another stop price");
+    }
+    {
+        OrderBook book = bookWithStops();
+        Access::stopLevel(book, Side::SELL, 85).side = Side::BUY;
+        expectViolation(book, {.violation = MISPLACED_STOP_LEVEL, .side = Side::SELL, .price = 85},
+                        "stop level on the other side");
+    }
+    {
+        OrderBook book = bookWithStops();
+        auto& stops = Access::stops(book, Side::BUY, 115);
+        auto emptied = std::move(stops);
+        stops.clear();
+        expectViolation(book, {.violation = EMPTY_STOP_LEVEL, .side = Side::BUY, .price = 115}, "empty stop level");
+        stops = std::move(emptied);
+    }
+    {
+        OrderBook book = bookWithStops();
+        Access::stops(book, Side::BUY, 110).front().request.quantity = 0;
+        expectViolation(book, {.violation = MALFORMED_PENDING_STOP, .side = Side::BUY, .price = 110, .orderId = 20},
+                        "pending stop with no quantity");
+    }
+    {
+        OrderBook book = bookWithStops();
+        auto& stop = Access::stops(book, Side::SELL, 90).front();
+        stop.request.type = order_book::OrderType::LIMIT;
+        stop.request.price = 90;
+        stop.request.stopPrice = 0;
+        stop.request.timeInForce = order_book::TimeInForce::GTC;
+        expectViolation(book, {.violation = MALFORMED_PENDING_STOP, .side = Side::SELL, .price = 90, .orderId = 23},
+                        "pending stop that is no stop");
+    }
+    {
+        OrderBook book = bookWithStops();
+        Access::stops(book, Side::BUY, 110).back().sequenceNum = 0;
+        expectViolation(book, {.violation = MALFORMED_PENDING_STOP, .side = Side::BUY, .price = 110, .orderId = 21},
+                        "pending stop without a sequence number");
+    }
+    {
+        OrderBook book = bookWithStops();
+        Access::stops(book, Side::BUY, 110).back().request.stopPrice = 111;
+        expectViolation(book,
+                        {.violation = MISPLACED_PENDING_STOP, .side = Side::BUY, .price = 110, .orderId = 21,
+                         .expected = 110, .actual = 111},
+                        "pending stop at another stop price");
+    }
+    {
+        OrderBook book = bookWithStops();
+        Access::stops(book, Side::SELL, 85).front().request.side = Side::BUY;
+        expectViolation(book, {.violation = MISPLACED_PENDING_STOP, .side = Side::SELL, .price = 85, .orderId = 24},
+                        "pending stop on the other side");
+    }
+    {
+        OrderBook book = bookWithStops();
+        auto& stops = Access::stops(book, Side::BUY, 110);
+        stops.splice(stops.begin(), stops, std::prev(stops.end()));
+        expectViolation(book,
+                        {.violation = INVALID_STOP_FIFO_SEQUENCE, .side = Side::BUY, .price = 110, .orderId = 20,
+                         .expected = 8, .actual = 7},
+                        "pending stops out of acceptance order");
+    }
+    {
+        OrderBook book = bookWithStops();
+        Access::pendingIndex(book).erase(22);
+        expectViolation(book, {.violation = MISSING_INDEX_ENTRY, .side = Side::BUY, .price = 115, .orderId = 22},
+                        "pending stop without an index entry");
+    }
+    {
+        OrderBook book = bookWithStops();
+        Access::pendingIndex(book).at(23).tickPrice = 91;
+        expectViolation(book,
+                        {.violation = INVALID_INDEX_ENTRY, .side = Side::SELL, .price = 90, .orderId = 23,
+                         .expected = 90, .actual = 91},
+                        "pending index entry recording the wrong stop price");
+    }
+    {
+        OrderBook book = bookWithStops();
+        Access::pendingIndex(book).at(20).itr = Access::pendingIndex(book).at(21).itr;
+        expectViolation(book, {.violation = INVALID_INDEX_ENTRY, .side = Side::BUY, .price = 110, .orderId = 20},
+                        "pending index entry pointing at another stop");
+    }
+    {
+        // A stop pending under a resting order's ID.
+        OrderBook book = bookWithStops();
+        Access::stops(book, Side::SELL, 85).front().request.id = 4;
+        const auto location = Access::pendingIndex(book).at(24);
+        Access::pendingIndex(book).erase(24);
+        Access::pendingIndex(book).emplace(4, location);
+        expectViolation(book, {.violation = DUPLICATE_ORDER_ID, .side = Side::SELL, .price = 85, .orderId = 4},
+                        "an ID both resting and pending");
+    }
+    {
+        // A stop removed without unindexing it: its entry is found by key alone.
+        OrderBook book = bookWithStops();
+        auto& stops = Access::stops(book, Side::BUY, 110);
+        stops.pop_back();
+        expectViolation(book, {.violation = INVALID_INDEX_ENTRY, .side = Side::BUY, .price = 110, .orderId = 21},
+                        "stale pending index entry");
+    }
+}
+
 void testCrossedBook() {
     for (const Price bidPrice : {Price{101}, Price{102}}) {
         const std::string context = "bid resting at " + std::to_string(bidPrice) + " against an ask at 101";
@@ -409,6 +545,7 @@ int main() {
     testLevelChecks();
     testOrderChecks();
     testIndexChecks();
+    testPendingStopChecks();
     testCrossedBook();
     testStopsAtFirstViolation();
     testFormat();

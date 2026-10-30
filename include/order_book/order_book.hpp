@@ -51,9 +51,20 @@ namespace order_book {
         std::unique_ptr<NodePool> nodePool = std::make_unique<NodePool>();
 
         OrderIndex orderIndex;
+        // Every pending stop's ID and place. An ID is live while either index holds it.
+        PendingStopIndex pendingIndex;
 
         std::map<Price, PriceLevel, std::greater<Price>> bids;
         std::map<Price, PriceLevel, std::less<Price>> asks;
+
+        // Pending stops by stop price, so that on each side begin() is the stop nearest to
+        // triggering: buy stops ascending (a rising trade reaches the lowest first), sell stops
+        // descending. Each queue is in acceptance order.
+        std::map<Price, StopLevel, std::less<Price>> buyStops;
+        std::map<Price, StopLevel, std::greater<Price>> sellStops;
+
+        // The price of the book's most recent trade: what stops trigger on.
+        std::optional<Price> lastTradePrice;
 
         TradeId nextTradeId = 1;
         // Assigned to each order as the book accepts it, so it records acceptance order
@@ -68,6 +79,8 @@ namespace order_book {
         // The same for a request: its malformed checks in their fixed order, then an ID
         // already live here.
         std::optional<RejectionReason> validateNewRequest(const OrderRequest& request) const;
+        // Whether an order rests or a stop pends under this ID.
+        bool isLive(OrderId orderId) const;
 
         // Move to the next number, wrapping from the maximum back to 1 (zero is invalid),
         // so numbers are silently reused once a counter overflows.
@@ -130,6 +143,19 @@ namespace order_book {
         // last, like addOrder, so a throw changes nothing.
         SubmissionResult postOnly(Order& incoming, OwnerId owner);
 
+        // A STOP or STOP_LIMIT request: accepted and wholly expired if it is already past its
+        // trigger, else stored pending. Strongly atomic and numbered last.
+        SubmissionResult submitStop(const OrderRequest& request);
+        // Whether a trade at the last trade price would already have triggered this stop.
+        bool isPastTrigger(const OrderRequest& stop) const noexcept;
+        // Queues a stop at the back of its stop level with the next sequence number and indexes
+        // it, leaving the book unchanged if that throws. Does not advance the counter.
+        void storePendingStop(const OrderRequest& stop);
+        // Takes a pending stop off its stop level and out of the index, erasing the level once
+        // empty. Throws std::runtime_error, before changing anything, if the entry's level
+        // handle does not name a stop level at its stop price and side.
+        void removePendingStop(PendingStopIndex::iterator entry);
+
         // Fills resting orders at one price level in FIFO order, unindexing fully filled
         // orders and erasing the level once it is empty. It makes no trades and reports no
         // events, so it is not a public command; tests reach it through OrderBookTestAccess.
@@ -170,6 +196,12 @@ namespace order_book {
         InvariantResult checkLevels(const Levels& levels, Side side, std::size_t& restingOrders) const noexcept;
         template <typename Levels>
         InvariantResult checkIndexedLevels(const Levels& levels, Side side) const noexcept;
+        // The same two for one side's pending stops.
+        template <typename StopLevels>
+        InvariantResult checkStopLevels(const StopLevels& levels, Side side, std::size_t& pendingStops) const noexcept;
+        template <typename StopLevels>
+        InvariantResult checkIndexedStops(const StopLevels& levels, Side side) const noexcept;
+        InvariantResult findStalePendingEntry(std::size_t pendingStops) const noexcept;
         // Finds an index entry that refers to no resting order; called once the index is known
         // to hold more entries than there are resting orders.
         InvariantResult findStaleIndexEntry(std::size_t restingOrders) const noexcept;
@@ -230,9 +262,16 @@ namespace order_book {
         // Submits a request. It is checked first, and a malformed one (by the first failing
         // check: a zero ID, a zero price other than on a MARKET order, a zero quantity, an
         // invalid side, a type that is not an enumerator (UNSUPPORTED_ORDER_TYPE), a price on a
-        // MARKET order (PRICE_NOT_ALLOWED), a time in force that is not an enumerator, then a
-        // MARKET order with GTC (TIME_IN_FORCE_NOT_ALLOWED)) or one whose ID is live is a
-        // REJECTED result that changes nothing. A MARKET order has no price protection: it trades
+        // MARKET or STOP order (PRICE_NOT_ALLOWED), a time in force that is not an enumerator,
+        // a MARKET or STOP order with GTC (TIME_IN_FORCE_NOT_ALLOWED), a stop with no stop price
+        // (INVALID_STOP_PRICE), a stop price on a type that is not a stop
+        // (STOP_PRICE_NOT_ALLOWED), post-only on anything but a GTC LIMIT order, then an invalid
+        // self-trade prevention mode) or one whose ID is live (resting or pending) is a REJECTED
+        // result that changes nothing. A STOP or STOP_LIMIT order already past its trigger (a buy
+        // stop at or below the last trade price, a sell stop at or above it) is accepted and
+        // wholly expired; otherwise it pends, its result holding only its OrderAccepted (at its
+        // limit price, or 0 for a STOP), strongly atomic and numbered last. Before the first
+        // trade no stop is past its trigger. A MARKET order has no price protection: it trades
         // at each resting price, as far through the opposite side as its quantity takes it, and
         // its acceptance reports price 0; as IOC or FOK, its remainder expires. A post-only
         // order (GTC LIMIT only, else POST_ONLY_NOT_ALLOWED) rests like any limit order, or, if
@@ -258,11 +297,25 @@ namespace order_book {
         // quantity, and allocates no more.
         SubmissionResult submitOrder(OrderRequest request);
 
-        // Number of orders resting on the book (both sides), not of price levels.
+        // Number of orders resting on the book (both sides), not of price levels. Pending stops
+        // are not resting orders.
         std::size_t activeOrderCount() const;
 
+        // Number of stops pending, both sides. O(1).
+        std::size_t pendingStopCount() const;
+
+        // The request a pending stop was accepted with, every field as submitted, or nothing if
+        // no stop pends under this ID.
+        std::optional<OrderRequest> findPendingStop(OrderId orderId) const;
+
+        // The price of the book's most recent trade, which is what stops trigger on: set by
+        // every trade, and by nothing else (not a prevented self-trade, an expiry, addOrder, or
+        // cancelOrder). Empty before the first trade; never reset; moves with the book.
+        std::optional<Price> getLastTradePrice() const noexcept;
+
         // Sizes the order index for at least `orders` resting orders, so it does not have to
-        // grow, rehashing every entry, until the book holds more. A capacity hint only: it
+        // grow, rehashing every entry, until the book holds more. (Pending stops have an index
+        // of their own, which this does not size.) A capacity hint only: it
         // changes nothing the book reports, does no matching, and consumes no sequence number
         // or trade ID. Throws std::bad_alloc, or std::length_error for a hint beyond what the
         // index can address, leaving it unchanged.
@@ -271,20 +324,22 @@ namespace order_book {
         void reserve(std::size_t orders);
 
         // Copy of a resting order as it is now (later fills are not reflected); throws
-        // std::invalid_argument if no order with that ID is resting.
+        // std::invalid_argument if no order with that ID is resting (a pending stop's included).
         Order findActiveOrder(OrderId orderId) const;
 
-        // Removes a resting order by ID, taking its remaining quantity off its level's
+        // Removes a resting order or a pending stop by ID. A pending stop's cancellation reports
+        // its whole quantity, and its stop level is erased once empty. A resting order's takes
+        // its remaining quantity off its level's
         // aggregate, unindexing it, and erasing the level once empty. Other orders keep
         // their FIFO positions and indexed iterators, and no sequence number or trade ID
         // is consumed. An ID that is not resting (unknown, already cancelled, fully filled,
         // or an incoming order that never rested) is rejected with ORDER_NOT_FOUND, leaving
         // the book unchanged. Throws std::runtime_error, before changing anything, if an
-        // indexed order's level is missing.
+        // indexed order's level, or a pending stop's stop level, is missing.
         CancellationResult cancelOrder(OrderId orderId);
 
         // The best `depth` levels of each side, best price first, with each level's aggregate
-        // and order count.
+        // and order count. Pending stops offer no liquidity, so they are in no snapshot.
         BookSnapshot snapshot(unsigned int depth = 5) const;
 
         // Checks the whole book in one O(N + L) pass over its N resting orders and L levels,

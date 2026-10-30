@@ -645,6 +645,37 @@ void testMalformedRequestsAreRejectedInOrder() {
     expectRequestRejectedUnchanged(book, postOnly(OrderRequest{4, Side::BUY, 50, 20}), RejectionReason::DUPLICATE_ORDER_ID,
                                    context + " post-only duplicate");
 
+    // Stops: a STOP has no price (2, 6) and must be IOC or FOK (7b); every stop needs a stop
+    // price (8a), and no other type may carry one (8b); post-only stays LIMIT-only (9).
+    const auto stop = [](OrderRequest request, Price stopPrice) {
+        request.stopPrice = stopPrice;
+        return request;
+    };
+    expectRequestRejectedUnchanged(book, stop(OrderRequest{9, Side::BUY, 0, 0, OrderType::STOP, TimeInForce::IOC}, 105),
+                                   RejectionReason::INVALID_QUANTITY, context + " STOP needs no price");
+    expectRequestRejectedUnchanged(book, stop(OrderRequest{9, Side::BUY, 0, 5, OrderType::STOP_LIMIT}, 105),
+                                   RejectionReason::INVALID_PRICE, context + " STOP_LIMIT needs a price");
+    expectRequestRejectedUnchanged(book, stop(OrderRequest{9, Side::BUY, 7, 5, OrderType::STOP, TimeInForce::IOC}, 105),
+                                   RejectionReason::PRICE_NOT_ALLOWED, context + " STOP with a price");
+    expectRequestRejectedUnchanged(book, stop(OrderRequest{9, Side::BUY, 0, 5, OrderType::STOP, badTimeInForce}, 0),
+                                   RejectionReason::INVALID_TIME_IN_FORCE, context + " time in force before stop price");
+    expectRequestRejectedUnchanged(book, stop(OrderRequest{9, Side::BUY, 0, 5, OrderType::STOP, TimeInForce::GTC}, 0),
+                                   RejectionReason::TIME_IN_FORCE_NOT_ALLOWED, context + " STOP GTC before stop price");
+    expectRequestRejectedUnchanged(book, stop(OrderRequest{9, Side::BUY, 0, 5, OrderType::STOP, TimeInForce::FOK}, 0),
+                                   RejectionReason::INVALID_STOP_PRICE, context + " STOP without a stop price");
+    expectRequestRejectedUnchanged(book, postOnly(stop(OrderRequest{9, Side::SELL, 95, 5, OrderType::STOP_LIMIT}, 0)),
+                                   RejectionReason::INVALID_STOP_PRICE, context + " missing stop price before post-only");
+    expectRequestRejectedUnchanged(book, stop(OrderRequest{9, Side::SELL, 95, 5}, 96), RejectionReason::STOP_PRICE_NOT_ALLOWED,
+                                   context + " LIMIT with a stop price");
+    expectRequestRejectedUnchanged(book, stop(OrderRequest{9, Side::SELL, 0, 5, OrderType::MARKET, TimeInForce::IOC}, 96),
+                                   RejectionReason::STOP_PRICE_NOT_ALLOWED, context + " MARKET with a stop price");
+    expectRequestRejectedUnchanged(book, postOnly(stop(OrderRequest{9, Side::SELL, 95, 5, OrderType::LIMIT}, 96)),
+                                   RejectionReason::STOP_PRICE_NOT_ALLOWED, context + " stop price before post-only");
+    expectRequestRejectedUnchanged(book, postOnly(stop(OrderRequest{9, Side::SELL, 95, 5, OrderType::STOP_LIMIT}, 96)),
+                                   RejectionReason::POST_ONLY_NOT_ALLOWED, context + " post-only STOP_LIMIT");
+    expectRequestRejectedUnchanged(book, stop(OrderRequest{4, Side::BUY, 0, 5, OrderType::STOP, TimeInForce::IOC}, 105),
+                                   RejectionReason::DUPLICATE_ORDER_ID, context + " stop with a resting order's ID");
+
     // An invalid self-trade prevention mode is malformed whatever the owner (check 10, last).
     const auto withMode = [](OrderRequest request, order_book::OwnerId owner, int mode) {
         request.owner = owner;
@@ -661,6 +692,25 @@ void testMalformedRequestsAreRejectedInOrder() {
                                    RejectionReason::POST_ONLY_NOT_ALLOWED, context + " post-only before the mode");
     expectRequestRejectedUnchanged(book, withMode(OrderRequest{4, Side::BUY, 102, 20}, 7, 3),
                                    RejectionReason::INVALID_SELF_TRADE_PREVENTION, context + " mode before duplicate");
+
+    // A pending stop's ID is live: no order may take it, in either state.
+    OrderBook stops = restingBook();
+    expect(stops.submitOrder(stop(OrderRequest{20, Side::BUY, 110, 5, OrderType::STOP_LIMIT}, 108)).getStatus() ==
+               SubmissionStatus::ACCEPTED && stops.pendingStopCount() == 1,
+           context + ": a stop-limit should pend");
+    expectRequestRejectedUnchanged(stops, OrderRequest{20, Side::SELL, 120, 1}, RejectionReason::DUPLICATE_ORDER_ID,
+                                   "a limit order with a pending stop's ID");
+    expectRequestRejectedUnchanged(stops, stop(OrderRequest{20, Side::SELL, 0, 1, OrderType::STOP, TimeInForce::IOC}, 90),
+                                   RejectionReason::DUPLICATE_ORDER_ID, "a stop with a pending stop's ID");
+    expectRejectedUnchanged(stops, Order(20, 120, 1, 1, Side::SELL), RejectionReason::DUPLICATE_ORDER_ID,
+                            "an Order with a pending stop's ID");
+    bool refused = false;
+    try {
+        stops.addOrder(Order(20, 120, 1, 1, Side::SELL));
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    expect(refused && stops.activeOrderCount() == 6, "addOrder should refuse a pending stop's ID");
     expectRequestRejectedUnchanged(book, OrderRequest{9, Side::BUY, 102, 20, badType, badTimeInForce},
                                    RejectionReason::UNSUPPORTED_ORDER_TYPE, context + " type before time in force");
     expectRequestRejectedUnchanged(book, OrderRequest{9, Side::BUY, 102, 20, OrderType::LIMIT, badTimeInForce},

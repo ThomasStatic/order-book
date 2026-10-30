@@ -20,13 +20,16 @@ namespace order_book {
     struct OrderRequest {
         OrderId id;
         Side side;
-        Price price;  // the limit price, in ticks; 0 for a MARKET order, which has none
+        Price price;  // the limit price, in ticks; 0 for a MARKET or STOP order, which has none
         Quantity quantity;
         OrderType type = OrderType::LIMIT;
         // GTC rests what does not trade at once; IOC expires it (reported by OrderExpired); FOK
         // fills whole or makes no trades and expires whole.
-        // A MARKET order must be IOC or FOK: it can never rest.
+        // A MARKET or STOP order must be IOC or FOK: it can never rest.
         TimeInForce timeInForce = TimeInForce::GTC;
+        // FIX StopPx: the price a trade on this book must reach (at or above for a buy, at or
+        // below for a sell) to trigger a STOP or STOP_LIMIT order. 0, none, on any other type.
+        Price stopPrice = 0;
         // Post-only (FIX ExecInst=6, participate don't initiate), on a GTC LIMIT order only: it
         // rests, or if it would take liquidity on arrival (at or through the best opposing
         // price) it is accepted and wholly expired, never repriced. The flag is not kept once it
@@ -37,6 +40,8 @@ namespace order_book {
         // valid whatever the owner; with owner 0 it has no effect.
         OwnerId owner = 0;
         SelfTradePrevention selfTradePrevention = SelfTradePrevention::CANCEL_RESTING;
+
+        bool operator==(const OrderRequest&) const = default;
     };
 
 }  // namespace order_book

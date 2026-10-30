@@ -5,6 +5,7 @@
 #include <string>
 
 #include "order_book/order_book.hpp"
+#include "order_checks.hpp"
 
 namespace order_book {
     namespace {
@@ -183,6 +184,138 @@ namespace order_book {
         return {};
     }
 
+    template <typename StopLevels>
+    InvariantResult OrderBook::checkStopLevels(const StopLevels& levels, Side side,
+                                               std::size_t& pendingStops) const noexcept {
+        using enum InvariantViolation;
+        std::optional<Price> previousPrice;
+        for(const auto& [stopPrice, level] : levels) {
+            // As for price levels, std::map keeps this order; this guards a change of comparator.
+            if(previousPrice && !levels.key_comp()(*previousPrice, stopPrice)) {
+                return {.violation = INVALID_STOP_ORDERING, .side = side, .price = stopPrice, .expected = *previousPrice,
+                        .actual = stopPrice, .detail = "stop levels should run from the nearest trigger outward"};
+            }
+            previousPrice = stopPrice;
+            if(level.stopPrice != stopPrice) {
+                return {.violation = MISPLACED_STOP_LEVEL, .side = side, .price = stopPrice, .expected = stopPrice,
+                        .actual = level.stopPrice, .detail = "a stop level's own stop price should be the one it is stored under"};
+            }
+            if(level.side != side) {
+                return {.violation = MISPLACED_STOP_LEVEL, .side = side, .price = stopPrice,
+                        .detail = "a stop level's own side should be the side holding it"};
+            }
+            if(level.stops.empty()) {
+                return {.violation = EMPTY_STOP_LEVEL, .side = side, .price = stopPrice,
+                        .detail = "a stop level should be erased once its last stop leaves"};
+            }
+            const PendingStop* ahead = nullptr;
+            for(const PendingStop& stop : level.stops) {
+                ++pendingStops;
+                const OrderRequest& request = stop.request;
+                if(const std::optional<RejectionReason> reason = checks::requestReason(request)) {
+                    return {.violation = MALFORMED_PENDING_STOP, .side = side, .price = stopPrice, .orderId = request.id,
+                            .detail = rejectionMessage(*reason)};
+                }
+                if(!isStopType(request.type)) {
+                    return {.violation = MALFORMED_PENDING_STOP, .side = side, .price = stopPrice, .orderId = request.id,
+                            .detail = "a pending stop should be a STOP or STOP_LIMIT order"};
+                }
+                if(stop.sequenceNum == 0) {
+                    return {.violation = MALFORMED_PENDING_STOP, .side = side, .price = stopPrice, .orderId = request.id,
+                            .detail = "a pending stop should have a sequence number"};
+                }
+                if(request.side != side) {
+                    return {.violation = MISPLACED_PENDING_STOP, .side = side, .price = stopPrice, .orderId = request.id,
+                            .detail = "a stop's side should be its level's"};
+                }
+                if(request.stopPrice != stopPrice) {
+                    return {.violation = MISPLACED_PENDING_STOP, .side = side, .price = stopPrice, .orderId = request.id,
+                            .expected = stopPrice, .actual = request.stopPrice,
+                            .detail = "a stop's stop price should be its level's"};
+                }
+                if(ahead != nullptr && sequenceAge(stop.sequenceNum) >= sequenceAge(ahead->sequenceNum)) {
+                    return {.violation = INVALID_STOP_FIFO_SEQUENCE, .side = side, .price = stopPrice,
+                            .orderId = request.id, .expected = ahead->sequenceNum, .actual = stop.sequenceNum,
+                            .detail = "each stop should have been accepted after the one ahead of it"};
+                }
+                ahead = &stop;
+            }
+        }
+        return {};
+    }
+
+    template <typename StopLevels>
+    InvariantResult OrderBook::checkIndexedStops(const StopLevels& levels, Side side) const noexcept {
+        using enum InvariantViolation;
+        for(const auto& [stopPrice, level] : levels) {
+            for(auto stopItr = level.stops.begin(); stopItr != level.stops.end(); ++stopItr) {
+                const OrderId orderId = stopItr->request.id;
+                if(orderIndex.find(orderId) != orderIndex.end()) {
+                    return {.violation = DUPLICATE_ORDER_ID, .side = side, .price = stopPrice, .orderId = orderId,
+                            .detail = "a resting order has this pending stop's ID"};
+                }
+                const auto entry = pendingIndex.find(orderId);
+                if(entry == pendingIndex.end()) {
+                    return {.violation = MISSING_INDEX_ENTRY, .side = side, .price = stopPrice, .orderId = orderId,
+                            .detail = "every pending stop should be indexed"};
+                }
+                // As for resting orders, the iterators are compared only once the entry names
+                // this stop level, and the level handle is compared, never followed.
+                const StopLocation& location = entry->second;
+                if(location.side == side && location.tickPrice == stopPrice && location.level == &level &&
+                   location.itr == stopItr) {
+                    continue;
+                }
+                if(location.side != side) {
+                    return {.violation = INVALID_INDEX_ENTRY, .side = side, .price = stopPrice, .orderId = orderId,
+                            .detail = "a pending index entry should record its stop's side"};
+                }
+                if(location.tickPrice != stopPrice) {
+                    return {.violation = INVALID_INDEX_ENTRY, .side = side, .price = stopPrice, .orderId = orderId,
+                            .expected = stopPrice, .actual = location.tickPrice,
+                            .detail = "a pending index entry should record its stop's stop price"};
+                }
+                if(location.level != &level) {
+                    return {.violation = INVALID_INDEX_ENTRY, .side = side, .price = stopPrice, .orderId = orderId,
+                            .detail = "a pending index entry should point at its stop's level"};
+                }
+                return {.violation = INVALID_INDEX_ENTRY, .side = side, .price = stopPrice, .orderId = orderId,
+                        .detail = "a pending index entry should point at its own stop"};
+            }
+        }
+        return {};
+    }
+
+    InvariantResult OrderBook::findStalePendingEntry(std::size_t pendingStops) const noexcept {
+        // As for resting orders, an extra entry is found by its key and recorded place alone.
+        for(const auto& entry : pendingIndex) {
+            const OrderId orderId = entry.first;
+            const StopLocation& location = entry.second;
+            if(!isValidSide(location.side)) {
+                return {.violation = InvariantViolation::INVALID_INDEX_ENTRY, .price = location.tickPrice,
+                        .orderId = orderId, .detail = "a pending index entry should record BUY or SELL"};
+            }
+            const auto whyStale = [key = orderId, &location](const auto& levels) -> const char* {
+                const auto levelItr = levels.find(location.tickPrice);
+                if(levelItr == levels.end()) {
+                    return "a pending index entry should refer to a stop level in the book";
+                }
+                for(const PendingStop& stop : levelItr->second.stops) {
+                    if(stop.request.id == key) {
+                        return nullptr;
+                    }
+                }
+                return "a pending index entry should refer to a pending stop";
+            };
+            if(const char* detail = location.side == Side::BUY ? whyStale(buyStops) : whyStale(sellStops)) {
+                return {.violation = InvariantViolation::INVALID_INDEX_ENTRY, .side = location.side,
+                        .price = location.tickPrice, .orderId = orderId, .detail = detail};
+            }
+        }
+        return {.violation = InvariantViolation::INVALID_INDEX_ENTRY, .expected = pendingStops,
+                .actual = pendingIndex.size(), .detail = "the pending index should hold one entry per pending stop"};
+    }
+
     InvariantResult OrderBook::findStaleIndexEntry(std::size_t restingOrders) const noexcept {
         // Every resting order has its own entry by now, so an extra one is told apart by its
         // key and recorded place alone. Its iterator is left alone, since it may point at an
@@ -225,6 +358,14 @@ namespace order_book {
         if(InvariantResult result = checkLevels(asks, Side::SELL, restingOrders); !result.isValid()) {
             return result;
         }
+        // Then each side's pending stops on their own.
+        std::size_t pendingStops = 0;
+        if(InvariantResult result = checkStopLevels(buyStops, Side::BUY, pendingStops); !result.isValid()) {
+            return result;
+        }
+        if(InvariantResult result = checkStopLevels(sellStops, Side::SELL, pendingStops); !result.isValid()) {
+            return result;
+        }
 
         // 3: the index against the orders. Once every resting order has an entry of its own,
         // a larger index can only hold entries that refer to no resting order.
@@ -236,6 +377,16 @@ namespace order_book {
         }
         if(orderIndex.size() != restingOrders) {
             return findStaleIndexEntry(restingOrders);
+        }
+        // The same for pending stops and their index, which shares the ID namespace.
+        if(InvariantResult result = checkIndexedStops(buyStops, Side::BUY); !result.isValid()) {
+            return result;
+        }
+        if(InvariantResult result = checkIndexedStops(sellStops, Side::SELL); !result.isValid()) {
+            return result;
+        }
+        if(pendingIndex.size() != pendingStops) {
+            return findStalePendingEntry(pendingStops);
         }
 
         // 4: the top of the book.

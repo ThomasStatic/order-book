@@ -38,8 +38,14 @@ namespace order_book {
         AGGREGATE_QUANTITY_MISMATCH,  // a level's cached quantity is not its orders' remaining sum
         MISSING_INDEX_ENTRY,          // a resting order with no index entry
         DUPLICATE_ORDER_ID,           // two resting orders, on either side, with one ID
-        INVALID_INDEX_ENTRY,          // an entry recording the wrong place, or no resting order
-        CROSSED_BOOK                  // best bid at or above best ask
+        INVALID_INDEX_ENTRY,          // an entry recording the wrong place, or no resting order or pending stop
+        CROSSED_BOOK,                 // best bid at or above best ask
+        INVALID_STOP_ORDERING,        // stop levels not buys ascending or sells descending by stop price
+        MISPLACED_STOP_LEVEL,         // a stop level's own stop price or side differs from its slot
+        EMPTY_STOP_LEVEL,
+        MALFORMED_PENDING_STOP,       // a request check fails, it is no stop, or it has no sequence number
+        MISPLACED_PENDING_STOP,       // a stop's stop price or side differs from its level's
+        INVALID_STOP_FIFO_SEQUENCE    // a stop level's sequence numbers out of acceptance order
     };
 
     // The enumerator's name, for printing violations as identifiers.
@@ -58,6 +64,12 @@ namespace order_book {
             case InvariantViolation::DUPLICATE_ORDER_ID: return "DUPLICATE_ORDER_ID";
             case InvariantViolation::INVALID_INDEX_ENTRY: return "INVALID_INDEX_ENTRY";
             case InvariantViolation::CROSSED_BOOK: return "CROSSED_BOOK";
+            case InvariantViolation::INVALID_STOP_ORDERING: return "INVALID_STOP_ORDERING";
+            case InvariantViolation::MISPLACED_STOP_LEVEL: return "MISPLACED_STOP_LEVEL";
+            case InvariantViolation::EMPTY_STOP_LEVEL: return "EMPTY_STOP_LEVEL";
+            case InvariantViolation::MALFORMED_PENDING_STOP: return "MALFORMED_PENDING_STOP";
+            case InvariantViolation::MISPLACED_PENDING_STOP: return "MISPLACED_PENDING_STOP";
+            case InvariantViolation::INVALID_STOP_FIFO_SEQUENCE: return "INVALID_STOP_FIFO_SEQUENCE";
         }
         return "UNKNOWN";
     }
@@ -78,7 +90,8 @@ namespace order_book {
         // INVALID_FIFO_SEQUENCE; the summed and the cached quantity for
         // AGGREGATE_QUANTITY_MISMATCH; the level's and the recorded price, or the resting
         // order count and the index size, for INVALID_INDEX_ENTRY; the best ask and the best
-        // bid for CROSSED_BOOK.
+        // bid for CROSSED_BOOK. The stop violations follow their price-level counterparts, with
+        // stop prices for prices.
         std::optional<std::uint64_t> expected{};
         std::optional<std::uint64_t> actual{};
         // Which check failed, in words. A string literal, so building a result never allocates.

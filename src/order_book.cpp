@@ -13,11 +13,18 @@ namespace order_book {
         if(this != &other) {
             // Free this book's nodes while their pool still exists, then take the other's.
             orderIndex.clear();
+            pendingIndex.clear();
             bids.clear();
             asks.clear();
+            buyStops.clear();
+            sellStops.clear();
             orderIndex = std::move(other.orderIndex);
+            pendingIndex = std::move(other.pendingIndex);
             bids = std::move(other.bids);
             asks = std::move(other.asks);
+            buyStops = std::move(other.buyStops);
+            sellStops = std::move(other.sellStops);
+            lastTradePrice = other.lastTradePrice;
             nextTradeId = other.nextTradeId;
             nextSequenceNum = other.nextSequenceNum;
             nodePool = std::move(other.nodePool);
@@ -54,17 +61,21 @@ namespace order_book {
         if(!order.isActive()) {
             return RejectionReason::ORDER_NOT_ACTIVE;
         }
-        if(orderIndex.find(order.getOrderId()) != orderIndex.end()) {
+        if(isLive(order.getOrderId())) {
             return RejectionReason::DUPLICATE_ORDER_ID;
         }
         return std::nullopt;
+    }
+
+    bool OrderBook::isLive(OrderId orderId) const {
+        return orderIndex.find(orderId) != orderIndex.end() || pendingIndex.find(orderId) != pendingIndex.end();
     }
 
     std::optional<RejectionReason> OrderBook::validateNewRequest(const OrderRequest& request) const {
         if(const std::optional<RejectionReason> reason = checks::requestReason(request)) {
             return reason;
         }
-        if(orderIndex.find(request.id) != orderIndex.end()) {
+        if(isLive(request.id)) {
             return RejectionReason::DUPLICATE_ORDER_ID;
         }
         return std::nullopt;
@@ -247,6 +258,7 @@ namespace order_book {
         }
         incoming.fillQuantity(execQuantity);
         advanceTradeId();
+        lastTradePrice = restingPrice;
 
         if(level.isEmpty()) {
             if(restingIsAsk) {
@@ -312,6 +324,9 @@ namespace order_book {
         const InvariantBoundary boundary(*this, "submitOrder");
         if(const std::optional<RejectionReason> reason = validateNewRequest(request)) {
             return SubmissionResult::rejected(request.id, request.quantity, *reason);
+        }
+        if(isStopType(request.type)) {
+            return submitStop(request);
         }
         // A market order has no limit, so it runs as a limit at the furthest price on its side,
         // which every resting price is within; it never rests, so that price is never seen.
@@ -401,6 +416,99 @@ namespace order_book {
         return result;
     }
 
+    bool OrderBook::isPastTrigger(const OrderRequest& stop) const noexcept {
+        if(!lastTradePrice) {
+            return false;
+        }
+        return stop.side == Side::BUY ? stop.stopPrice <= *lastTradePrice : stop.stopPrice >= *lastTradePrice;
+    }
+
+    SubmissionResult OrderBook::submitStop(const OrderRequest& request) {
+        // Its acceptance, and any expiry, fit inline, so building the result cannot throw.
+        ResultRecorder recorder(OrderAccepted{request.id, request.side, request.price, request.quantity});
+        if(isPastTrigger(request)) {
+            recorder.expire(request.quantity);
+            SubmissionResult result = recorder.finish();
+            advanceSequenceNum();
+            return result;
+        }
+        SubmissionResult result = recorder.finish();
+        // Numbered last: consumed only once the stop is stored, so a failed allocation leaves
+        // no trace.
+        storePendingStop(request);
+        advanceSequenceNum();
+        return result;
+    }
+
+    void OrderBook::storePendingStop(const OrderRequest& stop) {
+        auto store = [this, &stop](auto& levels) {
+            const auto levelItr = levels.try_emplace(stop.stopPrice, stop.stopPrice, stop.side, nodePool.get()).first;
+            StopLevel& level = levelItr->second;
+            std::optional<StopQueue::iterator> position;
+            try {
+                level.stops.push_back(PendingStop{stop, nextSequenceNum});
+                position = std::prev(level.stops.end());
+                if(!pendingIndex.emplace(stop.id, StopLocation(stop.stopPrice, stop.side, *position, &level)).second) {
+                    throw std::runtime_error("storing a stop whose id is already indexed error");
+                }
+            }
+            catch(...) {
+                // Unwind so a failed allocation leaves no unindexed stop and no empty level.
+                if(position) {
+                    level.stops.erase(*position);
+                }
+                if(level.stops.empty()) {
+                    levels.erase(levelItr);
+                }
+                throw;
+            }
+        };
+        if(stop.side == Side::BUY) {
+            store(buyStops);
+        }
+        else {
+            store(sellStops);
+        }
+    }
+
+    void OrderBook::removePendingStop(PendingStopIndex::iterator entry) {
+        const StopLocation location = entry->second;
+        auto remove = [this, entry, &location](auto& levels) {
+            StopLevel* const level = location.level;
+            if(level == nullptr || level->stopPrice != location.tickPrice || level->side != location.side) {
+                throw std::runtime_error("indexed stop's level handle does not match its entry error");
+            }
+            // Nothing below can throw.
+            level->stops.erase(location.itr);
+            pendingIndex.erase(entry);
+            if(level->stops.empty()) {
+                levels.erase(location.tickPrice);
+            }
+        };
+        if(location.side == Side::BUY) {
+            remove(buyStops);
+        }
+        else {
+            remove(sellStops);
+        }
+    }
+
+    std::size_t OrderBook::pendingStopCount() const {
+        return pendingIndex.size();
+    }
+
+    std::optional<OrderRequest> OrderBook::findPendingStop(OrderId orderId) const {
+        const auto entry = pendingIndex.find(orderId);
+        if(entry == pendingIndex.end()) {
+            return std::nullopt;
+        }
+        return entry->second.itr->request;
+    }
+
+    std::optional<Price> OrderBook::getLastTradePrice() const noexcept {
+        return lastTradePrice;
+    }
+
     std::size_t OrderBook::activeOrderCount() const {
         return orderIndex.size();
     }
@@ -425,7 +533,14 @@ namespace order_book {
         const InvariantBoundary boundary(*this, "cancelOrder");
         const auto indexItr = orderIndex.find(orderId);
         if(indexItr == orderIndex.end()) {
-            return CancellationResult::rejected(orderId, RejectionReason::ORDER_NOT_FOUND);
+            const auto stopItr = pendingIndex.find(orderId);
+            if(stopItr == pendingIndex.end()) {
+                return CancellationResult::rejected(orderId, RejectionReason::ORDER_NOT_FOUND);
+            }
+            // A pending stop never trades, so it has its whole quantity left.
+            CancellationResult result = CancellationResult::cancelled(orderId, stopItr->second.itr->request.quantity);
+            removePendingStop(stopItr);
+            return result;
         }
         // Built before anything is mutated, so nothing after the removal can throw. (Its one
         // event is held inline, so building it does not allocate either.)

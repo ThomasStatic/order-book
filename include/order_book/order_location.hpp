@@ -4,6 +4,7 @@
 
 #include "node_pool.hpp"
 #include "order.hpp"
+#include "order_request.hpp"
 #include "side.hpp"
 #include "types.hpp"
 
@@ -27,5 +28,37 @@ namespace order_book {
 
         OrderLocation(Price p, Side s, OrderQueue::iterator i, PriceLevel* l)
             : tickPrice(p), side(s), itr(i), level(l) {}
+    };
+
+    // A stop waiting for its trigger: the request as accepted, every field kept until it
+    // triggers, and the sequence number consumed on acceptance, which orders stops at one stop
+    // price.
+    struct PendingStop {
+        OrderRequest request;
+        SequenceNum sequenceNum;
+    };
+
+    // A stop price's FIFO queue of pending stops, its nodes from the book's NodePool.
+    using StopQueue = std::list<PendingStop, PoolAllocator<PendingStop>>;
+
+    // The pending stops at one stop price on one side, oldest first.
+    struct StopLevel {
+        Price stopPrice;
+        Side side;
+        StopQueue stops;
+
+        StopLevel(Price price, Side levelSide, NodePool* pool)
+            : stopPrice(price), side(levelSide), stops(PoolAllocator<PendingStop>(pool)) {}
+    };
+
+    // Where a pending stop is, as the pending-stop index records it: its stop price (named as
+    // a resting order's price is, so one index serves both), side, queue position, and level.
+    struct StopLocation {
+        Price tickPrice;
+        Side side;
+        StopQueue::iterator itr;
+        StopLevel* level;
+
+        StopLocation(Price p, Side s, StopQueue::iterator i, StopLevel* l) : tickPrice(p), side(s), itr(i), level(l) {}
     };
 }  // namespace order_book

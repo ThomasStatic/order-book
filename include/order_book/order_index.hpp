@@ -33,30 +33,33 @@ namespace order_book {
     // ID 0, which is never a valid order ID, marks an empty slot; emplacing it throws
     // std::invalid_argument. Iterators and references to entries are invalidated by any
     // emplace (which may grow the table) and any erase (which may move entries), as is the
-    // position of every entry: iteration order is unspecified. An iterator gives an
-    // OrderIndexEntry; change only its second and owner. Growing gives the strong guarantee: if
-    // allocating the new array throws, the table is unchanged.
+    // position of every entry: iteration order is unspecified. An iterator gives an entry;
+    // change only its second and owner. Growing gives the strong guarantee: if allocating the
+    // new array throws, the table is unchanged.
     //
-    // One slot of the index. Named like the std::pair<OrderId, OrderLocation> it replaced; the
+    // The same table, over StopLocation, indexes pending stops (PendingStopIndex), so an ID
+    // is live while either table holds it.
+    //
+    // One slot of the index. Named like the std::pair<OrderId, Location> it replaced; the
     // owner sits where that pair had padding, so a slot is no bigger.
-    struct OrderIndexEntry {
+    template <typename Location>
+    struct IndexEntry {
         OrderId first;  // the order's ID
-        OwnerId owner;  // for self-trade prevention; 0 for none
-        OrderLocation second;
+        OwnerId owner;  // for self-trade prevention; 0 for none (and for a pending stop, whose owner is in its record)
+        Location second;
     };
-    static_assert(sizeof(OrderIndexEntry) == sizeof(std::pair<OrderId, OrderLocation>),
-                  "the owner should fill the slot's padding, not grow it");
 
-    class OrderIndex {
+    template <typename Location>
+    class BasicOrderIndex {
     public:
-        using value_type = OrderIndexEntry;
+        using value_type = IndexEntry<Location>;
 
         // Visits occupied slots only, in table order.
         template <bool IsConst>
         class Iterator {
         public:
             using iterator_category = std::forward_iterator_tag;
-            using value_type = OrderIndex::value_type;
+            using value_type = BasicOrderIndex::value_type;
             using difference_type = std::ptrdiff_t;
             using pointer = std::conditional_t<IsConst, const value_type*, value_type*>;
             using reference = std::conditional_t<IsConst, const value_type&, value_type&>;
@@ -87,7 +90,7 @@ namespace order_book {
             }
 
         private:
-            friend class OrderIndex;
+            friend class BasicOrderIndex;
             template <bool>
             friend class Iterator;
 
@@ -106,12 +109,12 @@ namespace order_book {
         using iterator = Iterator<false>;
         using const_iterator = Iterator<true>;
 
-        OrderIndex() = default;
-        OrderIndex(const OrderIndex&) = default;
-        OrderIndex& operator=(const OrderIndex&) = default;
+        BasicOrderIndex() = default;
+        BasicOrderIndex(const BasicOrderIndex&) = default;
+        BasicOrderIndex& operator=(const BasicOrderIndex&) = default;
 
         // A moved-from index is empty and can be used again.
-        OrderIndex(OrderIndex&& other) noexcept
+        BasicOrderIndex(BasicOrderIndex&& other) noexcept
             : slots(std::move(other.slots)),
               entries(std::exchange(other.entries, 0)),
               mask(std::exchange(other.mask, 0)),
@@ -119,7 +122,7 @@ namespace order_book {
             other.slots.clear();
         }
 
-        OrderIndex& operator=(OrderIndex&& other) noexcept {
+        BasicOrderIndex& operator=(BasicOrderIndex&& other) noexcept {
             if(this != &other) {
                 slots = std::move(other.slots);
                 other.slots.clear();
@@ -136,8 +139,8 @@ namespace order_book {
             return first;
         }
         iterator end() noexcept { return iterator(slots.data() + slots.size(), slots.data() + slots.size()); }
-        const_iterator begin() const noexcept { return const_cast<OrderIndex*>(this)->begin(); }
-        const_iterator end() const noexcept { return const_cast<OrderIndex*>(this)->end(); }
+        const_iterator begin() const noexcept { return const_cast<BasicOrderIndex*>(this)->begin(); }
+        const_iterator end() const noexcept { return const_cast<BasicOrderIndex*>(this)->end(); }
 
         std::size_t size() const noexcept { return entries; }
         bool empty() const noexcept { return entries == 0; }
@@ -159,13 +162,13 @@ namespace order_book {
         }
 
         const_iterator find(OrderId id) const noexcept {
-            return const_cast<OrderIndex*>(this)->find(id);
+            return const_cast<BasicOrderIndex*>(this)->find(id);
         }
 
         std::size_t count(OrderId id) const noexcept { return find(id) == end() ? 0 : 1; }
 
         // Throws std::out_of_range if no entry has this ID.
-        OrderLocation& at(OrderId id) {
+        Location& at(OrderId id) {
             const iterator found = find(id);
             if(found == end()) {
                 throw std::out_of_range("order index has no entry with this id");
@@ -173,13 +176,13 @@ namespace order_book {
             return found->second;
         }
 
-        const OrderLocation& at(OrderId id) const {
-            return const_cast<OrderIndex*>(this)->at(id);
+        const Location& at(OrderId id) const {
+            return const_cast<BasicOrderIndex*>(this)->at(id);
         }
 
         // Adds an entry unless one with this ID exists; either way returns the entry with the
         // ID and whether it was added. May grow the table first, invalidating iterators.
-        std::pair<iterator, bool> emplace(OrderId id, const OrderLocation& location, OwnerId owner = 0) {
+        std::pair<iterator, bool> emplace(OrderId id, const Location& location, OwnerId owner = 0) {
             if(id == emptyId) {
                 throw std::invalid_argument("order index cannot hold the reserved id 0");
             }
@@ -259,7 +262,7 @@ namespace order_book {
 
         // capacity is a power of two, at least minimumCapacity and more than size() / 0.75.
         void growTo(std::size_t capacity) {
-            std::vector<value_type> grown(capacity, value_type{emptyId, 0, OrderLocation(0, Side::BUY, {}, nullptr)});
+            std::vector<value_type> grown(capacity, value_type{emptyId, 0, Location(0, Side::BUY, {}, nullptr)});
             unsigned int grownShift = 64;
             for(std::size_t remaining = capacity; remaining > 1; remaining >>= 1) {
                 --grownShift;
@@ -284,5 +287,11 @@ namespace order_book {
         std::size_t mask = 0;
         unsigned int shift = 64;
     };
+
+    using OrderIndexEntry = IndexEntry<OrderLocation>;
+    using OrderIndex = BasicOrderIndex<OrderLocation>;
+    using PendingStopIndex = BasicOrderIndex<StopLocation>;
+    static_assert(sizeof(OrderIndexEntry) == sizeof(std::pair<OrderId, OrderLocation>),
+                  "the owner should fill the slot's padding, not grow it");
 
 }  // namespace order_book

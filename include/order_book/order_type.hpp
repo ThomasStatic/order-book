@@ -3,21 +3,31 @@
 namespace order_book {
     // FIX OrdType, with this book's own values, not FIX's wire values. A LIMIT order trades at
     // its limit price or better; a MARKET order has no price and trades at whatever the book
-    // offers. Only a LIMIT order can rest, so only it can be an Order.
+    // offers. A STOP or STOP_LIMIT order waits, pending, until a trade on this book reaches its
+    // stop price, then becomes a MARKET or a LIMIT order (at its limit price). Only a LIMIT
+    // order can rest, so only it can be an Order.
     enum class OrderType {
         LIMIT = 0,
-        MARKET = 1
+        MARKET = 1,
+        STOP = 2,
+        STOP_LIMIT = 3
     };
 
     // Whether the value is one of the enumerators, which an OrderRequest may carry; false
     // for one made by a bad cast.
     constexpr bool isValidOrderType(OrderType type) {
-        return type == OrderType::LIMIT || type == OrderType::MARKET;
+        return type == OrderType::LIMIT || type == OrderType::MARKET || type == OrderType::STOP ||
+               type == OrderType::STOP_LIMIT;
     }
 
     // Whether an order of this type carries no price (it must be 0 on the request).
     constexpr bool hasNoPrice(OrderType type) {
-        return type == OrderType::MARKET;
+        return type == OrderType::MARKET || type == OrderType::STOP;
+    }
+
+    // Whether an order of this type waits for a stop price.
+    constexpr bool isStopType(OrderType type) {
+        return type == OrderType::STOP || type == OrderType::STOP_LIMIT;
     }
 
     // Whether an order of this type can rest, which is what an Order accepts: LIMIT only.

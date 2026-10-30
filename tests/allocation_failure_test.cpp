@@ -510,6 +510,76 @@ void testFillOrKillWithPreventionsIsAllOrNothing() {
     expect(failures > 0, "FOK with preventions: at least one allocation failure should have been injected");
 }
 
+order_book::OrderRequest stopRequest(order_book::OrderId id, Side side, order_book::Price stopPrice) {
+    order_book::OrderRequest request{id, side, 0, 5, order_book::OrderType::STOP, order_book::TimeInForce::IOC};
+    request.stopPrice = stopPrice;
+    return request;
+}
+
+// Storing a pending stop is strongly atomic and numbered last: whatever allocation fails (the
+// stop queue's node, the stop level's map node, the index), the book, the next sequence number,
+// and the pending count are as they were.
+template <typename Setup>
+void expectStopStorageRollsBack(Setup setup, const order_book::OrderRequest& request, const std::string& context) {
+    OrderBook pristine;
+    setup(pristine);
+    const std::size_t pending = pristine.pendingStopCount();
+    const order_book::SequenceNum sequence = Access::nextSequenceNum(pristine);
+    const long failures = failEachAllocationInTurn(
+        setup, [&request](OrderBook& book) { book.submitOrder(request); },
+        [&](const OrderBook& book, const std::string& attempt) {
+            expect(book.pendingStopCount() == pending && !book.findPendingStop(request.id),
+                   attempt + ": a failed stop should not pend");
+            expect(Access::nextSequenceNum(book) == sequence && Access::nextTradeId(book) == 1,
+                   attempt + ": a failed stop should consume no sequence number");
+        },
+        context);
+    expect(failures > 0, context + ": at least one allocation failure should have been injected");
+}
+
+void testStopStorageRollsBack() {
+    expectStopStorageRollsBack([](OrderBook&) {}, stopRequest(50, Side::BUY, 110), "first stop on an empty book");
+    expectStopStorageRollsBack([](OrderBook& book) { book.submitOrder(stopRequest(40, Side::BUY, 110)); },
+                               stopRequest(50, Side::BUY, 111), "stop at a new stop price");
+    // The index holds 12 entries before it grows from 16 slots.
+    expectStopStorageRollsBack(
+        [](OrderBook& book) {
+            for (unsigned int i = 0; i < 12; ++i) {
+                book.submitOrder(stopRequest(30 + i, Side::SELL, 90));
+            }
+        },
+        stopRequest(50, Side::SELL, 90), "stop that grows the index");
+}
+
+// Paths that never allocate: cancelling a pending stop, a stop that arrives past its trigger,
+// and (served from the pool's size class for stop nodes) a second stop at a stop price.
+void testStopPathsDoNotAllocate() {
+    OrderBook book{};
+    book.submitOrder(stopRequest(40, Side::BUY, 110));
+    book.submitOrder(stopRequest(41, Side::BUY, 111));
+    book.addOrder(Order(1, 100, 1, 1, Side::SELL));
+    book.submitOrder(order_book::OrderRequest{2, Side::BUY, 100, 1});  // last trade at 100
+    const auto armed = [&book](const auto& operation, const std::string& what) {
+        allocationsBeforeFailure = 0;
+        bool threw = false;
+        try {
+            operation();
+        } catch (const std::bad_alloc&) {
+            threw = true;
+        }
+        const bool stillArmed = allocationsBeforeFailure == 0;
+        allocationsBeforeFailure = -1;
+        expect(!threw && stillArmed, what + " should not allocate");
+        expectIndexConsistent(book, what);
+    };
+    bool cancelled = false;
+    armed([&book, &cancelled] { cancelled = book.cancelOrder(41).isSuccess(); }, "cancelling a pending stop");
+    expect(cancelled, "the stop should cancel");
+    armed([&book] { book.submitOrder(stopRequest(42, Side::BUY, 99)); }, "a stop past its trigger");
+    armed([&book] { book.submitOrder(stopRequest(43, Side::BUY, 110)); }, "a second stop at a stop price");
+    expect(book.pendingStopCount() == 2, "two stops should pend");
+}
+
 void testConsumeLevelFailsBeforeFilling() {
     const long failures = failEachAllocationInTurn(
         [](OrderBook& book) {
@@ -617,6 +687,8 @@ int main() {
         testPostOnlyThatWouldTakeDoesNotAllocate();
         testCancelRestingSweepStaysConsistent();
         testFillOrKillWithPreventionsIsAllOrNothing();
+        testStopStorageRollsBack();
+        testStopPathsDoNotAllocate();
         testConsumeLevelFailsBeforeFilling();
         testCancelOrderDoesNotAllocate();
         testRequestAllocatesLikeOrder();

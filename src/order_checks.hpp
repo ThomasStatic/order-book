@@ -34,7 +34,8 @@ namespace order_book::checks {
     // book's check, made after this one.
     // The checks, numbered as in the spec's request table: 1-4 the fields (a price is needed
     // unless the type has none; an invalid type needs one, keeping v1's order), 5 the type, 6 a
-    // price on a type that has none, 7a the time in force, 7b a MARKET order that is GTC, 9
+    // price on a type that has none, 7a the time in force, 7b a MARKET or STOP order that is
+    // GTC, 8a a stop with no stop price, 8b a stop price on a type that is not a stop, 9
     // post-only on anything but a GTC LIMIT order, 10 a self-trade prevention mode that is not
     // an enumerator, whatever the owner.
     inline std::optional<RejectionReason> requestReason(const OrderRequest& request) {
@@ -51,8 +52,14 @@ namespace order_book::checks {
         if(!isValidTimeInForce(request.timeInForce)) {
             return RejectionReason::INVALID_TIME_IN_FORCE;
         }
-        if(request.type == OrderType::MARKET && request.timeInForce == TimeInForce::GTC) {
+        if(hasNoPrice(request.type) && request.timeInForce == TimeInForce::GTC) {
             return RejectionReason::TIME_IN_FORCE_NOT_ALLOWED;
+        }
+        if(isStopType(request.type) && request.stopPrice == 0) {
+            return RejectionReason::INVALID_STOP_PRICE;
+        }
+        if(!isStopType(request.type) && request.stopPrice != 0) {
+            return RejectionReason::STOP_PRICE_NOT_ALLOWED;
         }
         if(request.postOnly && (request.type != OrderType::LIMIT || request.timeInForce != TimeInForce::GTC)) {
             return RejectionReason::POST_ONLY_NOT_ALLOWED;

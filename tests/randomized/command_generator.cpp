@@ -114,7 +114,7 @@ std::vector<WorkloadProfile> makeProfiles() {
 
 OrderRequest requestOf(const Command& command) {
     return OrderRequest{command.orderId, command.side, command.price, command.quantity, command.orderType,
-                        command.timeInForce, command.postOnly, command.owner, command.selfTradePrevention};
+                        command.timeInForce, 0, command.postOnly, command.owner, command.selfTradePrevention};
 }
 
 ExpectedOutcome applyCommand(ReferenceBook& model, const Command& command) {
