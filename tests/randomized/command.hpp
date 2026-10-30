@@ -15,6 +15,11 @@ namespace order_book::randomized {
 
 enum class CommandType { SUBMIT, CANCEL };
 
+// Which submitOrder overload a submission goes through. Nearly every command uses the request;
+// the Order overload carries the faults only an Order can have (MARKED_FILLED) and a share of
+// valid v1-shaped limits, so the two overloads keep being shown to agree.
+enum class SubmitOverload { REQUEST, ORDER };
+
 // What the generator meant a command to exercise. Informational only: running a command
 // never reads it, and after shrinking it can be stale (a CANCEL_ACTIVE whose submission was
 // removed now names an unknown ID).
@@ -51,7 +56,8 @@ struct Command {
     Price price = 0;
     Quantity quantity = 0;
     OrderType orderType = OrderType::LIMIT;
-    bool markedFilled = false;
+    bool markedFilled = false;  // only through the ORDER overload: a request has no fill status
+    SubmitOverload overload = SubmitOverload::REQUEST;
     CommandIntent intent = CommandIntent::UNSPECIFIED;
 
     bool operator==(const Command&) const = default;
@@ -63,10 +69,12 @@ struct Command {
 
 // One line, e.g. "SUBMIT id=17 side=BUY price=10002 qty=5 intent=NEW_ID" or
 // "CANCEL id=291 intent=CANCEL_ACTIVE". A side or type outside its enum prints as a number,
-// and type and status appear only when they differ from LIMIT and an unfilled order.
+// and type, status, and overload appear only when they differ from LIMIT, an unfilled
+// order, and the request overload.
 std::string formatCommand(const Command& command);
 
-// The inverse of formatCommand; throws std::invalid_argument saying what is wrong.
+// The inverse of formatCommand; throws std::invalid_argument saying what is wrong, including
+// for status=FILLED without overload=ORDER.
 Command parseCommand(const std::string& line);
 
 // Where a saved stream came from. Replay never needs any of it: the commands alone fix

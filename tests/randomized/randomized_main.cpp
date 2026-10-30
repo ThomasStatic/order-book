@@ -45,7 +45,7 @@ namespace fs = std::filesystem;
 // Run by every ctest: each profile under two fixed seeds. When exploration finds a failing
 // seed, add it here too, but the durable regression is its saved stream in
 // tests/randomized/regressions/: a seed reproduces its stream only under the generator
-// version it was found with (generatorVersion, currently 1). The passive profile's deep book
+// version it was found with (generatorVersion, currently 2). The passive profile's deep book
 // makes each command's checks slower, so its seeds run fewer commands.
 struct RegressionSeed {
     const char* profile;

@@ -12,12 +12,25 @@
 
 namespace order_book::randomized {
 
+using reference::ExpectedOutcome;
+using reference::IdPool;
+using reference::ModelLevel;
+using reference::ModelOrder;
+using reference::ReferenceBook;
+
+// The command's submission as a request, or as the fields of the Order it builds.
+OrderRequest requestOf(const Command& command);
+
+// Applies the command to the model through the overload it names, and returns what the engine
+// should report for it.
+ExpectedOutcome applyCommand(ReferenceBook& model, const Command& command);
+
 // Bump whenever a change to the generator or a built-in profile would make some seed produce
 // a different stream: what is drawn, in what order, or how a draw becomes a command. A seed is
 // only a reproduction recipe together with this version and the profile; saved streams replay
 // exactly whatever the version. randomized_harness_tests pins a fingerprint of each profile's
 // output, so a change that forgets to bump this fails there.
-inline constexpr unsigned int generatorVersion = 1;
+inline constexpr unsigned int generatorVersion = 2;
 
 // The shape of a generated workload. Percentages are out of 100.
 struct WorkloadProfile {
@@ -29,6 +42,7 @@ struct WorkloadProfile {
     unsigned int invalidPercent = 20;     // of commands, each intentionally invalid
     unsigned int buyPercent = 50;         // of submissions
     unsigned int reuseIdPercent = 10;     // of valid submissions, reusing a filled or cancelled ID
+    unsigned int orderOverloadPercent = 10;  // of valid submissions, through submitOrder(Order)
 
     // Prices, relative to the model's current best bid and ask. A marketable order is priced at
     // the opposing best or up to throughTicks through it; a far one sits nearTicks + 1 to

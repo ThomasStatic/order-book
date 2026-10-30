@@ -91,9 +91,24 @@ std::vector<WorkloadProfile> makeProfiles() {
 
 }  // namespace
 
+OrderRequest requestOf(const Command& command) {
+    return OrderRequest{command.orderId, command.side, command.price, command.quantity, command.orderType};
+}
+
+ExpectedOutcome applyCommand(ReferenceBook& model, const Command& command) {
+    if (command.type == CommandType::CANCEL) {
+        return model.cancel(command.orderId);
+    }
+    if (command.overload == SubmitOverload::ORDER) {
+        return model.submitOrder(requestOf(command), command.markedFilled);
+    }
+    return model.submit(requestOf(command));
+}
+
 std::string describeProfile(const WorkloadProfile& profile) {
     return "submit=" + std::to_string(profile.submitPercent) + "% invalid=" + std::to_string(profile.invalidPercent) +
            "% buy=" + std::to_string(profile.buyPercent) + "% reuse=" + std::to_string(profile.reuseIdPercent) +
+           "% order-overload=" + std::to_string(profile.orderOverloadPercent) +
            "% marketable=" + std::to_string(profile.marketablePercent) + "% far=" + std::to_string(profile.farPercent) +
            "% through=" + std::to_string(profile.throughTicks) + " near=" + std::to_string(profile.nearTicks) +
            " farTicks=" + std::to_string(profile.farTicks) + " start=" + std::to_string(profile.startPrice) +
@@ -148,8 +163,12 @@ Command RandomCommandGenerator::validSubmit(const ReferenceBook& model) {
     const OrderId orderId = reuse ? removed.at(below(removed.size())) : freshId();
     const Side side = chance(config.buyPercent) ? Side::BUY : Side::SELL;
     const Price price = pickPrice(model, side);
-    return Command::submit(orderId, side, price, pickQuantity(),
-                           reuse ? CommandIntent::REUSED_ID : CommandIntent::NEW_ID);
+    Command command = Command::submit(orderId, side, price, pickQuantity(),
+                                      reuse ? CommandIntent::REUSED_ID : CommandIntent::NEW_ID);
+    if (chance(config.orderOverloadPercent)) {
+        command.overload = SubmitOverload::ORDER;
+    }
+    return command;
 }
 
 // An otherwise ordinary new order with exactly one thing wrong, chosen among the faults
@@ -187,7 +206,10 @@ Command RandomCommandGenerator::nextSubmit(const ReferenceBook& model, bool inva
         case CommandIntent::ZERO_QUANTITY: command.quantity = 0; break;
         case CommandIntent::INVALID_SIDE: command.side = static_cast<Side>(2 + below(6)); break;
         case CommandIntent::UNSUPPORTED_TYPE: command.orderType = static_cast<OrderType>(1 + below(6)); break;
-        case CommandIntent::MARKED_FILLED: command.markedFilled = true; break;
+        case CommandIntent::MARKED_FILLED:
+            command.markedFilled = true;
+            command.overload = SubmitOverload::ORDER;
+            break;
         default: break;
     }
     return command;
@@ -276,7 +298,7 @@ std::vector<Command> generateCommands(std::uint64_t seed, const WorkloadProfile&
     commands.reserve(count);
     for (std::size_t i = 0; i < count; ++i) {
         commands.push_back(generator.next(model));
-        model.apply(commands.back());
+        applyCommand(model, commands.back());
     }
     return commands;
 }

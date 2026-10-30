@@ -434,19 +434,29 @@ if(BUILD_TESTING)
     # Randomized command testing: seeded streams of submissions and cancellations, each command
     # checked against the book's invariants and a reference model. The harness is a library so
     # its own tests can drive it.
+    # The independent model of the book, shared by the randomized harness (and, later, the
+    # benchmark workloads); it never touches an OrderBook.
+    add_library(order_book_reference STATIC
+        tests/reference/reference_book.cpp
+    )
+    target_compile_features(order_book_reference PUBLIC cxx_std_20)
+    target_include_directories(order_book_reference PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/reference)
+    target_link_libraries(order_book_reference PUBLIC order_book)
+    order_book_enable_warnings(order_book_reference)
+    order_book_enable_sanitizers(order_book_reference)
+
     add_library(order_book_randomized STATIC
         tests/randomized/abort_reporter.cpp
         tests/randomized/command.cpp
         tests/randomized/command_generator.cpp
         tests/randomized/command_replayer.cpp
         tests/randomized/failure_report.cpp
-        tests/randomized/reference_book.cpp
         tests/randomized/shrink.cpp
     )
 
     target_compile_features(order_book_randomized PUBLIC cxx_std_20)
     target_include_directories(order_book_randomized PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/randomized)
-    target_link_libraries(order_book_randomized PUBLIC order_book)
+    target_link_libraries(order_book_randomized PUBLIC order_book order_book_reference)
     order_book_enable_warnings(order_book_randomized)
     order_book_enable_sanitizers(order_book_randomized)
 

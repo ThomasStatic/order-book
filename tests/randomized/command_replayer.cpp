@@ -329,7 +329,7 @@ std::optional<Failure> CommandReplayer::execute(OrderBook& book, ReferenceBook& 
     const bool submission = command.type == CommandType::SUBMIT;
     ++(submission ? stats.submissions : stats.cancellations);
 
-    const ExpectedOutcome expected = model.apply(command);
+    const ExpectedOutcome expected = applyCommand(model, command);
 
     auto fail = [&](FailureType type, std::string reason, std::optional<InvariantViolation> violation = {}) {
         return Failure{type, index, command, violation, std::move(reason), describeBookState(book, model, command)};
@@ -339,7 +339,9 @@ std::optional<Failure> CommandReplayer::execute(OrderBook& book, ReferenceBook& 
     const char* operation = submission ? "submitOrder" : "cancelOrder";
     try {
         if (submission) {
-            const SubmissionResult result = book.submitOrder(Access::build(command));
+            const SubmissionResult result = command.overload == SubmitOverload::ORDER
+                                                ? book.submitOrder(Access::build(command))
+                                                : book.submitOrder(requestOf(command));
             actual.submissionId = result.getSubmissionId();
             actual.outcome.success = result.getStatus() == SubmissionStatus::ACCEPTED;
             if (!actual.outcome.success) {

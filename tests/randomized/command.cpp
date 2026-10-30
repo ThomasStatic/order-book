@@ -139,6 +139,9 @@ std::string formatCommand(const Command& command) {
         if (command.markedFilled) {
             line += " status=FILLED";
         }
+        if (command.overload == SubmitOverload::ORDER) {
+            line += " overload=ORDER";
+        }
     }
     if (command.intent != CommandIntent::UNSPECIFIED) {
         line += std::string(" intent=") + intentName(command.intent);
@@ -171,7 +174,8 @@ Command parseCommand(const std::string& line) {
         }
         const std::string key = token.substr(0, equals);
         const std::string value = token.substr(equals + 1);
-        const bool submitOnly = key == "side" || key == "price" || key == "qty" || key == "type" || key == "status";
+        const bool submitOnly = key == "side" || key == "price" || key == "qty" || key == "type" || key == "status" ||
+                                key == "overload";
         if (submitOnly && command.type == CommandType::CANCEL) {
             throw std::invalid_argument("a cancellation has no " + key);
         }
@@ -194,6 +198,11 @@ Command parseCommand(const std::string& line) {
                 throw std::invalid_argument("status can only be FILLED, got '" + value + "'");
             }
             command.markedFilled = true;
+        } else if (key == "overload") {
+            if (value != "ORDER") {
+                throw std::invalid_argument("overload can only be ORDER, got '" + value + "'");
+            }
+            command.overload = SubmitOverload::ORDER;
         } else if (key == "intent") {
             command.intent = parseIntent(value);
         } else {
@@ -202,6 +211,9 @@ Command parseCommand(const std::string& line) {
     }
     if (!sawId || (command.type == CommandType::SUBMIT && !(sawSide && sawPrice && sawQuantity))) {
         throw std::invalid_argument("missing a required field");
+    }
+    if (command.markedFilled && command.overload != SubmitOverload::ORDER) {
+        throw std::invalid_argument("status=FILLED needs overload=ORDER: a request has no fill status");
     }
     return command;
 }

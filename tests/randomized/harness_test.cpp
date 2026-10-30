@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -10,6 +11,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "command.hpp"
@@ -85,16 +87,16 @@ void testSameSeedSameStream() {
 // and update these values (the failure prints the new ones).
 void testGeneratorFingerprints() {
     const std::map<std::string, std::uint64_t> pinned = {
-        {"balanced", 9996004523080170856ULL},
-        {"aggressive", 16938820500844614907ULL},
-        {"passive", 6314329210638377676ULL},
-        {"cancel-heavy", 18062278028079067174ULL},
-        {"queue", 15692927188592896839ULL},
-        {"one-sided", 6061541447004085375ULL},
-        {"invalid-heavy", 10512796943208439145ULL},
-        {"limits", 17819682983036151506ULL},
+        {"balanced", 2418286177375948739ULL},
+        {"aggressive", 1606898910408254699ULL},
+        {"passive", 12957791267139538247ULL},
+        {"cancel-heavy", 6379430343759077871ULL},
+        {"queue", 13403509432949802907ULL},
+        {"one-sided", 6712860676131188209ULL},
+        {"invalid-heavy", 4673402574142639820ULL},
+        {"limits", 7962126432625476341ULL},
     };
-    expect(generatorVersion == 1, "the fingerprints below are for generator version 1");
+    expect(generatorVersion == 2, "the fingerprints below are for generator version 2");
     bool allMatch = true;
     std::string actual;
     for (const WorkloadProfile& profile : workloadProfiles()) {
@@ -136,6 +138,14 @@ void testStreamRoundTrip() {
     oddType.orderType = static_cast<order_book::OrderType>(3);
     Command filled = Command::submit(9, Side::BUY, 4294967295U, 4294967295U, CommandIntent::MARKED_FILLED);
     filled.markedFilled = true;
+    filled.overload = SubmitOverload::ORDER;
+    Command viaOrder = Command::submit(10, Side::SELL, 100, 5, CommandIntent::NEW_ID);
+    viaOrder.overload = SubmitOverload::ORDER;
+    expect(formatCommand(viaOrder) == "SUBMIT id=10 side=SELL price=100 qty=5 overload=ORDER intent=NEW_ID",
+           context + ": the Order overload should print as overload=ORDER");
+    expect(formatCommand(Command::submit(10, Side::SELL, 100, 5)) == "SUBMIT id=10 side=SELL price=100 qty=5",
+           context + ": the request overload, the default, should not print");
+    stream.commands.push_back(viaOrder);
     stream.commands.push_back(oddSide);
     stream.commands.push_back(oddType);
     stream.commands.push_back(filled);
@@ -161,7 +171,9 @@ void testStreamRoundTrip() {
 
     for (const std::string bad : {"SUBMIT id=1 side=BUY price=5", "CANCEL id=1 side=BUY", "MODIFY id=1",
                                   "SUBMIT id=1 side=BUY price=5 qty=4294967296", "CANCEL id=x",
-                                  "SUBMIT id=1 side=BUY price=5 qty=1 status=PARTIAL", "CANCEL id=1 intent=MAYBE"}) {
+                                  "SUBMIT id=1 side=BUY price=5 qty=1 status=PARTIAL", "CANCEL id=1 intent=MAYBE",
+                                  "SUBMIT id=1 side=BUY price=5 qty=1 status=FILLED",
+                                  "SUBMIT id=1 side=BUY price=5 qty=1 overload=REQUEST", "CANCEL id=1 overload=ORDER"}) {
         expectThrows([&] { parseCommand(bad); }, context + ": should refuse '" + bad + "'");
     }
     std::stringstream noFormat("SUBMIT id=1 side=BUY price=5 qty=1\n");
@@ -189,6 +201,7 @@ void testDistributions() {
         std::size_t commandsWithOrders = 0;
         std::size_t submissionsWithOrders = 0;
         std::size_t validSubmissions = 0;
+        std::size_t viaOrder = 0;
         std::size_t buys = 0;
         std::size_t nearTouch = 0;
         std::size_t large = 0;
@@ -202,6 +215,7 @@ void testDistributions() {
             }
             if (command.intent == CommandIntent::NEW_ID || command.intent == CommandIntent::REUSED_ID) {
                 ++validSubmissions;
+                viaOrder += command.overload == SubmitOverload::ORDER ? 1 : 0;
                 buys += command.side == Side::BUY ? 1 : 0;
                 large += command.quantity > profile.smallQuantityMax ? 1 : 0;
                 expect(command.orderId != 0 && command.price != 0 && command.quantity != 0 &&
@@ -225,6 +239,12 @@ void testDistributions() {
                     static_cast<std::int64_t>(std::max(profile.nearTicks, profile.throughTicks)) + 1;
                 nearTouch += distance <= nearBand ? 1 : 0;
             }
+            if (command.intent != CommandIntent::NEW_ID && command.intent != CommandIntent::REUSED_ID &&
+                command.intent != CommandIntent::MARKED_FILLED) {
+                expect(command.overload == SubmitOverload::REQUEST,
+                       context + ": only valid limits and MARKED_FILLED go through the Order overload: " +
+                           formatCommand(command));
+            }
             switch (command.intent) {
                 case CommandIntent::DUPLICATE_ACTIVE_ID:
                     expect(model.restingIds().contains(command.orderId), context + ": a duplicate should rest");
@@ -238,7 +258,10 @@ void testDistributions() {
                 case CommandIntent::UNSUPPORTED_TYPE:
                     expect(command.orderType != order_book::OrderType::LIMIT, context + ": unsupported type");
                     break;
-                case CommandIntent::MARKED_FILLED: expect(command.markedFilled, context + ": marked filled"); break;
+                case CommandIntent::MARKED_FILLED:
+                    expect(command.markedFilled && command.overload == SubmitOverload::ORDER,
+                           context + ": marked filled, through the Order overload");
+                    break;
                 case CommandIntent::CANCEL_ACTIVE:
                     expect(model.restingIds().contains(command.orderId), context + ": a valid cancel should rest");
                     break;
@@ -253,7 +276,7 @@ void testDistributions() {
                 case CommandIntent::CANCEL_ZERO_ID: expect(command.orderId == 0, context + ": zero cancel"); break;
                 default: break;
             }
-            model.apply(command);
+            applyCommand(model, command);
         }
 
         std::size_t invalid = 0;
@@ -268,6 +291,8 @@ void testDistributions() {
         const auto near = [](double actual, double target) { return actual > target - 2.5 && actual < target + 2.5; };
         expect(near(share(invalid, count), profile.invalidPercent),
                context + ": invalid share " + std::to_string(share(invalid, count)));
+        expect(near(share(viaOrder, validSubmissions), profile.orderOverloadPercent),
+               context + ": Order-overload share " + std::to_string(share(viaOrder, validSubmissions)));
         expect(near(share(buys, validSubmissions), profile.buyPercent),
                context + ": buy share " + std::to_string(share(buys, validSubmissions)));
         expect(share(nearTouch, validSubmissions) > 100.0 - profile.farPercent - 5,
@@ -318,6 +343,85 @@ void testProfilesExerciseTheBook() {
             expect(largestAggregate > std::numeric_limits<order_book::Quantity>::max(),
                    context + ": a level should hold more than one Quantity in total");
         }
+    }
+}
+
+// What each profile is for, judged on the model after each command of a 2000-command run, so a
+// profile tuned into uselessness fails loudly. Each target needs to happen only once.
+struct ProfileTarget {
+    const char* profile;
+    const char* behavior;
+    // Given the model after the command, the command, and the model's prediction for it.
+    std::function<bool(const ReferenceBook&, const Command&, const order_book::reference::ExpectedOutcome&)> hit;
+};
+
+std::size_t tradesIn(const order_book::reference::ExpectedOutcome& outcome) {
+    return static_cast<std::size_t>(std::count_if(outcome.events.begin(), outcome.events.end(), [](const auto& event) {
+        return std::holds_alternative<order_book::TradeExecuted>(event);
+    }));
+}
+
+std::size_t longestQueue(const ReferenceBook& model) {
+    std::size_t longest = 0;
+    for (const auto& [price, queue] : model.bidQueues()) {
+        longest = std::max(longest, queue.size());
+    }
+    for (const auto& [price, queue] : model.askQueues()) {
+        longest = std::max(longest, queue.size());
+    }
+    return longest;
+}
+
+void testProfilesHitTheirTargets() {
+    const std::vector<ProfileTarget> targets = {
+        {"balanced", "a valid limit through submitOrder(Order) that trades",
+         [](const ReferenceBook&, const Command& command, const auto& outcome) {
+             return command.overload == SubmitOverload::ORDER && outcome.success && tradesIn(outcome) > 0;
+         }},
+        {"aggressive", "one submission sweeping five makers",
+         [](const ReferenceBook&, const Command&, const auto& outcome) { return tradesIn(outcome) >= 5; }},
+        {"passive", "a book of 100 levels",
+         [](const ReferenceBook& model, const Command&, const auto&) { return model.levelCount() >= 100; }},
+        {"cancel-heavy", "a cancellation that empties the book",
+         [](const ReferenceBook& model, const Command& command, const auto& outcome) {
+             return command.type == CommandType::CANCEL && outcome.success && model.restingCount() == 0;
+         }},
+        {"queue", "twenty orders queued at one price",
+         [](const ReferenceBook& model, const Command&, const auto&) { return longestQueue(model) >= 20; }},
+        {"one-sided", "a buy that empties the ask side",
+         [](const ReferenceBook& model, const Command& command, const auto& outcome) {
+             return command.type == CommandType::SUBMIT && command.side == Side::BUY && tradesIn(outcome) > 0 &&
+                    !model.best(Side::SELL);
+         }},
+        {"invalid-heavy", "a reused ID accepted",
+         [](const ReferenceBook&, const Command& command, const auto& outcome) {
+             return command.intent == CommandIntent::REUSED_ID && outcome.success;
+         }},
+        {"limits", "a level holding more than one Quantity in total",
+         [](const ReferenceBook& model, const Command&, const auto&) {
+             for (Side side : {Side::BUY, Side::SELL}) {
+                 for (const order_book::reference::ModelLevel& level : model.levels(side)) {
+                     if (level.totalQuantity > std::numeric_limits<order_book::Quantity>::max()) {
+                         return true;
+                     }
+                 }
+             }
+             return false;
+         }},
+    };
+    expect(targets.size() == workloadProfiles().size(), "every profile should have a target behavior");
+    for (const ProfileTarget& target : targets) {
+        const WorkloadProfile& profile = findProfile(target.profile);
+        RandomCommandGenerator generator(1, profile);
+        ReferenceBook model;
+        bool hit = false;
+        for (std::size_t i = 0; i < 2000 && !hit; ++i) {
+            const Command command = generator.next(model);
+            const order_book::reference::ExpectedOutcome outcome = applyCommand(model, command);
+            hit = target.hit(model, command, outcome);
+        }
+        expect(hit, std::string("profile ") + target.profile + " should reach its target within 2000 commands: " +
+                        target.behavior);
     }
 }
 
@@ -475,6 +579,7 @@ int main() {
     testStreamRoundTrip();
     testDistributions();
     testProfilesExerciseTheBook();
+    testProfilesHitTheirTargets();
     testPlantedFaultIsReportedPreservedAndShrunk();
     testDivergenceFromTheModelIsCaught();
     testReplayNeedsAnEmptyBook();

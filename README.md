@@ -106,7 +106,8 @@ The code is split into libraries that depend in one direction only. The book kno
 | `order_book` | static library | The engine: `OrderBook`, `Order`, the result and event types, the invariant checker, and `formatEvent`. |
 | `order_book_replay` | static library | The CSV replay format: a parser that turns text into typed records, an engine that runs records through a book, and locale-free printing of the outcome. |
 | `order_book_cli` | executable | `replay <file.csv>` and a scripted `demo`. Non-interactive, so it scripts cleanly. |
-| `order_book_randomized`, `randomized_tests` | test library, executable | Seeded command generation, an independent reference model of the book, failure reports, and stream shrinking. |
+| `order_book_reference` | test library | `ReferenceBook`, an independent model of the book that never touches an `OrderBook`. |
+| `order_book_randomized`, `randomized_tests` | test library, executable | Seeded command generation against the reference model, failure reports, and stream shrinking. |
 | `order_book_benchmarking`, `order_book_benchmarks` | optional | Workload generation and timing (`ORDER_BOOK_BUILD_BENCHMARKS=ON`). |
 | `sampling_profiler`, `allocation_profile` | optional | Profiling tools (`ORDER_BOOK_BUILD_PROFILING=ON`, which needs the benchmarks). |
 
@@ -353,7 +354,7 @@ Two tests skip by design in some configurations, and CTest reports them as Skipp
 
 ### Randomized command tests
 
-`randomized_tests` generates long, deterministic streams of submissions and cancellations from a seed and a workload profile. The streams include intentionally invalid commands. Each stream runs against the book and, beside it, an independent reference model. After every command the harness checks:
+`randomized_tests` generates long, deterministic streams of submissions and cancellations from a seed and a workload profile. The streams include intentionally invalid commands, and each submission goes through one of the two `submitOrder` overloads (nearly all through `OrderRequest`; about 10% of valid limits, and every order marked `FILLED`, through `Order`). Each stream runs against the book and, beside it, an independent reference model, which works out each match as a plan walked order by order before applying it. After every command the harness checks:
 
 - the invariants;
 - the exact result and events;
