@@ -11,6 +11,7 @@
 #include "order_book/node_pool.hpp"
 #include "order_book/order.hpp"
 #include "order_book/order_book.hpp"
+#include "order_book/order_request.hpp"
 
 namespace {
 // When zero, the next allocation throws std::bad_alloc instead; when positive, that many
@@ -217,6 +218,40 @@ void testBookNodesComeFromItsPool() {
                            + std::to_string(made) + " allocations for 500 orders");
 }
 
+// Each node type the book makes is served from one of the pool's size classes, not the heap
+// fallback: once its first chunk exists, more nodes of that type allocate nothing of their
+// own. A resting order's queue node (an Order and its owner) and a pending stop's node have
+// classes of their own.
+void testEachNodeTypeHasASizeClass() {
+    OrderBook book;
+    book.reserve(400);
+    book.submitOrder(Order(1, 100, 1, 1, Side::BUY));
+    long before = allocations;
+    for (unsigned int id = 2; id <= 200; ++id) {
+        book.submitOrder(Order(id, 100, 1, 1, Side::BUY));  // same level, so no map node
+    }
+    long made = allocations - before;
+    expect(made == 0, "resting orders at one level should take their nodes from the pool, made "
+                          + std::to_string(made) + " allocations for 199 orders");
+
+    const auto stop = [](order_book::OrderId id) {
+        order_book::OrderRequest request{id, Side::BUY, 0, 1, order_book::OrderType::STOP, order_book::TimeInForce::IOC};
+        request.stopPrice = 120;
+        return request;
+    };
+    book.submitOrder(stop(1001));
+    before = allocations;
+    for (unsigned int id = 1002; id <= 1200; ++id) {
+        book.submitOrder(stop(id));  // same stop price, so no map node
+    }
+    made = allocations - before;
+    expect(book.pendingStopCount() == 200, "every stop pends");
+    // Only the pending index grows, by doubling: 16 to 256 slots is at most five growths, each
+    // one allocation, or two in MSVC Debug builds, whose checked vector allocates a proxy too.
+    expect(made <= 10, "pending stops should take their nodes from the pool, made " + std::to_string(made)
+                           + " allocations for 199 stops");
+}
+
 // Fills a book with orders on several levels, some partly filled, so moves carry real queues.
 void populate(OrderBook& book, unsigned int firstId) {
     for (unsigned int i = 0; i < 40; ++i) {
@@ -289,6 +324,7 @@ int main() {
     testOtherRequestsGoToTheHeap();
     testFailedChunkChangesNothing();
     testBookNodesComeFromItsPool();
+    testEachNodeTypeHasASizeClass();
     testMovedBookKeepsItsPool();
     testMoveAssignmentReleasesIntoTheRightPool();
     std::cout << "node pool tests passed" << std::endl;

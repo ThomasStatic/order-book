@@ -9,7 +9,7 @@ There are two. The current one, for v2.0.0, covers all eleven workloads: the fiv
 | | |
 |---|---|
 | Date | 2026-10-29 |
-| Code | commit `f7db5b5` on `main` (the code released as v2.0.0) |
+| Code | commit `f7db5b5` on `main`; v2.0.0 adds only the code review's behavior-preserving fixes after it (a shared level-handle check and a shared amount check) |
 | Workload generator | version 3, seed 42 |
 | Build | MSVC 19.44.35228, Release (`/O2 /Ob2 /DNDEBUG`), no automatic invariant checks, no sanitizers |
 | Machine | the reference machine in [`benchmarks/README.md`](../benchmarks/README.md#environment), as for the first baseline |

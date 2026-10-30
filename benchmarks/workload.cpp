@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
+#include <variant>
 
 namespace order_book::benchmark {
 
@@ -677,6 +678,21 @@ Workload generateWorkload(const WorkloadConfig& config, std::size_t timedCommand
     workload.expected.finalPriceLevels = model.levelCount();
     workload.preloadResting = workload.preload.size();
     return workload;
+}
+
+void countEvents(std::span<const BookEvent> events, WorkloadOutcome& outcome) {
+    for (const BookEvent& event : events) {
+        if (const auto* trade = std::get_if<TradeExecuted>(&event)) {
+            ++outcome.trades;
+            outcome.volume += trade->executionQuantity;
+        } else if (std::holds_alternative<OrderExpired>(event)) {
+            ++outcome.expirations;
+        } else if (std::holds_alternative<SelfTradePrevented>(event)) {
+            ++outcome.preventions;
+        } else if (std::holds_alternative<StopTriggered>(event)) {
+            ++outcome.stopsTriggered;
+        }
+    }
 }
 
 std::uint64_t workloadFingerprintV2(const Workload& workload) {

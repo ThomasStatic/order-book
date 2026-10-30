@@ -117,6 +117,15 @@ namespace order_book {
         }
     }
 
+    PriceLevel& OrderBook::checkedLevel(const OrderLocation& location) {
+        PriceLevel* const level = location.level;
+        if(level == nullptr || level->tickPrice != location.tickPrice || level->side != location.side) {
+            throw std::runtime_error(location.side == Side::BUY ? "indexed order's level handle does not match its bid entry error"
+                                                                : "indexed order's level handle does not match its ask entry error");
+        }
+        return *level;
+    }
+
     void OrderBook::restOrder(const Order& order, OwnerId owner) {
         auto rest = [this, &order, owner](auto& levels) {
             const auto levelItr = levels.try_emplace(
@@ -427,20 +436,11 @@ namespace order_book {
     ReplaceResult OrderBook::replaceOrder(const ReplaceRequest& request) {
         const InvariantBoundary boundary(*this, "replaceOrder");
         // The malformed checks first, then the state checks; nothing has changed yet.
-        std::optional<RejectionReason> reason;
-        if(request.id == 0) {
-            reason = RejectionReason::INVALID_ORDER_ID;
-        }
-        else if(request.price == 0) {
-            reason = RejectionReason::INVALID_PRICE;
-        }
-        else if(request.quantity == 0) {
-            reason = RejectionReason::INVALID_QUANTITY;
-        }
-        else if(!isValidSelfTradePrevention(request.selfTradePrevention)) {
+        std::optional<RejectionReason> reason = checks::amountReason(request.id, request.price, true, request.quantity);
+        if(!reason && !isValidSelfTradePrevention(request.selfTradePrevention)) {
             reason = RejectionReason::INVALID_SELF_TRADE_PREVENTION;
         }
-        else if(pendingIndex.find(request.id) != pendingIndex.end()) {
+        if(!reason && pendingIndex.find(request.id) != pendingIndex.end()) {
             reason = RejectionReason::ORDER_NOT_REPLACEABLE;
         }
         const auto entry = reason ? orderIndex.end() : orderIndex.find(request.id);
@@ -467,10 +467,7 @@ namespace order_book {
         if(keepsPriority) {
             // In place, as cancelOrder reaches the level: through the entry's own handle, checked
             // before anything changes. Nothing below allocates or throws.
-            PriceLevel* const level = entry->second.level;
-            if(level == nullptr || level->tickPrice != entry->second.tickPrice || level->side != entry->second.side) {
-                throw std::runtime_error("indexed order's level handle does not match its entry error");
-            }
+            PriceLevel* const level = &checkedLevel(entry->second);
             level->quantity -= resting.getRemainingQuantity() - open;
             resting.initialQuantity = request.quantity;
             resting.remainingQuantity = open;
@@ -506,10 +503,7 @@ namespace order_book {
 
     void OrderBook::moveToBack(OrderIndex::iterator entry, Price newPrice, Quantity total, Quantity open, OwnerId owner) {
         OrderLocation& location = entry->second;
-        PriceLevel* const source = location.level;
-        if(source == nullptr || source->tickPrice != location.tickPrice || source->side != location.side) {
-            throw std::runtime_error("indexed order's level handle does not match its entry error");
-        }
+        PriceLevel* const source = &checkedLevel(location);
         auto move = [&](auto& levels) {
             // The one step that can fail: a new level at the new price.
             PriceLevel& target = levels.try_emplace(newPrice, newPrice, location.side, nodePool.get()).first->second;
@@ -718,11 +712,7 @@ namespace order_book {
             // The entry's own level handle, not a search of the map. An indexed order always
             // has its level; if the handle does not name a level at the entry's price and side,
             // fail before mutating anything.
-            PriceLevel* const level = location.level;
-            if(level == nullptr || level->tickPrice != location.tickPrice || level->side != location.side) {
-                throw std::runtime_error(location.side == Side::BUY ? "indexed order's level handle does not match its bid entry error"
-                                                                    : "indexed order's level handle does not match its ask entry error");
-            }
+            PriceLevel* const level = &checkedLevel(location);
 
             // Nothing below can throw. Unindex straight after erasing, so the entry never
             // holds the erased element's dangling iterator.

@@ -229,7 +229,7 @@ Spec #40's P3 asked whether the order behaviors slowed v1 traffic: a paired, int
 
 **One was tried and reverted.** Making `AddCommand`'s new fields pack (one-byte storage for `TimeInForce` and `SelfTradePrevention`, the tail reordered) cut a parsed record from 64 to 56 bytes and measured 1.000 and 0.996 on `replay` (`experiments/c-compact-record-reverted/`). Record size is not what the parser lost. Its remaining cost is spread thin: the bigger record built through two variants (`ParseResult`, then `ReadResult`), the v1 row's extra dispatch through `parseV1Tail`, and `std::string::assign` in `splitRecordInto`, whose source is unchanged since v1 but which MSVC no longer inlines.
 
-**The final run** (`f7db5b5`, the code released as v2.0.0), against v1.0.0's:
+**The final run** (`f7db5b5`, v2.0.0's code but for the code review's behavior-preserving fixes), against v1.0.0's:
 
 | Workload | `core`, standard (16 pairs) | `core`, extended (8 pairs) | `replay`, standard | `replay`, extended |
 |---|---:|---:|---:|---:|

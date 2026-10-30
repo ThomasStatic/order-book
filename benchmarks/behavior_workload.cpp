@@ -41,18 +41,7 @@ void count(const BehaviorCommand& command, const ExpectedOutcome& predicted, Wor
         case CommandType::CANCEL: ++outcome.cancels; break;
         case CommandType::REPLACE: ++outcome.replaces; break;
     }
-    for (const BookEvent& event : predicted.events) {
-        if (const auto* trade = std::get_if<TradeExecuted>(&event)) {
-            ++outcome.trades;
-            outcome.volume += trade->executionQuantity;
-        } else if (std::holds_alternative<OrderExpired>(event)) {
-            ++outcome.expirations;
-        } else if (std::holds_alternative<SelfTradePrevented>(event)) {
-            ++outcome.preventions;
-        } else if (std::holds_alternative<StopTriggered>(event)) {
-            ++outcome.stopsTriggered;
-        }
-    }
+    countEvents(predicted.events, outcome);
 }
 
 ExpectedOutcome apply(ReferenceBook& model, const BehaviorCommand& command) {
@@ -371,7 +360,7 @@ void finish(Workload& workload, const ReferenceBook& model) {
 }
 
 // A v1 workload's exact stream, through the request path: owner 0, or a distinct nonzero owner
-// per order (its ID), so nothing self-matches and only the owner probe differs.
+// per order (its ID), so no order meets its own owner and only the owner probe differs.
 Workload replayThroughRequests(const WorkloadConfig& config, std::size_t timedCommands, std::uint64_t seed) {
     // The configuration is a copy of that workload's, so a scaled copy replays a scaled stream.
     WorkloadConfig v1 = config;

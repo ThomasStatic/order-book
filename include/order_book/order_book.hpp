@@ -100,6 +100,10 @@ namespace order_book {
         // it, leaving the book unchanged if that throws. Throws std::runtime_error if its
         // ID is already indexed: callers must validate first.
         void restOrder(const Order& order, OwnerId owner = 0);
+        // The level an index entry's handle names, checked to be a level at the entry's price
+        // and side before anything is changed through it; throws std::runtime_error otherwise
+        // (an engine bug).
+        static PriceLevel& checkedLevel(const OrderLocation& location);
 
         // Takes a resting order off its level and out of the index, erasing the level once
         // empty: cancelOrder's removal, shared with self-trade prevention. Throws
@@ -123,7 +127,7 @@ namespace order_book {
         // if the opposing orders within its limit cannot fill its whole quantity. Reads only.
         // Without an owner it sums level aggregates from the best level, then counts the orders
         // it would take at the last, so it costs O(levels crossed + orders taken at the last).
-        // With one it visits every order it crosses, O(orders crossed), so a self-match never
+        // With one it visits every order it crosses, O(orders crossed), so a self-trade never
         // counts toward filling: under CANCEL_RESTING it skips (and counts) each own order, and
         // under the other modes it stops at the first.
         struct FillPlan {
@@ -331,7 +335,7 @@ namespace order_book {
         // (CANCEL_RESTING removes the resting order whole and goes on matching; CANCEL_INCOMING
         // leaves it and stops, expiring the remainder even of a GTC order; CANCEL_BOTH does
         // both), reported as a SelfTradePrevented among the trades, in execution order. A
-        // prevention is never a trade: it consumes no trade ID. A FOK never counts a self-match
+        // prevention is never a trade: it consumes no trade ID. A FOK never counts a self-trade
         // toward filling, and one that cannot fill cancels nothing. Post-only never matches, so
         // it never runs it. An invalid mode is INVALID_SELF_TRADE_PREVENTION whatever the owner. A well-formed request is always
         // accepted and matched like submitOrder(Order); then a GTC remainder rests, and an IOC

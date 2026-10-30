@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <chrono>
 #include <limits>
-#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -49,23 +48,8 @@ void execute(OrderBook& book, const BenchmarkCommand& command, WorkloadOutcome& 
     }
 }
 
-// The same for a behavior command, counting every event its command made, the cascade's
-// included.
-void countEvents(std::span<const BookEvent> events, WorkloadOutcome& outcome) {
-    for (const BookEvent& event : events) {
-        if (const auto* trade = std::get_if<TradeExecuted>(&event)) {
-            ++outcome.trades;
-            outcome.volume += trade->executionQuantity;
-        } else if (std::holds_alternative<OrderExpired>(event)) {
-            ++outcome.expirations;
-        } else if (std::holds_alternative<SelfTradePrevented>(event)) {
-            ++outcome.preventions;
-        } else if (std::holds_alternative<StopTriggered>(event)) {
-            ++outcome.stopsTriggered;
-        }
-    }
-}
-
+// The same for a behavior command, counting every event its command made (countEvents),
+// the cascade's included.
 void execute(OrderBook& book, const BehaviorCommand& command, WorkloadOutcome& outcome) {
     if (command.type == CommandType::SUBMIT) {
         ++outcome.submits;

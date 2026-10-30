@@ -2,10 +2,12 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "order_book/book_event.hpp"
 #include "order_book/order_request.hpp"
 #include "order_book/replace_request.hpp"
 #include "order_book/side.hpp"
@@ -253,6 +255,11 @@ std::uint64_t workloadFingerprint(const Workload& workload);
 // under workloadGeneratorVersion 2, so a test can show the five v1 workloads' commands did
 // not change.
 std::uint64_t workloadFingerprintV2(const Workload& workload);
+
+// Adds what these events show to an outcome: each trade and its volume, each expiry, each
+// prevented self-trade, and each triggered stop. The model's prediction and the runner's
+// count of the book's results both go through it, so the two count alike.
+void countEvents(std::span<const BookEvent> events, WorkloadOutcome& outcome);
 
 // generateWorkload for a BEHAVIOR configuration (behavior_workload.cpp).
 Workload generateBehaviorWorkload(const WorkloadConfig& config, std::size_t timedCommands, std::uint64_t seed);

@@ -23,6 +23,7 @@ namespace order_book {
 // Befriended by OrderBook and PriceLevel so these tests can capture the whole book.
 struct OrderBookTestAccess {
     static const auto& index(const OrderBook& book) { return book.orderIndex; }
+    static const auto& pendingIndex(const OrderBook& book) { return book.pendingIndex; }
     static const auto& bids(const OrderBook& book) { return book.bids; }
     static const auto& asks(const OrderBook& book) { return book.asks; }
     static TradeId nextTradeId(const OrderBook& book) { return book.nextTradeId; }
@@ -114,6 +115,7 @@ struct BookState {
     StopState buyStops;
     StopState sellStops;
     std::vector<OrderId> index;
+    std::vector<std::pair<OrderId, Price>> pendingIndex;  // each pending stop's ID and stop price
     SequenceNum nextSequenceNum;
     TradeId nextTradeId;
 
@@ -151,8 +153,14 @@ BookState capture(const OrderBook& book) {
         index.push_back(entry.first);
     }
     std::sort(index.begin(), index.end());
+    std::vector<std::pair<OrderId, Price>> pendingIndex;
+    for (const auto& entry : Access::pendingIndex(book)) {
+        pendingIndex.emplace_back(entry.first, entry.second.tickPrice);
+    }
+    std::sort(pendingIndex.begin(), pendingIndex.end());
     return {captureLevels(Access::bids(book)), captureLevels(Access::asks(book)), captureStops(Access::buyStops(book)),
-            captureStops(Access::sellStops(book)), index, Access::nextSequenceNum(book), Access::nextTradeId(book)};
+            captureStops(Access::sellStops(book)), index, pendingIndex, Access::nextSequenceNum(book),
+            Access::nextTradeId(book)};
 }
 
 void expectSound(const OrderBook& book, const std::string& context) {
@@ -509,7 +517,7 @@ void testSelfTradePrevention(Side side) {
     }
 }
 
-// A FOK with an owner never counts a self-match toward filling. Under CANCEL_RESTING its walk
+// A FOK with an owner never counts a self-trade toward filling. Under CANCEL_RESTING its walk
 // skips its own orders (and removes them only if it fills); under the other modes it stops at
 // the first one. An unfillable FOK cancels nothing and reports no prevention.
 void testFillOrKillWithOwner(Side side) {
@@ -614,10 +622,9 @@ void testPendingStops(Side side) {
     auto& stops = side == Side::BUY ? withStops.buyStops : withStops.sellStops;
     auto& queue = stops.front().second;
     queue.erase(queue.begin() + 1);
-    withStops.index.clear();
-    BookState now = capture(book);
-    now.index.clear();
-    expect(now == withStops && book.pendingStopCount() == 2, context + ": cancelling a stop should move nothing else");
+    std::erase_if(withStops.pendingIndex, [](const auto& entry) { return entry.first == 21; });
+    expect(capture(book) == withStops && book.pendingStopCount() == 2,
+           context + ": cancelling a stop should remove it and its index entry and move nothing else");
     expect(book.cancelOrder(21).getRejectionReason() == order_book::RejectionReason::ORDER_NOT_FOUND,
            context + ": a cancelled stop is no longer live");
     expect(book.submitOrder(OrderRequest{21, side, side == Side::BUY ? Price{94} : Price{106}, 1}).getStatus() == SubmissionStatus::ACCEPTED,

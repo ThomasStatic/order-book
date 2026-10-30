@@ -3,6 +3,7 @@
 #include <iostream>
 #include <list>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -581,6 +582,80 @@ void testStopPathsDoNotAllocate() {
     expect(book.pendingStopCount() == 2, "two stops should pend");
 }
 
+// Every v2 submission rejection allocates nothing: each request check's refusal, and a
+// duplicate of a resting order's ID and of a pending stop's. The rejection holds its one
+// event inline, and validation reads the book without changing it.
+void testRequestRejectionsDoNotAllocate() {
+    using order_book::OrderRequest;
+    using order_book::OrderType;
+    using order_book::RejectionReason;
+    using order_book::SelfTradePrevention;
+    using order_book::TimeInForce;
+    OrderBook book{};
+    book.addOrder(Order(1, 100, 5, 1, Side::SELL));
+    book.submitOrder(stopRequest(2, Side::BUY, 110));
+
+    struct Case {
+        const char* name;
+        OrderRequest request;
+        RejectionReason reason;
+    };
+    const auto with = [](OrderRequest request, auto change) {
+        change(request);
+        return request;
+    };
+    const OrderRequest limit{10, Side::BUY, 90, 5};
+    const std::vector<Case> cases{
+        {"a zero ID", with(limit, [](OrderRequest& r) { r.id = 0; }), RejectionReason::INVALID_ORDER_ID},
+        {"a missing price", with(limit, [](OrderRequest& r) { r.price = 0; }), RejectionReason::INVALID_PRICE},
+        {"a zero quantity", with(limit, [](OrderRequest& r) { r.quantity = 0; }), RejectionReason::INVALID_QUANTITY},
+        {"an invalid side", with(limit, [](OrderRequest& r) { r.side = static_cast<Side>(7); }), RejectionReason::INVALID_SIDE},
+        {"an invalid type", with(limit, [](OrderRequest& r) { r.type = static_cast<OrderType>(9); }),
+         RejectionReason::UNSUPPORTED_ORDER_TYPE},
+        {"a market order with a price", with(limit, [](OrderRequest& r) {
+             r.type = OrderType::MARKET;
+             r.timeInForce = TimeInForce::IOC;
+         }), RejectionReason::PRICE_NOT_ALLOWED},
+        {"an invalid time in force", with(limit, [](OrderRequest& r) { r.timeInForce = static_cast<TimeInForce>(9); }),
+         RejectionReason::INVALID_TIME_IN_FORCE},
+        {"a GTC market order", with(limit, [](OrderRequest& r) {
+             r.type = OrderType::MARKET;
+             r.price = 0;
+         }), RejectionReason::TIME_IN_FORCE_NOT_ALLOWED},
+        {"a stop with no stop price", with(limit, [](OrderRequest& r) { r.type = OrderType::STOP_LIMIT; }),
+         RejectionReason::INVALID_STOP_PRICE},
+        {"a stop price on a limit order", with(limit, [](OrderRequest& r) { r.stopPrice = 95; }),
+         RejectionReason::STOP_PRICE_NOT_ALLOWED},
+        {"post-only on an IOC", with(limit, [](OrderRequest& r) {
+             r.postOnly = true;
+             r.timeInForce = TimeInForce::IOC;
+         }), RejectionReason::POST_ONLY_NOT_ALLOWED},
+        {"an invalid self-trade prevention mode",
+         with(limit, [](OrderRequest& r) { r.selfTradePrevention = static_cast<SelfTradePrevention>(9); }),
+         RejectionReason::INVALID_SELF_TRADE_PREVENTION},
+        {"a resting order's ID", with(limit, [](OrderRequest& r) { r.id = 1; }), RejectionReason::DUPLICATE_ORDER_ID},
+        {"a pending stop's ID", with(limit, [](OrderRequest& r) { r.id = 2; }), RejectionReason::DUPLICATE_ORDER_ID},
+    };
+    for (const Case& testCase : cases) {
+        std::optional<RejectionReason> reason;
+        allocationsBeforeFailure = 0;
+        bool threw = false;
+        try {
+            const order_book::SubmissionResult result = book.submitOrder(testCase.request);
+            reason = result.getStatus() == order_book::SubmissionStatus::REJECTED ? std::optional(result.getRejectionReason())
+                                                                                  : std::nullopt;
+        } catch (const std::bad_alloc&) {
+            threw = true;
+        }
+        const bool stillArmed = allocationsBeforeFailure == 0;
+        allocationsBeforeFailure = -1;
+        expect(!threw && stillArmed, std::string("rejecting ") + testCase.name + " should not allocate");
+        expect(reason == testCase.reason, std::string("rejecting ") + testCase.name + " should give its reason");
+    }
+    expect(book.activeOrderCount() == 1 && book.pendingStopCount() == 1, "no rejection should change the book");
+    expectIndexConsistent(book, "after the rejections");
+}
+
 // A cascade of three stops that fails inside the second stop's run: the submitter has
 // finished, the first stop's trade stands, the second keeps a market order's contract (its
 // trades made stand), and the third, triggered by the second, is discarded: nowhere, and
@@ -805,6 +880,7 @@ int main() {
         testConsumeLevelFailsBeforeFilling();
         testCancelOrderDoesNotAllocate();
         testRequestAllocatesLikeOrder();
+        testRequestRejectionsDoNotAllocate();
 
         std::cout << "allocation failure tests passed" << std::endl;
         return EXIT_SUCCESS;

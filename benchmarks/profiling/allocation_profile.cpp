@@ -4,9 +4,10 @@
 // workload is generated as the benchmark does and run once on a preloaded book. For the
 // core path every timed command is run on its own and its allocations, frees, and bytes are
 // charged to its kind: a submission that rests without trading, one that trades and rests
-// its remainder, one that fills completely, or a cancellation; for a behavior workload also
-// a submission whose remainder expires, a stop order, a command whose trades trigger stops,
-// and a replace that trades or does not. A histogram of allocation
+// its remainder, one that fills completely, or a cancellation; for a behavior workload, a
+// request submission by its type and time in force (post-only apart), a replace by its path,
+// and a cancel of a resting order or a pending stop. The peak of live heap bytes is reported
+// per workload. A histogram of allocation
 // sizes per kind says which container each allocation came from (a std::list node, an index
 // node, a map node, a result's events vector, a trades vector), since each has a distinct
 // size. The order index is watched for growth, and its capacity (slots) and fill (the share
@@ -56,6 +57,12 @@ struct AllocationCounts {
 };
 
 AllocationCounts counts;
+// Bytes allocated and not yet freed, and the most of them at once since the last reset. Each
+// block carries its size in a header, since an unsized delete is not told it.
+std::size_t liveBytes = 0;
+std::size_t peakLiveBytes = 0;
+constexpr std::size_t headerBytes = alignof(std::max_align_t) > sizeof(std::size_t) ? alignof(std::max_align_t)
+                                                                                    : sizeof(std::size_t);
 // Sizes below histogramLimit, exactly; larger ones go in the last slot.
 std::size_t sizeHistogram[histogramLimit + 1];
 
@@ -69,8 +76,11 @@ void countAllocation(std::size_t size) {
 
 void* operator new(std::size_t size) {
     countAllocation(size);
-    if (void* block = std::malloc(size == 0 ? 1 : size)) {
-        return block;
+    if (void* block = std::malloc(headerBytes + (size == 0 ? 1 : size))) {
+        *static_cast<std::size_t*>(block) = size;
+        liveBytes += size;
+        peakLiveBytes = liveBytes > peakLiveBytes ? liveBytes : peakLiveBytes;
+        return static_cast<char*>(block) + headerBytes;
     }
     throw std::bad_alloc();
 }
@@ -80,10 +90,13 @@ void* operator new[](std::size_t size) {
 }
 
 void operator delete(void* block) noexcept {
-    if (block != nullptr) {
-        ++counts.frees;
+    if (block == nullptr) {
+        return;
     }
-    std::free(block);
+    ++counts.frees;
+    void* const start = static_cast<char*>(block) - headerBytes;
+    liveBytes -= *static_cast<std::size_t*>(start);
+    std::free(start);
 }
 
 void operator delete(void* block, std::size_t) noexcept {
@@ -126,83 +139,93 @@ using namespace order_book;
 using namespace order_book::benchmark;
 using Clock = std::chrono::steady_clock;
 
-enum class CommandKind {
+// What a timed command is charged to. A v1 command by its outcome; a behavior command by what
+// it is: a request submission by its type and time in force (post-only limits apart, and a
+// stop by its own type), a replace by the path it took, a cancel by what it removed.
+enum CommandKind : std::size_t {
     SUBMIT_RESTS,
     SUBMIT_TRADES_AND_RESTS,
     SUBMIT_FILLED,
     CANCEL,
-    SUBMIT_EXPIRES,
-    SUBMIT_STOP,
-    TRIGGERS_STOPS,
-    REPLACE,
-    REPLACE_TRADES,
-    KINDS
+    CANCEL_RESTING,
+    CANCEL_PENDING_STOP,
+    REPLACE_IN_PLACE,
+    REPLACE_MOVED,
+    REPLACE_POST_ONLY_EXPIRED,
+    REPLACE_CROSSING,
+    REQUEST_POST_ONLY,
+    REQUEST_FIRST,  // then one per type and time in force, type-major
+    KINDS = REQUEST_FIRST + 4 * 3
 };
 
-const char* commandKindName(CommandKind kind) {
-    switch (kind) {
-        case CommandKind::SUBMIT_RESTS: return "submit, rests without trading";
-        case CommandKind::SUBMIT_TRADES_AND_RESTS: return "submit, trades then rests the remainder";
-        case CommandKind::SUBMIT_FILLED: return "submit, filled completely";
-        case CommandKind::CANCEL: return "cancel";
-        case CommandKind::SUBMIT_EXPIRES: return "submit, the remainder (or all of it) expires";
-        case CommandKind::SUBMIT_STOP: return "submit a stop order";
-        case CommandKind::TRIGGERS_STOPS: return "submit or replace whose trades trigger stops (cascade included)";
-        case CommandKind::REPLACE: return "replace, no trade";
-        case CommandKind::REPLACE_TRADES: return "replace, crosses and trades";
-        case CommandKind::KINDS: break;
+std::size_t requestKind(const OrderRequest& request) {
+    if (request.postOnly) {
+        return REQUEST_POST_ONLY;
     }
-    return "?";
+    return REQUEST_FIRST + static_cast<std::size_t>(request.type) * 3 + static_cast<std::size_t>(request.timeInForce);
 }
 
-bool holdsEvent(std::span<const BookEvent> events, auto isKind) {
-    return std::any_of(events.begin(), events.end(), [&](const BookEvent& event) { return isKind(event); });
+std::string commandKindName(std::size_t kind) {
+    switch (kind) {
+        case SUBMIT_RESTS: return "submit, rests without trading";
+        case SUBMIT_TRADES_AND_RESTS: return "submit, trades then rests the remainder";
+        case SUBMIT_FILLED: return "submit, filled completely";
+        case CANCEL: return "cancel";
+        case CANCEL_RESTING: return "cancel a resting order";
+        case CANCEL_PENDING_STOP: return "cancel a pending stop";
+        case REPLACE_IN_PLACE: return "replace, priority kept in place";
+        case REPLACE_MOVED: return "replace, moved to the back of a level";
+        case REPLACE_POST_ONLY_EXPIRED: return "replace, post-only that would take, expired";
+        case REPLACE_CROSSING: return "replace, crossing (trades or prevents)";
+        case REQUEST_POST_ONLY: return "request, LIMIT GTC post-only";
+        default: break;
+    }
+    const char* const types[] = {"LIMIT", "MARKET", "STOP", "STOP_LIMIT"};
+    const char* const timesInForce[] = {"GTC", "IOC", "FOK"};
+    const std::size_t index = kind - REQUEST_FIRST;
+    return std::string("request, ") + types[index / 3] + " " + timesInForce[index % 3];
 }
 
-bool triggersStops(std::span<const BookEvent> events) {
-    return holdsEvent(events, [](const BookEvent& event) { return std::holds_alternative<StopTriggered>(event); });
+template <typename Event>
+bool holdsEvent(std::span<const BookEvent> events) {
+    return std::any_of(events.begin(), events.end(), [](const BookEvent& event) { return std::holds_alternative<Event>(event); });
 }
 
 // A v1 command: as the benchmark runs it, through submitOrder(Order).
-CommandKind runCommand(OrderBook& book, const BenchmarkCommand& command, std::size_t& trades) {
+std::size_t runCommand(OrderBook& book, const BenchmarkCommand& command, std::size_t& trades) {
     if (command.type != CommandType::SUBMIT) {
         book.cancelOrder(command.orderId);
-        return CommandKind::CANCEL;
+        return CANCEL;
     }
     const SubmissionResult result = book.submitOrder(Order(command.orderId, command.price, command.quantity, 1, command.side));
     trades = result.getGeneratedTrades().size();
-    return trades == 0 ? CommandKind::SUBMIT_RESTS
-         : result.getRemainingQuantity() == 0 ? CommandKind::SUBMIT_FILLED
-                                              : CommandKind::SUBMIT_TRADES_AND_RESTS;
+    return trades == 0 ? SUBMIT_RESTS : result.getRemainingQuantity() == 0 ? SUBMIT_FILLED : SUBMIT_TRADES_AND_RESTS;
 }
 
 // A behavior command, through submitOrder(OrderRequest), replaceOrder, or cancelOrder.
-CommandKind runCommand(OrderBook& book, const BehaviorCommand& command, std::size_t& trades) {
+std::size_t runCommand(OrderBook& book, const BehaviorCommand& command, std::size_t& trades) {
     if (command.type == CommandType::CANCEL) {
+        // findPendingStop returns its request by value, inline: it allocates nothing.
+        const bool pending = book.findPendingStop(command.request.id).has_value();
         book.cancelOrder(command.request.id);
-        return CommandKind::CANCEL;
+        return pending ? CANCEL_PENDING_STOP : CANCEL_RESTING;
     }
     if (command.type == CommandType::REPLACE) {
         const ReplaceResult result = book.replaceOrder(command.replacement);
         trades = result.getGeneratedTrades().size();
-        return triggersStops(result.getEvents()) ? CommandKind::TRIGGERS_STOPS
-             : trades == 0                       ? CommandKind::REPLACE
-                                                 : CommandKind::REPLACE_TRADES;
+        const auto& events = result.getEvents();
+        const auto* replaced = std::get_if<OrderReplaced>(&events[0]);
+        if (replaced != nullptr && replaced->priorityKept) {
+            return REPLACE_IN_PLACE;
+        }
+        if (trades > 0 || holdsEvent<SelfTradePrevented>(events)) {
+            return REPLACE_CROSSING;
+        }
+        return holdsEvent<OrderExpired>(events) ? REPLACE_POST_ONLY_EXPIRED : REPLACE_MOVED;
     }
     const SubmissionResult result = book.submitOrder(command.request);
     trades = result.getGeneratedTrades().size();
-    if (triggersStops(result.getEvents())) {
-        return CommandKind::TRIGGERS_STOPS;
-    }
-    if (isStopType(command.request.type)) {
-        return CommandKind::SUBMIT_STOP;
-    }
-    if (holdsEvent(result.getEvents(), [](const BookEvent& event) { return std::holds_alternative<OrderExpired>(event); })) {
-        return CommandKind::SUBMIT_EXPIRES;
-    }
-    return trades == 0 ? CommandKind::SUBMIT_RESTS
-         : result.getRemainingQuantity() == 0 ? CommandKind::SUBMIT_FILLED
-                                              : CommandKind::SUBMIT_TRADES_AND_RESTS;
+    return requestKind(command.request);
 }
 
 void preloadBook(OrderBook& book, const Workload& workload, std::size_t* rehashes) {
@@ -277,6 +300,8 @@ void printHistogram(const std::size_t* histogram, std::size_t commands, const ch
 }
 
 void profileCore(const Workload& workload) {
+    const std::size_t liveBefore = liveBytes;
+    peakLiveBytes = liveBytes;
     OrderBook book;
     book.reserve(expectedBookSize(workload));
     std::size_t preloadRehashes = 0;
@@ -290,7 +315,7 @@ void profileCore(const Workload& workload) {
                 preloadCounts.bytes, preloadRehashes, OrderBookTestAccess::bucketCount(book),
                 fixed(OrderBookTestAccess::loadFactor(book), 3).c_str(), book.pendingStopCount());
 
-    KindTotals totals[static_cast<std::size_t>(CommandKind::KINDS)];
+    KindTotals totals[KINDS];
     std::size_t rehashes = 0;
     std::size_t levelsCreated = 0;
     std::size_t levelsErased = 0;
@@ -303,9 +328,9 @@ void profileCore(const Workload& workload) {
         std::size_t histogramBefore[histogramLimit + 1];
         std::copy(sizeHistogram, sizeHistogram + histogramLimit + 1, histogramBefore);
         const AllocationCounts before = snapshotCounts();
-        const CommandKind kind = runCommand(book, command, trades);
+        const std::size_t kind = runCommand(book, command, trades);
         const AllocationCounts delta = difference(before, snapshotCounts());
-        KindTotals& total = totals[static_cast<std::size_t>(kind)];
+        KindTotals& total = totals[kind];
         ++total.commands;
         total.trades += trades;
         accumulate(total.allocations, delta);
@@ -344,12 +369,15 @@ void profileCore(const Workload& workload) {
                 book.activeOrderCount());
     std::printf("  price levels: %zu created and %zu erased during the timed commands, %zu at the end\n", levelsCreated,
                 levelsErased, OrderBookTestAccess::levelCount(book));
-    for (std::size_t k = 0; k < static_cast<std::size_t>(CommandKind::KINDS); ++k) {
+    std::printf("  peak live heap: %zu bytes over what was live before the book was built (preload included), "
+                "%zu at the end\n",
+                peakLiveBytes - liveBefore, liveBytes - liveBefore);
+    for (std::size_t k = 0; k < KINDS; ++k) {
         const KindTotals& total = totals[k];
         if (total.commands == 0) {
             continue;
         }
-        std::printf("  %s: %zu commands", commandKindName(static_cast<CommandKind>(k)), total.commands);
+        std::printf("  %s: %zu commands", commandKindName(k).c_str(), total.commands);
         if (total.trades != 0) {
             std::printf(", %zu trades (%s per command)", total.trades, fixed(per(total.trades, total.commands), 2).c_str());
         }

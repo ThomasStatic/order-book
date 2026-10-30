@@ -10,10 +10,9 @@
 // Internal to the library: the field checks Order and OrderRequest share, written once.
 namespace order_book::checks {
 
-    // The per-field checks, in their fixed order: a zero ID, a missing price (where the
-    // order needs one), a zero quantity, then a side other than BUY or SELL.
-    inline std::optional<RejectionReason> fieldReason(OrderId id, Price price, bool priceRequired, Quantity quantity,
-                                                      Side side) {
+    // The amount checks, in their fixed order: a zero ID, a missing price (where the order
+    // needs one), then a zero quantity. A replace, which has no side, checks these alone.
+    inline std::optional<RejectionReason> amountReason(OrderId id, Price price, bool priceRequired, Quantity quantity) {
         if(id == 0) {
             return RejectionReason::INVALID_ORDER_ID;
         }
@@ -22,6 +21,16 @@ namespace order_book::checks {
         }
         if(quantity == 0) {
             return RejectionReason::INVALID_QUANTITY;
+        }
+        return std::nullopt;
+    }
+
+    // The per-field checks, in their fixed order: the amount checks, then a side other than
+    // BUY or SELL.
+    inline std::optional<RejectionReason> fieldReason(OrderId id, Price price, bool priceRequired, Quantity quantity,
+                                                      Side side) {
+        if(const std::optional<RejectionReason> reason = amountReason(id, price, priceRequired, quantity)) {
+            return reason;
         }
         if(!isValidSide(side)) {
             return RejectionReason::INVALID_SIDE;
