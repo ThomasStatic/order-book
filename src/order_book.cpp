@@ -422,6 +422,121 @@ namespace order_book {
         advanceSequenceNum();
     }
 
+    ReplaceResult OrderBook::replaceOrder(const ReplaceRequest& request) {
+        const InvariantBoundary boundary(*this, "replaceOrder");
+        // The malformed checks first, then the state checks; nothing has changed yet.
+        std::optional<RejectionReason> reason;
+        if(request.id == 0) {
+            reason = RejectionReason::INVALID_ORDER_ID;
+        }
+        else if(request.price == 0) {
+            reason = RejectionReason::INVALID_PRICE;
+        }
+        else if(request.quantity == 0) {
+            reason = RejectionReason::INVALID_QUANTITY;
+        }
+        else if(!isValidSelfTradePrevention(request.selfTradePrevention)) {
+            reason = RejectionReason::INVALID_SELF_TRADE_PREVENTION;
+        }
+        else if(pendingIndex.find(request.id) != pendingIndex.end()) {
+            reason = RejectionReason::ORDER_NOT_REPLACEABLE;
+        }
+        const auto entry = reason ? orderIndex.end() : orderIndex.find(request.id);
+        if(!reason && entry == orderIndex.end()) {
+            reason = RejectionReason::ORDER_NOT_FOUND;
+        }
+        if(reason) {
+            return ReplaceResult::rejected(request.id, *reason);
+        }
+        Order& resting = *entry->second.itr;
+        const Quantity executed = resting.getInitialQuantity() - resting.getRemainingQuantity();
+        if(request.quantity <= executed) {
+            return ReplaceResult::rejected(request.id, RejectionReason::REPLACE_QUANTITY_TOO_LOW);
+        }
+
+        const Quantity open = request.quantity - executed;
+        const bool keepsPriority = request.price == resting.getPriceTick() && request.quantity <= resting.getInitialQuantity();
+        // Its OrderReplaced fits inline, so opening the result cannot throw.
+        ResultRecorder recorder(OrderReplaced{request.id, resting.getSide(), request.price, request.quantity, open,
+                                              keepsPriority},
+                                executed);
+        const TriggeredStopsGuard discardOnThrow(*this);
+
+        if(keepsPriority) {
+            // In place, as cancelOrder reaches the level: through the entry's own handle, checked
+            // before anything changes. Nothing below allocates or throws.
+            PriceLevel* const level = entry->second.level;
+            if(level == nullptr || level->tickPrice != entry->second.tickPrice || level->side != entry->second.side) {
+                throw std::runtime_error("indexed order's level handle does not match its entry error");
+            }
+            level->quantity -= resting.getRemainingQuantity() - open;
+            resting.initialQuantity = request.quantity;
+            resting.remainingQuantity = open;
+            entry->owner = request.owner;
+            return recorder.finishReplace();
+        }
+
+        // Losing priority, it re-enters as if it had just arrived, at its new price.
+        Order incoming = resting;
+        incoming.priceTick = request.price;
+        incoming.initialQuantity = request.quantity;
+        incoming.remainingQuantity = open;
+        const bool crosses = crossesBestOpposing(incoming);
+        if(request.postOnly && crosses) {
+            // Two events, inline, and a removal: nothing allocates or throws after the guard.
+            removeResting(entry);
+            recorder.expire(open);
+            advanceSequenceNum();
+            return recorder.finishReplace();
+        }
+        if(!crosses) {
+            moveToBack(entry, request.price, request.quantity, open, request.owner);
+            advanceSequenceNum();
+            return recorder.finishReplace();
+        }
+        // Crossing: it leaves its level, then matches like a new GTC limit order, with
+        // submitOrder's contract, and runs the cascade its trades trigger.
+        removeResting(entry);
+        runIncoming(incoming, Instructions{TimeInForce::GTC, request.owner, request.selfTradePrevention}, recorder);
+        runCascade(recorder);
+        return recorder.finishReplace();
+    }
+
+    void OrderBook::moveToBack(OrderIndex::iterator entry, Price newPrice, Quantity total, Quantity open, OwnerId owner) {
+        OrderLocation& location = entry->second;
+        PriceLevel* const source = location.level;
+        if(source == nullptr || source->tickPrice != location.tickPrice || source->side != location.side) {
+            throw std::runtime_error("indexed order's level handle does not match its entry error");
+        }
+        auto move = [&](auto& levels) {
+            // The one step that can fail: a new level at the new price.
+            PriceLevel& target = levels.try_emplace(newPrice, newPrice, location.side, nodePool.get()).first->second;
+            // Nothing below allocates or throws. Splicing keeps the node, so the entry's
+            // iterator stays valid; the allocators are equal, both from this book's pool.
+            const OrderQueue::iterator node = location.itr;
+            source->quantity -= node->getRemainingQuantity();
+            target.orders.splice(target.orders.end(), source->orders, node);
+            node->priceTick = newPrice;
+            node->initialQuantity = total;
+            node->remainingQuantity = open;
+            node->sequenceNum = nextSequenceNum;
+            target.quantity += open;
+            const Price oldPrice = location.tickPrice;
+            location.tickPrice = newPrice;
+            location.level = &target;
+            entry->owner = owner;
+            if(source->isEmpty()) {
+                levels.erase(oldPrice);
+            }
+        };
+        if(location.side == Side::BUY) {
+            move(bids);
+        }
+        else {
+            move(asks);
+        }
+    }
+
     void OrderBook::triggerStops(Price tradePrice) noexcept {
         if(!triggeredStops) {
             return;  // no stop has ever pended here

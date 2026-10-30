@@ -2,6 +2,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include "order_book/replace_result.hpp"
 #include "order_book/result_recorder.hpp"
 #include "order_book/submission_result.hpp"
 
@@ -35,6 +36,21 @@ namespace order_book {
             throw std::invalid_argument("recorded result for an order with no quantity error");
         }
         events.push_back(acceptance);
+    }
+
+    ResultRecorder::ResultRecorder(const OrderReplaced& replacement, Quantity executed)
+        : submissionId(replacement.orderId),
+          submittedQuantity(replacement.openQuantity),
+          replacing(true),
+          executedBefore(executed),
+          current{replacement.orderId, replacement.side, replacement.price, replacement.openQuantity, false} {
+        if (replacement.orderId == 0 || replacement.price == 0 || replacement.openQuantity == 0) {
+            throw std::invalid_argument("recorded replace with the reserved id 0, no price, or nothing open error");
+        }
+        if (static_cast<unsigned long long>(replacement.openQuantity) + executed != replacement.quantity) {
+            throw std::invalid_argument("recorded replace whose open and executed quantities do not sum to its total error");
+        }
+        events.push_back(replacement);
     }
 
     void ResultRecorder::checkOpen() const {
@@ -134,8 +150,25 @@ namespace order_book {
         trades = std::move(adopted);
     }
 
+    ReplaceResult ResultRecorder::finishReplace() {
+        checkOpen();
+        if (!replacing) {
+            throw std::invalid_argument("finishing a submission's recorder as a replace error");
+        }
+        closeSubmitted();
+        finished = true;
+        const bool executed = executedBefore > 0 || submittedRemaining < submittedQuantity;
+        const FillStatus fillStatus = !executed               ? FillStatus::NONE
+                                    : submittedRemaining == 0 ? FillStatus::FILLED
+                                                              : FillStatus::PARTIAL;
+        return ReplaceResult(true, std::nullopt, std::move(trades), std::move(events), submittedRemaining, fillStatus);
+    }
+
     SubmissionResult ResultRecorder::finish() {
         checkOpen();
+        if (replacing) {
+            throw std::invalid_argument("finishing a replace's recorder as a submission error");
+        }
         closeSubmitted();
         finished = true;
         const FillStatus fillStatus = submittedRemaining == submittedQuantity ? FillStatus::NONE

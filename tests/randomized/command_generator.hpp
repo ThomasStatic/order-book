@@ -20,6 +20,7 @@ using reference::ReferenceBook;
 
 // The command's submission as a request, or as the fields of the Order it builds.
 OrderRequest requestOf(const Command& command);
+ReplaceRequest replaceRequestOf(const Command& command);
 
 // Applies the command to the model through the overload it names, and returns what the engine
 // should report for it.
@@ -30,7 +31,7 @@ ExpectedOutcome applyCommand(ReferenceBook& model, const Command& command);
 // only a reproduction recipe together with this version and the profile; saved streams replay
 // exactly whatever the version. randomized_harness_tests pins a fingerprint of each profile's
 // output, so a change that forgets to bump this fails there.
-inline constexpr unsigned int generatorVersion = 8;
+inline constexpr unsigned int generatorVersion = 9;
 
 // The shape of a generated workload. Percentages are out of 100.
 struct WorkloadProfile {
@@ -38,7 +39,8 @@ struct WorkloadProfile {
     std::string purpose;
     std::size_t defaultCommands = 5000;
 
-    unsigned int submitPercent = 70;      // of commands; the rest are cancellations
+    unsigned int submitPercent = 60;      // of commands
+    unsigned int replacePercent = 15;     // of commands; the rest are cancellations
     unsigned int invalidPercent = 20;     // of commands, each intentionally invalid
     unsigned int buyPercent = 50;         // of submissions
     unsigned int reuseIdPercent = 10;     // of valid submissions, reusing a filled or cancelled ID
@@ -119,6 +121,7 @@ private:
 
     Command nextSubmit(const ReferenceBook& model, bool invalid);
     Command nextCancel(const ReferenceBook& model, bool invalid);
+    Command nextReplace(const ReferenceBook& model, bool invalid);
     Command validSubmit(const ReferenceBook& model);
     // Draws a request's owner, then its mode.
     void drawOwnership(Command& command);

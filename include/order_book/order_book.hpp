@@ -16,6 +16,8 @@
 #include "order_location.hpp"
 #include "order_request.hpp"
 #include "price_level.hpp"
+#include "replace_request.hpp"
+#include "replace_result.hpp"
 #include "result_recorder.hpp"
 #include "self_trade_prevention.hpp"
 #include "side.hpp"
@@ -166,6 +168,12 @@ namespace order_book {
         // side, nearest stop price first, acceptance order within a price. Unindexes each.
         // Allocates nothing; a trade that triggers nothing costs O(1).
         void triggerStops(Price tradePrice) noexcept;
+        // Moves a resting order to the back of the level at newPrice (its own, if unchanged)
+        // with the next sequence number, a new total and open quantity, and a new owner,
+        // splicing its own list node. The one possible allocation, a new level, comes first, so
+        // a throw changes nothing. Does not advance the counter.
+        void moveToBack(OrderIndex::iterator entry, Price newPrice, Quantity total, Quantity open, OwnerId owner);
+
         // Runs the triggered stops one at a time, each as its market or limit order with a fresh
         // sequence number, appending what their trades trigger, until none is left.
         void runCascade(ResultRecorder& recorder);
@@ -337,6 +345,28 @@ namespace order_book {
         // exactly as submitOrder(Order) does for an Order with the same ID, side, price, and
         // quantity, and allocates no more.
         SubmissionResult submitOrder(OrderRequest request);
+
+        // Replaces a resting order under the same ID with a new price, total quantity (including
+        // what has traded), and instructions, which are all declared again. Refused, changing
+        // nothing and allocating nothing, as one ReplaceRejected, by the first failing check: a
+        // zero ID, price, or quantity, an invalid self-trade prevention mode, a pending stop's ID
+        // (ORDER_NOT_REPLACEABLE: move a stop by cancelling and submitting again), an ID not
+        // resting (ORDER_NOT_FOUND), then a total at or below what has executed
+        // (REPLACE_QUANTITY_TOO_LOW: a replace never cancels). Otherwise it reports OrderReplaced
+        // (new price, total, open quantity = total - executed, priority kept or not) and:
+        // - at the same price with no increase, it keeps its time priority: done in place,
+        //   keeping its queue position and sequence number; it never crosses, allocates nothing,
+        //   and cannot throw once found;
+        // - otherwise it loses priority, re-entering as if it had just arrived, under the new
+        //   instructions. Post-only at a price that would take, it leaves the book, its whole
+        //   open quantity expired (no allocation). Not crossing, it moves to the back of the
+        //   queue at its new price with a new sequence number, strongly atomic and numbered last.
+        //   Crossing, it leaves its level and matches as an incoming GTC limit order under the
+        //   new mode, with submitOrder's (non-atomic) contract: its trades set the last trade
+        //   price and may trigger stops, which run as a cascade reported in the result.
+        // The order's initial quantity becomes the new total, so a partly filled order stays
+        // PARTIAL. Side, type, time in force, and stop price never change.
+        ReplaceResult replaceOrder(const ReplaceRequest& request);
 
         // Number of orders resting on the book (both sides), not of price levels. Pending stops
         // are not resting orders.

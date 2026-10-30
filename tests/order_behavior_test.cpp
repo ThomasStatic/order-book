@@ -12,6 +12,7 @@
 #include "order_book/order.hpp"
 #include "order_book/order_book.hpp"
 #include "order_book/order_request.hpp"
+#include "order_book/replace_request.hpp"
 #include "order_book/submission_result.hpp"
 
 // The order behaviors of spec #40, through the public API: each test checks the exact result
@@ -49,6 +50,10 @@ using order_book::OrderRequest;
 using order_book::OrderType;
 using order_book::OwnerId;
 using order_book::SelfTradePrevented;
+using order_book::OrderReplaced;
+using order_book::ReplaceRejected;
+using order_book::ReplaceRequest;
+using order_book::ReplaceResult;
 using order_book::SelfTradePrevention;
 using order_book::StopTriggered;
 using order_book::Price;
@@ -802,6 +807,124 @@ void testTriggeredStops() {
     }
 }
 
+ReplaceRequest replacement(OrderId id, Price price, unsigned int total, bool postOnlyReplace = false, OwnerId owner = 0,
+                           SelfTradePrevention mode = SelfTradePrevention::CANCEL_RESTING) {
+    return ReplaceRequest{id, price, total, postOnlyReplace, owner, mode};
+}
+
+void expectReplaceRejected(OrderBook& book, const ReplaceRequest& request, order_book::RejectionReason reason,
+                           const std::string& context) {
+    const BookState before = capture(book);
+    const ReplaceResult result = book.replaceOrder(request);
+    expect(!result.isSuccess() && result.getRejectionReason() == reason, context + ": unexpected outcome");
+    expect(result.getEvents() == Events{ReplaceRejected{request.id, reason}} && result.getGeneratedTrades().empty(),
+           context + ": a refused replace should report exactly one ReplaceRejected");
+    expect(capture(book) == before, context + ": a refused replace should change nothing");
+}
+
+// The replace checks, in order, before anything changes.
+void testReplaceChecks() {
+    using order_book::RejectionReason;
+    OrderBook book;
+    book.submitOrder(Order(1, 100, 10, 1, Side::SELL));
+    book.submitOrder(OrderRequest{2, Side::BUY, 100, 4});  // fills 4 of #1
+    book.submitOrder(stopOrder(3, Side::BUY, 120, 5));
+    const auto badMode = static_cast<SelfTradePrevention>(5);
+    expectReplaceRejected(book, replacement(0, 0, 0, false, 0, badMode), RejectionReason::INVALID_ORDER_ID, "replace id 0");
+    expectReplaceRejected(book, replacement(1, 0, 0, false, 0, badMode), RejectionReason::INVALID_PRICE, "replace price 0");
+    expectReplaceRejected(book, replacement(1, 100, 0, false, 0, badMode), RejectionReason::INVALID_QUANTITY,
+                          "replace quantity 0");
+    expectReplaceRejected(book, replacement(99, 100, 1, false, 0, badMode), RejectionReason::INVALID_SELF_TRADE_PREVENTION,
+                          "replace with an invalid mode, before the state checks");
+    expectReplaceRejected(book, replacement(3, 100, 1), RejectionReason::ORDER_NOT_REPLACEABLE, "replace a pending stop");
+    expectReplaceRejected(book, replacement(99, 100, 1), RejectionReason::ORDER_NOT_FOUND, "replace an unknown ID");
+    expectReplaceRejected(book, replacement(2, 100, 5), RejectionReason::ORDER_NOT_FOUND, "replace a filled order");
+    expectReplaceRejected(book, replacement(1, 100, 4), RejectionReason::REPLACE_QUANTITY_TOO_LOW,
+                          "replace to exactly the executed quantity");
+    expectReplaceRejected(book, replacement(1, 101, 3), RejectionReason::REPLACE_QUANTITY_TOO_LOW,
+                          "replace below the executed quantity");
+}
+
+// Keeping priority (same price, no increase): in place, the order keeps its FIFO position,
+// address, and sequence number; its total and open quantity change, and its owner.
+void testReplaceKeepsPriority() {
+    OrderBook book;
+    book.submitOrder(Order(1, 100, 10, 1, Side::SELL));
+    book.submitOrder(Order(2, 100, 5, 1, Side::SELL));
+    book.submitOrder(Order(3, 100, 5, 1, Side::SELL));
+    book.submitOrder(OrderRequest{9, Side::BUY, 100, 4});  // 4 of #1
+    BookState before = capture(book);
+    const ReplaceResult result = book.replaceOrder(replacement(1, 100, 7, false, 6, SelfTradePrevention::CANCEL_BOTH));
+    expect(result.isSuccess() && !result.getRejectionReason() &&
+               result.getEvents() == Events{OrderReplaced{1, Side::SELL, 100, 7, 3, true}},
+           "a priority-keeping replace reports OrderReplaced with priority kept");
+    expect(result.getRemainingQuantity() == 3 && result.getFillStatus() == FillStatus::PARTIAL &&
+               result.getGeneratedTrades().empty(),
+           "its remaining quantity is the new open quantity, and a partly filled order stays PARTIAL");
+    LevelState& level = before.asks.front();
+    level.aggregateQuantity -= 3;
+    level.orders.front().remainingQuantity = 3;
+    expect(capture(book) == before, "keeping priority should change only that order's quantities, in place");
+    const Order replaced = book.findActiveOrder(1);
+    expect(replaced.getInitialQuantity() == 7 && replaced.getFillStatus() == FillStatus::PARTIAL && Access::owner(book, 1) == 6,
+           "the new total becomes the initial quantity, and the owner is replaced");
+    // A replace that changes only the instructions also keeps priority.
+    expect(book.replaceOrder(replacement(2, 100, 5)).getEvents() == Events{OrderReplaced{2, Side::SELL, 100, 5, 5, true}},
+           "changing nothing but the instructions keeps priority");
+    expectSound(book, "priority kept");
+}
+
+// Losing priority without crossing: back of the queue at the new price, with a new number.
+void testReplaceLosesPriority() {
+    OrderBook book;
+    book.submitOrder(Order(1, 100, 5, 1, Side::SELL));
+    book.submitOrder(Order(2, 100, 5, 1, Side::SELL));
+    book.submitOrder(Order(3, 101, 5, 1, Side::SELL));
+    book.submitOrder(Order(4, 95, 1, 1, Side::BUY));
+    const SequenceNum next = Access::nextSequenceNum(book);
+    const ReplaceResult increased = book.replaceOrder(replacement(1, 100, 6));
+    expect(increased.getEvents() == Events{OrderReplaced{1, Side::SELL, 100, 6, 6, false}} &&
+               increased.getRemainingQuantity() == 6 && increased.getFillStatus() == FillStatus::NONE,
+           "an increase loses priority");
+    const auto& asks = Access::asks(book);
+    expect(Access::orders(asks.at(100)).back().getOrderId() == 1 && book.findActiveOrder(1).getSequenceNum() == next &&
+               Access::nextSequenceNum(book) == next + 1,
+           "it should go to the back of its level with a new sequence number");
+    const ReplaceResult moved = book.replaceOrder(replacement(2, 101, 5));
+    expect(moved.getEvents() == Events{OrderReplaced{2, Side::SELL, 101, 5, 5, false}} &&
+               Access::orders(asks.at(101)).back().getOrderId() == 2 && asks.at(100).getAggregateQuantity() == 6,
+           "a price change moves it to the back of its new level");
+    // Post-only at a price that would take: replaced, then its whole open quantity expires.
+    const ReplaceResult taker = book.replaceOrder(replacement(3, 95, 5, true));
+    expect(taker.getEvents() == Events{OrderReplaced{3, Side::SELL, 95, 5, 5, false}, OrderExpired{3, 5}} &&
+               taker.getRemainingQuantity() == 5 && !Access::index(book).count(3),
+           "a post-only replace that would take leaves the book, its open quantity expired");
+    expectSound(book, "priority lost");
+}
+
+// Crossing: it leaves its level and matches as an incoming GTC limit order under the
+// replacement's mode; its trades set the last trade price and can trigger stops.
+void testReplaceCrosses() {
+    OrderBook book;
+    book.submitOrder(Order(1, 100, 4, 1, Side::SELL));
+    book.submitOrder(owned(OrderRequest{2, Side::SELL, 101, 2}, 7));
+    book.submitOrder(Order(3, 102, 3, 1, Side::SELL));
+    book.submitOrder(owned(OrderRequest{10, Side::BUY, 98, 10}, 7));
+    book.submitOrder(OrderRequest{11, Side::BUY, 99, 2});  // above #10 in the book
+    book.submitOrder(stopOrder(20, Side::BUY, 102, 1));
+    book.submitOrder(OrderRequest{12, Side::BUY, 98, 1});
+    const ReplaceResult result = book.replaceOrder(replacement(10, 102, 12, false, 7, SelfTradePrevention::CANCEL_RESTING));
+    expect(result.getEvents() == Events{OrderReplaced{10, Side::BUY, 102, 12, 12, false}, TradeExecuted{10, 1, 100, 4},
+                                        SelfTradePrevented{10, 2, 101, 2}, TradeExecuted{10, 3, 102, 3},
+                                        StopTriggered{20, 102, 102}, OrderExpired{20, 1}},
+           "a crossing replace matches under its mode and runs the cascade its trades trigger");
+    expect(result.getGeneratedTrades().size() == 2 && result.getRemainingQuantity() == 5 &&
+               result.getFillStatus() == FillStatus::PARTIAL && book.findActiveOrder(10).getRemainingQuantity() == 5,
+           "the rest of a crossing replace rests at its new price");
+    expect(book.getLastTradePrice() == Price{102}, "its trades set the last trade price");
+    expectSound(book, "crossing replace");
+}
+
 // An expired order's ID is free again, as a filled one's is.
 void testExpiredIdIsFree() {
     OrderBook book;
@@ -868,6 +991,10 @@ int main() {
     }
     testLastTradePrice();
     testTriggeredStops();
+    testReplaceChecks();
+    testReplaceKeepsPriority();
+    testReplaceLosesPriority();
+    testReplaceCrosses();
     testExpiredIdIsFree();
     testGoodTillCancelledRests();
     testScriptIsDeterministic();

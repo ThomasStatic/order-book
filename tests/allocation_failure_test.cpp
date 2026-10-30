@@ -619,6 +619,76 @@ void testCascadeFailureDiscardsTriggeredStops() {
            "the first failure should come inside the second stop's run, after its first trade");
 }
 
+// Replace paths that never allocate: a refused replace, one that keeps priority, and a
+// post-only one that would take.
+void testReplacePathsDoNotAllocate() {
+    OrderBook book{};
+    book.addOrder(Order(1, 100, 5, 1, Side::SELL));
+    book.addOrder(Order(2, 100, 5, 1, Side::SELL));
+    book.addOrder(Order(3, 99, 5, 1, Side::BUY));
+    const auto armed = [&book](const auto& operation, const std::string& what) {
+        allocationsBeforeFailure = 0;
+        bool threw = false;
+        bool succeeded = false;
+        try {
+            succeeded = operation();
+        } catch (const std::bad_alloc&) {
+            threw = true;
+        }
+        const bool stillArmed = allocationsBeforeFailure == 0;
+        allocationsBeforeFailure = -1;
+        expect(!threw && stillArmed, what + " should not allocate");
+        return succeeded;
+    };
+    const bool refused = armed([&book] { return !book.replaceOrder(order_book::ReplaceRequest{9, 100, 1}).isSuccess(); },
+                               "a refused replace");
+    const bool kept = armed([&book] { return book.replaceOrder(order_book::ReplaceRequest{2, 100, 3}).isSuccess(); },
+                            "a priority-keeping replace");
+    const bool taker = armed([&book] { return book.replaceOrder(order_book::ReplaceRequest{1, 99, 5, true}).isSuccess(); },
+                             "a post-only replace that would take");
+    expect(refused && kept && taker, "the replaces should be refused, keep priority, and expire");
+    expectIndexConsistent(book, "replaces without allocating");
+}
+
+// A priority-losing replace to a new level is strongly atomic: a failure (the new level's map
+// node) leaves the book, its counters included, as it was.
+void testReplaceToNewLevelRollsBack() {
+    const long failures = failEachAllocationInTurn(
+        [](OrderBook& book) {
+            book.addOrder(Order(1, 100, 5, 1, Side::SELL));
+            book.addOrder(Order(2, 100, 5, 1, Side::SELL));
+        },
+        [](OrderBook& book) { book.replaceOrder(order_book::ReplaceRequest{1, 105, 5}); },
+        [](const OrderBook& book, const std::string& context) {
+            expect(Access::asks(book).size() == 1 && Access::asks(book).at(100).getOrderCount() == 2 &&
+                       Access::nextSequenceNum(book) == 3,
+                   context + ": a failed replace should leave the order where it was");
+        },
+        "replace to a new level");
+    expect(failures > 0, "replace to a new level: at least one allocation failure should have been injected");
+}
+
+// A crossing replace keeps v1's contract: what was made stands, and no remainder rests behind
+// a throw.
+void testCrossingReplaceStaysConsistent() {
+    const long failures = failEachAllocationInTurn(
+        [](OrderBook& book) {
+            for (unsigned int i = 0; i < 6; ++i) {
+                book.addOrder(Order(10 + i, 100 + i, 1, 1, Side::SELL));
+            }
+            book.addOrder(Order(2, 90, 9, 1, Side::BUY));
+        },
+        [](OrderBook& book) { book.replaceOrder(order_book::ReplaceRequest{2, 106, 9}); },
+        [](const OrderBook& book, const std::string& context) {
+            expect(!book.hasBids() && Access::index(book).count(2) == 0,
+                   context + ": a failed crossing replace should leave the order off the book");
+            const unsigned int executions = Access::nextTradeId(book) - 1;
+            expect(Access::asks(book).size() == 6 - executions, context + ": every execution made should stand");
+        },
+        "crossing replace");
+    expect(failures > 0, "crossing replace: at least one allocation failure should have been injected");
+}
+
 void testConsumeLevelFailsBeforeFilling() {
     const long failures = failEachAllocationInTurn(
         [](OrderBook& book) {
@@ -729,6 +799,9 @@ int main() {
         testStopStorageRollsBack();
         testStopPathsDoNotAllocate();
         testCascadeFailureDiscardsTriggeredStops();
+        testReplacePathsDoNotAllocate();
+        testReplaceToNewLevelRollsBack();
+        testCrossingReplaceStaysConsistent();
         testConsumeLevelFailsBeforeFilling();
         testCancelOrderDoesNotAllocate();
         testRequestAllocatesLikeOrder();

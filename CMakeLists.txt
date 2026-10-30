@@ -123,6 +123,7 @@ add_library(order_book STATIC
     src/trade.cpp
     src/submission_result.cpp
     src/result_recorder.cpp
+    src/replace_result.cpp
     src/cancellation_result.cpp
     src/price_level.cpp
     src/event_format.cpp
@@ -505,7 +506,7 @@ if(BUILD_TESTING)
     target_link_libraries(invariant_boundary_tests PRIVATE order_book)
     order_book_enable_warnings(invariant_boundary_tests)
     order_book_enable_sanitizers(invariant_boundary_tests)
-    foreach(command addOrder submitOrder cancelOrder consumeLevel)
+    foreach(command addOrder submitOrder cancelOrder consumeLevel replaceOrder)
         add_test(NAME invariant_boundary_${command} COMMAND invariant_boundary_tests ${command})
         set_tests_properties(invariant_boundary_${command} PROPERTIES
             PASS_REGULAR_EXPRESSION "order book invariant violated after ${command}: AGGREGATE_QUANTITY_MISMATCH side=SELL price=100 expected=5 actual=6"

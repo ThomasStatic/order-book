@@ -88,19 +88,20 @@ void testSameSeedSameStream() {
 // and update these values (the failure prints the new ones).
 void testGeneratorFingerprints() {
     const std::map<std::string, std::uint64_t> pinned = {
-        {"balanced", 5564879061556947044ULL},
-        {"aggressive", 8481657866503503821ULL},
-        {"passive", 6763976021892944449ULL},
-        {"cancel-heavy", 3611834777573128470ULL},
-        {"queue", 7739213142561390673ULL},
-        {"one-sided", 18072558173000573765ULL},
-        {"invalid-heavy", 2685711784982307739ULL},
-        {"limits", 8556868042740139041ULL},
-        {"self-trade", 8315979448594823842ULL},
-        {"stop-cascade", 736736494424531975ULL},
-        {"immediate", 15317620537276013285ULL},
+        {"balanced", 10464936116285297161ULL},
+        {"aggressive", 8645582931718887431ULL},
+        {"passive", 785227058610243177ULL},
+        {"cancel-heavy", 11226581774984837337ULL},
+        {"queue", 9897002396743410182ULL},
+        {"one-sided", 9561297660355310714ULL},
+        {"invalid-heavy", 14011682843529399313ULL},
+        {"limits", 14891029128874882244ULL},
+        {"self-trade", 7265007228038429646ULL},
+        {"stop-cascade", 8525263529161034919ULL},
+        {"replace-heavy", 2187816436616634951ULL},
+        {"immediate", 8544858475628966072ULL},
     };
-    expect(generatorVersion == 8, "the fingerprints below are for generator version 8");
+    expect(generatorVersion == 9, "the fingerprints below are for generator version 9");
     bool allMatch = true;
     std::string actual;
     for (const WorkloadProfile& profile : workloadProfiles()) {
@@ -180,6 +181,12 @@ void testStreamRoundTrip() {
            context + ": a stop-limit should print its type and stop price");
     stream.commands.push_back(stopLimit);
     stream.commands.push_back(Command::cancel(18, CommandIntent::CANCEL_PENDING_STOP));
+    Command replaced = Command::replace(19, 104, 9, CommandIntent::REPLACE_PRICE);
+    replaced.postOnly = true;
+    replaced.owner = 2;
+    expect(formatCommand(replaced) == "REPLACE id=19 price=104 qty=9 post_only=Y owner=2 intent=REPLACE_PRICE",
+           context + ": a replace should print its fields");
+    stream.commands.push_back(replaced);
     Command killer = Command::submit(13, Side::SELL, 100, 5, CommandIntent::NEW_ID);
     killer.timeInForce = order_book::TimeInForce::FOK;
     expect(formatCommand(killer) == "SUBMIT id=13 side=SELL price=100 qty=5 tif=FOK intent=NEW_ID",
@@ -221,7 +228,9 @@ void testStreamRoundTrip() {
                                   "SUBMIT id=1 side=BUY price=5 qty=1 tif=IOC overload=ORDER", "CANCEL id=1 tif=IOC",
                                   "SUBMIT id=1 side=BUY price=5 qty=1 post_only=Y overload=ORDER",
                                   "SUBMIT id=1 side=BUY price=5 qty=1 post_only=N",
-                                  "SUBMIT id=1 side=BUY price=5 qty=1 owner=2 overload=ORDER", "CANCEL id=1 owner=2"}) {
+                                  "SUBMIT id=1 side=BUY price=5 qty=1 owner=2 overload=ORDER", "CANCEL id=1 owner=2",
+                                  "REPLACE id=1 price=5", "REPLACE id=1 price=5 qty=1 side=BUY",
+                                  "REPLACE id=1 price=5 qty=1 tif=IOC"}) {
         expectThrows([&] { parseCommand(bad); }, context + ": should refuse '" + bad + "'");
     }
     std::stringstream noFormat("SUBMIT id=1 side=BUY price=5 qty=1\n");
@@ -239,6 +248,7 @@ void testStreamRoundTrip() {
 // 80/20 valid to invalid, 50/50 sides, mostly prices near the touch and small sizes, mostly
 // new IDs; and every profile only ever breaks the one thing its intent says.
 void testDistributions() {
+    std::set<CommandIntent> seenAnywhere;
     for (const WorkloadProfile& profile : workloadProfiles()) {
         const std::string context = "distribution (" + profile.name + ")";
         RandomCommandGenerator generator(2026, profile);
@@ -248,6 +258,7 @@ void testDistributions() {
         // becomes a submission, so an empty book skews the split by design.
         std::size_t commandsWithOrders = 0;
         std::size_t submissionsWithOrders = 0;
+        std::size_t replacesWithOrders = 0;
         std::size_t validSubmissions = 0;
         std::size_t viaOrder = 0;
         std::size_t ioc = 0;
@@ -273,6 +284,7 @@ void testDistributions() {
             if (!model.restingIds().empty()) {
                 ++commandsWithOrders;
                 submissionsWithOrders += command.type == CommandType::SUBMIT ? 1 : 0;
+                replacesWithOrders += command.type == CommandType::REPLACE ? 1 : 0;
             }
             if (command.intent == CommandIntent::NEW_ID || command.intent == CommandIntent::REUSED_ID) {
                 ++validSubmissions;
@@ -382,6 +394,56 @@ void testDistributions() {
                     expect(!order_book::isStopType(command.orderType) && command.stopPrice != 0,
                            context + ": a stop price on an order that is not a stop");
                     break;
+                case CommandIntent::REPLACE_DECREASE:
+                case CommandIntent::REPLACE_INSTRUCTIONS:
+                case CommandIntent::REPLACE_PRICE:
+                case CommandIntent::REPLACE_INCREASE:
+                case CommandIntent::REPLACE_POST_ONLY_TAKE: {
+                    const order_book::reference::ModelOrder* order = model.find(command.orderId);
+                    expect(command.type == CommandType::REPLACE && order != nullptr, context + ": a valid replace should name a resting order");
+                    const order_book::Quantity executed = order->total - order->open;
+                    expect(command.price != 0 && command.quantity > executed &&
+                               order_book::isValidSelfTradePrevention(command.selfTradePrevention),
+                           context + ": a valid replace should be well formed: " + formatCommand(command));
+                    const bool samePrice = command.price == order->price;
+                    if (command.intent == CommandIntent::REPLACE_DECREASE) {
+                        expect(samePrice && command.quantity < order->total, context + ": a decrease keeps the price");
+                    } else if (command.intent == CommandIntent::REPLACE_INSTRUCTIONS) {
+                        expect(samePrice && command.quantity == order->total, context + ": instructions only");
+                    } else if (command.intent == CommandIntent::REPLACE_INCREASE) {
+                        expect(samePrice && command.quantity >= order->total, context + ": an increase keeps the price");
+                    } else if (command.intent == CommandIntent::REPLACE_POST_ONLY_TAKE) {
+                        expect(command.postOnly && model.best(order->side == Side::BUY ? Side::SELL : Side::BUY) == command.price,
+                               context + ": a post-only replace at the opposing best");
+                    }
+                    break;
+                }
+                case CommandIntent::REPLACE_ZERO_ID: expect(command.orderId == 0, context + ": zero replace ID"); break;
+                case CommandIntent::REPLACE_ZERO_PRICE: expect(command.price == 0, context + ": zero replace price"); break;
+                case CommandIntent::REPLACE_ZERO_QUANTITY: expect(command.quantity == 0, context + ": zero replace total"); break;
+                case CommandIntent::REPLACE_INVALID_MODE:
+                    expect(!order_book::isValidSelfTradePrevention(command.selfTradePrevention), context + ": invalid replace mode");
+                    break;
+                case CommandIntent::REPLACE_PENDING_STOP:
+                    expect(model.pendingIds().contains(command.orderId), context + ": a replace of a pending stop");
+                    break;
+                case CommandIntent::REPLACE_REMOVED:
+                    expect(model.removedIds().contains(command.orderId), context + ": a replace of a removed ID");
+                    break;
+                case CommandIntent::REPLACE_UNKNOWN:
+                    expect(!model.restingIds().contains(command.orderId) && !model.pendingIds().contains(command.orderId) &&
+                               !model.removedIds().contains(command.orderId),
+                           context + ": a replace of an unknown ID");
+                    break;
+                case CommandIntent::REPLACE_AT_EXECUTED:
+                case CommandIntent::REPLACE_BELOW_EXECUTED: {
+                    const order_book::reference::ModelOrder* order = model.find(command.orderId);
+                    expect(order != nullptr && command.quantity != 0 && command.quantity <= order->total - order->open &&
+                               (command.intent == CommandIntent::REPLACE_BELOW_EXECUTED) ==
+                                   (command.quantity < order->total - order->open),
+                           context + ": a total at or below what has executed: " + formatCommand(command));
+                    break;
+                }
                 case CommandIntent::CANCEL_PENDING_STOP:
                     expect(model.pendingIds().contains(command.orderId), context + ": a valid stop cancel should pend");
                     break;
@@ -447,8 +509,19 @@ void testDistributions() {
         for (const auto& [intent, seen] : intents) {
             invalid += isIntentionallyInvalid(intent) ? seen : 0;
         }
-        expect(intents.size() == 24 && intents.count(CommandIntent::UNSPECIFIED) == 0,
-               context + ": every intent should occur, got " + std::to_string(intents.size()));
+        // A replace below a partly filled order's executed quantity needs one with two or more
+        // executed, which a profile that rarely trades may never build; it must occur in some.
+        std::string missing;
+        for (int raw = 0; raw < static_cast<int>(CommandIntent::UNSPECIFIED); ++raw) {
+            const auto intent = static_cast<CommandIntent>(raw);
+            if (intents.count(intent) != 0) {
+                seenAnywhere.insert(intent);
+            } else if (intent != CommandIntent::REPLACE_BELOW_EXECUTED) {
+                missing += std::string(" ") + intentName(intent);
+            }
+        }
+        expect(missing.empty() && intents.count(CommandIntent::UNSPECIFIED) == 0,
+               context + ": every intent should occur, missing:" + missing);
         const auto share = [](std::size_t part, std::size_t whole) {
             return 100.0 * static_cast<double>(part) / static_cast<double>(whole);
         };
@@ -491,7 +564,11 @@ void testDistributions() {
                context + ": new IDs should outnumber reused ones");
         expect(near(share(submissionsWithOrders, commandsWithOrders), profile.submitPercent),
                context + ": submission share " + std::to_string(share(submissionsWithOrders, commandsWithOrders)));
+        expect(near(share(replacesWithOrders, commandsWithOrders), profile.replacePercent),
+               context + ": replace share " + std::to_string(share(replacesWithOrders, commandsWithOrders)));
     }
+    expect(seenAnywhere.size() == static_cast<std::size_t>(CommandIntent::UNSPECIFIED),
+           "every intent should occur in some profile");
 }
 
 // Every profile passes on the engine and reaches what it is meant to stress.
@@ -605,6 +682,15 @@ void testProfilesHitTheirTargets() {
              return std::count_if(outcome.events.begin(), outcome.events.end(), [](const auto& event) {
                         return std::holds_alternative<order_book::StopTriggered>(event);
                     }) >= 3;
+         }},
+        {"replace-heavy", "a replace that keeps priority and one that crosses",
+         [kept = false](const ReferenceBook&, const Command& command, const auto& outcome) mutable {
+             if (command.type != CommandType::REPLACE || !outcome.success) {
+                 return false;
+             }
+             const auto& replaced = std::get<order_book::OrderReplaced>(outcome.events.front());
+             kept = kept || replaced.priorityKept;
+             return kept && tradesIn(outcome) > 0;
          }},
         {"immediate", "a market order that trades and expires the rest",
          [](const ReferenceBook&, const Command& command, const auto& outcome) {

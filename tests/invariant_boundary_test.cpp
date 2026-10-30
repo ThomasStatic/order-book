@@ -65,6 +65,8 @@ using order_book::Side;
         book.cancelOrder(2);
     } else if (command == "consumeLevel") {
         Access::consumeLevel(book, Side::BUY, 90, 1);
+    } else if (command == "replaceOrder") {
+        book.replaceOrder(order_book::ReplaceRequest{2, 90, 3});
     } else {
         std::cerr << "FAILED: unknown command " << command << std::endl;
         return EXIT_FAILURE;

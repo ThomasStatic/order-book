@@ -186,13 +186,8 @@ ExpectedOutcome ReferenceBook::submit(const OrderRequest& request) {
         pend(request);
         return outcome;
     }
-    if (request.postOnly) {
-        // Decided on price alone: at or through the opposing best would take, so it expires.
-        const std::optional<Price> opposing = best(request.side == Side::BUY ? Side::SELL : Side::BUY);
-        const bool takes = opposing && (request.side == Side::BUY ? request.price >= *opposing : request.price <= *opposing);
-        if (takes) {
-            return expireWhole(request);
-        }
+    if (request.postOnly && wouldTake(request.side, request.price)) {
+        return expireWhole(request);
     }
     ExpectedOutcome outcome;
     outcome.success = true;
@@ -201,6 +196,76 @@ ExpectedOutcome ReferenceBook::submit(const OrderRequest& request) {
     const Quantity filled = runOrder(request, outcome.events);
     outcome.remaining = request.quantity - filled;
     outcome.fillStatus = filled == 0 ? FillStatus::NONE : outcome.remaining == 0 ? FillStatus::FILLED : FillStatus::PARTIAL;
+    runCascade(outcome.events);
+    return outcome;
+}
+
+// Decided on price alone: at or through the opposing best would take.
+bool ReferenceBook::wouldTake(Side side, Price price) const {
+    const std::optional<Price> opposing = best(side == Side::BUY ? Side::SELL : Side::BUY);
+    return opposing && (side == Side::BUY ? price >= *opposing : price <= *opposing);
+}
+
+ExpectedOutcome ReferenceBook::replace(const ReplaceRequest& request) {
+    std::optional<RejectionReason> reason;
+    if (request.id == 0) {
+        reason = RejectionReason::INVALID_ORDER_ID;
+    } else if (request.price == 0) {
+        reason = RejectionReason::INVALID_PRICE;
+    } else if (request.quantity == 0) {
+        reason = RejectionReason::INVALID_QUANTITY;
+    } else if (!knownMode(request.selfTradePrevention)) {
+        reason = RejectionReason::INVALID_SELF_TRADE_PREVENTION;
+    } else if (pending.contains(request.id)) {
+        reason = RejectionReason::ORDER_NOT_REPLACEABLE;
+    } else if (!resting.contains(request.id)) {
+        reason = RejectionReason::ORDER_NOT_FOUND;
+    } else if (const ModelOrder& order = orders.at(request.id).order; request.quantity <= order.total - order.open) {
+        reason = RejectionReason::REPLACE_QUANTITY_TOO_LOW;
+    }
+    ExpectedOutcome outcome;
+    if (reason) {
+        outcome.rejection = reason;
+        outcome.events.push_back(ReplaceRejected{request.id, *reason});
+        ++seen.replacesRejected;
+        return outcome;
+    }
+
+    outcome.success = true;
+    ModelOrder& order = orders.at(request.id).order;
+    const Quantity executed = order.total - order.open;
+    const Quantity open = request.quantity - executed;
+    const bool keeps = request.price == order.price && request.quantity <= order.total;
+    outcome.events.push_back(OrderReplaced{request.id, order.side, request.price, request.quantity, open, keeps});
+    const auto wholeLife = [executed](Quantity filled, Quantity remaining) {
+        return executed + filled == 0 ? FillStatus::NONE : remaining == 0 ? FillStatus::FILLED : FillStatus::PARTIAL;
+    };
+    if (keeps) {
+        ++seen.replacesKept;
+        order.total = request.quantity;
+        order.open = open;
+        order.owner = request.owner;
+        outcome.remaining = open;
+        outcome.fillStatus = wholeLife(0, open);
+        return outcome;
+    }
+    ++seen.replacesLost;
+    const Side side = order.side;
+    if (request.postOnly && wouldTake(side, request.price)) {
+        remove(request.id);
+        outcome.events.push_back(OrderExpired{request.id, open});
+        ++seen.expired;
+        outcome.remaining = open;
+        outcome.fillStatus = wholeLife(0, open);
+        return outcome;
+    }
+    // It leaves its place and re-enters as if it had just arrived.
+    remove(request.id);
+    const OrderRequest incoming{request.id, side, request.price, open, OrderType::LIMIT, TimeInForce::GTC, 0, false,
+                                request.owner, request.selfTradePrevention};
+    const Quantity filled = runOrder(incoming, outcome.events, executed);
+    outcome.remaining = open - filled;
+    outcome.fillStatus = wholeLife(filled, outcome.remaining);
     runCascade(outcome.events);
     return outcome;
 }
@@ -234,7 +299,7 @@ ExpectedOutcome ReferenceBook::submitOrder(const OrderRequest& fields, bool mark
 
 // Matches the order by its plan (a FOK only if the plan fills it), then rests what is left if
 // it is a GTC limit not stopped by self-trade prevention, and otherwise expires it.
-Quantity ReferenceBook::runOrder(const OrderRequest& order, std::vector<BookEvent>& events) {
+Quantity ReferenceBook::runOrder(const OrderRequest& order, std::vector<BookEvent>& events, Quantity executedBefore) {
     const Price limit = priceless(order.type) ? 0 : order.price;
     MatchPlan matchPlan = plan(order.side, limit, order.quantity, order.owner, order.selfTradePrevention);
     if (order.timeInForce == TimeInForce::FOK && matchPlan.filled < order.quantity) {
@@ -245,7 +310,7 @@ Quantity ReferenceBook::runOrder(const OrderRequest& order, std::vector<BookEven
     removed.erase(order.id);
     const bool rests = order.timeInForce == TimeInForce::GTC && !matchPlan.stopped && !priceless(order.type);
     if (open > 0 && rests) {
-        rest(ModelOrder{order.id, order.side, order.price, open, order.owner});
+        rest(ModelOrder{order.id, order.side, order.price, open, order.owner, executedBefore + order.quantity});
     } else {
         if (open > 0) {
             events.push_back(OrderExpired{order.id, open});

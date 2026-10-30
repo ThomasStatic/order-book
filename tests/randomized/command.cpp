@@ -23,6 +23,11 @@ constexpr CommandIntent allIntents[] = {
     CommandIntent::TYPE_CANNOT_REST, CommandIntent::POST_ONLY_NOT_GTC_LIMIT, CommandIntent::INVALID_STP_MODE,
     CommandIntent::STOP_GTC,        CommandIntent::POST_ONLY_STOP,  CommandIntent::MISSING_STOP_PRICE,
     CommandIntent::STOP_PRICE_ON_LIMIT, CommandIntent::CANCEL_PENDING_STOP,
+    CommandIntent::REPLACE_DECREASE, CommandIntent::REPLACE_INSTRUCTIONS, CommandIntent::REPLACE_PRICE,
+    CommandIntent::REPLACE_INCREASE, CommandIntent::REPLACE_POST_ONLY_TAKE, CommandIntent::REPLACE_ZERO_ID,
+    CommandIntent::REPLACE_ZERO_PRICE, CommandIntent::REPLACE_ZERO_QUANTITY, CommandIntent::REPLACE_INVALID_MODE,
+    CommandIntent::REPLACE_UNKNOWN, CommandIntent::REPLACE_REMOVED, CommandIntent::REPLACE_PENDING_STOP,
+    CommandIntent::REPLACE_AT_EXECUTED, CommandIntent::REPLACE_BELOW_EXECUTED,
     CommandIntent::CANCEL_ACTIVE,   CommandIntent::CANCEL_REMOVED,  CommandIntent::CANCEL_UNKNOWN,
     CommandIntent::CANCEL_ZERO_ID,  CommandIntent::UNSPECIFIED};
 
@@ -161,6 +166,20 @@ const char* intentName(CommandIntent intent) {
         case CommandIntent::MISSING_STOP_PRICE: return "MISSING_STOP_PRICE";
         case CommandIntent::STOP_PRICE_ON_LIMIT: return "STOP_PRICE_ON_LIMIT";
         case CommandIntent::CANCEL_PENDING_STOP: return "CANCEL_PENDING_STOP";
+        case CommandIntent::REPLACE_DECREASE: return "REPLACE_DECREASE";
+        case CommandIntent::REPLACE_INSTRUCTIONS: return "REPLACE_INSTRUCTIONS";
+        case CommandIntent::REPLACE_PRICE: return "REPLACE_PRICE";
+        case CommandIntent::REPLACE_INCREASE: return "REPLACE_INCREASE";
+        case CommandIntent::REPLACE_POST_ONLY_TAKE: return "REPLACE_POST_ONLY_TAKE";
+        case CommandIntent::REPLACE_ZERO_ID: return "REPLACE_ZERO_ID";
+        case CommandIntent::REPLACE_ZERO_PRICE: return "REPLACE_ZERO_PRICE";
+        case CommandIntent::REPLACE_ZERO_QUANTITY: return "REPLACE_ZERO_QUANTITY";
+        case CommandIntent::REPLACE_INVALID_MODE: return "REPLACE_INVALID_MODE";
+        case CommandIntent::REPLACE_UNKNOWN: return "REPLACE_UNKNOWN";
+        case CommandIntent::REPLACE_REMOVED: return "REPLACE_REMOVED";
+        case CommandIntent::REPLACE_PENDING_STOP: return "REPLACE_PENDING_STOP";
+        case CommandIntent::REPLACE_AT_EXECUTED: return "REPLACE_AT_EXECUTED";
+        case CommandIntent::REPLACE_BELOW_EXECUTED: return "REPLACE_BELOW_EXECUTED";
         case CommandIntent::CANCEL_ACTIVE: return "CANCEL_ACTIVE";
         case CommandIntent::CANCEL_REMOVED: return "CANCEL_REMOVED";
         case CommandIntent::CANCEL_UNKNOWN: return "CANCEL_UNKNOWN";
@@ -176,6 +195,11 @@ bool isIntentionallyInvalid(CommandIntent intent) {
         case CommandIntent::REUSED_ID:
         case CommandIntent::CANCEL_ACTIVE:
         case CommandIntent::CANCEL_PENDING_STOP:
+        case CommandIntent::REPLACE_DECREASE:
+        case CommandIntent::REPLACE_INSTRUCTIONS:
+        case CommandIntent::REPLACE_PRICE:
+        case CommandIntent::REPLACE_INCREASE:
+        case CommandIntent::REPLACE_POST_ONLY_TAKE:
         case CommandIntent::UNSPECIFIED:
             return false;
         default:
@@ -202,10 +226,32 @@ Command Command::cancel(OrderId orderId, CommandIntent intent) {
     return command;
 }
 
+Command Command::replace(OrderId orderId, Price price, Quantity total, CommandIntent intent) {
+    Command command;
+    command.type = CommandType::REPLACE;
+    command.orderId = orderId;
+    command.price = price;
+    command.quantity = total;
+    command.intent = intent;
+    return command;
+}
+
 std::string formatCommand(const Command& command) {
     std::string line;
     if (command.type == CommandType::CANCEL) {
         line = "CANCEL id=" + std::to_string(command.orderId);
+    } else if (command.type == CommandType::REPLACE) {
+        line = "REPLACE id=" + std::to_string(command.orderId) + " price=" + std::to_string(command.price) +
+               " qty=" + std::to_string(command.quantity);
+        if (command.postOnly) {
+            line += " post_only=Y";
+        }
+        if (command.owner != 0) {
+            line += " owner=" + std::to_string(command.owner);
+        }
+        if (command.selfTradePrevention != SelfTradePrevention::CANCEL_RESTING) {
+            line += " stp=" + modeText(command.selfTradePrevention);
+        }
     } else {
         line = "SUBMIT id=" + std::to_string(command.orderId) + " side=" + sideText(command.side) +
                " price=" + std::to_string(command.price) + " qty=" + std::to_string(command.quantity);
@@ -249,6 +295,8 @@ Command parseCommand(const std::string& line) {
         command.type = CommandType::SUBMIT;
     } else if (operation == "CANCEL") {
         command.type = CommandType::CANCEL;
+    } else if (operation == "REPLACE") {
+        command.type = CommandType::REPLACE;
     } else {
         throw std::invalid_argument("unknown operation '" + operation + "'");
     }
@@ -270,6 +318,10 @@ Command parseCommand(const std::string& line) {
                                 key == "stp" || key == "stop_price";
         if (submitOnly && command.type == CommandType::CANCEL) {
             throw std::invalid_argument("a cancellation has no " + key);
+        }
+        const bool replaceField = key == "price" || key == "qty" || key == "post_only" || key == "owner" || key == "stp";
+        if (submitOnly && !replaceField && command.type == CommandType::REPLACE) {
+            throw std::invalid_argument("a replace has no " + key);
         }
         if (key == "id") {
             command.orderId = parseField(value, "id");
@@ -314,7 +366,8 @@ Command parseCommand(const std::string& line) {
             throw std::invalid_argument("unknown field '" + key + "'");
         }
     }
-    if (!sawId || (command.type == CommandType::SUBMIT && !(sawSide && sawPrice && sawQuantity))) {
+    if (!sawId || (command.type == CommandType::SUBMIT && !(sawSide && sawPrice && sawQuantity)) ||
+        (command.type == CommandType::REPLACE && !(sawPrice && sawQuantity))) {
         throw std::invalid_argument("missing a required field");
     }
     if (command.markedFilled && command.overload != SubmitOverload::ORDER) {
@@ -365,7 +418,7 @@ CommandStream readStream(std::istream& in) {
             continue;
         }
         try {
-            if (line.rfind("SUBMIT", 0) == 0 || line.rfind("CANCEL", 0) == 0) {
+            if (line.rfind("SUBMIT", 0) == 0 || line.rfind("CANCEL", 0) == 0 || line.rfind("REPLACE", 0) == 0) {
                 stream.commands.push_back(parseCommand(line));
                 continue;
             }

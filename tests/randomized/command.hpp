@@ -15,7 +15,7 @@
 
 namespace order_book::randomized {
 
-enum class CommandType { SUBMIT, CANCEL };
+enum class CommandType { SUBMIT, CANCEL, REPLACE };
 
 // Which submitOrder overload a submission goes through. Nearly every command uses the request;
 // the Order overload carries the faults only an Order can have (MARKED_FILLED) and a share of
@@ -53,6 +53,21 @@ enum class CommandIntent {
     CANCEL_REMOVED,  // filled or cancelled already
     CANCEL_UNKNOWN,  // never issued
     CANCEL_ZERO_ID,
+    // Valid replaces of a resting order, then intentionally invalid ones.
+    REPLACE_DECREASE,       // same price, a lower total above what has executed: keeps priority
+    REPLACE_INSTRUCTIONS,   // same price and total, new owner, mode, or post-only: keeps priority
+    REPLACE_PRICE,          // a new price, near the touch or marketable: loses priority, may cross
+    REPLACE_INCREASE,       // same price, a higher total: loses priority
+    REPLACE_POST_ONLY_TAKE, // post-only at a price that would take: expires whole
+    REPLACE_ZERO_ID,
+    REPLACE_ZERO_PRICE,
+    REPLACE_ZERO_QUANTITY,
+    REPLACE_INVALID_MODE,
+    REPLACE_UNKNOWN,
+    REPLACE_REMOVED,
+    REPLACE_PENDING_STOP,   // ORDER_NOT_REPLACEABLE
+    REPLACE_AT_EXECUTED,    // REPLACE_QUANTITY_TOO_LOW, a total of exactly what has executed
+    REPLACE_BELOW_EXECUTED, // and below it
     UNSPECIFIED      // written by hand
 };
 
@@ -83,10 +98,13 @@ struct Command {
     static Command submit(OrderId orderId, Side side, Price price, Quantity quantity,
                           CommandIntent intent = CommandIntent::UNSPECIFIED);
     static Command cancel(OrderId orderId, CommandIntent intent = CommandIntent::UNSPECIFIED);
+    // A replace's fields are its ID, price, quantity (the new total), post-only, owner, and mode.
+    static Command replace(OrderId orderId, Price price, Quantity total,
+                           CommandIntent intent = CommandIntent::UNSPECIFIED);
 };
 
-// One line, e.g. "SUBMIT id=17 side=BUY price=10002 qty=5 intent=NEW_ID" or
-// "CANCEL id=291 intent=CANCEL_ACTIVE". A side or type outside its enum prints as a number,
+// One line, e.g. "SUBMIT id=17 side=BUY price=10002 qty=5 intent=NEW_ID",
+// "CANCEL id=291 intent=CANCEL_ACTIVE", or "REPLACE id=8 price=10001 qty=12 intent=REPLACE_PRICE". A side or type outside its enum prints as a number,
 // and type, time in force, stop price, post-only, owner, mode, status, and overload appear only
 // when they differ from LIMIT, GTC, 0, not post-only, owner 0, CANCEL_RESTING, an unfilled
 // order, and the request overload.

@@ -12,6 +12,7 @@ namespace {
 
 constexpr std::int64_t maxPrice = std::numeric_limits<Price>::max();
 constexpr OrderId maxOrderId = std::numeric_limits<OrderId>::max();
+constexpr Quantity maxQuantity = std::numeric_limits<Quantity>::max();
 
 Price clampPrice(std::int64_t price) {
     return static_cast<Price>(std::clamp<std::int64_t>(price, 1, maxPrice));
@@ -22,13 +23,14 @@ std::vector<WorkloadProfile> makeProfiles() {
 
     WorkloadProfile balanced;
     balanced.name = "balanced";
-    balanced.purpose = "the default mix: 70/30 submit/cancel, 20% invalid, prices near the touch, mostly small sizes";
+    balanced.purpose = "the default mix: 60/25/15 submit/cancel/replace, 20% invalid, prices near the touch, mostly small sizes";
     profiles.push_back(balanced);
 
     WorkloadProfile aggressive = balanced;
     aggressive.name = "aggressive";
     aggressive.purpose = "mostly marketable and often large, so orders sweep several levels and leave remainders";
     aggressive.submitPercent = 80;
+    aggressive.replacePercent = 10;
     aggressive.marketablePercent = 60;
     aggressive.throughTicks = 10;
     aggressive.largeQuantityPercent = 20;
@@ -39,6 +41,7 @@ std::vector<WorkloadProfile> makeProfiles() {
     passive.name = "passive";
     passive.purpose = "few marketable orders spread over a wide range, building a deep book of many levels";
     passive.submitPercent = 80;
+    passive.replacePercent = 10;
     passive.marketablePercent = 5;
     passive.farPercent = 15;
     passive.nearTicks = 20;
@@ -51,6 +54,7 @@ std::vector<WorkloadProfile> makeProfiles() {
     cancelHeavy.name = "cancel-heavy";
     cancelHeavy.purpose = "more cancellations than submissions, churning levels in and out of the book";
     cancelHeavy.submitPercent = 45;
+    cancelHeavy.replacePercent = 10;
     cancelHeavy.marketablePercent = 15;
     profiles.push_back(cancelHeavy);
 
@@ -58,6 +62,7 @@ std::vector<WorkloadProfile> makeProfiles() {
     queue.name = "queue";
     queue.purpose = "prices packed into a few ticks at the bottom of the range, so long FIFO queues form at price 1";
     queue.submitPercent = 75;
+    queue.replacePercent = 10;
     queue.marketablePercent = 15;
     queue.farPercent = 0;
     queue.throughTicks = 0;
@@ -107,6 +112,13 @@ std::vector<WorkloadProfile> makeProfiles() {
     stopCascade.largeQuantityMax = 40;
     profiles.push_back(stopCascade);
 
+    WorkloadProfile replaceHeavy = balanced;
+    replaceHeavy.name = "replace-heavy";
+    replaceHeavy.purpose = "replaces 45% of commands, so orders are repriced, resized, and re-owned in place and across the touch";
+    replaceHeavy.submitPercent = 40;
+    replaceHeavy.replacePercent = 45;
+    profiles.push_back(replaceHeavy);
+
     WorkloadProfile immediate = balanced;
     immediate.name = "immediate";
     immediate.purpose = "market, IOC, and FOK orders 60% of submissions, often large, so FOKs fail and remainders expire";
@@ -129,9 +141,17 @@ OrderRequest requestOf(const Command& command) {
                         command.selfTradePrevention};
 }
 
+ReplaceRequest replaceRequestOf(const Command& command) {
+    return ReplaceRequest{command.orderId, command.price, command.quantity, command.postOnly, command.owner,
+                          command.selfTradePrevention};
+}
+
 ExpectedOutcome applyCommand(ReferenceBook& model, const Command& command) {
     if (command.type == CommandType::CANCEL) {
         return model.cancel(command.orderId);
+    }
+    if (command.type == CommandType::REPLACE) {
+        return model.replace(replaceRequestOf(command));
     }
     if (command.overload == SubmitOverload::ORDER) {
         return model.submitOrder(requestOf(command), command.markedFilled);
@@ -140,7 +160,8 @@ ExpectedOutcome applyCommand(ReferenceBook& model, const Command& command) {
 }
 
 std::string describeProfile(const WorkloadProfile& profile) {
-    return "submit=" + std::to_string(profile.submitPercent) + "% invalid=" + std::to_string(profile.invalidPercent) +
+    return "submit=" + std::to_string(profile.submitPercent) + "% replace=" + std::to_string(profile.replacePercent) +
+           "% invalid=" + std::to_string(profile.invalidPercent) +
            "% buy=" + std::to_string(profile.buyPercent) + "% reuse=" + std::to_string(profile.reuseIdPercent) +
            "% order-overload=" + std::to_string(profile.orderOverloadPercent) +
            "% ioc=" + std::to_string(profile.iocPercent) + "% fok=" + std::to_string(profile.fokPercent) +
@@ -196,9 +217,135 @@ std::uint64_t RandomCommandGenerator::below(std::uint64_t bound) {
 }
 
 Command RandomCommandGenerator::next(const ReferenceBook& model) {
-    const bool submit = chance(config.submitPercent);
+    const std::uint64_t kind = below(100);
     const bool invalid = chance(config.invalidPercent);
-    return submit ? nextSubmit(model, invalid) : nextCancel(model, invalid);
+    if (kind < config.submitPercent) {
+        return nextSubmit(model, invalid);
+    }
+    if (kind < config.submitPercent + config.replacePercent) {
+        return nextReplace(model, invalid);
+    }
+    return nextCancel(model, invalid);
+}
+
+Command RandomCommandGenerator::nextReplace(const ReferenceBook& model, bool invalid) {
+    const IdPool& resting = model.restingIds();
+    if (!invalid) {
+        if (resting.empty()) {
+            // Nothing rests to replace; submit instead, so the command stays valid.
+            return validSubmit(model);
+        }
+        const ModelOrder& order = *model.find(resting.at(below(resting.size())));
+        const Quantity executed = order.total - order.open;
+        const std::uint64_t roll = below(100);
+        CommandIntent intent = roll < 30   ? CommandIntent::REPLACE_DECREASE
+                             : roll < 40   ? CommandIntent::REPLACE_INSTRUCTIONS
+                             : roll < 75   ? CommandIntent::REPLACE_PRICE
+                             : roll < 90   ? CommandIntent::REPLACE_INCREASE
+                                           : CommandIntent::REPLACE_POST_ONLY_TAKE;
+        const Side opposing = order.side == Side::BUY ? Side::SELL : Side::BUY;
+        if (intent == CommandIntent::REPLACE_DECREASE && order.open < 2) {
+            intent = CommandIntent::REPLACE_INSTRUCTIONS;  // no lower total above the executed quantity
+        }
+        if (intent == CommandIntent::REPLACE_POST_ONLY_TAKE && !model.best(opposing)) {
+            intent = CommandIntent::REPLACE_PRICE;  // nothing to take
+        }
+        Command command = Command::replace(order.id, order.price, order.total, intent);
+        switch (intent) {
+            case CommandIntent::REPLACE_DECREASE:
+                command.quantity = static_cast<Quantity>(executed + 1 + below(order.open - 1));
+                break;
+            case CommandIntent::REPLACE_INSTRUCTIONS:
+                command.postOnly = chance(50);
+                break;
+            case CommandIntent::REPLACE_PRICE:
+                command.price = pickPrice(model, order.side);
+                break;
+            case CommandIntent::REPLACE_INCREASE: {
+                const std::uint64_t grown = std::uint64_t{order.total} + 1 + below(config.smallQuantityMax);
+                command.quantity = static_cast<Quantity>(std::min<std::uint64_t>(grown, maxQuantity));
+                break;
+            }
+            default:
+                command.postOnly = true;
+                command.price = *model.best(opposing);
+                break;
+        }
+        drawOwnership(command);
+        return command;
+    }
+
+    // One thing wrong, chosen among the faults possible now.
+    std::vector<CommandIntent> faults = {CommandIntent::REPLACE_ZERO_ID, CommandIntent::REPLACE_ZERO_PRICE,
+                                         CommandIntent::REPLACE_ZERO_QUANTITY, CommandIntent::REPLACE_INVALID_MODE,
+                                         CommandIntent::REPLACE_UNKNOWN};
+    if (!model.removedIds().empty()) {
+        faults.push_back(CommandIntent::REPLACE_REMOVED);
+    }
+    if (!model.pendingIds().empty()) {
+        faults.push_back(CommandIntent::REPLACE_PENDING_STOP);
+    }
+    if (!resting.empty()) {
+        faults.push_back(CommandIntent::REPLACE_AT_EXECUTED);
+        faults.push_back(CommandIntent::REPLACE_BELOW_EXECUTED);
+    }
+    const CommandIntent fault = faults[static_cast<std::size_t>(below(faults.size()))];
+    const Side side = chance(config.buyPercent) ? Side::BUY : Side::SELL;
+    const Price price = pickPrice(model, side);
+    Command command = Command::replace(0, price, pickQuantity(), fault);
+    switch (fault) {
+        case CommandIntent::REPLACE_ZERO_ID:
+            break;
+        case CommandIntent::REPLACE_ZERO_PRICE:
+        case CommandIntent::REPLACE_ZERO_QUANTITY:
+        case CommandIntent::REPLACE_INVALID_MODE:
+            // Malformed, so refused before the ID is looked up; any ID will do.
+            command.orderId = resting.empty() ? freshId() : resting.at(below(resting.size()));
+            if (fault == CommandIntent::REPLACE_ZERO_PRICE) {
+                command.price = 0;
+            } else if (fault == CommandIntent::REPLACE_ZERO_QUANTITY) {
+                command.quantity = 0;
+            } else {
+                command.selfTradePrevention = static_cast<SelfTradePrevention>(3 + below(6));
+            }
+            break;
+        case CommandIntent::REPLACE_UNKNOWN: {
+            const std::uint64_t unknown = std::min<std::uint64_t>(nextFreshId + below(1000), maxOrderId);
+            command.orderId = static_cast<OrderId>(unknown);
+            break;
+        }
+        case CommandIntent::REPLACE_REMOVED:
+            command.orderId = model.removedIds().at(below(model.removedIds().size()));
+            break;
+        case CommandIntent::REPLACE_PENDING_STOP:
+            command.orderId = model.pendingIds().at(below(model.pendingIds().size()));
+            break;
+        default: {
+            // A total at or below what a resting order has executed; with nothing executed,
+            // that is only possible at zero, which is another check. Partly filled orders can be
+            // rare (and below needs at least two executed), so up to sixteen are looked at.
+            const Quantity wanted = fault == CommandIntent::REPLACE_BELOW_EXECUTED ? 2 : 1;
+            const ModelOrder* candidate = model.find(resting.at(below(resting.size())));
+            for (int attempt = 1; attempt < 16 && candidate->total - candidate->open < wanted; ++attempt) {
+                candidate = model.find(resting.at(below(resting.size())));
+            }
+            const ModelOrder& order = *candidate;
+            const Quantity executed = order.total - order.open;
+            command.orderId = order.id;
+            command.price = order.price;
+            if (executed == 0) {
+                command.intent = CommandIntent::REPLACE_ZERO_QUANTITY;
+                command.quantity = 0;
+            } else if (fault == CommandIntent::REPLACE_BELOW_EXECUTED && executed > 1) {
+                command.quantity = static_cast<Quantity>(1 + below(executed - 1));
+            } else {
+                command.intent = CommandIntent::REPLACE_AT_EXECUTED;
+                command.quantity = executed;
+            }
+            break;
+        }
+    }
+    return command;
 }
 
 Command RandomCommandGenerator::validSubmit(const ReferenceBook& model) {

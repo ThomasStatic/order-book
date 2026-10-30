@@ -72,12 +72,12 @@ struct ActualOutcome {
 std::string formatOutcome(const ExpectedOutcome& outcome, CommandType type) {
     std::string text;
     if (outcome.success) {
-        text = type == CommandType::SUBMIT ? "ACCEPTED" : "CANCELLED";
+        text = type == CommandType::SUBMIT ? "ACCEPTED" : type == CommandType::REPLACE ? "REPLACED" : "CANCELLED";
     } else {
         text = std::string("REJECTED reason=") +
                (outcome.rejection ? rejectionReasonName(*outcome.rejection) : "(none given)");
     }
-    if (type == CommandType::SUBMIT) {
+    if (type != CommandType::CANCEL) {
         text += " remaining=" + std::to_string(outcome.remaining) + " fill=" + fillStatusName(outcome.fillStatus);
     }
     text += "\n";
@@ -91,10 +91,11 @@ std::optional<std::string> compareOutcomes(const ExpectedOutcome& expected, cons
                                            const Command& command) {
     const ExpectedOutcome& got = actual.outcome;
     const bool submission = command.type == CommandType::SUBMIT;
+    const bool quantities = command.type != CommandType::CANCEL;
     const bool same = expected.success == got.success && expected.rejection == got.rejection &&
                       expected.events == got.events &&
-                      (!submission || (expected.remaining == got.remaining && expected.fillStatus == got.fillStatus &&
-                                       actual.submissionId == command.orderId));
+                      (!quantities || (expected.remaining == got.remaining && expected.fillStatus == got.fillStatus)) &&
+                      (!submission || actual.submissionId == command.orderId);
     if (same) {
         return std::nullopt;
     }
@@ -280,12 +281,21 @@ std::optional<std::string> checkBehavior(const OrderBook& book, const Command& c
                    std::to_string(*last);
         }
     }
-    if (command.type != CommandType::SUBMIT || !actual.outcome.success) {
+    if (command.type == CommandType::CANCEL || !actual.outcome.success) {
         return std::nullopt;
     }
-    const OrderRequest submitted = requestOf(command);
     const std::vector<BookEvent>& events = actual.outcome.events;
-    if (hasNoPrice(submitted.type)) {
+    OrderRequest submitted = requestOf(command);
+    if (command.type == CommandType::REPLACE) {
+        // It runs as a GTC limit order of its open quantity, under its new instructions.
+        const auto* replaced = std::get_if<OrderReplaced>(&events.front());
+        if (replaced == nullptr) {
+            return "a replace's events should open with OrderReplaced";
+        }
+        submitted = OrderRequest{command.orderId, replaced->side, command.price, replaced->openQuantity, OrderType::LIMIT,
+                                 TimeInForce::GTC, 0, command.postOnly, command.owner, command.selfTradePrevention};
+    }
+    if (command.type == CommandType::SUBMIT && hasNoPrice(submitted.type)) {
         const auto* acceptance = events.empty() ? nullptr : std::get_if<OrderAccepted>(&events.front());
         if (acceptance == nullptr || acceptance->price != 0) {
             return "a market or STOP order's acceptance should report price 0";
@@ -293,7 +303,7 @@ std::optional<std::string> checkBehavior(const OrderBook& book, const Command& c
     }
     const auto ownerOf = [&](OrderId orderId) -> OwnerId {
         if (orderId == submitted.id) {
-            return command.overload == SubmitOverload::REQUEST ? submitted.owner : 0;
+            return command.overload == SubmitOverload::REQUEST || command.type == CommandType::REPLACE ? submitted.owner : 0;
         }
         const auto found = ledger.find(orderId);
         return found == ledger.end() ? 0 : found->second.owner;
@@ -312,7 +322,7 @@ std::optional<std::string> checkBehavior(const OrderBook& book, const Command& c
                 return "a stop triggered that was never accepted: " + formatEvent(events[begin]);
             }
             order = found->second;
-        } else if (command.overload == SubmitOverload::ORDER) {
+        } else if (command.type == CommandType::SUBMIT && command.overload == SubmitOverload::ORDER) {
             order.timeInForce = TimeInForce::GTC;
         }
         Quantity traded = 0;
@@ -371,7 +381,9 @@ std::string RunStats::summary() const {
     return "commands=" + std::to_string(commands) + " submissions=" + std::to_string(submissions) + " (accepted " +
            std::to_string(accepted) + ", rejected " + std::to_string(rejected) + ") cancellations=" +
            std::to_string(cancellations) + " (cancelled " + std::to_string(cancelled) + ", rejected " +
-           std::to_string(cancelsRejected) + ") intentionally-invalid=" + std::to_string(intentionallyInvalid) +
+           std::to_string(cancelsRejected) + ") replaces=" + std::to_string(replaces) + " (kept " +
+           std::to_string(replacesKept) + ", lost " + std::to_string(replacesLost) + ", rejected " +
+           std::to_string(replacesRejected) + ") intentionally-invalid=" + std::to_string(intentionallyInvalid) +
            " trades=" + std::to_string(trades) + " (at most " + std::to_string(mostTradesInOneSubmission) +
            " per submission) expired=" + std::to_string(expired) + " prevented=" + std::to_string(preventions) +
            " stops-triggered=" + std::to_string(stopsTriggered) + " (longest cascade " + std::to_string(longestCascade) +
@@ -448,7 +460,8 @@ std::optional<Failure> CommandReplayer::execute(OrderBook& book, ReferenceBook& 
         ++stats.intentionallyInvalid;
     }
     const bool submission = command.type == CommandType::SUBMIT;
-    ++(submission ? stats.submissions : stats.cancellations);
+    const bool replacing = command.type == CommandType::REPLACE;
+    ++(submission ? stats.submissions : replacing ? stats.replaces : stats.cancellations);
 
     const ExpectedOutcome expected = applyCommand(model, command);
 
@@ -457,7 +470,7 @@ std::optional<Failure> CommandReplayer::execute(OrderBook& book, ReferenceBook& 
     };
 
     ActualOutcome actual;
-    const char* operation = submission ? "submitOrder" : "cancelOrder";
+    const char* operation = submission ? "submitOrder" : replacing ? "replaceOrder" : "cancelOrder";
     try {
         if (submission) {
             const SubmissionResult result = command.overload == SubmitOverload::ORDER
@@ -468,6 +481,13 @@ std::optional<Failure> CommandReplayer::execute(OrderBook& book, ReferenceBook& 
             if (!actual.outcome.success) {
                 actual.outcome.rejection = result.getRejectionReason();
             }
+            actual.outcome.events = result.getEvents().toVector();
+            actual.outcome.remaining = result.getRemainingQuantity();
+            actual.outcome.fillStatus = result.getFillStatus();
+        } else if (replacing) {
+            const ReplaceResult result = book.replaceOrder(replaceRequestOf(command));
+            actual.outcome.success = result.isSuccess();
+            actual.outcome.rejection = result.getRejectionReason();
             actual.outcome.events = result.getEvents().toVector();
             actual.outcome.remaining = result.getRemainingQuantity();
             actual.outcome.fillStatus = result.getFillStatus();
@@ -499,6 +519,13 @@ std::optional<Failure> CommandReplayer::execute(OrderBook& book, ReferenceBook& 
             accepted.owner = 0;
         }
         owners.insert_or_assign(command.orderId, accepted);
+    } else if (replacing && actual.outcome.success) {
+        OrderRequest& replaced = owners[command.orderId];
+        replaced.price = command.price;
+        replaced.quantity = command.quantity;
+        replaced.postOnly = command.postOnly;
+        replaced.owner = command.owner;
+        replaced.selfTradePrevention = command.selfTradePrevention;
     }
     if (std::optional<std::string> difference = compareOutcomes(expected, actual, command)) {
         return fail(FailureType::OUTCOME_MISMATCH, *difference);
@@ -512,8 +539,19 @@ std::optional<Failure> CommandReplayer::execute(OrderBook& book, ReferenceBook& 
         }
     }
 
-    if (submission) {
-        ++(expected.success ? stats.accepted : stats.rejected);
+    if (replacing) {
+        if (!expected.success) {
+            ++stats.replacesRejected;
+        } else if (std::get<OrderReplaced>(expected.events.front()).priorityKept) {
+            ++stats.replacesKept;
+        } else {
+            ++stats.replacesLost;
+        }
+    }
+    if (submission || replacing) {
+        if (submission) {
+            ++(expected.success ? stats.accepted : stats.rejected);
+        }
         const auto count = [&](auto isKind) {
             return static_cast<std::size_t>(std::count_if(expected.events.begin(), expected.events.end(), isKind));
         };

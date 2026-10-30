@@ -51,6 +51,10 @@ struct RunStats {
     std::size_t preventions = 0;
     std::size_t stopsTriggered = 0;
     std::size_t longestCascade = 0;  // stops triggered by one command
+    std::size_t replaces = 0;
+    std::size_t replacesKept = 0;
+    std::size_t replacesLost = 0;
+    std::size_t replacesRejected = 0;
     std::size_t cancellations = 0;
     std::size_t cancelled = 0;
     std::size_t cancelsRejected = 0;

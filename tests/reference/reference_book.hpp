@@ -15,6 +15,7 @@
 #include "order_book/fill_status.hpp"
 #include "order_book/order_request.hpp"
 #include "order_book/rejection_reason.hpp"
+#include "order_book/replace_request.hpp"
 #include "order_book/side.hpp"
 #include "order_book/types.hpp"
 
@@ -47,10 +48,12 @@ struct ModelOrder {
     Price price;
     Quantity open;
     OwnerId owner = 0;
+    Quantity total = 0;  // its quantity as accepted or last replaced, so total - open has executed
 };
 
 // Everything a command should report: whether it succeeded, why not, its exact events, and
-// for a submission what was left of it and its fill status (at the end of its own match).
+// for a submission what was left of it and its fill status (at the end of its own match; for
+// a replace, over the order's whole life).
 struct ExpectedOutcome {
     bool success = false;
     std::optional<RejectionReason> rejection;
@@ -95,6 +98,9 @@ struct ModelCounters {
     std::size_t stopsTriggered = 0;
     std::size_t cancelled = 0;
     std::size_t cancelsRejected = 0;
+    std::size_t replacesKept = 0;
+    std::size_t replacesLost = 0;
+    std::size_t replacesRejected = 0;
 };
 
 // A deliberately plain model of the book: validation in the documented order, then
@@ -120,6 +126,10 @@ public:
     ExpectedOutcome submitOrder(const OrderRequest& fields, bool markedFilled);
     // Cancels a resting order or a pending stop.
     ExpectedOutcome cancel(OrderId orderId);
+    // replaceOrder: the replace checks in order; then priority kept (same price, no increase)
+    // in place, or lost: a post-only replacement that would take leaves the book expired, and
+    // any other re-enters as a new GTC limit order of its open quantity, matching if it crosses.
+    ExpectedOutcome replace(const ReplaceRequest& request);
 
     // The plan for an incoming order on `side` with this limit price (0 for none, a market
     // order), quantity, owner (0 for none), and self-trade prevention mode. Changes nothing.
@@ -167,7 +177,9 @@ private:
     ExpectedOutcome expireWhole(const OrderRequest& request);
     // Runs an incoming order (the submitted one, or a triggered stop as its market or limit
     // order) to the end of its own lifecycle, appending its events; returns how much it filled.
-    Quantity runOrder(const OrderRequest& order, std::vector<BookEvent>& events);
+    // executedBefore is what a replaced order had traded, so a resting remainder keeps its total.
+    Quantity runOrder(const OrderRequest& order, std::vector<BookEvent>& events, Quantity executedBefore = 0);
+    bool wouldTake(Side side, Price price) const;
     void runCascade(std::vector<BookEvent>& events);
     void applyPlan(const MatchPlan& plan, OrderId incomingId, std::vector<BookEvent>& events);
     void triggerAt(Price tradePrice);

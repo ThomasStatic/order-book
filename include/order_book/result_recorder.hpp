@@ -11,6 +11,7 @@
 namespace order_book {
 
     class SubmissionResult;
+    class ReplaceResult;
 
     // A submission's trades and events, held inline for up to four trades and six events, so
     // reporting one allocates nothing in the common case: a submission that trades makes
@@ -41,6 +42,11 @@ namespace order_book {
         // Opens the submitted order's part of the result with its acceptance. price 0 means
         // the order has no limit price. Throws std::invalid_argument on a zero ID or quantity.
         explicit ResultRecorder(const OrderAccepted& acceptance);
+        // Opens a replace's result with its OrderReplaced: the replaced order is the current one,
+        // with its open quantity to trade; executedBefore is what it had traded before the
+        // replace. Throws std::invalid_argument on a zero ID, price, or open quantity, or unless
+        // the new total is the open quantity plus executedBefore.
+        ResultRecorder(const OrderReplaced& replacement, Quantity executedBefore);
 
         // Appends a trade and its TradeExecuted. Refused unless the trade's incoming order is
         // the current order, on its side (so the resting order is on the other), at a price
@@ -75,8 +81,10 @@ namespace order_book {
         void reserve(std::size_t addedTrades, std::size_t addedEvents);
 
         // The result. The recorder is spent afterwards: any further call throws
-        // std::invalid_argument.
+        // std::invalid_argument. finish() is for a recorder opened by an acceptance,
+        // finishReplace() for one opened by a replacement; the other throws.
         SubmissionResult finish();
+        ReplaceResult finishReplace();
 
     private:
         friend class SubmissionResult;
@@ -109,6 +117,8 @@ namespace order_book {
         Quantity submittedRemaining = 0;
         bool submittedCurrent = true;
         bool finished = false;
+        bool replacing = false;
+        Quantity executedBefore = 0;  // a replaced order's, before the replace
 
         CurrentOrder current;
     };
