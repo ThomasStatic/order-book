@@ -98,8 +98,16 @@ _Avoid_: invalid (too broad: a well-formed order can still be rejected)
 ## Books and records
 
 **Instrument**:
-One tradable thing, with its own book. Orders never cross instruments, and the book gives an instrument no other meaning: no tick size, lot size, or decimal price.
+One tradable thing, with its own book. Orders never cross instruments, and the book gives an instrument no other meaning: no tick size, lot size, or decimal price. Order IDs and trade IDs mean something only within one instrument.
 _Avoid_: product, security, market, symbol (a symbol names an instrument)
+
+**Symbol**:
+The short name that identifies an instrument, and its only identity in any command or record. It never changes for the life of the instrument.
+_Avoid_: ticker, instrument ID, security ID
+
+**Instrument list**:
+The instruments an engine may trade, fixed when it starts. A later start may add to it but never remove from it.
+_Avoid_: universe, security master
 
 **Snapshot**:
 A summary of a book's depth at one moment: its best levels on each side, with their aggregate quantities. It describes a book; it cannot rebuild one.
