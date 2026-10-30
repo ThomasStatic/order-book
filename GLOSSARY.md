@@ -129,14 +129,30 @@ _Avoid_: accepted commands, order flow
 A summary of a book's depth at one moment: its best levels on each side, with their aggregate quantities. It describes a book; it cannot rebuild one.
 _Avoid_: checkpoint, dump
 
+**Book image**:
+The complete state of one book at one moment, from which an identical book can be rebuilt. It says nothing of which instrument it belongs to or where in a command log it stands.
+_Avoid_: state image, dump
+
 **Checkpoint**:
-A complete image of a book's state at one moment, from which an identical book can be rebuilt.
-_Avoid_: snapshot, dump, state image
+One instrument's book image, published with its symbol and log position once it has been proved to restore. Each book has its own; no checkpoint covers a shard or the engine.
+_Avoid_: snapshot, dump
 
 **Command log**:
 The sequence of commands a book or engine was given, recorded so that replaying it reproduces the same books and events. It records commands only, never their results.
 _Avoid_: journal, event log, audit log
 
+**Log position**:
+A place in a command log. A checkpoint at a log position reflects every command for its instrument before that place, and none at or after it.
+_Avoid_: offset, sequence
+
 **Replay**:
 Feeding a recorded sequence of commands to fresh books, which produces the same books and events as the original run.
 _Avoid_: recovery (recovery is a replay that starts from a checkpoint)
+
+**Restore**:
+Rebuilding a book from a book image, without running any command.
+_Avoid_: load, recover
+
+**Recovery**:
+Bringing the books back after a stop or crash: restoring each from its checkpoint, then replaying the command log after it.
+_Avoid_: restore, restart
