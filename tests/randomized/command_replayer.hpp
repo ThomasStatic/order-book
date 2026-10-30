@@ -4,6 +4,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "command.hpp"
@@ -47,6 +48,7 @@ struct RunStats {
     std::size_t trades = 0;
     std::size_t mostTradesInOneSubmission = 0;
     std::size_t expired = 0;
+    std::size_t preventions = 0;
     std::size_t cancellations = 0;
     std::size_t cancelled = 0;
     std::size_t cancelsRejected = 0;
@@ -73,7 +75,8 @@ using PropertyCheck = std::function<std::optional<std::string>(const OrderBook& 
 // runs the book's complete invariant check, then checks the behavior properties against the
 // engine's own result and book alone (so a misreading the model shares still fails: no IOC
 // or FOK order rests, an unfilled remainder of one ends its events as an OrderExpired, and a
-// FOK trades all or nothing; a post-only order never takes), then
+// FOK trades all or nothing; a post-only order never takes; no two orders of the same nonzero
+// owner trade, judged from the commands' owners), then
 // compares the result and its exact events with the model's prediction, and every level and
 // FIFO queue with the model's.
 class CommandReplayer {
@@ -90,7 +93,10 @@ public:
                   CommandRecorder& recorder) const;
 
 private:
-    std::optional<Failure> execute(OrderBook& book, ReferenceBook& model, const Command& command,
+    // Each accepted request's owner by order ID, from the commands run, for the behavior check.
+    using OwnerLedger = std::unordered_map<OrderId, OwnerId>;
+
+    std::optional<Failure> execute(OrderBook& book, ReferenceBook& model, OwnerLedger& owners, const Command& command,
                                    std::size_t index, RunStats& stats) const;
 
     PropertyCheck property;

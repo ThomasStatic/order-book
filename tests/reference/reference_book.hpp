@@ -45,6 +45,7 @@ struct ModelOrder {
     Side side;
     Price price;
     Quantity open;
+    OwnerId owner = 0;
 };
 
 // Everything a command should report: whether it succeeded, why not, its exact events, and
@@ -64,18 +65,23 @@ struct ModelLevel {
     std::vector<std::pair<OrderId, Quantity>> orders;
 };
 
-// One step of a match plan: a trade with one resting order (the maker), at its price.
-struct PlannedTrade {
+// One step of a match plan, with one resting order (the maker), at its price: a trade of
+// `quantity`, or a prevented self-trade that removes the maker whole (`quantity` is what it had
+// open) or, under CANCEL_INCOMING, leaves it (`quantity` 0).
+struct PlanStep {
     OrderId maker;
     Price price;
     Quantity quantity;
+    bool prevented = false;
 };
 
 // What an incoming order would do against the book as it stands, worked out without changing
-// it: each step in execution order, and how much of the order they fill.
+// it: each step in execution order, how much of the order they fill, and whether self-trade
+// prevention stops it (its remainder then expires, even on a GTC order).
 struct MatchPlan {
-    std::vector<PlannedTrade> steps;
+    std::vector<PlanStep> steps;
     Quantity filled = 0;
+    bool stopped = false;
 };
 
 // What the model has seen so far, counted from the outcomes it predicted.
@@ -84,6 +90,7 @@ struct ModelCounters {
     std::size_t submissionsRejected = 0;
     std::size_t trades = 0;
     std::size_t expired = 0;
+    std::size_t preventions = 0;
     std::size_t cancelled = 0;
     std::size_t cancelsRejected = 0;
 };
@@ -109,8 +116,9 @@ public:
     ExpectedOutcome cancel(OrderId orderId);
 
     // The plan for an incoming order on `side` with this limit price (0 for none, a market
-    // order) and quantity. Changes nothing.
-    MatchPlan plan(Side side, Price limitPrice, Quantity quantity) const;
+    // order), quantity, owner (0 for none), and self-trade prevention mode. Changes nothing.
+    MatchPlan plan(Side side, Price limitPrice, Quantity quantity, OwnerId owner = 0,
+                   SelfTradePrevention mode = SelfTradePrevention::CANCEL_RESTING) const;
 
     const IdPool& restingIds() const { return resting; }
     // IDs accepted at some point that rest no longer: filled, cancelled, or filled or expired on
@@ -143,7 +151,8 @@ private:
     // Takes a resting order off its level and forgets it.
     void remove(OrderId orderId);
     template <typename Levels>
-    void planAgainst(const Levels& levels, Side side, Price limitPrice, Quantity quantity, MatchPlan& plan) const;
+    void planAgainst(const Levels& levels, Side side, Price limitPrice, Quantity quantity, OwnerId owner,
+                     SelfTradePrevention mode, MatchPlan& plan) const;
     template <typename Levels>
     std::vector<ModelLevel> describe(const Levels& levels) const;
 

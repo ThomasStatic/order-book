@@ -33,12 +33,23 @@ namespace order_book {
     // ID 0, which is never a valid order ID, marks an empty slot; emplacing it throws
     // std::invalid_argument. Iterators and references to entries are invalidated by any
     // emplace (which may grow the table) and any erase (which may move entries), as is the
-    // position of every entry: iteration order is unspecified. An iterator gives a
-    // std::pair<OrderId, OrderLocation>; change only its second. Growing gives the strong
-    // guarantee: if allocating the new array throws, the table is unchanged.
+    // position of every entry: iteration order is unspecified. An iterator gives an
+    // OrderIndexEntry; change only its second and owner. Growing gives the strong guarantee: if
+    // allocating the new array throws, the table is unchanged.
+    //
+    // One slot of the index. Named like the std::pair<OrderId, OrderLocation> it replaced; the
+    // owner sits where that pair had padding, so a slot is no bigger.
+    struct OrderIndexEntry {
+        OrderId first;  // the order's ID
+        OwnerId owner;  // for self-trade prevention; 0 for none
+        OrderLocation second;
+    };
+    static_assert(sizeof(OrderIndexEntry) == sizeof(std::pair<OrderId, OrderLocation>),
+                  "the owner should fill the slot's padding, not grow it");
+
     class OrderIndex {
     public:
-        using value_type = std::pair<OrderId, OrderLocation>;
+        using value_type = OrderIndexEntry;
 
         // Visits occupied slots only, in table order.
         template <bool IsConst>
@@ -168,7 +179,7 @@ namespace order_book {
 
         // Adds an entry unless one with this ID exists; either way returns the entry with the
         // ID and whether it was added. May grow the table first, invalidating iterators.
-        std::pair<iterator, bool> emplace(OrderId id, const OrderLocation& location) {
+        std::pair<iterator, bool> emplace(OrderId id, const OrderLocation& location, OwnerId owner = 0) {
             if(id == emptyId) {
                 throw std::invalid_argument("order index cannot hold the reserved id 0");
             }
@@ -182,7 +193,7 @@ namespace order_book {
             while(slots[slot].first != emptyId) {
                 slot = (slot + 1) & mask;
             }
-            slots[slot] = value_type{id, location};
+            slots[slot] = value_type{id, owner, location};
             ++entries;
             return {iterator(slots.data() + slot, slots.data() + slots.size()), true};
         }
@@ -248,7 +259,7 @@ namespace order_book {
 
         // capacity is a power of two, at least minimumCapacity and more than size() / 0.75.
         void growTo(std::size_t capacity) {
-            std::vector<value_type> grown(capacity, value_type{emptyId, OrderLocation(0, Side::BUY, {}, nullptr)});
+            std::vector<value_type> grown(capacity, value_type{emptyId, 0, OrderLocation(0, Side::BUY, {}, nullptr)});
             unsigned int grownShift = 64;
             for(std::size_t remaining = capacity; remaining > 1; remaining >>= 1) {
                 --grownShift;

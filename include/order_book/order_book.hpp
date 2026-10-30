@@ -17,6 +17,7 @@
 #include "order_request.hpp"
 #include "price_level.hpp"
 #include "result_recorder.hpp"
+#include "self_trade_prevention.hpp"
 #include "side.hpp"
 #include "submission_result.hpp"
 #include "time_in_force.hpp"
@@ -76,23 +77,46 @@ namespace order_book {
         // Appends an already accepted order to the back of its price level and indexes
         // it, leaving the book unchanged if that throws. Throws std::runtime_error if its
         // ID is already indexed: callers must validate first.
-        void restOrder(const Order& order);
+        void restOrder(const Order& order, OwnerId owner = 0);
+
+        // Takes a resting order off its level and out of the index, erasing the level once
+        // empty: cancelOrder's removal, shared with self-trade prevention. Throws
+        // std::runtime_error, before changing anything, if the entry's level handle does not
+        // name a level at its price and side; after that check nothing can throw.
+        void removeResting(OrderIndex::iterator entry);
+
+        // What a submission says about how it may trade, beyond the order itself.
+        struct Instructions {
+            TimeInForce timeInForce = TimeInForce::GTC;
+            OwnerId owner = 0;
+            SelfTradePrevention selfTradePrevention = SelfTradePrevention::CANCEL_RESTING;
+        };
 
         // Whether the order is at or through the best opposing price: an incoming order that
         // would take liquidity. A locked price counts; an empty opposite side never does. Shared
         // by addOrder, which refuses such an order, and post-only, which expires it.
         bool crossesBestOpposing(const Order& incoming) const;
 
-        // How many trades a fill-or-kill order would make, or nothing if the opposing levels
-        // within its limit cannot fill its whole quantity. Reads only: it sums level aggregates
-        // from the best level, then counts the orders it would take at the last level, so it
-        // costs O(levels crossed + orders taken at the last).
-        std::optional<std::size_t> fillOrKillTrades(const Order& incoming) const;
+        // How many trades and self-trade preventions a fill-or-kill order would make, or nothing
+        // if the opposing orders within its limit cannot fill its whole quantity. Reads only.
+        // Without an owner it sums level aggregates from the best level, then counts the orders
+        // it would take at the last, so it costs O(levels crossed + orders taken at the last).
+        // With one it visits every order it crosses, O(orders crossed), so a self-match never
+        // counts toward filling: under CANCEL_RESTING it skips (and counts) each own order, and
+        // under the other modes it stops at the first.
+        struct FillPlan {
+            std::size_t trades;
+            std::size_t preventions;
+        };
+        std::optional<FillPlan> fillOrKillPlan(const Order& incoming, const Instructions& how) const;
 
         Trade executeOnce(Order& incoming);
 
-        // Matches while the incoming order has quantity and crosses, recording each trade.
-        void matchOrder(Order& incoming, ResultRecorder& recorder);
+        // Matches while the incoming order has quantity and crosses, recording each trade. With
+        // an owner, it first checks the oldest order at the best opposing level for the same
+        // owner, and prevents that match as the mode says. Returns whether self-trade
+        // prevention stopped the incoming order, whose remainder must then expire.
+        bool matchOrder(Order& incoming, const Instructions& how, ResultRecorder& recorder);
 
         // submitOrder's steps once the order is accepted, shared by both overloads: number it,
         // match it, build the result, then rest any remainder (GTC) or expire it (IOC). A FOK
@@ -100,11 +124,11 @@ namespace order_book {
         // then is numbered and matched, so it either completes or throws having changed nothing.
         // acceptance is what the result reports: the incoming order as submitted, at price 0 for
         // a market order, which runs as a limit order at the furthest price on its side.
-        SubmissionResult matchAndRest(Order& incoming, const OrderAccepted& acceptance, TimeInForce timeInForce);
-        SubmissionResult fillOrKill(Order& incoming, const OrderAccepted& acceptance);
+        SubmissionResult matchAndRest(Order& incoming, const OrderAccepted& acceptance, const Instructions& how);
+        SubmissionResult fillOrKill(Order& incoming, const OrderAccepted& acceptance, const Instructions& how);
         // Rests the order, or expires it whole if it would take. Strongly atomic and numbered
         // last, like addOrder, so a throw changes nothing.
-        SubmissionResult postOnly(Order& incoming);
+        SubmissionResult postOnly(Order& incoming, OwnerId owner);
 
         // Fills resting orders at one price level in FIFO order, unindexing fully filled
         // orders and erasing the level once it is empty. It makes no trades and reports no
@@ -213,7 +237,15 @@ namespace order_book {
         // its acceptance reports price 0; as IOC or FOK, its remainder expires. A post-only
         // order (GTC LIMIT only, else POST_ONLY_NOT_ALLOWED) rests like any limit order, or, if
         // it would take liquidity (at or through the best opposing price), is accepted and
-        // wholly expired without trading or allocating; it is strongly atomic and numbered last. A well-formed request is always
+        // wholly expired without trading or allocating; it is strongly atomic and numbered last.
+        // Self-trade prevention: when the incoming order has a nonzero owner and would trade
+        // next with a resting order of the same owner, the incoming order's mode decides
+        // (CANCEL_RESTING removes the resting order whole and goes on matching; CANCEL_INCOMING
+        // leaves it and stops, expiring the remainder even of a GTC order; CANCEL_BOTH does
+        // both), reported as a SelfTradePrevented among the trades, in execution order. A
+        // prevention is never a trade: it consumes no trade ID. A FOK never counts a self-match
+        // toward filling, and one that cannot fill cancels nothing. Post-only never matches, so
+        // it never runs it. An invalid mode is INVALID_SELF_TRADE_PREVENTION whatever the owner. A well-formed request is always
         // accepted and matched like submitOrder(Order); then a GTC remainder rests, and an IOC
         // remainder expires instead (a trailing OrderExpired for the whole remainder, which still
         // counts as the result's remaining quantity). An IOC that does not cross, or faces an

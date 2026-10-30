@@ -462,6 +462,54 @@ void testPostOnlyThatWouldTakeDoesNotAllocate() {
     expect(!threw && stillArmed && book.activeOrderCount() == 1, "a post-only order that would take should not allocate");
 }
 
+order_book::OrderRequest ownedRequest(order_book::OrderId id, Side side, order_book::Price price, unsigned int quantity,
+                                      order_book::OwnerId owner,
+                                      order_book::TimeInForce timeInForce = order_book::TimeInForce::GTC) {
+    order_book::OrderRequest request{id, side, price, quantity, order_book::OrderType::LIMIT, timeInForce};
+    request.owner = owner;
+    return request;
+}
+
+// Asks 100..105, one lot each, alternating between owner 7 and owner 8.
+void setUpAlternatingOwners(OrderBook& book) {
+    for (unsigned int i = 0; i < 6; ++i) {
+        book.submitOrder(ownedRequest(10 + i, Side::SELL, 100 + i, 1, i % 2 == 0 ? 7 : 8));
+    }
+}
+
+// A CANCEL_RESTING sweep of three preventions and three trades outgrows the result's inline
+// storage. Whatever fails, every prevention and execution made stands, and no remainder rests.
+void testCancelRestingSweepStaysConsistent() {
+    const long failures = failEachAllocationInTurn(
+        setUpAlternatingOwners,
+        [](OrderBook& book) { book.submitOrder(ownedRequest(2, Side::BUY, 105, 9, 7)); },
+        [](const OrderBook& book, const std::string& context) {
+            expect(!book.hasBids() && Access::index(book).count(2) == 0,
+                   context + ": a failed sweep should not rest the incoming order");
+            const unsigned int executions = Access::nextTradeId(book) - 1;
+            expect(Access::index(book).size() == Access::asks(book).size() && Access::index(book).size() <= 6 - executions,
+                   context + ": every execution and prevention made should have removed one resting order");
+        },
+        "CANCEL_RESTING sweep");
+    expect(failures > 0, "CANCEL_RESTING sweep: at least one allocation failure should have been injected");
+}
+
+// A FOK with three preventions and three trades reserves its whole result before anything
+// changes: whatever fails, nothing does, counters included.
+void testFillOrKillWithPreventionsIsAllOrNothing() {
+    const long failures = failEachAllocationInTurn(
+        setUpAlternatingOwners,
+        [](OrderBook& book) {
+            book.submitOrder(ownedRequest(2, Side::BUY, 105, 3, 7, order_book::TimeInForce::FOK));
+        },
+        [](const OrderBook& book, const std::string& context) {
+            expect(Access::index(book).size() == 6 && Access::nextTradeId(book) == 1 && Access::nextSequenceNum(book) == 7,
+                   context + ": a failed FOK should change nothing, counters included");
+        },
+        "FOK with preventions");
+    expect(failures > 0, "FOK with preventions: at least one allocation failure should have been injected");
+}
+
 void testConsumeLevelFailsBeforeFilling() {
     const long failures = failEachAllocationInTurn(
         [](OrderBook& book) {
@@ -567,6 +615,8 @@ int main() {
         testMarketSweepStaysConsistent();
         testPostOnlyRestRollsBack();
         testPostOnlyThatWouldTakeDoesNotAllocate();
+        testCancelRestingSweepStaysConsistent();
+        testFillOrKillWithPreventionsIsAllOrNothing();
         testConsumeLevelFailsBeforeFilling();
         testCancelOrderDoesNotAllocate();
         testRequestAllocatesLikeOrder();

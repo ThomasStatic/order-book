@@ -20,7 +20,7 @@ constexpr CommandIntent allIntents[] = {
     CommandIntent::ZERO_ORDER_ID,   CommandIntent::ZERO_PRICE,      CommandIntent::ZERO_QUANTITY,
     CommandIntent::INVALID_SIDE,    CommandIntent::UNSUPPORTED_TYPE, CommandIntent::MARKED_FILLED,
     CommandIntent::INVALID_TIME_IN_FORCE, CommandIntent::MARKET_WITH_PRICE, CommandIntent::MARKET_GTC,
-    CommandIntent::TYPE_CANNOT_REST, CommandIntent::POST_ONLY_NOT_GTC_LIMIT,
+    CommandIntent::TYPE_CANNOT_REST, CommandIntent::POST_ONLY_NOT_GTC_LIMIT, CommandIntent::INVALID_STP_MODE,
     CommandIntent::CANCEL_ACTIVE,   CommandIntent::CANCEL_REMOVED,  CommandIntent::CANCEL_UNKNOWN,
     CommandIntent::CANCEL_ZERO_ID,  CommandIntent::UNSPECIFIED};
 
@@ -99,6 +99,25 @@ TimeInForce parseTimeInForce(const std::string& text) {
     return static_cast<TimeInForce>(parseNumber(text, std::numeric_limits<int>::max(), "time in force"));
 }
 
+std::string modeText(SelfTradePrevention mode) {
+    switch (mode) {
+        case SelfTradePrevention::CANCEL_RESTING: return "CANCEL_RESTING";
+        case SelfTradePrevention::CANCEL_INCOMING: return "CANCEL_INCOMING";
+        case SelfTradePrevention::CANCEL_BOTH: return "CANCEL_BOTH";
+    }
+    return std::to_string(static_cast<int>(mode));
+}
+
+SelfTradePrevention parseMode(const std::string& text) {
+    for (SelfTradePrevention mode : {SelfTradePrevention::CANCEL_RESTING, SelfTradePrevention::CANCEL_INCOMING,
+                                     SelfTradePrevention::CANCEL_BOTH}) {
+        if (text == modeText(mode)) {
+            return mode;
+        }
+    }
+    return static_cast<SelfTradePrevention>(parseNumber(text, std::numeric_limits<int>::max(), "self-trade prevention"));
+}
+
 CommandIntent parseIntent(const std::string& text) {
     for (CommandIntent intent : allIntents) {
         if (text == intentName(intent)) {
@@ -126,6 +145,7 @@ const char* intentName(CommandIntent intent) {
         case CommandIntent::MARKET_GTC: return "MARKET_GTC";
         case CommandIntent::TYPE_CANNOT_REST: return "TYPE_CANNOT_REST";
         case CommandIntent::POST_ONLY_NOT_GTC_LIMIT: return "POST_ONLY_NOT_GTC_LIMIT";
+        case CommandIntent::INVALID_STP_MODE: return "INVALID_STP_MODE";
         case CommandIntent::CANCEL_ACTIVE: return "CANCEL_ACTIVE";
         case CommandIntent::CANCEL_REMOVED: return "CANCEL_REMOVED";
         case CommandIntent::CANCEL_UNKNOWN: return "CANCEL_UNKNOWN";
@@ -182,6 +202,12 @@ std::string formatCommand(const Command& command) {
         if (command.postOnly) {
             line += " post_only=Y";
         }
+        if (command.owner != 0) {
+            line += " owner=" + std::to_string(command.owner);
+        }
+        if (command.selfTradePrevention != SelfTradePrevention::CANCEL_RESTING) {
+            line += " stp=" + modeText(command.selfTradePrevention);
+        }
         if (command.markedFilled) {
             line += " status=FILLED";
         }
@@ -221,7 +247,8 @@ Command parseCommand(const std::string& line) {
         const std::string key = token.substr(0, equals);
         const std::string value = token.substr(equals + 1);
         const bool submitOnly = key == "side" || key == "price" || key == "qty" || key == "type" || key == "status" ||
-                                key == "overload" || key == "tif" || key == "post_only";
+                                key == "overload" || key == "tif" || key == "post_only" || key == "owner" ||
+                                key == "stp";
         if (submitOnly && command.type == CommandType::CANCEL) {
             throw std::invalid_argument("a cancellation has no " + key);
         }
@@ -239,6 +266,10 @@ Command parseCommand(const std::string& line) {
             sawQuantity = true;
         } else if (key == "type") {
             command.orderType = parseType(value);
+        } else if (key == "owner") {
+            command.owner = parseField(value, "owner");
+        } else if (key == "stp") {
+            command.selfTradePrevention = parseMode(value);
         } else if (key == "post_only") {
             if (value != "Y") {
                 throw std::invalid_argument("post_only can only be Y, got '" + value + "'");
@@ -268,7 +299,9 @@ Command parseCommand(const std::string& line) {
     if (command.markedFilled && command.overload != SubmitOverload::ORDER) {
         throw std::invalid_argument("status=FILLED needs overload=ORDER: a request has no fill status");
     }
-    if (command.overload == SubmitOverload::ORDER && (command.timeInForce != TimeInForce::GTC || command.postOnly)) {
+    if (command.overload == SubmitOverload::ORDER &&
+        (command.timeInForce != TimeInForce::GTC || command.postOnly || command.owner != 0 ||
+         command.selfTradePrevention != SelfTradePrevention::CANCEL_RESTING)) {
         throw std::invalid_argument("an Order has no time in force or post-only flag: they need the request overload");
     }
     return command;

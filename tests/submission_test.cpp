@@ -167,7 +167,9 @@ std::vector<LevelState> captureLevels(const Levels& levels) {
 
 BookState capture(const OrderBook& book) {
     std::vector<std::pair<OrderId, const Order*>> index;
-    for (const auto& [orderId, location] : Access::index(book)) {
+    for (const auto& entry : Access::index(book)) {
+        const auto& [orderId, owner, location] = entry;
+        static_cast<void>(owner);
         index.emplace_back(orderId, &*location.itr);
     }
     std::sort(index.begin(), index.end());
@@ -642,6 +644,23 @@ void testMalformedRequestsAreRejectedInOrder() {
                                    RejectionReason::POST_ONLY_NOT_ALLOWED, context + " post-only before duplicate");
     expectRequestRejectedUnchanged(book, postOnly(OrderRequest{4, Side::BUY, 50, 20}), RejectionReason::DUPLICATE_ORDER_ID,
                                    context + " post-only duplicate");
+
+    // An invalid self-trade prevention mode is malformed whatever the owner (check 10, last).
+    const auto withMode = [](OrderRequest request, order_book::OwnerId owner, int mode) {
+        request.owner = owner;
+        request.selfTradePrevention = static_cast<order_book::SelfTradePrevention>(mode);
+        return request;
+    };
+    expectRequestRejectedUnchanged(book, withMode(OrderRequest{9, Side::BUY, 102, 20}, 0, 3),
+                                   RejectionReason::INVALID_SELF_TRADE_PREVENTION, context + " invalid mode, no owner");
+    expectRequestRejectedUnchanged(book, withMode(OrderRequest{9, Side::BUY, 102, 20}, 7, -1),
+                                   RejectionReason::INVALID_SELF_TRADE_PREVENTION, context + " invalid mode, an owner");
+    expectRequestRejectedUnchanged(book,
+                                   withMode(postOnly(OrderRequest{9, Side::BUY, 102, 20, OrderType::LIMIT, TimeInForce::IOC}),
+                                            7, 3),
+                                   RejectionReason::POST_ONLY_NOT_ALLOWED, context + " post-only before the mode");
+    expectRequestRejectedUnchanged(book, withMode(OrderRequest{4, Side::BUY, 102, 20}, 7, 3),
+                                   RejectionReason::INVALID_SELF_TRADE_PREVENTION, context + " mode before duplicate");
     expectRequestRejectedUnchanged(book, OrderRequest{9, Side::BUY, 102, 20, badType, badTimeInForce},
                                    RejectionReason::UNSUPPORTED_ORDER_TYPE, context + " type before time in force");
     expectRequestRejectedUnchanged(book, OrderRequest{9, Side::BUY, 102, 20, OrderType::LIMIT, badTimeInForce},

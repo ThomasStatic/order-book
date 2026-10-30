@@ -235,9 +235,20 @@ std::optional<std::string> locateInLevels(const Levels& levels, OrderId orderId,
 }
 
 // The behavior properties, judged from the engine's result and book alone.
-std::optional<std::string> checkBehavior(const OrderBook& book, const Command& command, const ActualOutcome& actual) {
+std::optional<std::string> checkBehavior(const OrderBook& book, const Command& command, const ActualOutcome& actual,
+                                         const std::unordered_map<OrderId, OwnerId>& owners) {
     if (command.type != CommandType::SUBMIT || command.overload != SubmitOverload::REQUEST || !actual.outcome.success) {
         return std::nullopt;
+    }
+    if (command.owner != 0) {
+        for (const BookEvent& event : actual.outcome.events) {
+            if (const auto* trade = std::get_if<TradeExecuted>(&event)) {
+                const auto resting = owners.find(trade->restingOrderId);
+                if (resting != owners.end() && resting->second == command.owner) {
+                    return "two orders of owner " + std::to_string(command.owner) + " traded: " + formatEvent(event);
+                }
+            }
+        }
     }
     if (command.postOnly) {
         for (const BookEvent& event : actual.outcome.events) {
@@ -301,7 +312,8 @@ std::string RunStats::summary() const {
            std::to_string(cancellations) + " (cancelled " + std::to_string(cancelled) + ", rejected " +
            std::to_string(cancelsRejected) + ") intentionally-invalid=" + std::to_string(intentionallyInvalid) +
            " trades=" + std::to_string(trades) + " (at most " + std::to_string(mostTradesInOneSubmission) +
-           " per submission) expired=" + std::to_string(expired) + " peak-resting=" + std::to_string(peakResting) +
+           " per submission) expired=" + std::to_string(expired) + " prevented=" + std::to_string(preventions) +
+           " peak-resting=" + std::to_string(peakResting) +
            " peak-levels=" + std::to_string(peakLevels);
 }
 
@@ -336,9 +348,10 @@ RunResult CommandReplayer::replay(OrderBook& book, const std::vector<Command>& c
         throw std::invalid_argument("CommandReplayer::replay needs an empty book: the reference model starts empty");
     }
     ReferenceBook model;
+    OwnerLedger owners;
     RunResult result;
     for (std::size_t i = 0; i < commands.size(); ++i) {
-        if (std::optional<Failure> failure = execute(book, model, commands[i], i, result.stats)) {
+        if (std::optional<Failure> failure = execute(book, model, owners, commands[i], i, result.stats)) {
             result.failure = std::move(failure);
             break;
         }
@@ -352,11 +365,12 @@ RunResult CommandReplayer::run(OrderBook& book, RandomCommandGenerator& generato
         throw std::invalid_argument("CommandReplayer::run needs an empty book: the reference model starts empty");
     }
     ReferenceBook model;
+    OwnerLedger owners;
     RunResult result;
     for (std::size_t i = 0; i < count; ++i) {
         const Command command = generator.next(model);
         recorder.record(command);
-        if (std::optional<Failure> failure = execute(book, model, command, i, result.stats)) {
+        if (std::optional<Failure> failure = execute(book, model, owners, command, i, result.stats)) {
             result.failure = std::move(failure);
             break;
         }
@@ -364,8 +378,8 @@ RunResult CommandReplayer::run(OrderBook& book, RandomCommandGenerator& generato
     return result;
 }
 
-std::optional<Failure> CommandReplayer::execute(OrderBook& book, ReferenceBook& model, const Command& command,
-                                                std::size_t index, RunStats& stats) const {
+std::optional<Failure> CommandReplayer::execute(OrderBook& book, ReferenceBook& model, OwnerLedger& owners,
+                                                const Command& command, std::size_t index, RunStats& stats) const {
     noteCommand(index, command);
     ++stats.commands;
     if (isIntentionallyInvalid(command.intent)) {
@@ -414,8 +428,11 @@ std::optional<Failure> CommandReplayer::execute(OrderBook& book, ReferenceBook& 
     if (!invariants.isValid()) {
         return fail(FailureType::INVARIANT_VIOLATION, formatInvariantResult(invariants), invariants.violation);
     }
-    if (std::optional<std::string> broken = checkBehavior(book, command, actual)) {
+    if (std::optional<std::string> broken = checkBehavior(book, command, actual, owners)) {
         return fail(FailureType::BEHAVIOR_VIOLATION, *broken);
+    }
+    if (submission && actual.outcome.success) {
+        owners[command.orderId] = command.overload == SubmitOverload::REQUEST ? command.owner : 0;
     }
     if (std::optional<std::string> difference = compareOutcomes(expected, actual, command)) {
         return fail(FailureType::OUTCOME_MISMATCH, *difference);
@@ -436,6 +453,7 @@ std::optional<Failure> CommandReplayer::execute(OrderBook& book, ReferenceBook& 
         };
         const std::size_t trades = count([](const BookEvent& event) { return std::holds_alternative<TradeExecuted>(event); });
         stats.expired += count([](const BookEvent& event) { return std::holds_alternative<OrderExpired>(event); });
+        stats.preventions += count([](const BookEvent& event) { return std::holds_alternative<SelfTradePrevented>(event); });
         stats.trades += trades;
         stats.mostTradesInOneSubmission = std::max(stats.mostTradesInOneSubmission, trades);
     } else {

@@ -63,7 +63,8 @@ OrderLocation locationFor(OrderId id) {
 // Every entry the index holds, by iteration, as an ordered map; each ID must appear once.
 std::map<OrderId, unsigned int> contents(const OrderIndex& index) {
     std::map<OrderId, unsigned int> seen;
-    for (const auto& [id, location] : index) {
+    for (const auto& [id, owner, location] : index) {
+        static_cast<void>(owner);
         expect(seen.emplace(id, location.tickPrice).second, "iteration visits each entry once");
     }
     return seen;

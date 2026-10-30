@@ -88,6 +88,14 @@ std::vector<WorkloadProfile> makeProfiles() {
     limits.firstOrderId = maxOrderId - 1000000;
     profiles.push_back(limits);
 
+    WorkloadProfile selfTrade = balanced;
+    selfTrade.name = "self-trade";
+    selfTrade.purpose = "nearly every order owned, by one of two owners, and often marketable, so matches are prevented";
+    selfTrade.ownerPercent = 95;
+    selfTrade.ownerPool = 2;
+    selfTrade.marketablePercent = 50;
+    profiles.push_back(selfTrade);
+
     WorkloadProfile immediate = balanced;
     immediate.name = "immediate";
     immediate.purpose = "market, IOC, and FOK orders 60% of submissions, often large, so FOKs fail and remainders expire";
@@ -106,7 +114,7 @@ std::vector<WorkloadProfile> makeProfiles() {
 
 OrderRequest requestOf(const Command& command) {
     return OrderRequest{command.orderId, command.side, command.price, command.quantity, command.orderType,
-                        command.timeInForce, command.postOnly};
+                        command.timeInForce, command.postOnly, command.owner, command.selfTradePrevention};
 }
 
 ExpectedOutcome applyCommand(ReferenceBook& model, const Command& command) {
@@ -125,7 +133,10 @@ std::string describeProfile(const WorkloadProfile& profile) {
            "% order-overload=" + std::to_string(profile.orderOverloadPercent) +
            "% ioc=" + std::to_string(profile.iocPercent) + "% fok=" + std::to_string(profile.fokPercent) +
            "% market=" + std::to_string(profile.marketPercent) + "% (ioc " + std::to_string(profile.marketIocPercent) +
-           "%) post-only=" + std::to_string(profile.postOnlyPercent) + "%" +
+           "%) post-only=" + std::to_string(profile.postOnlyPercent) + "% owner=" +
+           std::to_string(profile.ownerPercent) + "% of " + std::to_string(profile.ownerPool) + " (resting " +
+           std::to_string(profile.cancelRestingPercent) + "%, incoming " + std::to_string(profile.cancelIncomingPercent) +
+           "%)" +
            " marketable=" + std::to_string(profile.marketablePercent) + "% far=" + std::to_string(profile.farPercent) +
            "% through=" + std::to_string(profile.throughTicks) + " near=" + std::to_string(profile.nearTicks) +
            " farTicks=" + std::to_string(profile.farTicks) + " start=" + std::to_string(profile.startPrice) +
@@ -152,7 +163,8 @@ const WorkloadProfile& findProfile(std::string_view name) {
 
 RandomCommandGenerator::RandomCommandGenerator(std::uint64_t seed, WorkloadProfile profile)
     : random(seed), config(std::move(profile)), nextFreshId(config.firstOrderId) {
-    if (config.smallQuantityMax == 0 || config.largeQuantityMax < config.smallQuantityMax || config.firstOrderId == 0) {
+    if (config.smallQuantityMax == 0 || config.largeQuantityMax < config.smallQuantityMax || config.firstOrderId == 0 ||
+        config.ownerPool == 0) {
         throw std::invalid_argument("profile " + config.name + " cannot generate valid orders");
     }
 }
@@ -190,6 +202,7 @@ Command RandomCommandGenerator::validSubmit(const ReferenceBook& model) {
         command.orderType = OrderType::MARKET;
         command.price = 0;
         command.timeInForce = chance(config.marketIocPercent) ? TimeInForce::IOC : TimeInForce::FOK;
+        drawOwnership(command);
         return command;
     }
     const std::uint64_t timeInForce = below(100);
@@ -200,7 +213,19 @@ Command RandomCommandGenerator::validSubmit(const ReferenceBook& model) {
     } else if (chance(config.postOnlyPercent)) {
         command.postOnly = true;
     }
+    drawOwnership(command);
     return command;
+}
+
+void RandomCommandGenerator::drawOwnership(Command& command) {
+    if (chance(config.ownerPercent)) {
+        command.owner = static_cast<OwnerId>(1 + below(config.ownerPool));
+    }
+    const std::uint64_t mode = below(100);
+    command.selfTradePrevention = mode < config.cancelRestingPercent ? SelfTradePrevention::CANCEL_RESTING
+                                : mode < config.cancelRestingPercent + config.cancelIncomingPercent
+                                    ? SelfTradePrevention::CANCEL_INCOMING
+                                    : SelfTradePrevention::CANCEL_BOTH;
 }
 
 // An otherwise ordinary new order with exactly one thing wrong, chosen among the faults
@@ -214,7 +239,7 @@ Command RandomCommandGenerator::nextSubmit(const ReferenceBook& model, bool inva
                                         CommandIntent::UNSUPPORTED_TYPE, CommandIntent::MARKED_FILLED,
                                         CommandIntent::INVALID_TIME_IN_FORCE, CommandIntent::MARKET_WITH_PRICE,
                                         CommandIntent::MARKET_GTC,       CommandIntent::TYPE_CANNOT_REST,
-                                        CommandIntent::POST_ONLY_NOT_GTC_LIMIT,
+                                        CommandIntent::POST_ONLY_NOT_GTC_LIMIT, CommandIntent::INVALID_STP_MODE,
                                         CommandIntent::DUPLICATE_ACTIVE_ID};
     const IdPool& resting = model.restingIds();
     const std::size_t choices = std::size(faults) - (resting.empty() ? 1 : 0);
@@ -262,6 +287,12 @@ Command RandomCommandGenerator::nextSubmit(const ReferenceBook& model, bool inva
             }
             break;
         }
+        case CommandIntent::INVALID_STP_MODE:
+            if (chance(config.ownerPercent)) {
+                command.owner = static_cast<OwnerId>(1 + below(config.ownerPool));
+            }
+            command.selfTradePrevention = static_cast<SelfTradePrevention>(3 + below(6));
+            break;
         // A type an Order refuses since it cannot rest, among the request's enumerators to come.
         case CommandIntent::TYPE_CANNOT_REST:
             command.orderType = static_cast<OrderType>(1 + below(3));

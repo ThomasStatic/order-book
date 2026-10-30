@@ -107,6 +107,11 @@ ExpectedOutcome ReferenceBook::submit(const OrderRequest& request) {
     if (!reason && request.postOnly && (market || request.timeInForce != TimeInForce::GTC)) {
         reason = RejectionReason::POST_ONLY_NOT_ALLOWED;
     }
+    if (!reason && request.selfTradePrevention != SelfTradePrevention::CANCEL_RESTING &&
+        request.selfTradePrevention != SelfTradePrevention::CANCEL_INCOMING &&
+        request.selfTradePrevention != SelfTradePrevention::CANCEL_BOTH) {
+        reason = RejectionReason::INVALID_SELF_TRADE_PREVENTION;
+    }
     if (!reason && resting.contains(request.id)) {
         reason = RejectionReason::DUPLICATE_ORDER_ID;
     }
@@ -154,19 +159,19 @@ ExpectedOutcome ReferenceBook::accept(const OrderRequest& request, TimeInForce t
     ++seen.submissionsAccepted;
     outcome.events.push_back(OrderAccepted{request.id, request.side, request.price, request.quantity});
 
-    MatchPlan matchPlan = plan(request.side, request.price, request.quantity);
+    MatchPlan matchPlan = plan(request.side, request.price, request.quantity, request.owner, request.selfTradePrevention);
     if (timeInForce == TimeInForce::FOK && matchPlan.filled < request.quantity) {
-        matchPlan = MatchPlan{};
+        matchPlan = MatchPlan{};  // discarded, preventions included: it cancels nothing
     }
     applyPlan(matchPlan, request.id, outcome.events);
-    const bool restsRemainder = timeInForce == TimeInForce::GTC;
+    const bool restsRemainder = timeInForce == TimeInForce::GTC && !matchPlan.stopped;
     const Quantity open = request.quantity - matchPlan.filled;
     outcome.remaining = open;
-    outcome.fillStatus = matchPlan.steps.empty() ? FillStatus::NONE : open == 0 ? FillStatus::FILLED : FillStatus::PARTIAL;
+    outcome.fillStatus = matchPlan.filled == 0 ? FillStatus::NONE : open == 0 ? FillStatus::FILLED : FillStatus::PARTIAL;
 
     removed.erase(request.id);
     if (open > 0 && restsRemainder) {
-        rest(ModelOrder{request.id, request.side, request.price, open});
+        rest(ModelOrder{request.id, request.side, request.price, open, request.owner});
     } else {
         if (open > 0) {
             outcome.events.push_back(OrderExpired{request.id, open});
@@ -177,23 +182,26 @@ ExpectedOutcome ReferenceBook::accept(const OrderRequest& request, TimeInForce t
     return outcome;
 }
 
-MatchPlan ReferenceBook::plan(Side side, Price limitPrice, Quantity quantity) const {
+MatchPlan ReferenceBook::plan(Side side, Price limitPrice, Quantity quantity, OwnerId owner,
+                              SelfTradePrevention mode) const {
     MatchPlan matchPlan;
     if (side == Side::BUY) {
-        planAgainst(asks, side, limitPrice, quantity, matchPlan);
+        planAgainst(asks, side, limitPrice, quantity, owner, mode, matchPlan);
     } else {
-        planAgainst(bids, side, limitPrice, quantity, matchPlan);
+        planAgainst(bids, side, limitPrice, quantity, owner, mode, matchPlan);
     }
     return matchPlan;
 }
 
 // Walks the opposing levels best first and each queue oldest first, taking from each maker
 // the smaller of what the incoming order still wants and what the maker has open, while the
-// incoming limit reaches the level's price. Each maker appears at most once, so what a step
-// takes from it never has to be remembered for a later step.
+// incoming limit reaches the level's price. A maker with the incoming order's nonzero owner is
+// a prevented self-trade instead: under CANCEL_RESTING the walk goes on past it; under the
+// other modes it stops there. Each maker appears at most once, so what a step takes from it
+// never has to be remembered for a later step.
 template <typename Levels>
-void ReferenceBook::planAgainst(const Levels& levels, Side side, Price limitPrice, Quantity quantity,
-                                MatchPlan& matchPlan) const {
+void ReferenceBook::planAgainst(const Levels& levels, Side side, Price limitPrice, Quantity quantity, OwnerId owner,
+                                SelfTradePrevention mode, MatchPlan& matchPlan) const {
     for (const auto& [price, queue] : levels) {
         const bool reaches = limitPrice == 0 || (side == Side::BUY ? price <= limitPrice : price >= limitPrice);
         if (!reaches) {
@@ -203,15 +211,33 @@ void ReferenceBook::planAgainst(const Levels& levels, Side side, Price limitPric
             if (matchPlan.filled == quantity) {
                 return;
             }
-            const Quantity traded = std::min(quantity - matchPlan.filled, orders.at(makerId).order.open);
-            matchPlan.steps.push_back(PlannedTrade{makerId, price, traded});
+            const ModelOrder& maker = orders.at(makerId).order;
+            if (owner != 0 && maker.owner == owner) {
+                const bool removes = mode != SelfTradePrevention::CANCEL_INCOMING;
+                matchPlan.steps.push_back(PlanStep{makerId, price, removes ? maker.open : 0, true});
+                if (mode != SelfTradePrevention::CANCEL_RESTING) {
+                    matchPlan.stopped = true;
+                    return;
+                }
+                continue;
+            }
+            const Quantity traded = std::min(quantity - matchPlan.filled, maker.open);
+            matchPlan.steps.push_back(PlanStep{makerId, price, traded});
             matchPlan.filled += traded;
         }
     }
 }
 
 void ReferenceBook::applyPlan(const MatchPlan& matchPlan, OrderId incomingId, std::vector<BookEvent>& events) {
-    for (const PlannedTrade& step : matchPlan.steps) {
+    for (const PlanStep& step : matchPlan.steps) {
+        if (step.prevented) {
+            events.push_back(SelfTradePrevented{incomingId, step.maker, step.price, step.quantity});
+            ++seen.preventions;
+            if (step.quantity > 0) {
+                remove(step.maker);
+            }
+            continue;
+        }
         events.push_back(TradeExecuted{incomingId, step.maker, step.price, step.quantity});
         lastTrade = step.price;
         ++seen.trades;

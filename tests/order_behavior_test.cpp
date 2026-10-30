@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -26,6 +27,7 @@ struct OrderBookTestAccess {
     static TradeId nextTradeId(const OrderBook& book) { return book.nextTradeId; }
     static SequenceNum nextSequenceNum(const OrderBook& book) { return book.nextSequenceNum; }
     static const OrderQueue& orders(const PriceLevel& level) { return level.orders; }
+    static OwnerId owner(const OrderBook& book, OrderId id) { return book.orderIndex.find(id)->owner; }
 };
 
 }  // namespace order_book
@@ -42,6 +44,9 @@ using order_book::OrderExpired;
 using order_book::OrderId;
 using order_book::OrderRequest;
 using order_book::OrderType;
+using order_book::OwnerId;
+using order_book::SelfTradePrevented;
+using order_book::SelfTradePrevention;
 using order_book::Price;
 using order_book::SequenceNum;
 using order_book::Side;
@@ -363,6 +368,162 @@ void testPostOnly(Side side) {
     }
 }
 
+OrderRequest owned(OrderRequest request, OwnerId owner, SelfTradePrevention mode = SelfTradePrevention::CANCEL_RESTING) {
+    request.owner = owner;
+    request.selfTradePrevention = mode;
+    return request;
+}
+
+// Asks: #1 (owner 7, 3) and #2 (owner 8, 4) at 100, #3 (owner 7, 5) at 101, #4 (no owner, 6) at
+// 101; mirrored for an incoming sell.
+OrderBook ownedBook(Side incomingSide) {
+    const Side restingSide = opposite(incomingSide);
+    OrderBook book;
+    book.submitOrder(owned(OrderRequest{1, restingSide, priceAway(incomingSide, 0), 3}, 7));
+    book.submitOrder(owned(OrderRequest{2, restingSide, priceAway(incomingSide, 0), 4}, 8));
+    book.submitOrder(owned(OrderRequest{3, restingSide, priceAway(incomingSide, 1), 5}, 7));
+    book.submitOrder(OrderRequest{4, restingSide, priceAway(incomingSide, 1), 6});
+    return book;
+}
+
+// The incoming order's mode decides which of two same-owner orders gives way; a prevented
+// match is never a trade, consumes no trade ID, and is reported in execution order.
+void testSelfTradePrevention(Side side) {
+    const std::string context = "STP " + sideName(side);
+    const Price near = priceAway(side, 0);
+    const Price far = priceAway(side, 1);
+    {
+        OrderBook book = ownedBook(side);
+        expect(Access::owner(book, 1) == 7 && Access::owner(book, 2) == 8 && Access::owner(book, 4) == 0,
+               context + ": a resting order should keep its request's owner");
+        // CANCEL_RESTING: each own order is removed whole, and matching goes on; the GTC
+        // remainder rests.
+        const SubmissionResult result =
+            book.submitOrder(owned(OrderRequest{9, side, far, 20}, 7, SelfTradePrevention::CANCEL_RESTING));
+        expectAcceptedWith(result,
+                           Events{OrderAccepted{9, side, far, 20}, SelfTradePrevented{9, 1, near, 3},
+                                  TradeExecuted{9, 2, near, 4}, SelfTradePrevented{9, 3, far, 5},
+                                  TradeExecuted{9, 4, far, 6}},
+                           10, FillStatus::PARTIAL, 2, context + " cancel resting");
+        expect(book.activeOrderCount() == 1 && book.findActiveOrder(9).getRemainingQuantity() == 10 &&
+                   Access::owner(book, 9) == 7,
+               context + " cancel resting: only the incoming remainder should rest, with its owner");
+        expect(Access::nextTradeId(book) == 3, context + " cancel resting: a prevention should consume no trade ID");
+        expectSound(book, context + " cancel resting");
+        // The removed orders' IDs are free again.
+        expect(book.submitOrder(OrderRequest{1, side, priceAway(side, -5), 1}).getStatus() == SubmissionStatus::ACCEPTED,
+               context + " cancel resting: a removed order's ID should be free");
+    }
+    {
+        // CANCEL_INCOMING: the own order stays, matching stops, and even a GTC remainder expires.
+        OrderBook book = ownedBook(side);
+        const SubmissionResult result = book.submitOrder(
+            owned(OrderRequest{9, side, far, 20}, 8, SelfTradePrevention::CANCEL_INCOMING));
+        expectAcceptedWith(result,
+                           Events{OrderAccepted{9, side, far, 20}, TradeExecuted{9, 1, near, 3},
+                                  SelfTradePrevented{9, 2, near, 0}, OrderExpired{9, 17}},
+                           17, FillStatus::PARTIAL, 1, context + " cancel incoming");
+        expect(book.findActiveOrder(2).getRemainingQuantity() == 4 && book.activeOrderCount() == 3,
+               context + " cancel incoming: the resting order should be untouched, and nothing rest");
+        expectSound(book, context + " cancel incoming");
+    }
+    {
+        // CANCEL_BOTH: the own order is removed, and the remainder expires.
+        OrderBook book = ownedBook(side);
+        const SubmissionResult result =
+            book.submitOrder(owned(OrderRequest{9, side, far, 20}, 8, SelfTradePrevention::CANCEL_BOTH));
+        expectAcceptedWith(result,
+                           Events{OrderAccepted{9, side, far, 20}, TradeExecuted{9, 1, near, 3},
+                                  SelfTradePrevented{9, 2, near, 4}, OrderExpired{9, 17}},
+                           17, FillStatus::PARTIAL, 1, context + " cancel both");
+        expect(book.activeOrderCount() == 2 && !Access::index(book).count(2), context + " cancel both: #2 should be gone");
+        expectSound(book, context + " cancel both");
+    }
+    {
+        // Owner 0 is never prevented, whatever the mode, and different owners trade freely.
+        OrderBook book = ownedBook(side);
+        const SubmissionResult result =
+            book.submitOrder(owned(OrderRequest{9, side, far, 18}, 0, SelfTradePrevention::CANCEL_BOTH));
+        expectAcceptedWith(result,
+                           Events{OrderAccepted{9, side, far, 18}, TradeExecuted{9, 1, near, 3}, TradeExecuted{9, 2, near, 4},
+                                  TradeExecuted{9, 3, far, 5}, TradeExecuted{9, 4, far, 6}},
+                           0, FillStatus::FILLED, 4, context + " no owner");
+        OrderBook other = ownedBook(side);
+        expect(other.submitOrder(owned(OrderRequest{9, side, far, 18}, 5)).getGeneratedTrades().size() == 4,
+               context + ": an owner no resting order has should trade with every order");
+    }
+    {
+        // A market order with CANCEL_RESTING removes each own order it reaches.
+        OrderBook book = ownedBook(side);
+        const SubmissionResult result =
+            book.submitOrder(owned(OrderRequest{9, side, 0, 30, OrderType::MARKET, TimeInForce::IOC}, 7));
+        expectAcceptedWith(result,
+                           Events{OrderAccepted{9, side, 0, 30}, SelfTradePrevented{9, 1, near, 3},
+                                  TradeExecuted{9, 2, near, 4}, SelfTradePrevented{9, 3, far, 5},
+                                  TradeExecuted{9, 4, far, 6}, OrderExpired{9, 20}},
+                           20, FillStatus::PARTIAL, 2, context + " market");
+        expect(book.activeOrderCount() == 0, context + " market: the side should be empty");
+    }
+    {
+        // Post-only never matches, so it never runs STP: one that would take only its own order
+        // still expires.
+        OrderBook book = ownedBook(side);
+        OrderRequest request = owned(OrderRequest{9, side, near, 2}, 7);
+        request.postOnly = true;
+        expectAcceptedWith(book.submitOrder(request), Events{OrderAccepted{9, side, near, 2}, OrderExpired{9, 2}}, 2,
+                           FillStatus::NONE, 0, context + " post-only");
+        expect(book.activeOrderCount() == 4, context + " post-only: nothing should be removed");
+    }
+    {
+        // addOrder and submitOrder(Order) give owner 0.
+        OrderBook book;
+        book.addOrder(Order(1, priceAway(side, -3), 1, 1, side));
+        book.submitOrder(Order(2, priceAway(side, -3), 1, 1, side));
+        expect(Access::owner(book, 1) == 0 && Access::owner(book, 2) == 0, context + ": v1 commands give owner 0");
+    }
+}
+
+// A FOK with an owner never counts a self-match toward filling. Under CANCEL_RESTING its walk
+// skips its own orders (and removes them only if it fills); under the other modes it stops at
+// the first one. An unfillable FOK cancels nothing and reports no prevention.
+void testFillOrKillWithOwner(Side side) {
+    const std::string context = "FOK with owner " + sideName(side);
+    const Price near = priceAway(side, 0);
+    const Price far = priceAway(side, 1);
+    {
+        OrderBook book = ownedBook(side);
+        const SubmissionResult result = book.submitOrder(
+            owned(OrderRequest{9, side, far, 10, OrderType::LIMIT, TimeInForce::FOK}, 7));
+        expectAcceptedWith(result,
+                           Events{OrderAccepted{9, side, far, 10}, SelfTradePrevented{9, 1, near, 3},
+                                  TradeExecuted{9, 2, near, 4}, SelfTradePrevented{9, 3, far, 5},
+                                  TradeExecuted{9, 4, far, 6}},
+                           0, FillStatus::FILLED, 2, context + " cancel resting, fillable");
+        expectSound(book, context + " cancel resting, fillable");
+    }
+    for (const auto& [mode, quantity, what] :
+         {std::tuple{SelfTradePrevention::CANCEL_RESTING, 11u, "cancel resting, one short of the others"},
+          std::tuple{SelfTradePrevention::CANCEL_INCOMING, 4u, "cancel incoming, blocked at its own order"},
+          std::tuple{SelfTradePrevention::CANCEL_BOTH, 1u, "cancel both, blocked at its own order"}}) {
+        OrderBook book = ownedBook(side);
+        BookState before = capture(book);
+        const SubmissionResult result =
+            book.submitOrder(owned(OrderRequest{9, side, far, quantity, OrderType::LIMIT, TimeInForce::FOK}, 7, mode));
+        expectAcceptedWith(result, Events{OrderAccepted{9, side, far, quantity}, OrderExpired{9, quantity}}, quantity,
+                           FillStatus::NONE, 0, context + " " + what);
+        ++before.nextSequenceNum;
+        expect(capture(book) == before, context + " " + what + ": nothing should be cancelled");
+    }
+    {
+        // CANCEL_INCOMING fills when its quantity comes before its own order.
+        OrderBook book = ownedBook(side);
+        const SubmissionResult result = book.submitOrder(
+            owned(OrderRequest{9, side, far, 3, OrderType::LIMIT, TimeInForce::FOK}, 8, SelfTradePrevention::CANCEL_INCOMING));
+        expectAcceptedWith(result, Events{OrderAccepted{9, side, far, 3}, TradeExecuted{9, 1, near, 3}}, 0,
+                           FillStatus::FILLED, 1, context + " cancel incoming, filled before its own order");
+    }
+}
+
 // An expired order's ID is free again, as a filled one's is.
 void testExpiredIdIsFree() {
     OrderBook book;
@@ -422,6 +583,8 @@ int main() {
         testFillOrKill(side);
         testMarketOrders(side);
         testPostOnly(side);
+        testSelfTradePrevention(side);
+        testFillOrKillWithOwner(side);
     }
     testExpiredIdIsFree();
     testGoodTillCancelledRests();

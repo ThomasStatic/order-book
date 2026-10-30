@@ -8,6 +8,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -87,17 +88,18 @@ void testSameSeedSameStream() {
 // and update these values (the failure prints the new ones).
 void testGeneratorFingerprints() {
     const std::map<std::string, std::uint64_t> pinned = {
-        {"balanced", 14662495297942027882ULL},
-        {"aggressive", 10242673076840149824ULL},
-        {"passive", 8206137109161963100ULL},
-        {"cancel-heavy", 223816239284510926ULL},
-        {"queue", 743590482630770298ULL},
-        {"one-sided", 5194908573959224845ULL},
-        {"invalid-heavy", 3483985212608110677ULL},
-        {"limits", 4222487938738535540ULL},
-        {"immediate", 5703362477127973927ULL},
+        {"balanced", 1256948402184570592ULL},
+        {"aggressive", 15564890074746293941ULL},
+        {"passive", 4513328097151289785ULL},
+        {"cancel-heavy", 4039300296230370349ULL},
+        {"queue", 15866627438205874611ULL},
+        {"one-sided", 17449804457086351482ULL},
+        {"invalid-heavy", 9872866986915840162ULL},
+        {"limits", 11190759334658035344ULL},
+        {"self-trade", 9694923690401000569ULL},
+        {"immediate", 9740767023990187601ULL},
     };
-    expect(generatorVersion == 6, "the fingerprints below are for generator version 6");
+    expect(generatorVersion == 7, "the fingerprints below are for generator version 7");
     bool allMatch = true;
     std::string actual;
     for (const WorkloadProfile& profile : workloadProfiles()) {
@@ -161,6 +163,15 @@ void testStreamRoundTrip() {
     expect(formatCommand(maker) == "SUBMIT id=15 side=SELL price=101 qty=5 post_only=Y intent=NEW_ID",
            context + ": post-only should print as post_only=Y");
     stream.commands.push_back(maker);
+    Command ownedOrder = Command::submit(16, Side::SELL, 101, 5, CommandIntent::NEW_ID);
+    ownedOrder.owner = 3;
+    ownedOrder.selfTradePrevention = order_book::SelfTradePrevention::CANCEL_BOTH;
+    expect(formatCommand(ownedOrder) == "SUBMIT id=16 side=SELL price=101 qty=5 owner=3 stp=CANCEL_BOTH intent=NEW_ID",
+           context + ": an owner and a mode other than CANCEL_RESTING should print");
+    Command oddMode = Command::submit(17, Side::SELL, 101, 5, CommandIntent::INVALID_STP_MODE);
+    oddMode.selfTradePrevention = static_cast<order_book::SelfTradePrevention>(4);
+    stream.commands.push_back(ownedOrder);
+    stream.commands.push_back(oddMode);
     Command killer = Command::submit(13, Side::SELL, 100, 5, CommandIntent::NEW_ID);
     killer.timeInForce = order_book::TimeInForce::FOK;
     expect(formatCommand(killer) == "SUBMIT id=13 side=SELL price=100 qty=5 tif=FOK intent=NEW_ID",
@@ -201,7 +212,8 @@ void testStreamRoundTrip() {
                                   "SUBMIT id=1 side=BUY price=5 qty=1 overload=REQUEST", "CANCEL id=1 overload=ORDER",
                                   "SUBMIT id=1 side=BUY price=5 qty=1 tif=IOC overload=ORDER", "CANCEL id=1 tif=IOC",
                                   "SUBMIT id=1 side=BUY price=5 qty=1 post_only=Y overload=ORDER",
-                                  "SUBMIT id=1 side=BUY price=5 qty=1 post_only=N"}) {
+                                  "SUBMIT id=1 side=BUY price=5 qty=1 post_only=N",
+                                  "SUBMIT id=1 side=BUY price=5 qty=1 owner=2 overload=ORDER", "CANCEL id=1 owner=2"}) {
         expectThrows([&] { parseCommand(bad); }, context + ": should refuse '" + bad + "'");
     }
     std::stringstream noFormat("SUBMIT id=1 side=BUY price=5 qty=1\n");
@@ -234,6 +246,8 @@ void testDistributions() {
         std::size_t fok = 0;
         std::size_t markets = 0;
         std::size_t postOnly = 0;
+        std::size_t ownedRequests = 0;
+        std::size_t cancelIncoming = 0;
         std::size_t gtcLimits = 0;
         std::size_t buys = 0;
         std::size_t nearTouch = 0;
@@ -259,6 +273,16 @@ void testDistributions() {
                                       command.overload == SubmitOverload::REQUEST;
                 gtcLimits += gtcLimit ? 1 : 0;
                 postOnly += command.postOnly ? 1 : 0;
+                if (command.overload == SubmitOverload::REQUEST) {
+                    ownedRequests += command.owner != 0 ? 1 : 0;
+                    cancelIncoming +=
+                        command.selfTradePrevention == order_book::SelfTradePrevention::CANCEL_INCOMING ? 1 : 0;
+                    expect(command.owner <= profile.ownerPool &&
+                               order_book::isValidSelfTradePrevention(command.selfTradePrevention),
+                           context + ": a valid request's owner comes from the pool: " + formatCommand(command));
+                } else {
+                    expect(command.owner == 0, context + ": an Order has no owner: " + formatCommand(command));
+                }
                 expect(!command.postOnly || gtcLimit,
                        context + ": a valid post-only order is a GTC limit request: " + formatCommand(command));
                 expect(!market || (command.price == 0 && command.timeInForce != order_book::TimeInForce::GTC &&
@@ -325,6 +349,10 @@ void testDistributions() {
                                                 command.timeInForce != order_book::TimeInForce::GTC),
                            context + ": post-only on a market, IOC, or FOK order");
                     break;
+                case CommandIntent::INVALID_STP_MODE:
+                    expect(!order_book::isValidSelfTradePrevention(command.selfTradePrevention),
+                           context + ": an invalid self-trade prevention mode");
+                    break;
                 case CommandIntent::MARKET_GTC:
                     expect(command.orderType == order_book::OrderType::MARKET && command.price == 0 &&
                                command.timeInForce == order_book::TimeInForce::GTC,
@@ -358,7 +386,7 @@ void testDistributions() {
         for (const auto& [intent, seen] : intents) {
             invalid += isIntentionallyInvalid(intent) ? seen : 0;
         }
-        expect(intents.size() == 18 && intents.count(CommandIntent::UNSPECIFIED) == 0,
+        expect(intents.size() == 19 && intents.count(CommandIntent::UNSPECIFIED) == 0,
                context + ": every intent should occur, got " + std::to_string(intents.size()));
         const auto share = [](std::size_t part, std::size_t whole) {
             return 100.0 * static_cast<double>(part) / static_cast<double>(whole);
@@ -375,6 +403,10 @@ void testDistributions() {
                context + ": IOC share " + std::to_string(share(ioc, viaRequest - markets)));
         expect(near(share(fok, viaRequest - markets), profile.fokPercent),
                context + ": FOK share " + std::to_string(share(fok, viaRequest - markets)));
+        expect(near(share(ownedRequests, viaRequest), profile.ownerPercent),
+               context + ": owner share " + std::to_string(share(ownedRequests, viaRequest)));
+        expect(near(share(cancelIncoming, viaRequest), profile.cancelIncomingPercent),
+               context + ": CANCEL_INCOMING share " + std::to_string(share(cancelIncoming, viaRequest)));
         expect(near(share(postOnly, gtcLimits), profile.postOnlyPercent),
                context + ": post-only share " + std::to_string(share(postOnly, gtcLimits)));
         expect(near(share(buys, validSubmissions), profile.buyPercent),
@@ -485,6 +517,16 @@ void testProfilesHitTheirTargets() {
         {"invalid-heavy", "a reused ID accepted",
          [](const ReferenceBook&, const Command& command, const auto& outcome) {
              return command.intent == CommandIntent::REUSED_ID && outcome.success;
+         }},
+        {"self-trade", "a prevented self-trade under each mode",
+         [modes = std::set<order_book::SelfTradePrevention>{}](const ReferenceBook&, const Command& command,
+                                                               const auto& outcome) mutable {
+             for (const auto& event : outcome.events) {
+                 if (std::holds_alternative<order_book::SelfTradePrevented>(event)) {
+                     modes.insert(command.selfTradePrevention);
+                 }
+             }
+             return modes.size() == 3;
          }},
         {"immediate", "a market order that trades and expires the rest",
          [](const ReferenceBook&, const Command& command, const auto& outcome) {

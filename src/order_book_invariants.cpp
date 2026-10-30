@@ -187,7 +187,9 @@ namespace order_book {
         // Every resting order has its own entry by now, so an extra one is told apart by its
         // key and recorded place alone. Its iterator is left alone, since it may point at an
         // order that has been erased.
-        for(const auto& [orderId, location] : orderIndex) {
+        for(const OrderIndexEntry& entry : orderIndex) {
+            const OrderId orderId = entry.first;
+            const OrderLocation& location = entry.second;
             if(!isValidSide(location.side)) {
                 return {.violation = InvariantViolation::INVALID_INDEX_ENTRY, .price = location.tickPrice,
                         .orderId = orderId, .detail = "an index entry should record BUY or SELL"};

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "order_type.hpp"
+#include "self_trade_prevention.hpp"
 #include "side.hpp"
 #include "time_in_force.hpp"
 #include "types.hpp"
@@ -31,6 +32,11 @@ namespace order_book {
         // price) it is accepted and wholly expired, never repriced. The flag is not kept once it
         // rests.
         bool postOnly = false;
+        // Self-trade prevention: owner 0 is none. With an owner, a match with a resting order of
+        // the same owner is prevented as selfTradePrevention says, never traded. The mode must be
+        // valid whatever the owner; with owner 0 it has no effect.
+        OwnerId owner = 0;
+        SelfTradePrevention selfTradePrevention = SelfTradePrevention::CANCEL_RESTING;
     };
 
 }  // namespace order_book

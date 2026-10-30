@@ -104,8 +104,8 @@ namespace order_book {
         }
     }
 
-    void OrderBook::restOrder(const Order& order) {
-        auto rest = [this, &order](auto& levels) {
+    void OrderBook::restOrder(const Order& order, OwnerId owner) {
+        auto rest = [this, &order, owner](auto& levels) {
             const auto levelItr = levels.try_emplace(
                 order.getPriceTick(), order.getPriceTick(), order.getSide(), nodePool.get()).first;
             PriceLevel& level = levelItr->second;
@@ -113,7 +113,7 @@ namespace order_book {
             std::optional<OrderLocation> location;
             try {
                 location = level.addOrder(order);
-                if(!orderIndex.emplace(order.getOrderId(), *location).second) {
+                if(!orderIndex.emplace(order.getOrderId(), *location, owner).second) {
                     // emplace keeps the existing entry, which would leave this order resting
                     // unindexed; throwing here unwinds it like a failed allocation.
                     throw std::runtime_error("resting an order whose id is already indexed error");
@@ -146,11 +146,40 @@ namespace order_book {
         return hasBids() && incoming.getPriceTick() <= bids.begin()->first;
     }
 
-    std::optional<std::size_t> OrderBook::fillOrKillTrades(const Order& incoming) const {
+    std::optional<OrderBook::FillPlan> OrderBook::fillOrKillPlan(const Order& incoming, const Instructions& how) const {
         const Quantity wanted = incoming.getRemainingQuantity();
         const Price limit = incoming.getPriceTick();
         const bool buying = incoming.getSide() == Side::BUY;
-        auto walk = [&](const auto& levels) -> std::optional<std::size_t> {
+        // With an owner, every crossed order is visited and its owner probed.
+        auto walkOrders = [&](const auto& levels) -> std::optional<FillPlan> {
+            std::uint64_t available = 0;
+            FillPlan plan{0, 0};
+            for(const auto& [price, level] : levels) {
+                if(buying ? price > limit : price < limit) {
+                    break;
+                }
+                for(const Order& order : level.orders) {
+                    const auto entry = orderIndex.find(order.getOrderId());
+                    if(entry != orderIndex.end() && entry->owner == how.owner) {
+                        if(how.selfTradePrevention != SelfTradePrevention::CANCEL_RESTING) {
+                            return std::nullopt;  // matching would stop here, short of filling
+                        }
+                        ++plan.preventions;
+                        continue;
+                    }
+                    ++plan.trades;
+                    available += order.getRemainingQuantity();
+                    if(available >= wanted) {
+                        return plan;
+                    }
+                }
+            }
+            return std::nullopt;
+        };
+        auto walk = [&](const auto& levels) -> std::optional<FillPlan> {
+            if(how.owner != 0) {
+                return walkOrders(levels);
+            }
             std::uint64_t available = 0;
             std::size_t trades = 0;
             for(const auto& [price, level] : levels) {
@@ -167,7 +196,7 @@ namespace order_book {
                     ++trades;
                     available += order.getRemainingQuantity();
                     if(available >= wanted) {
-                        return trades;
+                        return FillPlan{trades, 0};
                     }
                 }
                 break;
@@ -231,14 +260,40 @@ namespace order_book {
         return trade;
     }
 
-    void OrderBook::matchOrder(Order& incoming, ResultRecorder& recorder) {
+    bool OrderBook::matchOrder(Order& incoming, const Instructions& how, ResultRecorder& recorder) {
         while(incoming.getRemainingQuantity() > 0 && crossesBestOpposing(incoming)) {
+            // Self-trade prevention, probed only for an incoming order with an owner, against
+            // the order it would trade with next.
+            if(how.owner != 0) {
+                const Order& resting = incoming.getSide() == Side::BUY ? asks.begin()->second.getOldestOrder()
+                                                                       : bids.begin()->second.getOldestOrder();
+                const auto entry = orderIndex.find(resting.getOrderId());
+                if(entry != orderIndex.end() && entry->owner == how.owner) {
+                    const SelfTradePrevention mode = how.selfTradePrevention;
+                    const bool removesResting = mode != SelfTradePrevention::CANCEL_INCOMING;
+                    // Recorded (with room made first) before the removal, which cannot throw once
+                    // its guard has passed, so the event is never lost behind a change.
+                    recorder.makeRoom(0, 1);
+                    recorder.prevented(SelfTradePrevented{incoming.getOrderId(), resting.getOrderId(),
+                                                          entry->second.tickPrice,
+                                                          removesResting ? resting.getRemainingQuantity() : 0},
+                                       incoming.getSide());
+                    if(removesResting) {
+                        removeResting(entry);
+                    }
+                    if(mode != SelfTradePrevention::CANCEL_RESTING) {
+                        return true;
+                    }
+                    continue;
+                }
+            }
             // Make room first: once executeOnce has changed the book, recording its trade
             // must not be able to throw. The first few fit inline; beyond them, doubling
             // keeps appending amortized O(1).
             recorder.makeRoom(1, 1);
             recorder.trade(executeOnce(incoming));
         }
+        return false;
     }
 
     SubmissionResult OrderBook::submitOrder(Order incoming) {
@@ -250,7 +305,7 @@ namespace order_book {
         }
         const OrderAccepted acceptance{incoming.getOrderId(), incoming.getSide(), incoming.getPriceTick(),
                                        incoming.getRemainingQuantity()};
-        return matchAndRest(incoming, acceptance, TimeInForce::GTC);
+        return matchAndRest(incoming, acceptance, Instructions{});
     }
 
     SubmissionResult OrderBook::submitOrder(OrderRequest request) {
@@ -266,16 +321,15 @@ namespace order_book {
         // Well formed, so the constructor cannot refuse it; matchAndRest numbers it.
         Order incoming(request.id, limit, request.quantity, nextSequenceNum, request.side);
         if(request.postOnly) {
-            return postOnly(incoming);
+            return postOnly(incoming, request.owner);
         }
         return matchAndRest(incoming, OrderAccepted{request.id, request.side, request.price, request.quantity},
-                            request.timeInForce);
+                            Instructions{request.timeInForce, request.owner, request.selfTradePrevention});
     }
 
-    SubmissionResult OrderBook::matchAndRest(Order& incoming, const OrderAccepted& acceptance,
-                                             TimeInForce timeInForce) {
-        if(timeInForce == TimeInForce::FOK) {
-            return fillOrKill(incoming, acceptance);
+    SubmissionResult OrderBook::matchAndRest(Order& incoming, const OrderAccepted& acceptance, const Instructions& how) {
+        if(how.timeInForce == TimeInForce::FOK) {
+            return fillOrKill(incoming, acceptance, how);
         }
         // Accepted: numbered once, before matching, and the remainder rests with this same
         // number. Consumed even if matching throws, since executions may already stand.
@@ -289,8 +343,10 @@ namespace order_book {
         // The result, events included, is built before the remainder rests, so resting is
         // the last step that can fail: a remainder is never left resting behind a throw.
         ResultRecorder recorder(acceptance);
-        matchOrder(incoming, recorder);
-        const bool expires = timeInForce == TimeInForce::IOC;
+        const bool stopped = matchOrder(incoming, how, recorder);
+        // Stopped by self-trade prevention, even a GTC remainder expires: it is at or through
+        // its own resting order's price, so resting it would cross the book.
+        const bool expires = how.timeInForce == TimeInForce::IOC || stopped;
         if(expires && incoming.getRemainingQuantity() > 0) {
             // Changes nothing in the book, so it may allocate here.
             recorder.expire(incoming.getRemainingQuantity());
@@ -299,16 +355,16 @@ namespace order_book {
         if(!expires && incoming.getRemainingQuantity() > 0) {
             // Rests at the incoming limit price (fills never change it), not at the price
             // of its last execution. Validation already passed, so it cannot be rejected now.
-            restOrder(incoming);
+            restOrder(incoming, how.owner);
         }
         return result;
     }
 
-    SubmissionResult OrderBook::fillOrKill(Order& incoming, const OrderAccepted& acceptance) {
-        const std::optional<std::size_t> trades = fillOrKillTrades(incoming);
+    SubmissionResult OrderBook::fillOrKill(Order& incoming, const OrderAccepted& acceptance, const Instructions& how) {
+        const std::optional<FillPlan> plan = fillOrKillPlan(incoming, how);
         incoming.assignSequenceNum(nextSequenceNum);
         ResultRecorder recorder(acceptance);
-        if(!trades) {
+        if(!plan) {
             // Its acceptance and expiry fit inline, so nothing here allocates or throws.
             recorder.expire(incoming.getRemainingQuantity());
             SubmissionResult result = recorder.finish();
@@ -318,13 +374,13 @@ namespace order_book {
         // Room for the whole result before anything is numbered or traded: the only step that
         // can fail. After it, matching cannot throw (executeOnce and the erasures it makes never
         // allocate), so the FOK either completes or changes nothing.
-        recorder.reserve(*trades, *trades + 1);
+        recorder.reserve(plan->trades, plan->trades + plan->preventions + 1);
         advanceSequenceNum();
-        matchOrder(incoming, recorder);
+        matchOrder(incoming, how, recorder);
         return recorder.finish();
     }
 
-    SubmissionResult OrderBook::postOnly(Order& incoming) {
+    SubmissionResult OrderBook::postOnly(Order& incoming, OwnerId owner) {
         ResultRecorder recorder(OrderAccepted{incoming.getOrderId(), incoming.getSide(), incoming.getPriceTick(),
                                               incoming.getRemainingQuantity()});
         if(crossesBestOpposing(incoming)) {
@@ -336,7 +392,7 @@ namespace order_book {
             // only once it has rested, so a failed allocation leaves no trace.
             incoming.assignSequenceNum(nextSequenceNum);
             SubmissionResult result = recorder.finish();
-            restOrder(incoming);
+            restOrder(incoming, owner);
             advanceSequenceNum();
             return result;
         }
@@ -371,12 +427,16 @@ namespace order_book {
         if(indexItr == orderIndex.end()) {
             return CancellationResult::rejected(orderId, RejectionReason::ORDER_NOT_FOUND);
         }
-        const OrderLocation location = indexItr->second;
         // Built before anything is mutated, so nothing after the removal can throw. (Its one
         // event is held inline, so building it does not allocate either.)
-        CancellationResult result = CancellationResult::cancelled(orderId, location.itr->getRemainingQuantity());
+        CancellationResult result = CancellationResult::cancelled(orderId, indexItr->second.itr->getRemainingQuantity());
+        removeResting(indexItr);
+        return result;
+    }
 
-        auto cancel = [this, indexItr, &location](auto& levels) {
+    void OrderBook::removeResting(OrderIndex::iterator entry) {
+        const OrderLocation location = entry->second;
+        auto remove = [this, entry, &location](auto& levels) {
             // The entry's own level handle, not a search of the map. An indexed order always
             // has its level; if the handle does not name a level at the entry's price and side,
             // fail before mutating anything.
@@ -389,19 +449,18 @@ namespace order_book {
             // Nothing below can throw. Unindex straight after erasing, so the entry never
             // holds the erased element's dangling iterator.
             level->removeOrder(location.itr);
-            orderIndex.erase(indexItr);
+            orderIndex.erase(entry);
             if(level->isEmpty()) {
                 levels.erase(location.tickPrice);
             }
         };
 
         if(location.side == Side::BUY) {
-            cancel(bids);
+            remove(bids);
         }
         else {
-            cancel(asks);
+            remove(asks);
         }
-        return result;
     }
 
     ConsumptionResult OrderBook::consumeLevel(Side side, Price price, Quantity quantity) {

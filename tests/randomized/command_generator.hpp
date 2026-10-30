@@ -30,7 +30,7 @@ ExpectedOutcome applyCommand(ReferenceBook& model, const Command& command);
 // only a reproduction recipe together with this version and the profile; saved streams replay
 // exactly whatever the version. randomized_harness_tests pins a fingerprint of each profile's
 // output, so a change that forgets to bump this fails there.
-inline constexpr unsigned int generatorVersion = 6;
+inline constexpr unsigned int generatorVersion = 7;
 
 // The shape of a generated workload. Percentages are out of 100.
 struct WorkloadProfile {
@@ -48,6 +48,14 @@ struct WorkloadProfile {
     unsigned int marketPercent = 10;         // of valid request submissions, MARKET (before IOC/FOK)
     unsigned int marketIocPercent = 60;      // of market orders, IOC; the rest FOK
     unsigned int postOnlyPercent = 10;       // of valid GTC limit requests, post-only
+
+    // Self-trade prevention, on every valid request: ownerPercent have an owner from
+    // 1..ownerPool, the rest none. The mode is drawn every time, even with no owner, so that
+    // owner 0 ignoring it is exercised: CANCEL_RESTING, CANCEL_INCOMING, then CANCEL_BOTH.
+    unsigned int ownerPercent = 50;
+    OwnerId ownerPool = 4;
+    unsigned int cancelRestingPercent = 50;
+    unsigned int cancelIncomingPercent = 25;
 
     // Prices, relative to the model's current best bid and ask. A marketable order is priced at
     // the opposing best or up to throughTicks through it; a far one sits nearTicks + 1 to
@@ -100,6 +108,8 @@ private:
     Command nextSubmit(const ReferenceBook& model, bool invalid);
     Command nextCancel(const ReferenceBook& model, bool invalid);
     Command validSubmit(const ReferenceBook& model);
+    // Draws a request's owner, then its mode.
+    void drawOwnership(Command& command);
     Price pickPrice(const ReferenceBook& model, Side side);
     Quantity pickQuantity();
     // Throws std::length_error once IDs would pass the largest OrderId.
