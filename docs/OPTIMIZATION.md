@@ -190,6 +190,25 @@ What the performance cost in clarity, honestly:
 - **The node pool keeps memory.** It never returns chunks before the book is destroyed, so a book that spikes holds its peak.
 - **`SmallVector` is a near-vector.** It has no `erase` or `insert`, and moving an inline result copies it, so a pointer into a result does not survive a move.
 
+## The owner probe (v2.0.0)
+
+Self-trade prevention (spec #40) checks, before each match of an incoming order that has an owner, whether the oldest resting order it would trade with has the same owner. The spec first put a resting order's owner in its index slot, in the four bytes of padding between the ID and its location, so neither `Order` nor the queue nodes grew. The probe then cost one index lookup per match: a hash, and on a large book a likely cache miss, against an order the matching loop is already reading. Spec #40's P2 set the rule before anything was measured: compare `matching-heavy-owned` (matching-heavy's exact stream through the request path, every order with its own owner, so the probe runs on every match and never prevents) with `matching-heavy-request` (the same stream, owner 0, so the probe never runs), on `core` under the measurement protocol, and move the owner into the queue node if owned is more than 5% slower.
+
+| Comparison, `core`, standard size | Pairs | Median ratio | 95% CI | Faster in |
+|---|---:|---:|---|---:|
+| owned / request, owner in the index slot | 16 | 0.980 | 0.904 - 1.067 | 44% |
+| the same, rerun | 32 | **0.947** | 0.940 - 0.963 | 12% |
+| request / request (noise floor) | 16 | 0.991 | 0.968 - 1.008 | 31% |
+| request / v1 `matching-heavy` (the request path's own cost) | 16 | 0.974 | 0.969 - 0.991 | 19% |
+| owned / request, owner in the queue node | 32 | **0.999** | 0.993 - 1.011 | 47% |
+
+Raw output in [`benchmarks/results/2026-10-29-owner-probe/`](../benchmarks/results/2026-10-29-owner-probe/). One binary throughout, run against itself on two workloads (`compare_ab.py --exp-workload`), so no difference in code placement enters.
+
+- **Outcome.** The probe cost 5.3%, just past the threshold. The first 16 pairs were too noisy to decide (their early pairs ranged from 0.80 to 1.35), so the comparison was rerun with 32, whose later pairs held steady at 0.93-0.97.
+- **The fallback.** A level's queue now holds `RestingOrder`s (`order_location.hpp`): the `Order` plus its `OwnerId`, a 56-byte node in place of 48, which takes a size class of the pool of its own. The probe reads the owner from the front node, and the index is searched only on an actual match, to remove the resting order. The index slot is a plain `{id, location}` again. `RestingOrder` converts from an `Order` and binds to an `Order&`, so the code that reads queues as orders, tests included, did not change.
+- **What it cost the rest.** Against the slot-owner build (16 pairs each, `core`): `matching-heavy-owned` 1.055 (1.044-1.061, every pair faster), `matching-heavy-request` 1.001, and the five v1 workloads 0.976-1.002. `cancellation-heavy` and `mostly-resting` are the two at 0.976, inside the protocol's ±3% no-change band, and they are where a larger node would show: both touch a cancelled or newly rested node on nearly every command. The owner probe now costs nothing measurable (0.999).
+- **Correctness.** The whole suite in Debug and Release, `allocation_failure_tests` included; the workload fingerprints are unchanged, since the generator is untouched.
+
 ## What remains unoptimized
 
 From the final profile and allocation counts. These are opportunities, not plans; none has been measured.

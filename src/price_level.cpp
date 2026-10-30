@@ -5,14 +5,14 @@
 
 namespace order_book {
     PriceLevel::PriceLevel(Price price, Side s, NodePool* pool)
-        : tickPrice(price), side(s), orders(PoolAllocator<Order>(pool)) {}
+        : tickPrice(price), side(s), orders(PoolAllocator<RestingOrder>(pool)) {}
 
     PriceLevel::PriceLevel(Price price, Side s, Order initialOrder): PriceLevel(price, s) {
         addOrder(initialOrder);
     }
 
-    OrderLocation PriceLevel::addOrder(Order newOrder) {
-        OrderQueue::iterator itr = orders.insert(orders.end(), newOrder);
+    OrderLocation PriceLevel::addOrder(Order newOrder, OwnerId owner) {
+        OrderQueue::iterator itr = orders.emplace(orders.end(), newOrder, owner);
         quantity += newOrder.getRemainingQuantity();
 
         OrderLocation location(tickPrice, side, itr, this);

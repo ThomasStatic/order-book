@@ -168,8 +168,7 @@ std::vector<LevelState> captureLevels(const Levels& levels) {
 BookState capture(const OrderBook& book) {
     std::vector<std::pair<OrderId, const Order*>> index;
     for (const auto& entry : Access::index(book)) {
-        const auto& [orderId, owner, location] = entry;
-        static_cast<void>(owner);
+        const auto& [orderId, location] = entry;
         index.emplace_back(orderId, &*location.itr);
     }
     std::sort(index.begin(), index.end());

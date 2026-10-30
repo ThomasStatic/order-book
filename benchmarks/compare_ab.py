@@ -13,8 +13,13 @@ confidence interval, and the share of pairs in which the experiment was faster.
 
     python benchmarks/compare_ab.py --base BASE.exe --exp EXP.exe --out DIR
         [--pairs 16] [--repetitions 5] [--size standard] [--kind both] [--workload NAME]...
+        [--exp-workload NAME]
 
 Writes every invocation's CSV to DIR, and DIR/summary.md.
+
+With --exp-workload, the experiment's invocations run that workload in place of each
+--workload, so one binary (passed as both --base and --exp) can compare two workloads under
+the same interleaving: matching-heavy-owned against matching-heavy-request, for example.
 """
 import argparse
 import csv
@@ -62,6 +67,7 @@ def main():
     parser.add_argument("--kind", default="both")
     parser.add_argument("--workload", action="append", default=[])
     parser.add_argument("--seed", default="42")
+    parser.add_argument("--exp-workload")
     options = parser.parse_args()
     # Absolute, since Windows does not search the current directory for a relative path with slashes.
     binaries = {"base": os.path.abspath(options.base), "exp": os.path.abspath(options.exp)}
@@ -70,15 +76,17 @@ def main():
 
     rows = []
     for workload in workloads:
-        args = ["--workload", workload, "--size", options.size, "--kind", options.kind,
-                "--repetitions", str(options.repetitions), "--warmup", "1", "--seed", options.seed]
+        common = ["--size", options.size, "--kind", options.kind,
+                  "--repetitions", str(options.repetitions), "--warmup", "1", "--seed", options.seed]
+        args = {"base": ["--workload", workload] + common,
+                "exp": ["--workload", options.exp_workload or workload] + common}
         ratios = {}
         for pair in range(options.pairs):
             order = ("base", "exp") if pair % 2 == 0 else ("exp", "base")
             result = {}
             for label in order:
                 path = os.path.join(options.out, f"{workload}-{pair:02d}-{label}.csv")
-                run(binaries[label], args, path)
+                run(binaries[label], args[label], path)
                 result[label] = medians(path)
             for kind in result["base"]:
                 ratios.setdefault(kind, []).append(result["exp"][kind] / result["base"][kind])
@@ -93,7 +101,8 @@ def main():
     for workload, kind, median, low, high, faster, count in rows:
         lines.append(f"| {workload} | {kind} | {median:.3f} | {low:.3f} - {high:.3f} | {faster:.0%} | {count} |")
     with open(os.path.join(options.out, "summary.md"), "w", newline="\n") as summary:
-        summary.write(f"base: {binaries['base']}\nexp: {binaries['exp']}\nsize {options.size}, {options.pairs} ABBA pairs per "
+        against = f"exp workload: {options.exp_workload}\n" if options.exp_workload else ""
+        summary.write(f"base: {binaries['base']}\nexp: {binaries['exp']}\n{against}size {options.size}, {options.pairs} ABBA pairs per "
                       f"workload, {options.repetitions} measured runs per invocation, seed {options.seed}\n\n" + "\n".join(lines) + "\n")
 
 

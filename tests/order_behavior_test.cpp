@@ -28,7 +28,7 @@ struct OrderBookTestAccess {
     static TradeId nextTradeId(const OrderBook& book) { return book.nextTradeId; }
     static SequenceNum nextSequenceNum(const OrderBook& book) { return book.nextSequenceNum; }
     static const OrderQueue& orders(const PriceLevel& level) { return level.orders; }
-    static OwnerId owner(const OrderBook& book, OrderId id) { return book.orderIndex.find(id)->owner; }
+    static OwnerId owner(const OrderBook& book, OrderId id) { return book.orderIndex.find(id)->second.itr->owner; }
     static const auto& buyStops(const OrderBook& book) { return book.buyStops; }
     static const auto& sellStops(const OrderBook& book) { return book.sellStops; }
     static bool noneTriggered(const OrderBook& book) { return !book.triggeredStops || book.triggeredStops->empty(); }

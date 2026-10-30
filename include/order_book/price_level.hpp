@@ -60,7 +60,8 @@ namespace order_book {
         // A heap-backed level holding one order; for tests.
         PriceLevel(Price price, Side s, Order initialOrder);
 
-        OrderLocation addOrder(Order newOrder);
+        // Queues the order at the back, under this owner (0 for none).
+        OrderLocation addOrder(Order newOrder, OwnerId owner = 0);
         // The front of the queue; the level must not be empty.
         const Order& getOldestOrder() const;
 

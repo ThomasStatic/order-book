@@ -111,9 +111,9 @@ struct OrderBookTestAccess {
     static std::size_t levelCount(const OrderBook& book) { return book.bids.size() + book.asks.size(); }
     static std::size_t listNodeSize() {
 #ifdef _MSC_VER
-        return sizeof(std::_List_node<Order, void*>);
+        return sizeof(std::_List_node<RestingOrder, void*>);
 #else
-        return sizeof(Order) + 2 * sizeof(void*);  // libstdc++ and libc++: two links then the value
+        return sizeof(RestingOrder) + 2 * sizeof(void*);  // libstdc++ and libc++: two links then the value
 #endif
     }
 };
@@ -455,7 +455,7 @@ int main(int argc, char** argv) {
     std::printf("# Allocation profile\n\nsize %s (%zu timed commands), seed %llu, generator version %u\n",
                 benchmarkSizeName(size), timedCommandCount(size), static_cast<unsigned long long>(seed),
                 workloadGeneratorVersion);
-    std::printf("sizes: Order %zu, std::list node of Order %zu, PriceLevel %zu, OrderLocation %zu, Trade %zu, "
+    std::printf("sizes: Order %zu, std::list node of RestingOrder %zu, PriceLevel %zu, OrderLocation %zu, Trade %zu, "
                 "BookEvent %zu, SubmissionResult %zu, CancellationResult %zu bytes\n\n",
                 sizeof(Order), OrderBookTestAccess::listNodeSize(), sizeof(PriceLevel), sizeof(OrderLocation), sizeof(Trade),
                 sizeof(BookEvent), sizeof(SubmissionResult), sizeof(CancellationResult));

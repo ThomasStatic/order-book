@@ -11,9 +11,21 @@
 namespace order_book {
     class PriceLevel;
 
+    // A resting order as its level's queue holds it: the order, plus the owner self-trade
+    // prevention probes on every match against it (0 for none). The owner lives in the queue
+    // node, beside the order the probe is already reading, rather than in the index, which
+    // would cost a lookup per match (docs/OPTIMIZATION.md, the owner probe). It converts
+    // from an Order, with no owner, and binds to an Order&, so code that reads the queue as
+    // orders is unchanged; no event, snapshot, or query shows the owner.
+    struct RestingOrder : Order {
+        OwnerId owner = 0;
+
+        RestingOrder(const Order& order, OwnerId restingOwner = 0) : Order(order), owner(restingOwner) {}
+    };
+
     // A price level's FIFO queue of resting orders. Its nodes come from the owning book's
     // NodePool, so resting and removing orders reuse memory instead of going to the heap.
-    using OrderQueue = std::list<Order, PoolAllocator<Order>>;
+    using OrderQueue = std::list<RestingOrder, PoolAllocator<RestingOrder>>;
 
     // Where a resting order is: what OrderBook's index records for each order ID.
     struct OrderLocation

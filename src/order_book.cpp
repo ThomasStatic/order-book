@@ -125,8 +125,8 @@ namespace order_book {
 
             std::optional<OrderLocation> location;
             try {
-                location = level.addOrder(order);
-                if(!orderIndex.emplace(order.getOrderId(), *location, owner).second) {
+                location = level.addOrder(order, owner);
+                if(!orderIndex.emplace(order.getOrderId(), *location).second) {
                     // emplace keeps the existing entry, which would leave this order resting
                     // unindexed; throwing here unwinds it like a failed allocation.
                     throw std::runtime_error("resting an order whose id is already indexed error");
@@ -171,9 +171,8 @@ namespace order_book {
                 if(buying ? price > limit : price < limit) {
                     break;
                 }
-                for(const Order& order : level.orders) {
-                    const auto entry = orderIndex.find(order.getOrderId());
-                    if(entry != orderIndex.end() && entry->owner == how.owner) {
+                for(const RestingOrder& order : level.orders) {
+                    if(order.owner == how.owner) {
                         if(how.selfTradePrevention != SelfTradePrevention::CANCEL_RESTING) {
                             return std::nullopt;  // matching would stop here, short of filling
                         }
@@ -280,10 +279,13 @@ namespace order_book {
             // Self-trade prevention, probed only for an incoming order with an owner, against
             // the order it would trade with next.
             if(how.owner != 0) {
-                const Order& resting = incoming.getSide() == Side::BUY ? asks.begin()->second.getOldestOrder()
-                                                                       : bids.begin()->second.getOldestOrder();
-                const auto entry = orderIndex.find(resting.getOrderId());
-                if(entry != orderIndex.end() && entry->owner == how.owner) {
+                const RestingOrder& resting = incoming.getSide() == Side::BUY ? asks.begin()->second.orders.front()
+                                                                              : bids.begin()->second.orders.front();
+                if(resting.owner == how.owner) {
+                    const auto entry = orderIndex.find(resting.getOrderId());
+                    if(entry == orderIndex.end()) {
+                        throw std::runtime_error("resting order missing from the order index error");
+                    }
                     const SelfTradePrevention mode = how.selfTradePrevention;
                     const bool removesResting = mode != SelfTradePrevention::CANCEL_INCOMING;
                     // Recorded (with room made first) before the removal, which cannot throw once
@@ -472,7 +474,7 @@ namespace order_book {
             level->quantity -= resting.getRemainingQuantity() - open;
             resting.initialQuantity = request.quantity;
             resting.remainingQuantity = open;
-            entry->owner = request.owner;
+            entry->second.itr->owner = request.owner;
             return recorder.finishReplace();
         }
 
@@ -524,7 +526,7 @@ namespace order_book {
             const Price oldPrice = location.tickPrice;
             location.tickPrice = newPrice;
             location.level = &target;
-            entry->owner = owner;
+            node->owner = owner;
             if(source->isEmpty()) {
                 levels.erase(oldPrice);
             }
