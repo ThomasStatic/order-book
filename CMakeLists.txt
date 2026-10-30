@@ -189,6 +189,16 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(order_tests)
     add_test(NAME order_tests COMMAND order_tests)
 
+    add_executable(order_behavior_tests
+        tests/order_behavior_test.cpp
+    )
+
+    target_compile_features(order_behavior_tests PRIVATE cxx_std_20)
+    target_link_libraries(order_behavior_tests PRIVATE order_book)
+    order_book_enable_warnings(order_behavior_tests)
+    order_book_enable_sanitizers(order_behavior_tests)
+    add_test(NAME order_behavior_tests COMMAND order_behavior_tests)
+
     add_executable(result_type_tests
         tests/result_types_test.cpp
     )

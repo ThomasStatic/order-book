@@ -9,6 +9,7 @@
 
 #include "order_book/order_type.hpp"
 #include "order_book/side.hpp"
+#include "order_book/time_in_force.hpp"
 #include "order_book/types.hpp"
 
 namespace order_book::randomized {
@@ -35,6 +36,7 @@ enum class CommandIntent {
     INVALID_SIDE,
     UNSUPPORTED_TYPE,
     MARKED_FILLED,
+    INVALID_TIME_IN_FORCE,
     // A valid cancellation, then intentionally invalid ones.
     CANCEL_ACTIVE,
     CANCEL_REMOVED,  // filled or cancelled already
@@ -56,6 +58,7 @@ struct Command {
     Price price = 0;
     Quantity quantity = 0;
     OrderType orderType = OrderType::LIMIT;
+    TimeInForce timeInForce = TimeInForce::GTC;  // only through the REQUEST overload
     bool markedFilled = false;  // only through the ORDER overload: a request has no fill status
     SubmitOverload overload = SubmitOverload::REQUEST;
     CommandIntent intent = CommandIntent::UNSPECIFIED;
@@ -69,12 +72,12 @@ struct Command {
 
 // One line, e.g. "SUBMIT id=17 side=BUY price=10002 qty=5 intent=NEW_ID" or
 // "CANCEL id=291 intent=CANCEL_ACTIVE". A side or type outside its enum prints as a number,
-// and type, status, and overload appear only when they differ from LIMIT, an unfilled
-// order, and the request overload.
+// and type, time in force, status, and overload appear only when they differ from LIMIT, GTC,
+// an unfilled order, and the request overload.
 std::string formatCommand(const Command& command);
 
 // The inverse of formatCommand; throws std::invalid_argument saying what is wrong, including
-// for status=FILLED without overload=ORDER.
+// for status=FILLED without overload=ORDER, or a time in force with it.
 Command parseCommand(const std::string& line);
 
 // Where a saved stream came from. Replay never needs any of it: the commands alone fix

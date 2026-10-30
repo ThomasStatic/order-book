@@ -6,6 +6,7 @@
 #include <list>
 #include <sstream>
 #include <stdexcept>
+#include <variant>
 
 #include "abort_reporter.hpp"
 #include "order_book/event_format.hpp"
@@ -233,6 +234,30 @@ std::optional<std::string> locateInLevels(const Levels& levels, OrderId orderId,
     return std::nullopt;
 }
 
+// The behavior properties, judged from the engine's result and book alone.
+std::optional<std::string> checkBehavior(const OrderBook& book, const Command& command, const ActualOutcome& actual) {
+    if (command.type != CommandType::SUBMIT || command.overload != SubmitOverload::REQUEST || !actual.outcome.success) {
+        return std::nullopt;
+    }
+    if (command.timeInForce == TimeInForce::IOC) {
+        std::optional<std::string> resting = locateInLevels(Access::bids(book), command.orderId, Side::BUY);
+        if (!resting) {
+            resting = locateInLevels(Access::asks(book), command.orderId, Side::SELL);
+        }
+        if (resting) {
+            return "an IOC order rests: " + *resting;
+        }
+        const std::vector<BookEvent>& events = actual.outcome.events;
+        const Quantity remaining = actual.outcome.remaining;
+        const bool expiredLast = !events.empty() && events.back() == BookEvent{OrderExpired{command.orderId, remaining}};
+        if (remaining > 0 && !expiredLast) {
+            return "an IOC order's unfilled " + std::to_string(remaining) +
+                   " should end its events as an OrderExpired for that quantity";
+        }
+    }
+    return std::nullopt;
+}
+
 std::size_t countLevels(const OrderBook& book) {
     return Access::bids(book).size() + Access::asks(book).size();
 }
@@ -243,6 +268,7 @@ const char* failureTypeName(FailureType type) {
     switch (type) {
         case FailureType::UNEXPECTED_EXCEPTION: return "UNEXPECTED_EXCEPTION";
         case FailureType::INVARIANT_VIOLATION: return "INVARIANT_VIOLATION";
+        case FailureType::BEHAVIOR_VIOLATION: return "BEHAVIOR_VIOLATION";
         case FailureType::OUTCOME_MISMATCH: return "OUTCOME_MISMATCH";
         case FailureType::BOOK_STATE_MISMATCH: return "BOOK_STATE_MISMATCH";
         case FailureType::PROPERTY_VIOLATION: return "PROPERTY_VIOLATION";
@@ -256,7 +282,7 @@ std::string RunStats::summary() const {
            std::to_string(cancellations) + " (cancelled " + std::to_string(cancelled) + ", rejected " +
            std::to_string(cancelsRejected) + ") intentionally-invalid=" + std::to_string(intentionallyInvalid) +
            " trades=" + std::to_string(trades) + " (at most " + std::to_string(mostTradesInOneSubmission) +
-           " per submission) peak-resting=" + std::to_string(peakResting) +
+           " per submission) expired=" + std::to_string(expired) + " peak-resting=" + std::to_string(peakResting) +
            " peak-levels=" + std::to_string(peakLevels);
 }
 
@@ -369,6 +395,9 @@ std::optional<Failure> CommandReplayer::execute(OrderBook& book, ReferenceBook& 
     if (!invariants.isValid()) {
         return fail(FailureType::INVARIANT_VIOLATION, formatInvariantResult(invariants), invariants.violation);
     }
+    if (std::optional<std::string> broken = checkBehavior(book, command, actual)) {
+        return fail(FailureType::BEHAVIOR_VIOLATION, *broken);
+    }
     if (std::optional<std::string> difference = compareOutcomes(expected, actual, command)) {
         return fail(FailureType::OUTCOME_MISMATCH, *difference);
     }
@@ -383,7 +412,11 @@ std::optional<Failure> CommandReplayer::execute(OrderBook& book, ReferenceBook& 
 
     if (submission) {
         ++(expected.success ? stats.accepted : stats.rejected);
-        const std::size_t trades = expected.success ? expected.events.size() - 1 : 0;
+        const auto count = [&](auto isKind) {
+            return static_cast<std::size_t>(std::count_if(expected.events.begin(), expected.events.end(), isKind));
+        };
+        const std::size_t trades = count([](const BookEvent& event) { return std::holds_alternative<TradeExecuted>(event); });
+        stats.expired += count([](const BookEvent& event) { return std::holds_alternative<OrderExpired>(event); });
         stats.trades += trades;
         stats.mostTradesInOneSubmission = std::max(stats.mostTradesInOneSubmission, trades);
     } else {

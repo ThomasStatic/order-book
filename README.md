@@ -180,6 +180,13 @@ The book matches **limit orders** by price, then time:
 7. **Cancellation.** A cancel removes the order and leaves every other order's position unchanged. Resubmitting the same ID later puts it at the back of the queue.
 8. **Never crossed.** After every public command, the best bid is strictly below the best ask. `submitOrder` guarantees this by matching. `addOrder` rests without matching, so it refuses an order that would cross (`WOULD_CROSS_BOOK`).
 
+### Order behaviors
+
+An `OrderRequest` says how its order may trade. These rules add to the ones above, which every behavior keeps (they are being built toward v2.0.0, one at a time):
+
+- **Expiry** ([ADR 0002](docs/adr/0002-unfilled-remainders-expire.md)). A well-formed request is always accepted, whatever the book holds. Whatever it may not trade or rest **expires**: an `OrderExpired` for the whole remainder ends its events, and the remainder still counts as the result's remaining quantity, so traded plus remaining equals accepted. For a `submitOrder(OrderRequest)` result, a remaining quantity above zero therefore does not mean the order rests; only the absence of a trailing `OrderExpired` says it did. An expiring order consumes a sequence number, and its ID is free again at once.
+- **Immediate-or-cancel** (`timeInForce = IOC`). It trades while it crosses, up to its limit price, at each resting price, then its remainder expires. One that does not cross, or faces an empty side, is accepted and wholly expired. It never rests. Like a GTC submission, it is not atomic: if an allocation fails, executions already made stand.
+
 Worked example, from [`tests/replay/valid/price_time_priority.csv`](tests/replay/valid/price_time_priority.csv):
 
 ![Three snapshots of the book replaying price_time_priority.csv: four orders rest; a buy for 50 at 102 sweeps 101 then 102 and rests its last 5 at 102; a sell for 8 at 99 trades 5 at 102 and 3 at 99. Five numbered trades, in execution order.](docs/images/matching-walkthrough.svg)
@@ -208,7 +215,7 @@ N is the number of resting orders, L the number of price levels on the side conc
 | Operation | Time | Notes |
 |---|---|---|
 | `submitOrder` that rests without trading | O(log L) | One map lookup or insert for the level. The index check and insert are O(1) expected, and appending to the level is O(1). |
-| `submitOrder` that makes T trades | O(T + log L) | Each trade is O(1) at the front of the best level. Each emptied level is erased from the front of the map, O(1) amortized. Resting a remainder adds O(log L). The result's storage is inline for up to 4 trades. |
+| `submitOrder` that makes T trades | O(T + log L) | Each trade is O(1) at the front of the best level. Each emptied level is erased from the front of the map, O(1) amortized. Resting a remainder adds O(log L); an IOC remainder expires in O(1) instead. The result's storage is inline for up to 4 trades and 6 events. |
 | `addOrder` | O(log L) | The same as a resting submission, plus an O(1) crossing check. |
 | `cancelOrder` | O(1) expected | Index lookup, then erasure through the stored iterator and level pointer. If the level empties, erasing it by key costs O(log L). It never allocates. |
 | `getBestBid`, `getBestAsk`, `hasBids`, `hasAsks` | O(1) | `begin()` of each map. |
@@ -233,9 +240,9 @@ Everything is in namespace `order_book`, with headers in `include/order_book/`. 
   - Queries: `findActiveOrder`, `getBestBid`/`getBestAsk`, `hasBids`/`hasAsks`, `snapshot`, `activeOrderCount`, `checkInvariants`.
   - `reserve`, a capacity hint.
   - Move-only, and not thread-safe.
-- **`order.hpp`, `order_request.hpp`, `side.hpp`, `order_type.hpp`, `fill_status.hpp`, `types.hpp`**: what a caller submits, and the types it is built from.
+- **`order.hpp`, `order_request.hpp`, `side.hpp`, `order_type.hpp`, `time_in_force.hpp`, `fill_status.hpp`, `types.hpp`**: what a caller submits, and the types it is built from.
   - `Order` is the resting record: its constructor checks its fields and throws, and it accepts only `LIMIT`.
-  - `OrderRequest` is a plain aggregate (`{id, side, price, quantity}`, then instructions that default to a v1 limit order) whose construction never throws. `submitOrder(OrderRequest)` checks it, in a fixed order, and reports the first failing check as a rejected result: a zero ID, a zero price, a zero quantity, an invalid side, a type that is not an enumerator (`UNSUPPORTED_ORDER_TYPE`; only `LIMIT` exists so far), then an ID that is already live (`DUPLICATE_ORDER_ID`). A rejection depends only on the request and on which IDs are live, changes nothing, and consumes no sequence number or trade ID.
+  - `OrderRequest` is a plain aggregate (`{id, side, price, quantity}`, then `type` and `timeInForce` (`time_in_force.hpp`: `GTC`, `IOC`), which default to a v1 limit order) whose construction never throws. `submitOrder(OrderRequest)` checks it, in a fixed order, and reports the first failing check as a rejected result: a zero ID, a zero price, a zero quantity, an invalid side, a type that is not an enumerator (`UNSUPPORTED_ORDER_TYPE`; only `LIMIT` exists so far), a time in force that is not an enumerator (`INVALID_TIME_IN_FORCE`), then an ID that is already live (`DUPLICATE_ORDER_ID`). See [Order behaviors](#order-behaviors) for what each instruction does. A rejection depends only on the request and on which IDs are live, changes nothing, and consumes no sequence number or trade ID.
 - **`submission_result.hpp`, `cancellation_result.hpp`, `trade.hpp`, `book_event.hpp`, `rejection_reason.hpp`**: what each command returns. Each result is built only through its factories (and the book's internal `ResultRecorder`, which checks every trade and event as it is appended), and holds its trades and lifecycle events in execution order. A rejected submission or cancellation is a result, not an exception.
   - Events: `OrderAccepted`, `OrderRejected`, `TradeExecuted`, `OrderCancelled`, `CancelRejected`, and, for the order behaviors being built toward v2.0.0, `OrderExpired`, `SelfTradePrevented`, `StopTriggered`, `OrderReplaced`, and `ReplaceRejected`. No command produces the last five yet.
   - An `OrderAccepted` at price 0 is an order with no limit price (a market or `STOP` order), and prints as `price=MARKET`.
@@ -252,7 +259,7 @@ Error policy:
   - `getBestBid` and `getBestAsk` throw `std::runtime_error` on an empty side;
   - `findActiveOrder` throws on an ID that is not resting.
 - **Values** for rejections: `submitOrder` and `cancelOrder` report them as results.
-- **Allocation failure** propagates and leaves the book consistent. `submitOrder` is not atomic, though: executions made before the failure stand, and their events are lost with the exception.
+- **Allocation failure** propagates and leaves the book consistent. `submitOrder` is not atomic, though, for a GTC or IOC order: executions made before the failure stand, and their events are lost with the exception. A remainder never rests behind a throw.
 
 ## Building
 

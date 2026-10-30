@@ -93,10 +93,16 @@ ExpectedOutcome ReferenceBook::submit(const OrderRequest& request) {
     if (!reason && request.type != OrderType::LIMIT) {
         reason = RejectionReason::UNSUPPORTED_ORDER_TYPE;
     }
+    if (!reason && request.timeInForce != TimeInForce::GTC && request.timeInForce != TimeInForce::IOC) {
+        reason = RejectionReason::INVALID_TIME_IN_FORCE;
+    }
     if (!reason && resting.contains(request.id)) {
         reason = RejectionReason::DUPLICATE_ORDER_ID;
     }
-    return reason ? reject(request.id, request.quantity, *reason) : accept(request);
+    if (reason) {
+        return reject(request.id, request.quantity, *reason);
+    }
+    return accept(request, request.timeInForce == TimeInForce::GTC);
 }
 
 ExpectedOutcome ReferenceBook::submitOrder(const OrderRequest& fields, bool markedFilled) {
@@ -110,11 +116,11 @@ ExpectedOutcome ReferenceBook::submitOrder(const OrderRequest& fields, bool mark
     if (!reason && resting.contains(fields.id)) {
         reason = RejectionReason::DUPLICATE_ORDER_ID;
     }
-    return reason ? reject(fields.id, fields.quantity, *reason) : accept(fields);
+    return reason ? reject(fields.id, fields.quantity, *reason) : accept(fields, true);
 }
 
-// A well-formed limit order: match it by its plan, then rest whatever is left.
-ExpectedOutcome ReferenceBook::accept(const OrderRequest& request) {
+// A well-formed limit order: match it by its plan, then rest whatever is left, or expire it.
+ExpectedOutcome ReferenceBook::accept(const OrderRequest& request, bool restsRemainder) {
     ExpectedOutcome outcome;
     outcome.success = true;
     ++seen.submissionsAccepted;
@@ -127,9 +133,13 @@ ExpectedOutcome ReferenceBook::accept(const OrderRequest& request) {
     outcome.fillStatus = matchPlan.steps.empty() ? FillStatus::NONE : open == 0 ? FillStatus::FILLED : FillStatus::PARTIAL;
 
     removed.erase(request.id);
-    if (open > 0) {
+    if (open > 0 && restsRemainder) {
         rest(ModelOrder{request.id, request.side, request.price, open});
     } else {
+        if (open > 0) {
+            outcome.events.push_back(OrderExpired{request.id, open});
+            ++seen.expired;
+        }
         removed.insert(request.id);
     }
     return outcome;

@@ -2,6 +2,7 @@
 
 #include "order_type.hpp"
 #include "side.hpp"
+#include "time_in_force.hpp"
 #include "types.hpp"
 
 namespace order_book {
@@ -21,6 +22,8 @@ namespace order_book {
         Price price;  // the limit price, in ticks
         Quantity quantity;
         OrderType type = OrderType::LIMIT;
+        // GTC rests what does not trade at once; IOC expires it (reported by OrderExpired).
+        TimeInForce timeInForce = TimeInForce::GTC;
     };
 
 }  // namespace order_book

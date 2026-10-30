@@ -17,6 +17,7 @@ namespace order_book::randomized {
 enum class FailureType {
     UNEXPECTED_EXCEPTION,  // the command threw, which it should do only on an engine bug or allocation failure
     INVARIANT_VIOLATION,   // OrderBook::checkInvariants found a broken invariant
+    BEHAVIOR_VIOLATION,    // the engine's own result broke a behavior property, model or no model
     OUTCOME_MISMATCH,      // the result or its events differ from what the reference model predicts
     BOOK_STATE_MISMATCH,   // the book's levels, queues, or order count differ from the model's
     PROPERTY_VIOLATION     // an extra property given to the replayer failed
@@ -45,6 +46,7 @@ struct RunStats {
     std::size_t rejected = 0;
     std::size_t trades = 0;
     std::size_t mostTradesInOneSubmission = 0;
+    std::size_t expired = 0;
     std::size_t cancellations = 0;
     std::size_t cancelled = 0;
     std::size_t cancelsRejected = 0;
@@ -68,8 +70,11 @@ using PropertyCheck = std::function<std::optional<std::string>(const OrderBook& 
 
 // Runs commands against an OrderBook beside a ReferenceBook, stopping at the first failure.
 // After every command, whatever it did (accepted, rejected, traded, cancelled, refused), it
-// runs the book's complete invariant check, compares the result and its exact events with
-// the model's prediction, and compares every level and FIFO queue with the model's.
+// runs the book's complete invariant check, then checks the behavior properties against the
+// engine's own result and book alone (so a misreading the model shares still fails: no IOC
+// order rests, and an unfilled IOC remainder ends its events as an OrderExpired), then
+// compares the result and its exact events with the model's prediction, and every level and
+// FIFO queue with the model's.
 class CommandReplayer {
 public:
     explicit CommandReplayer(PropertyCheck extraProperty = {}) : property(std::move(extraProperty)) {}

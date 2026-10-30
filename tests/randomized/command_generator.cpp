@@ -92,7 +92,8 @@ std::vector<WorkloadProfile> makeProfiles() {
 }  // namespace
 
 OrderRequest requestOf(const Command& command) {
-    return OrderRequest{command.orderId, command.side, command.price, command.quantity, command.orderType};
+    return OrderRequest{command.orderId, command.side, command.price, command.quantity, command.orderType,
+                        command.timeInForce};
 }
 
 ExpectedOutcome applyCommand(ReferenceBook& model, const Command& command) {
@@ -109,6 +110,7 @@ std::string describeProfile(const WorkloadProfile& profile) {
     return "submit=" + std::to_string(profile.submitPercent) + "% invalid=" + std::to_string(profile.invalidPercent) +
            "% buy=" + std::to_string(profile.buyPercent) + "% reuse=" + std::to_string(profile.reuseIdPercent) +
            "% order-overload=" + std::to_string(profile.orderOverloadPercent) +
+           "% ioc=" + std::to_string(profile.iocPercent) +
            "% marketable=" + std::to_string(profile.marketablePercent) + "% far=" + std::to_string(profile.farPercent) +
            "% through=" + std::to_string(profile.throughTicks) + " near=" + std::to_string(profile.nearTicks) +
            " farTicks=" + std::to_string(profile.farTicks) + " start=" + std::to_string(profile.startPrice) +
@@ -167,6 +169,8 @@ Command RandomCommandGenerator::validSubmit(const ReferenceBook& model) {
                                       reuse ? CommandIntent::REUSED_ID : CommandIntent::NEW_ID);
     if (chance(config.orderOverloadPercent)) {
         command.overload = SubmitOverload::ORDER;
+    } else if (chance(config.iocPercent)) {
+        command.timeInForce = TimeInForce::IOC;
     }
     return command;
 }
@@ -180,7 +184,7 @@ Command RandomCommandGenerator::nextSubmit(const ReferenceBook& model, bool inva
     constexpr CommandIntent faults[] = {CommandIntent::ZERO_ORDER_ID,    CommandIntent::ZERO_PRICE,
                                         CommandIntent::ZERO_QUANTITY,    CommandIntent::INVALID_SIDE,
                                         CommandIntent::UNSUPPORTED_TYPE, CommandIntent::MARKED_FILLED,
-                                        CommandIntent::DUPLICATE_ACTIVE_ID};
+                                        CommandIntent::INVALID_TIME_IN_FORCE, CommandIntent::DUPLICATE_ACTIVE_ID};
     const IdPool& resting = model.restingIds();
     const std::size_t choices = std::size(faults) - (resting.empty() ? 1 : 0);
     const CommandIntent fault = faults[below(choices)];
@@ -210,6 +214,8 @@ Command RandomCommandGenerator::nextSubmit(const ReferenceBook& model, bool inva
             command.markedFilled = true;
             command.overload = SubmitOverload::ORDER;
             break;
+        // Past every enumerator, including those still to come.
+        case CommandIntent::INVALID_TIME_IN_FORCE: command.timeInForce = static_cast<TimeInForce>(3 + below(6)); break;
         default: break;
     }
     return command;

@@ -309,6 +309,32 @@ void testLongSweepStaysConsistent() {
            "the first allocation of a six-trade sweep should be the trades vector growing after four executions");
 }
 
+// An IOC sweep of six trades outgrows the result's inline storage, then expires its remainder.
+// v1's contract holds: whatever fails, every execution made stands, and nothing rests.
+void testImmediateOrCancelSweepStaysConsistent() {
+    const long failures = failEachAllocationInTurn(
+        [](OrderBook& book) {
+            for (unsigned int i = 0; i < 6; ++i) {
+                book.addOrder(Order(10 + i, 100 + i, 1, 1, Side::SELL));
+            }
+        },
+        [](OrderBook& book) {
+            book.submitOrder(order_book::OrderRequest{2, Side::BUY, 106, 9, order_book::OrderType::LIMIT,
+                                                      order_book::TimeInForce::IOC});
+        },
+        [](const OrderBook& book, const std::string& context) {
+            expect(!book.hasBids() && Access::index(book).count(2) == 0,
+                   context + ": an IOC should never rest, even when it fails");
+            const unsigned int executions = Access::nextTradeId(book) - 1;
+            expect(Access::index(book).size() == 6 - executions && Access::asks(book).size() == 6 - executions,
+                   context + ": every execution made should have filled exactly one resting order and its level");
+            expect(Access::nextSequenceNum(book) == 8,
+                   context + ": an IOC accepted before failing should still have consumed its number");
+        },
+        "IOC submitOrder (six-trade sweep)");
+    expect(failures > 0, "IOC (six-trade sweep): at least one allocation failure should have been injected");
+}
+
 void testConsumeLevelFailsBeforeFilling() {
     const long failures = failEachAllocationInTurn(
         [](OrderBook& book) {
@@ -408,6 +434,7 @@ int main() {
         testSubmitOrderStaysConsistent();
         testLongSweepStaysConsistent();
         testRestingSubmitRollsBack();
+        testImmediateOrCancelSweepStaysConsistent();
         testConsumeLevelFailsBeforeFilling();
         testCancelOrderDoesNotAllocate();
         testRequestAllocatesLikeOrder();

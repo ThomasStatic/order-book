@@ -198,18 +198,14 @@ namespace order_book {
         return trade;
     }
 
-    SubmissionTrades OrderBook::matchOrder(Order& incoming) {
-        SubmissionTrades trades;
+    void OrderBook::matchOrder(Order& incoming, ResultRecorder& recorder) {
         while(incoming.getRemainingQuantity() > 0 && crossesBestOpposing(incoming)) {
             // Make room first: once executeOnce has changed the book, recording its trade
             // must not be able to throw. The first few fit inline; beyond them, doubling
-            // keeps push_back amortized O(1).
-            if(trades.size() == trades.capacity()) {
-                trades.reserve(trades.capacity() * 2);
-            }
-            trades.push_back(executeOnce(incoming));
+            // keeps appending amortized O(1).
+            recorder.makeRoom(1, 1);
+            recorder.trade(executeOnce(incoming));
         }
-        return trades;
     }
 
     SubmissionResult OrderBook::submitOrder(Order incoming) {
@@ -219,7 +215,7 @@ namespace order_book {
         if(const std::optional<RejectionReason> reason = validateNewOrder(incoming)) {
             return SubmissionResult::rejected(incoming.getOrderId(), incoming.getRemainingQuantity(), *reason);
         }
-        return matchAndRest(incoming);
+        return matchAndRest(incoming, TimeInForce::GTC);
     }
 
     SubmissionResult OrderBook::submitOrder(OrderRequest request) {
@@ -229,10 +225,10 @@ namespace order_book {
         }
         // Well formed, so the constructor cannot refuse it; matchAndRest numbers it.
         Order incoming(request.id, request.price, request.quantity, nextSequenceNum, request.side);
-        return matchAndRest(incoming);
+        return matchAndRest(incoming, request.timeInForce);
     }
 
-    SubmissionResult OrderBook::matchAndRest(Order& incoming) {
+    SubmissionResult OrderBook::matchAndRest(Order& incoming, TimeInForce timeInForce) {
         // Accepted: numbered once, before matching, and the remainder rests with this same
         // number. Consumed even if matching throws, since executions may already stand.
         incoming.assignSequenceNum(nextSequenceNum);
@@ -247,10 +243,15 @@ namespace order_book {
 
         // The result, events included, is built before the remainder rests, so resting is
         // the last step that can fail: a remainder is never left resting behind a throw.
-        SubmissionTrades trades = matchOrder(incoming);
-        SubmissionResult result = SubmissionResult::accepted(acceptance, std::move(trades),
-                                                               incoming.getRemainingQuantity());
-        if(incoming.getRemainingQuantity() > 0) {
+        ResultRecorder recorder(acceptance);
+        matchOrder(incoming, recorder);
+        const bool expires = timeInForce == TimeInForce::IOC;
+        if(expires && incoming.getRemainingQuantity() > 0) {
+            // Changes nothing in the book, so it may allocate here.
+            recorder.expire(incoming.getRemainingQuantity());
+        }
+        SubmissionResult result = recorder.finish();
+        if(!expires && incoming.getRemainingQuantity() > 0) {
             // Rests at the incoming limit price (fills never change it), not at the price
             // of its last execution. Validation already passed, so it cannot be rejected now.
             restOrder(incoming);

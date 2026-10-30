@@ -16,8 +16,10 @@
 #include "order_location.hpp"
 #include "order_request.hpp"
 #include "price_level.hpp"
+#include "result_recorder.hpp"
 #include "side.hpp"
 #include "submission_result.hpp"
+#include "time_in_force.hpp"
 #include "trade.hpp"
 #include "types.hpp"
 
@@ -80,11 +82,12 @@ namespace order_book {
 
         Trade executeOnce(Order& incoming);
 
-        SubmissionTrades matchOrder(Order& incoming);
+        // Matches while the incoming order has quantity and crosses, recording each trade.
+        void matchOrder(Order& incoming, ResultRecorder& recorder);
 
         // submitOrder's steps once the order is accepted, shared by both overloads: number it,
-        // match it, build the result, and rest any remainder.
-        SubmissionResult matchAndRest(Order& incoming);
+        // match it, build the result, then rest any remainder (GTC) or expire it (IOC).
+        SubmissionResult matchAndRest(Order& incoming, TimeInForce timeInForce);
 
         // Fills resting orders at one price level in FIFO order, unindexing fully filled
         // orders and erasing the level once it is empty. It makes no trades and reports no
@@ -182,12 +185,17 @@ namespace order_book {
         SubmissionResult submitOrder(Order incoming);
 
         // Submits a request. It is checked first, and a malformed one (by the first failing
-        // check: a zero ID, a zero price, a zero quantity, an invalid side, then a type that
-        // is not an enumerator; only LIMIT is accepted for now, and any other type is
-        // UNSUPPORTED_ORDER_TYPE) or one whose ID is live is a REJECTED result that changes
-        // nothing. A request with every field after quantity at its default behaves exactly
-        // as submitOrder(Order) does for an Order with the same ID, side, price, and quantity,
-        // and allocates no more.
+        // check: a zero ID, a zero price, a zero quantity, an invalid side, a type that is not
+        // an enumerator (only LIMIT is accepted for now, and any other type is
+        // UNSUPPORTED_ORDER_TYPE), then a time in force that is not an enumerator) or one whose
+        // ID is live is a REJECTED result that changes nothing. A well-formed request is always
+        // accepted and matched like submitOrder(Order); then a GTC remainder rests, and an IOC
+        // remainder expires instead (a trailing OrderExpired for the whole remainder, which still
+        // counts as the result's remaining quantity). An IOC that does not cross, or faces an
+        // empty side, is accepted and wholly expired; either way it consumes a sequence number
+        // and never rests. A request with every field after quantity at its default behaves
+        // exactly as submitOrder(Order) does for an Order with the same ID, side, price, and
+        // quantity, and allocates no more.
         SubmissionResult submitOrder(OrderRequest request);
 
         // Number of orders resting on the book (both sides), not of price levels.

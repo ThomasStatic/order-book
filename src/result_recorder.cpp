@@ -16,7 +16,7 @@ namespace order_book {
 
         // Room for `added` more elements, doubling so repeated appends stay amortized O(1).
         template <typename Vector>
-        void makeRoom(Vector& vector, std::size_t added) {
+        void growFor(Vector& vector, std::size_t added) {
             const std::size_t wanted = vector.size() + added;
             if (wanted > vector.capacity()) {
                 vector.reserve(std::max(wanted, vector.capacity() * 2));
@@ -63,15 +63,16 @@ namespace order_book {
         }
     }
 
-    void ResultRecorder::reserveEvents(std::size_t added) {
-        makeRoom(events, added);
+    void ResultRecorder::makeRoom(std::size_t addedTrades, std::size_t addedEvents) {
+        // Trades first: if events then fail to grow, the larger trade storage is harmless.
+        growFor(trades, addedTrades);
+        growFor(events, addedEvents);
     }
 
     void ResultRecorder::trade(const Trade& executed) {
         checkTrade(executed);
         // Room for both first, so neither push can throw once the other has been made.
-        makeRoom(trades, 1);
-        reserveEvents(1);
+        makeRoom(1, 1);
         trades.push_back(executed);
         events.push_back(TradeExecuted{executed.getIncomingId(), executed.getRestingId(), executed.getExecutionPrice(),
                                        executed.getExecutionQuantity()});

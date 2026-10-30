@@ -30,7 +30,7 @@ ExpectedOutcome applyCommand(ReferenceBook& model, const Command& command);
 // only a reproduction recipe together with this version and the profile; saved streams replay
 // exactly whatever the version. randomized_harness_tests pins a fingerprint of each profile's
 // output, so a change that forgets to bump this fails there.
-inline constexpr unsigned int generatorVersion = 2;
+inline constexpr unsigned int generatorVersion = 3;
 
 // The shape of a generated workload. Percentages are out of 100.
 struct WorkloadProfile {
@@ -43,6 +43,7 @@ struct WorkloadProfile {
     unsigned int buyPercent = 50;         // of submissions
     unsigned int reuseIdPercent = 10;     // of valid submissions, reusing a filled or cancelled ID
     unsigned int orderOverloadPercent = 10;  // of valid submissions, through submitOrder(Order)
+    unsigned int iocPercent = 12;            // of valid request submissions, IOC rather than GTC
 
     // Prices, relative to the model's current best bid and ask. A marketable order is priced at
     // the opposing best or up to throughTicks through it; a far one sits nearTicks + 1 to

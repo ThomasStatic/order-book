@@ -62,6 +62,12 @@ namespace order_book {
         // quantity, stop price, or trade price.
         void triggered(const OrderAccepted& stop, Price stopPrice, Price tradePrice);
 
+        // Makes room for this many more trades and events, doubling, so that many appends cannot
+        // throw for lack of memory. The book calls it before each step that changes the book,
+        // so recording what the step did never fails once the book has changed. Throws
+        // std::bad_alloc, leaving the recorder unchanged.
+        void makeRoom(std::size_t addedTrades, std::size_t addedEvents);
+
         // The result. The recorder is spent afterwards: any further call throws
         // std::invalid_argument.
         SubmissionResult finish();
@@ -83,8 +89,6 @@ namespace order_book {
         void checkTrade(const Trade& checked) const;
         // Ends the submitted order's part, fixing its remaining quantity, if it is current.
         void closeSubmitted() noexcept;
-        // Makes room for `added` more events, doubling, so the next pushes cannot throw.
-        void reserveEvents(std::size_t added);
 
         // SubmissionResult::accepted's shorthand: checks and records trades as if each were
         // appended in turn, but takes the vector itself, so it allocates no more than the

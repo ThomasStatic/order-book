@@ -40,6 +40,9 @@ namespace order_book::checks {
         if(!isValidOrderType(request.type)) {
             return RejectionReason::UNSUPPORTED_ORDER_TYPE;
         }
+        if(!isValidTimeInForce(request.timeInForce)) {
+            return RejectionReason::INVALID_TIME_IN_FORCE;
+        }
         return std::nullopt;
     }
 

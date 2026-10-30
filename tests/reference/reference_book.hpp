@@ -83,6 +83,7 @@ struct ModelCounters {
     std::size_t submissionsAccepted = 0;
     std::size_t submissionsRejected = 0;
     std::size_t trades = 0;
+    std::size_t expired = 0;
     std::size_t cancelled = 0;
     std::size_t cancelsRejected = 0;
 };
@@ -97,7 +98,8 @@ public:
     // Oldest first.
     using Queue = std::list<OrderId>;
 
-    // submitOrder(OrderRequest): the request's checks in their fixed order, then a live ID.
+    // submitOrder(OrderRequest): the request's checks in their fixed order, then a live ID; an
+    // IOC remainder expires rather than rests.
     ExpectedOutcome submit(const OrderRequest& request);
     // submitOrder(Order), for an Order with these fields, marked FILLED if markedFilled: the
     // Order's own checks (which accept only a type that can rest), then FILLED, then a live ID.
@@ -109,7 +111,8 @@ public:
     MatchPlan plan(Side side, Price limitPrice, Quantity quantity) const;
 
     const IdPool& restingIds() const { return resting; }
-    // IDs accepted at some point that rest no longer: filled, cancelled, or filled on arrival.
+    // IDs accepted at some point that rest no longer: filled, cancelled, or filled or expired on
+    // arrival.
     const IdPool& removedIds() const { return removed; }
 
     const ModelOrder* find(OrderId orderId) const;
@@ -132,7 +135,7 @@ private:
     };
 
     ExpectedOutcome reject(OrderId orderId, Quantity quantity, RejectionReason reason);
-    ExpectedOutcome accept(const OrderRequest& request);
+    ExpectedOutcome accept(const OrderRequest& request, bool restsRemainder);
     void applyPlan(const MatchPlan& plan, OrderId incomingId, std::vector<BookEvent>& events);
     void rest(const ModelOrder& order);
     // Takes a resting order off its level and forgets it.

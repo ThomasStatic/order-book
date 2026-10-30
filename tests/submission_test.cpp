@@ -596,6 +596,13 @@ void testMalformedRequestsAreRejectedInOrder() {
                                    context + " invalid side before type");
     expectRequestRejectedUnchanged(book, OrderRequest{9, Side::BUY, 102, 20, badType},
                                    RejectionReason::UNSUPPORTED_ORDER_TYPE, context + " type not an enumerator");
+    const order_book::TimeInForce badTimeInForce = static_cast<order_book::TimeInForce>(9);
+    expectRequestRejectedUnchanged(book, OrderRequest{9, Side::BUY, 102, 20, badType, badTimeInForce},
+                                   RejectionReason::UNSUPPORTED_ORDER_TYPE, context + " type before time in force");
+    expectRequestRejectedUnchanged(book, OrderRequest{9, Side::BUY, 102, 20, OrderType::LIMIT, badTimeInForce},
+                                   RejectionReason::INVALID_TIME_IN_FORCE, context + " time in force not an enumerator");
+    expectRequestRejectedUnchanged(book, OrderRequest{4, Side::BUY, 102, 20, OrderType::LIMIT, badTimeInForce},
+                                   RejectionReason::INVALID_TIME_IN_FORCE, context + " time in force before duplicate");
 
     // Malformed is reported ahead of duplicate when a request is both; then a live ID.
     expectRequestRejectedUnchanged(book, OrderRequest{4, Side::BUY, 0, 20}, RejectionReason::INVALID_PRICE,

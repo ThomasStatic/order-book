@@ -19,6 +19,7 @@ constexpr CommandIntent allIntents[] = {
     CommandIntent::NEW_ID,          CommandIntent::REUSED_ID,       CommandIntent::DUPLICATE_ACTIVE_ID,
     CommandIntent::ZERO_ORDER_ID,   CommandIntent::ZERO_PRICE,      CommandIntent::ZERO_QUANTITY,
     CommandIntent::INVALID_SIDE,    CommandIntent::UNSUPPORTED_TYPE, CommandIntent::MARKED_FILLED,
+    CommandIntent::INVALID_TIME_IN_FORCE,
     CommandIntent::CANCEL_ACTIVE,   CommandIntent::CANCEL_REMOVED,  CommandIntent::CANCEL_UNKNOWN,
     CommandIntent::CANCEL_ZERO_ID,  CommandIntent::UNSPECIFIED};
 
@@ -64,6 +65,24 @@ OrderType parseType(const std::string& text) {
     return static_cast<OrderType>(parseNumber(text, std::numeric_limits<int>::max(), "type"));
 }
 
+std::string timeInForceText(TimeInForce timeInForce) {
+    switch (timeInForce) {
+        case TimeInForce::GTC: return "GTC";
+        case TimeInForce::IOC: return "IOC";
+    }
+    return std::to_string(static_cast<int>(timeInForce));
+}
+
+TimeInForce parseTimeInForce(const std::string& text) {
+    if (text == "GTC") {
+        return TimeInForce::GTC;
+    }
+    if (text == "IOC") {
+        return TimeInForce::IOC;
+    }
+    return static_cast<TimeInForce>(parseNumber(text, std::numeric_limits<int>::max(), "time in force"));
+}
+
 CommandIntent parseIntent(const std::string& text) {
     for (CommandIntent intent : allIntents) {
         if (text == intentName(intent)) {
@@ -86,6 +105,7 @@ const char* intentName(CommandIntent intent) {
         case CommandIntent::INVALID_SIDE: return "INVALID_SIDE";
         case CommandIntent::UNSUPPORTED_TYPE: return "UNSUPPORTED_TYPE";
         case CommandIntent::MARKED_FILLED: return "MARKED_FILLED";
+        case CommandIntent::INVALID_TIME_IN_FORCE: return "INVALID_TIME_IN_FORCE";
         case CommandIntent::CANCEL_ACTIVE: return "CANCEL_ACTIVE";
         case CommandIntent::CANCEL_REMOVED: return "CANCEL_REMOVED";
         case CommandIntent::CANCEL_UNKNOWN: return "CANCEL_UNKNOWN";
@@ -136,6 +156,9 @@ std::string formatCommand(const Command& command) {
         if (command.orderType != OrderType::LIMIT) {
             line += " type=" + std::to_string(static_cast<int>(command.orderType));
         }
+        if (command.timeInForce != TimeInForce::GTC) {
+            line += " tif=" + timeInForceText(command.timeInForce);
+        }
         if (command.markedFilled) {
             line += " status=FILLED";
         }
@@ -175,7 +198,7 @@ Command parseCommand(const std::string& line) {
         const std::string key = token.substr(0, equals);
         const std::string value = token.substr(equals + 1);
         const bool submitOnly = key == "side" || key == "price" || key == "qty" || key == "type" || key == "status" ||
-                                key == "overload";
+                                key == "overload" || key == "tif";
         if (submitOnly && command.type == CommandType::CANCEL) {
             throw std::invalid_argument("a cancellation has no " + key);
         }
@@ -193,6 +216,8 @@ Command parseCommand(const std::string& line) {
             sawQuantity = true;
         } else if (key == "type") {
             command.orderType = parseType(value);
+        } else if (key == "tif") {
+            command.timeInForce = parseTimeInForce(value);
         } else if (key == "status") {
             if (value != "FILLED") {
                 throw std::invalid_argument("status can only be FILLED, got '" + value + "'");
@@ -214,6 +239,9 @@ Command parseCommand(const std::string& line) {
     }
     if (command.markedFilled && command.overload != SubmitOverload::ORDER) {
         throw std::invalid_argument("status=FILLED needs overload=ORDER: a request has no fill status");
+    }
+    if (command.overload == SubmitOverload::ORDER && command.timeInForce != TimeInForce::GTC) {
+        throw std::invalid_argument("an Order has no time in force: tif needs the request overload");
     }
     return command;
 }

@@ -87,16 +87,16 @@ void testSameSeedSameStream() {
 // and update these values (the failure prints the new ones).
 void testGeneratorFingerprints() {
     const std::map<std::string, std::uint64_t> pinned = {
-        {"balanced", 2418286177375948739ULL},
-        {"aggressive", 1606898910408254699ULL},
-        {"passive", 12957791267139538247ULL},
-        {"cancel-heavy", 6379430343759077871ULL},
-        {"queue", 13403509432949802907ULL},
-        {"one-sided", 6712860676131188209ULL},
-        {"invalid-heavy", 4673402574142639820ULL},
-        {"limits", 7962126432625476341ULL},
+        {"balanced", 15700824553455456327ULL},
+        {"aggressive", 677030719416245982ULL},
+        {"passive", 15052305133296719875ULL},
+        {"cancel-heavy", 10419147365732077667ULL},
+        {"queue", 624564421534963073ULL},
+        {"one-sided", 14091841147008407990ULL},
+        {"invalid-heavy", 17420312017069275855ULL},
+        {"limits", 2634838100882592680ULL},
     };
-    expect(generatorVersion == 2, "the fingerprints below are for generator version 2");
+    expect(generatorVersion == 3, "the fingerprints below are for generator version 3");
     bool allMatch = true;
     std::string actual;
     for (const WorkloadProfile& profile : workloadProfiles()) {
@@ -145,6 +145,14 @@ void testStreamRoundTrip() {
            context + ": the Order overload should print as overload=ORDER");
     expect(formatCommand(Command::submit(10, Side::SELL, 100, 5)) == "SUBMIT id=10 side=SELL price=100 qty=5",
            context + ": the request overload, the default, should not print");
+    Command immediate = Command::submit(11, Side::BUY, 100, 5, CommandIntent::NEW_ID);
+    immediate.timeInForce = order_book::TimeInForce::IOC;
+    expect(formatCommand(immediate) == "SUBMIT id=11 side=BUY price=100 qty=5 tif=IOC intent=NEW_ID",
+           context + ": IOC should print as tif=IOC");
+    Command oddTimeInForce = Command::submit(12, Side::BUY, 100, 5, CommandIntent::INVALID_TIME_IN_FORCE);
+    oddTimeInForce.timeInForce = static_cast<order_book::TimeInForce>(7);
+    stream.commands.push_back(immediate);
+    stream.commands.push_back(oddTimeInForce);
     stream.commands.push_back(viaOrder);
     stream.commands.push_back(oddSide);
     stream.commands.push_back(oddType);
@@ -173,7 +181,8 @@ void testStreamRoundTrip() {
                                   "SUBMIT id=1 side=BUY price=5 qty=4294967296", "CANCEL id=x",
                                   "SUBMIT id=1 side=BUY price=5 qty=1 status=PARTIAL", "CANCEL id=1 intent=MAYBE",
                                   "SUBMIT id=1 side=BUY price=5 qty=1 status=FILLED",
-                                  "SUBMIT id=1 side=BUY price=5 qty=1 overload=REQUEST", "CANCEL id=1 overload=ORDER"}) {
+                                  "SUBMIT id=1 side=BUY price=5 qty=1 overload=REQUEST", "CANCEL id=1 overload=ORDER",
+                                  "SUBMIT id=1 side=BUY price=5 qty=1 tif=IOC overload=ORDER", "CANCEL id=1 tif=IOC"}) {
         expectThrows([&] { parseCommand(bad); }, context + ": should refuse '" + bad + "'");
     }
     std::stringstream noFormat("SUBMIT id=1 side=BUY price=5 qty=1\n");
@@ -202,6 +211,7 @@ void testDistributions() {
         std::size_t submissionsWithOrders = 0;
         std::size_t validSubmissions = 0;
         std::size_t viaOrder = 0;
+        std::size_t ioc = 0;
         std::size_t buys = 0;
         std::size_t nearTouch = 0;
         std::size_t large = 0;
@@ -218,9 +228,13 @@ void testDistributions() {
                 viaOrder += command.overload == SubmitOverload::ORDER ? 1 : 0;
                 buys += command.side == Side::BUY ? 1 : 0;
                 large += command.quantity > profile.smallQuantityMax ? 1 : 0;
+                ioc += command.timeInForce == order_book::TimeInForce::IOC ? 1 : 0;
+                expect(command.overload == SubmitOverload::REQUEST || command.timeInForce == order_book::TimeInForce::GTC,
+                       context + ": an Order-overload submission has no time in force: " + formatCommand(command));
                 expect(command.orderId != 0 && command.price != 0 && command.quantity != 0 &&
                            command.quantity <= profile.largeQuantityMax && !command.markedFilled &&
                            command.orderType == order_book::OrderType::LIMIT &&
+                           order_book::isValidTimeInForce(command.timeInForce) &&
                            (command.side == Side::BUY || command.side == Side::SELL),
                        context + ": a valid submission should be well formed: " + formatCommand(command));
                 expect(command.intent == CommandIntent::NEW_ID || model.removedIds().contains(command.orderId),
@@ -262,6 +276,9 @@ void testDistributions() {
                     expect(command.markedFilled && command.overload == SubmitOverload::ORDER,
                            context + ": marked filled, through the Order overload");
                     break;
+                case CommandIntent::INVALID_TIME_IN_FORCE:
+                    expect(!order_book::isValidTimeInForce(command.timeInForce), context + ": invalid time in force");
+                    break;
                 case CommandIntent::CANCEL_ACTIVE:
                     expect(model.restingIds().contains(command.orderId), context + ": a valid cancel should rest");
                     break;
@@ -283,7 +300,7 @@ void testDistributions() {
         for (const auto& [intent, seen] : intents) {
             invalid += isIntentionallyInvalid(intent) ? seen : 0;
         }
-        expect(intents.size() == 13 && intents.count(CommandIntent::UNSPECIFIED) == 0,
+        expect(intents.size() == 14 && intents.count(CommandIntent::UNSPECIFIED) == 0,
                context + ": every intent should occur, got " + std::to_string(intents.size()));
         const auto share = [](std::size_t part, std::size_t whole) {
             return 100.0 * static_cast<double>(part) / static_cast<double>(whole);
@@ -293,6 +310,8 @@ void testDistributions() {
                context + ": invalid share " + std::to_string(share(invalid, count)));
         expect(near(share(viaOrder, validSubmissions), profile.orderOverloadPercent),
                context + ": Order-overload share " + std::to_string(share(viaOrder, validSubmissions)));
+        expect(near(share(ioc, validSubmissions - viaOrder), profile.iocPercent),
+               context + ": IOC share " + std::to_string(share(ioc, validSubmissions - viaOrder)));
         expect(near(share(buys, validSubmissions), profile.buyPercent),
                context + ": buy share " + std::to_string(share(buys, validSubmissions)));
         expect(share(nearTouch, validSubmissions) > 100.0 - profile.farPercent - 5,
@@ -329,8 +348,9 @@ void testProfilesExerciseTheBook() {
         expect(result.passed(), context + ": should pass, but failed with " +
                                     (result.failure ? result.failure->reason : std::string()));
         const RunStats& stats = result.stats;
-        expect(stats.trades > 0 && stats.cancelled > 0 && stats.rejected > 0 && stats.cancelsRejected > 0,
-               context + ": should trade, cancel, and refuse submissions and cancellations: " + stats.summary());
+        expect(stats.trades > 0 && stats.cancelled > 0 && stats.rejected > 0 && stats.cancelsRejected > 0 &&
+                   stats.expired > 0,
+               context + ": should trade, cancel, expire, and refuse submissions and cancellations: " + stats.summary());
         if (profile.name == "passive") {
             expect(stats.peakLevels > 200, context + ": should build a deep book: " + stats.summary());
         } else if (profile.name == "queue") {
