@@ -99,7 +99,8 @@ public:
     using Queue = std::list<OrderId>;
 
     // submitOrder(OrderRequest): the request's checks in their fixed order, then a live ID; an
-    // IOC remainder expires rather than rests.
+    // IOC remainder expires rather than rests, and a FOK applies its plan only if the plan
+    // fills it, and otherwise discards it and expires whole.
     ExpectedOutcome submit(const OrderRequest& request);
     // submitOrder(Order), for an Order with these fields, marked FILLED if markedFilled: the
     // Order's own checks (which accept only a type that can rest), then FILLED, then a live ID.
@@ -135,7 +136,7 @@ private:
     };
 
     ExpectedOutcome reject(OrderId orderId, Quantity quantity, RejectionReason reason);
-    ExpectedOutcome accept(const OrderRequest& request, bool restsRemainder);
+    ExpectedOutcome accept(const OrderRequest& request, TimeInForce timeInForce);
     void applyPlan(const MatchPlan& plan, OrderId incomingId, std::vector<BookEvent>& events);
     void rest(const ModelOrder& order);
     // Takes a resting order off its level and forgets it.

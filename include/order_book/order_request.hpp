@@ -22,7 +22,8 @@ namespace order_book {
         Price price;  // the limit price, in ticks
         Quantity quantity;
         OrderType type = OrderType::LIMIT;
-        // GTC rests what does not trade at once; IOC expires it (reported by OrderExpired).
+        // GTC rests what does not trade at once; IOC expires it (reported by OrderExpired); FOK
+        // fills whole or makes no trades and expires whole.
         TimeInForce timeInForce = TimeInForce::GTC;
     };
 

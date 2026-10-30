@@ -80,14 +80,23 @@ namespace order_book {
 
         bool crossesBestOpposing(const Order& incoming) const;
 
+        // How many trades a fill-or-kill order would make, or nothing if the opposing levels
+        // within its limit cannot fill its whole quantity. Reads only: it sums level aggregates
+        // from the best level, then counts the orders it would take at the last level, so it
+        // costs O(levels crossed + orders taken at the last).
+        std::optional<std::size_t> fillOrKillTrades(const Order& incoming) const;
+
         Trade executeOnce(Order& incoming);
 
         // Matches while the incoming order has quantity and crosses, recording each trade.
         void matchOrder(Order& incoming, ResultRecorder& recorder);
 
         // submitOrder's steps once the order is accepted, shared by both overloads: number it,
-        // match it, build the result, then rest any remainder (GTC) or expire it (IOC).
+        // match it, build the result, then rest any remainder (GTC) or expire it (IOC). A FOK
+        // instead decides first whether it fills, makes room for its whole result, and only
+        // then is numbered and matched, so it either completes or throws having changed nothing.
         SubmissionResult matchAndRest(Order& incoming, TimeInForce timeInForce);
+        SubmissionResult fillOrKill(Order& incoming);
 
         // Fills resting orders at one price level in FIFO order, unindexing fully filled
         // orders and erasing the level once it is empty. It makes no trades and reports no
@@ -193,7 +202,10 @@ namespace order_book {
         // remainder expires instead (a trailing OrderExpired for the whole remainder, which still
         // counts as the result's remaining quantity). An IOC that does not cross, or faces an
         // empty side, is accepted and wholly expired; either way it consumes a sequence number
-        // and never rests. A request with every field after quantity at its default behaves
+        // and never rests. A FOK fills its whole quantity, or else makes no trades and wholly
+        // expires (FillStatus NONE, no trade ID consumed, the book otherwise untouched; this
+        // allocates nothing). It is strongly atomic: if an allocation fails, it throws with the
+        // book and its counters unchanged. A request with every field after quantity at its default behaves
         // exactly as submitOrder(Order) does for an Order with the same ID, side, price, and
         // quantity, and allocates no more.
         SubmissionResult submitOrder(OrderRequest request);

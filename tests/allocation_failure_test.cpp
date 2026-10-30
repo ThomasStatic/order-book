@@ -335,6 +335,59 @@ void testImmediateOrCancelSweepStaysConsistent() {
     expect(failures > 0, "IOC (six-trade sweep): at least one allocation failure should have been injected");
 }
 
+// A fillable FOK of six trades outgrows the result's inline storage. It is strongly atomic: it
+// makes room for every trade and event before it is numbered or anything trades, so whatever
+// allocation fails, nothing changes, counters included.
+void testFillOrKillIsAllOrNothing() {
+    const auto setup = [](OrderBook& book) {
+        for (unsigned int i = 0; i < 6; ++i) {
+            book.addOrder(Order(10 + i, 100 + i, 2, 1, Side::SELL));
+        }
+    };
+    OrderBook pristine;
+    setup(pristine);
+    const order_book::SequenceNum sequence = Access::nextSequenceNum(pristine);
+    const long failures = failEachAllocationInTurn(
+        setup,
+        [](OrderBook& book) {
+            book.submitOrder(order_book::OrderRequest{2, Side::BUY, 106, 11, order_book::OrderType::LIMIT,
+                                                      order_book::TimeInForce::FOK});
+        },
+        [sequence](const OrderBook& book, const std::string& context) {
+            expect(Access::index(book).size() == 6 && Access::asks(book).size() == 6 && !book.hasBids(),
+                   context + ": a failed FOK should leave every resting order in place");
+            expect(Access::asks(book).at(105).getAggregateQuantity() == 2,
+                   context + ": a failed FOK should fill nothing");
+            expect(Access::nextSequenceNum(book) == sequence && Access::nextTradeId(book) == 1,
+                   context + ": a failed FOK should consume no sequence number or trade ID");
+        },
+        "FOK submitOrder (six-trade fill)");
+    expect(failures > 0, "FOK (six trades): at least one allocation failure should have been injected");
+}
+
+// A FOK that cannot fill is accepted then wholly expired without allocating: its two events fit
+// inline, and the walk that decides it only reads.
+void testUnfillableFillOrKillDoesNotAllocate() {
+    OrderBook book{};
+    for (unsigned int i = 0; i < 6; ++i) {
+        book.addOrder(Order(10 + i, 100 + i, 2, 1, Side::SELL));
+    }
+    allocationsBeforeFailure = 0;
+    bool threw = false;
+    bool expired = false;
+    try {
+        const order_book::SubmissionResult result = book.submitOrder(order_book::OrderRequest{
+            2, Side::BUY, 106, 13, order_book::OrderType::LIMIT, order_book::TimeInForce::FOK});
+        expired = result.getStatus() == order_book::SubmissionStatus::ACCEPTED && result.getGeneratedTrades().empty();
+    } catch (const std::bad_alloc&) {
+        threw = true;
+    }
+    const bool stillArmed = allocationsBeforeFailure == 0;
+    allocationsBeforeFailure = -1;
+    expect(!threw && stillArmed && expired, "an unfillable FOK should expire without allocating");
+    expectIndexConsistent(book, "unfillable FOK without allocating");
+}
+
 void testConsumeLevelFailsBeforeFilling() {
     const long failures = failEachAllocationInTurn(
         [](OrderBook& book) {
@@ -435,6 +488,8 @@ int main() {
         testLongSweepStaysConsistent();
         testRestingSubmitRollsBack();
         testImmediateOrCancelSweepStaysConsistent();
+        testFillOrKillIsAllOrNothing();
+        testUnfillableFillOrKillDoesNotAllocate();
         testConsumeLevelFailsBeforeFilling();
         testCancelOrderDoesNotAllocate();
         testRequestAllocatesLikeOrder();

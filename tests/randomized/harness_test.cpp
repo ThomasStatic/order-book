@@ -87,16 +87,16 @@ void testSameSeedSameStream() {
 // and update these values (the failure prints the new ones).
 void testGeneratorFingerprints() {
     const std::map<std::string, std::uint64_t> pinned = {
-        {"balanced", 15700824553455456327ULL},
-        {"aggressive", 677030719416245982ULL},
-        {"passive", 15052305133296719875ULL},
-        {"cancel-heavy", 10419147365732077667ULL},
-        {"queue", 624564421534963073ULL},
-        {"one-sided", 14091841147008407990ULL},
-        {"invalid-heavy", 17420312017069275855ULL},
-        {"limits", 2634838100882592680ULL},
+        {"balanced", 3512178794005860028ULL},
+        {"aggressive", 5766683271771282662ULL},
+        {"passive", 13930655518994184595ULL},
+        {"cancel-heavy", 5800708897898125254ULL},
+        {"queue", 4716475145451889468ULL},
+        {"one-sided", 16132073300433426455ULL},
+        {"invalid-heavy", 11040785032181077416ULL},
+        {"limits", 16066685275371287177ULL},
     };
-    expect(generatorVersion == 3, "the fingerprints below are for generator version 3");
+    expect(generatorVersion == 4, "the fingerprints below are for generator version 4");
     bool allMatch = true;
     std::string actual;
     for (const WorkloadProfile& profile : workloadProfiles()) {
@@ -149,6 +149,11 @@ void testStreamRoundTrip() {
     immediate.timeInForce = order_book::TimeInForce::IOC;
     expect(formatCommand(immediate) == "SUBMIT id=11 side=BUY price=100 qty=5 tif=IOC intent=NEW_ID",
            context + ": IOC should print as tif=IOC");
+    Command killer = Command::submit(13, Side::SELL, 100, 5, CommandIntent::NEW_ID);
+    killer.timeInForce = order_book::TimeInForce::FOK;
+    expect(formatCommand(killer) == "SUBMIT id=13 side=SELL price=100 qty=5 tif=FOK intent=NEW_ID",
+           context + ": FOK should print as tif=FOK");
+    stream.commands.push_back(killer);
     Command oddTimeInForce = Command::submit(12, Side::BUY, 100, 5, CommandIntent::INVALID_TIME_IN_FORCE);
     oddTimeInForce.timeInForce = static_cast<order_book::TimeInForce>(7);
     stream.commands.push_back(immediate);
@@ -212,6 +217,7 @@ void testDistributions() {
         std::size_t validSubmissions = 0;
         std::size_t viaOrder = 0;
         std::size_t ioc = 0;
+        std::size_t fok = 0;
         std::size_t buys = 0;
         std::size_t nearTouch = 0;
         std::size_t large = 0;
@@ -229,6 +235,7 @@ void testDistributions() {
                 buys += command.side == Side::BUY ? 1 : 0;
                 large += command.quantity > profile.smallQuantityMax ? 1 : 0;
                 ioc += command.timeInForce == order_book::TimeInForce::IOC ? 1 : 0;
+                fok += command.timeInForce == order_book::TimeInForce::FOK ? 1 : 0;
                 expect(command.overload == SubmitOverload::REQUEST || command.timeInForce == order_book::TimeInForce::GTC,
                        context + ": an Order-overload submission has no time in force: " + formatCommand(command));
                 expect(command.orderId != 0 && command.price != 0 && command.quantity != 0 &&
@@ -312,6 +319,8 @@ void testDistributions() {
                context + ": Order-overload share " + std::to_string(share(viaOrder, validSubmissions)));
         expect(near(share(ioc, validSubmissions - viaOrder), profile.iocPercent),
                context + ": IOC share " + std::to_string(share(ioc, validSubmissions - viaOrder)));
+        expect(near(share(fok, validSubmissions - viaOrder), profile.fokPercent),
+               context + ": FOK share " + std::to_string(share(fok, validSubmissions - viaOrder)));
         expect(near(share(buys, validSubmissions), profile.buyPercent),
                context + ": buy share " + std::to_string(share(buys, validSubmissions)));
         expect(share(nearTouch, validSubmissions) > 100.0 - profile.farPercent - 5,

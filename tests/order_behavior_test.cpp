@@ -217,6 +217,62 @@ void testImmediateOrCancel(Side side) {
     }
 }
 
+OrderRequest fok(OrderId id, Side side, Price price, unsigned int quantity) {
+    return OrderRequest{id, side, price, quantity, OrderType::LIMIT, TimeInForce::FOK};
+}
+
+// FOK fills its whole quantity at once, or makes no trades and wholly expires, leaving the book
+// untouched but for the sequence number it consumes.
+void testFillOrKill(Side side) {
+    const std::string context = "FOK " + sideName(side);
+    {
+        // Fills across both levels, the last only in part: a normal match, nothing expires.
+        OrderBook book = seededBook(side);
+        const SubmissionResult result = book.submitOrder(fok(9, side, priceAway(side, 1), 10));
+        expectAcceptedWith(result,
+                           Events{OrderAccepted{9, side, priceAway(side, 1), 10},
+                                  TradeExecuted{9, 1, priceAway(side, 0), 3}, TradeExecuted{9, 2, priceAway(side, 0), 4},
+                                  TradeExecuted{9, 3, priceAway(side, 1), 3}},
+                           0, FillStatus::FILLED, 3, context + " fillable");
+        expect(book.findActiveOrder(3).getRemainingQuantity() == 2 && book.activeOrderCount() == 1,
+               context + " fillable: the last maker should keep what was left");
+        expectSound(book, context + " fillable");
+    }
+    {
+        // Exactly everything within its limit.
+        OrderBook book = seededBook(side);
+        const SubmissionResult result = book.submitOrder(fok(9, side, priceAway(side, 0), 7));
+        expectAcceptedWith(result,
+                           Events{OrderAccepted{9, side, priceAway(side, 0), 7},
+                                  TradeExecuted{9, 1, priceAway(side, 0), 3}, TradeExecuted{9, 2, priceAway(side, 0), 4}},
+                           0, FillStatus::FILLED, 2, context + " exactly fillable");
+        expectSound(book, context + " exactly fillable");
+    }
+    // Not fillable: one short within its limit, more beyond its limit, nothing crossing, or an
+    // empty side. Accepted, then wholly expired, with no trade ID consumed.
+    const std::pair<OrderRequest, const char*> unfillable[] = {
+        {fok(9, side, priceAway(side, 1), 13), "one short"},
+        {fok(9, side, priceAway(side, 0), 8), "liquidity beyond its limit"},
+        {fok(9, side, priceAway(side, -1), 1), "not crossing"},
+    };
+    for (const auto& [request, what] : unfillable) {
+        OrderBook book = seededBook(side);
+        BookState before = capture(book);
+        const SubmissionResult result = book.submitOrder(request);
+        expectAcceptedWith(result,
+                           Events{OrderAccepted{9, side, request.price, request.quantity}, OrderExpired{9, request.quantity}},
+                           request.quantity, FillStatus::NONE, 0, context + " " + what);
+        ++before.nextSequenceNum;
+        expect(capture(book) == before, context + " " + what + ": only the sequence number should change");
+        expectSound(book, context + " " + what);
+    }
+    OrderBook empty;
+    expectAcceptedWith(empty.submitOrder(fok(9, side, 100, 4)), Events{OrderAccepted{9, side, 100, 4}, OrderExpired{9, 4}},
+                       4, FillStatus::NONE, 0, context + " empty side");
+    expect(Access::nextSequenceNum(empty) == 2 && Access::nextTradeId(empty) == 1 && empty.activeOrderCount() == 0,
+           context + " empty side: should consume a sequence number and no trade ID");
+}
+
 // An expired order's ID is free again, as a filled one's is.
 void testExpiredIdIsFree() {
     OrderBook book;
@@ -244,6 +300,7 @@ void testScriptIsDeterministic() {
         const OrderRequest script[] = {
             {1, Side::SELL, 101, 5}, {2, Side::SELL, 102, 5}, ioc(3, Side::BUY, 101, 8), {4, Side::BUY, 99, 4},
             ioc(5, Side::SELL, 98, 10), ioc(6, Side::BUY, 110, 2), ioc(3, Side::SELL, 120, 1), {7, Side::BUY, 102, 9},
+            fok(8, Side::SELL, 100, 7), fok(8, Side::SELL, 100, 6), {9, Side::SELL, 105, 2}, fok(10, Side::BUY, 105, 3),
         };
         for (const OrderRequest& request : script) {
             outcomes.push_back(book.submitOrder(request).getEvents().toVector());
@@ -259,6 +316,12 @@ void testScriptIsDeterministic() {
            "scripted IOC: the IOC sell should take the bid and expire the rest");
     expect(first[7] == Events{OrderAccepted{7, Side::BUY, 102, 9}, TradeExecuted{7, 2, 102, 3}},
            "scripted IOC: the remaining ask should fill what the earlier IOC left");
+    expect(first[8] == Events{OrderAccepted{8, Side::SELL, 100, 7}, OrderExpired{8, 7}},
+           "scripted FOK: a sell for more than the bid holds should expire whole");
+    expect(first[9] == Events{OrderAccepted{8, Side::SELL, 100, 6}, TradeExecuted{8, 7, 102, 6}},
+           "scripted FOK: a sell for exactly the bid should fill");
+    expect(first[11] == Events{OrderAccepted{10, Side::BUY, 105, 3}, OrderExpired{10, 3}},
+           "scripted FOK: a buy for more than the ask holds should expire whole");
 }
 
 }  // namespace
@@ -266,6 +329,7 @@ void testScriptIsDeterministic() {
 int main() {
     for (Side side : {Side::BUY, Side::SELL}) {
         testImmediateOrCancel(side);
+        testFillOrKill(side);
     }
     testExpiredIdIsFree();
     testGoodTillCancelledRests();

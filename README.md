@@ -186,6 +186,7 @@ An `OrderRequest` says how its order may trade. These rules add to the ones abov
 
 - **Expiry** ([ADR 0002](docs/adr/0002-unfilled-remainders-expire.md)). A well-formed request is always accepted, whatever the book holds. Whatever it may not trade or rest **expires**: an `OrderExpired` for the whole remainder ends its events, and the remainder still counts as the result's remaining quantity, so traded plus remaining equals accepted. For a `submitOrder(OrderRequest)` result, a remaining quantity above zero therefore does not mean the order rests; only the absence of a trailing `OrderExpired` says it did. An expiring order consumes a sequence number, and its ID is free again at once.
 - **Immediate-or-cancel** (`timeInForce = IOC`). It trades while it crosses, up to its limit price, at each resting price, then its remainder expires. One that does not cross, or faces an empty side, is accepted and wholly expired. It never rests. Like a GTC submission, it is not atomic: if an allocation fails, executions already made stand.
+- **Fill-or-kill** (`timeInForce = FOK`). Before anything changes, a read-only walk sums the opposing levels' aggregates within its limit to decide whether it can fill its whole quantity, counting the trades it would make. If it can, it matches normally and nothing expires. If not, it makes no trades and its whole quantity expires (`FillStatus::NONE`, no trade ID consumed, the book otherwise untouched, nothing allocated). It is **strongly atomic**: it makes room for its whole result before it is numbered or trades, so if an allocation fails it throws with the book, the next sequence number, and the next trade ID unchanged.
 
 Worked example, from [`tests/replay/valid/price_time_priority.csv`](tests/replay/valid/price_time_priority.csv):
 
@@ -216,6 +217,7 @@ N is the number of resting orders, L the number of price levels on the side conc
 |---|---|---|
 | `submitOrder` that rests without trading | O(log L) | One map lookup or insert for the level. The index check and insert are O(1) expected, and appending to the level is O(1). |
 | `submitOrder` that makes T trades | O(T + log L) | Each trade is O(1) at the front of the best level. Each emptied level is erased from the front of the map, O(1) amortized. Resting a remainder adds O(log L); an IOC remainder expires in O(1) instead. The result's storage is inline for up to 4 trades and 6 events. |
+| FOK `submitOrder` | O(C + k + T) | A read-only walk over the C levels it crosses, plus the k orders it takes at the last, decides whether it fills, before the match. One that cannot fill is O(C + k) and allocates nothing. |
 | `addOrder` | O(log L) | The same as a resting submission, plus an O(1) crossing check. |
 | `cancelOrder` | O(1) expected | Index lookup, then erasure through the stored iterator and level pointer. If the level empties, erasing it by key costs O(log L). It never allocates. |
 | `getBestBid`, `getBestAsk`, `hasBids`, `hasAsks` | O(1) | `begin()` of each map. |
@@ -242,7 +244,7 @@ Everything is in namespace `order_book`, with headers in `include/order_book/`. 
   - Move-only, and not thread-safe.
 - **`order.hpp`, `order_request.hpp`, `side.hpp`, `order_type.hpp`, `time_in_force.hpp`, `fill_status.hpp`, `types.hpp`**: what a caller submits, and the types it is built from.
   - `Order` is the resting record: its constructor checks its fields and throws, and it accepts only `LIMIT`.
-  - `OrderRequest` is a plain aggregate (`{id, side, price, quantity}`, then `type` and `timeInForce` (`time_in_force.hpp`: `GTC`, `IOC`), which default to a v1 limit order) whose construction never throws. `submitOrder(OrderRequest)` checks it, in a fixed order, and reports the first failing check as a rejected result: a zero ID, a zero price, a zero quantity, an invalid side, a type that is not an enumerator (`UNSUPPORTED_ORDER_TYPE`; only `LIMIT` exists so far), a time in force that is not an enumerator (`INVALID_TIME_IN_FORCE`), then an ID that is already live (`DUPLICATE_ORDER_ID`). See [Order behaviors](#order-behaviors) for what each instruction does. A rejection depends only on the request and on which IDs are live, changes nothing, and consumes no sequence number or trade ID.
+  - `OrderRequest` is a plain aggregate (`{id, side, price, quantity}`, then `type` and `timeInForce` (`time_in_force.hpp`: `GTC`, `IOC`, `FOK`), which default to a v1 limit order) whose construction never throws. `submitOrder(OrderRequest)` checks it, in a fixed order, and reports the first failing check as a rejected result: a zero ID, a zero price, a zero quantity, an invalid side, a type that is not an enumerator (`UNSUPPORTED_ORDER_TYPE`; only `LIMIT` exists so far), a time in force that is not an enumerator (`INVALID_TIME_IN_FORCE`), then an ID that is already live (`DUPLICATE_ORDER_ID`). See [Order behaviors](#order-behaviors) for what each instruction does. A rejection depends only on the request and on which IDs are live, changes nothing, and consumes no sequence number or trade ID.
 - **`submission_result.hpp`, `cancellation_result.hpp`, `trade.hpp`, `book_event.hpp`, `rejection_reason.hpp`**: what each command returns. Each result is built only through its factories (and the book's internal `ResultRecorder`, which checks every trade and event as it is appended), and holds its trades and lifecycle events in execution order. A rejected submission or cancellation is a result, not an exception.
   - Events: `OrderAccepted`, `OrderRejected`, `TradeExecuted`, `OrderCancelled`, `CancelRejected`, and, for the order behaviors being built toward v2.0.0, `OrderExpired`, `SelfTradePrevented`, `StopTriggered`, `OrderReplaced`, and `ReplaceRejected`. No command produces the last five yet.
   - An `OrderAccepted` at price 0 is an order with no limit price (a market or `STOP` order), and prints as `price=MARKET`.
@@ -259,7 +261,7 @@ Error policy:
   - `getBestBid` and `getBestAsk` throw `std::runtime_error` on an empty side;
   - `findActiveOrder` throws on an ID that is not resting.
 - **Values** for rejections: `submitOrder` and `cancelOrder` report them as results.
-- **Allocation failure** propagates and leaves the book consistent. `submitOrder` is not atomic, though, for a GTC or IOC order: executions made before the failure stand, and their events are lost with the exception. A remainder never rests behind a throw.
+- **Allocation failure** propagates and leaves the book consistent. `submitOrder` is not atomic, though, for a GTC or IOC order (a FOK is): executions made before the failure stand, and their events are lost with the exception. A remainder never rests behind a throw.
 
 ## Building
 

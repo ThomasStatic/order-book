@@ -239,20 +239,25 @@ std::optional<std::string> checkBehavior(const OrderBook& book, const Command& c
     if (command.type != CommandType::SUBMIT || command.overload != SubmitOverload::REQUEST || !actual.outcome.success) {
         return std::nullopt;
     }
-    if (command.timeInForce == TimeInForce::IOC) {
+    if (command.timeInForce == TimeInForce::IOC || command.timeInForce == TimeInForce::FOK) {
+        const char* kind = command.timeInForce == TimeInForce::IOC ? "an IOC" : "a FOK";
         std::optional<std::string> resting = locateInLevels(Access::bids(book), command.orderId, Side::BUY);
         if (!resting) {
             resting = locateInLevels(Access::asks(book), command.orderId, Side::SELL);
         }
         if (resting) {
-            return "an IOC order rests: " + *resting;
+            return std::string(kind) + " order rests: " + *resting;
         }
         const std::vector<BookEvent>& events = actual.outcome.events;
         const Quantity remaining = actual.outcome.remaining;
         const bool expiredLast = !events.empty() && events.back() == BookEvent{OrderExpired{command.orderId, remaining}};
         if (remaining > 0 && !expiredLast) {
-            return "an IOC order's unfilled " + std::to_string(remaining) +
+            return std::string(kind) + " order's unfilled " + std::to_string(remaining) +
                    " should end its events as an OrderExpired for that quantity";
+        }
+        if (command.timeInForce == TimeInForce::FOK && remaining > 0 && remaining != command.quantity) {
+            return "a FOK order traded part of its quantity: " + std::to_string(command.quantity - remaining) + " of " +
+                   std::to_string(command.quantity);
         }
     }
     return std::nullopt;

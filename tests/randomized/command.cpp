@@ -69,6 +69,7 @@ std::string timeInForceText(TimeInForce timeInForce) {
     switch (timeInForce) {
         case TimeInForce::GTC: return "GTC";
         case TimeInForce::IOC: return "IOC";
+        case TimeInForce::FOK: return "FOK";
     }
     return std::to_string(static_cast<int>(timeInForce));
 }
@@ -79,6 +80,9 @@ TimeInForce parseTimeInForce(const std::string& text) {
     }
     if (text == "IOC") {
         return TimeInForce::IOC;
+    }
+    if (text == "FOK") {
+        return TimeInForce::FOK;
     }
     return static_cast<TimeInForce>(parseNumber(text, std::numeric_limits<int>::max(), "time in force"));
 }

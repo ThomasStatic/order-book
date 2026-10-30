@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cstdint>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -144,6 +145,37 @@ namespace order_book {
         return hasBids() && incoming.getPriceTick() <= bids.begin()->first;
     }
 
+    std::optional<std::size_t> OrderBook::fillOrKillTrades(const Order& incoming) const {
+        const Quantity wanted = incoming.getRemainingQuantity();
+        const Price limit = incoming.getPriceTick();
+        const bool buying = incoming.getSide() == Side::BUY;
+        auto walk = [&](const auto& levels) -> std::optional<std::size_t> {
+            std::uint64_t available = 0;
+            std::size_t trades = 0;
+            for(const auto& [price, level] : levels) {
+                if(buying ? price > limit : price < limit) {
+                    break;
+                }
+                if(available + level.getAggregateQuantity() < wanted) {
+                    available += level.getAggregateQuantity();
+                    trades += level.getOrderCount();
+                    continue;
+                }
+                // The level that completes it: count the orders it takes, oldest first.
+                for(const Order& order : level.orders) {
+                    ++trades;
+                    available += order.getRemainingQuantity();
+                    if(available >= wanted) {
+                        return trades;
+                    }
+                }
+                break;
+            }
+            return std::nullopt;
+        };
+        return buying ? walk(asks) : walk(bids);
+    }
+
     Trade OrderBook::executeOnce(Order& incoming) {
         // Every check runs and the trade is built before anything is mutated, so a throw
         // leaves the book, its index, and the incoming order untouched.
@@ -229,6 +261,9 @@ namespace order_book {
     }
 
     SubmissionResult OrderBook::matchAndRest(Order& incoming, TimeInForce timeInForce) {
+        if(timeInForce == TimeInForce::FOK) {
+            return fillOrKill(incoming);
+        }
         // Accepted: numbered once, before matching, and the remainder rests with this same
         // number. Consumed even if matching throws, since executions may already stand.
         incoming.assignSequenceNum(nextSequenceNum);
@@ -257,6 +292,28 @@ namespace order_book {
             restOrder(incoming);
         }
         return result;
+    }
+
+    SubmissionResult OrderBook::fillOrKill(Order& incoming) {
+        const OrderAccepted acceptance{incoming.getOrderId(), incoming.getSide(), incoming.getPriceTick(),
+                                       incoming.getRemainingQuantity()};
+        const std::optional<std::size_t> trades = fillOrKillTrades(incoming);
+        incoming.assignSequenceNum(nextSequenceNum);
+        ResultRecorder recorder(acceptance);
+        if(!trades) {
+            // Its acceptance and expiry fit inline, so nothing here allocates or throws.
+            recorder.expire(incoming.getRemainingQuantity());
+            SubmissionResult result = recorder.finish();
+            advanceSequenceNum();
+            return result;
+        }
+        // Room for the whole result before anything is numbered or traded: the only step that
+        // can fail. After it, matching cannot throw (executeOnce and the erasures it makes never
+        // allocate), so the FOK either completes or changes nothing.
+        recorder.reserve(*trades, *trades + 1);
+        advanceSequenceNum();
+        matchOrder(incoming, recorder);
+        return recorder.finish();
     }
 
     std::size_t OrderBook::activeOrderCount() const {

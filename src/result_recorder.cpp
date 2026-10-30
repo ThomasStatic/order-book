@@ -69,6 +69,11 @@ namespace order_book {
         growFor(events, addedEvents);
     }
 
+    void ResultRecorder::reserve(std::size_t totalTrades, std::size_t totalEvents) {
+        trades.reserve(totalTrades);
+        events.reserve(totalEvents);
+    }
+
     void ResultRecorder::trade(const Trade& executed) {
         checkTrade(executed);
         // Room for both first, so neither push can throw once the other has been made.

@@ -93,7 +93,8 @@ ExpectedOutcome ReferenceBook::submit(const OrderRequest& request) {
     if (!reason && request.type != OrderType::LIMIT) {
         reason = RejectionReason::UNSUPPORTED_ORDER_TYPE;
     }
-    if (!reason && request.timeInForce != TimeInForce::GTC && request.timeInForce != TimeInForce::IOC) {
+    if (!reason && request.timeInForce != TimeInForce::GTC && request.timeInForce != TimeInForce::IOC &&
+        request.timeInForce != TimeInForce::FOK) {
         reason = RejectionReason::INVALID_TIME_IN_FORCE;
     }
     if (!reason && resting.contains(request.id)) {
@@ -102,7 +103,7 @@ ExpectedOutcome ReferenceBook::submit(const OrderRequest& request) {
     if (reason) {
         return reject(request.id, request.quantity, *reason);
     }
-    return accept(request, request.timeInForce == TimeInForce::GTC);
+    return accept(request, request.timeInForce);
 }
 
 ExpectedOutcome ReferenceBook::submitOrder(const OrderRequest& fields, bool markedFilled) {
@@ -116,18 +117,23 @@ ExpectedOutcome ReferenceBook::submitOrder(const OrderRequest& fields, bool mark
     if (!reason && resting.contains(fields.id)) {
         reason = RejectionReason::DUPLICATE_ORDER_ID;
     }
-    return reason ? reject(fields.id, fields.quantity, *reason) : accept(fields, true);
+    return reason ? reject(fields.id, fields.quantity, *reason) : accept(fields, TimeInForce::GTC);
 }
 
-// A well-formed limit order: match it by its plan, then rest whatever is left, or expire it.
-ExpectedOutcome ReferenceBook::accept(const OrderRequest& request, bool restsRemainder) {
+// A well-formed limit order: match it by its plan, then rest whatever is left (GTC), or expire
+// it (IOC). A FOK whose plan does not fill it discards the plan and expires whole.
+ExpectedOutcome ReferenceBook::accept(const OrderRequest& request, TimeInForce timeInForce) {
     ExpectedOutcome outcome;
     outcome.success = true;
     ++seen.submissionsAccepted;
     outcome.events.push_back(OrderAccepted{request.id, request.side, request.price, request.quantity});
 
-    const MatchPlan matchPlan = plan(request.side, request.price, request.quantity);
+    MatchPlan matchPlan = plan(request.side, request.price, request.quantity);
+    if (timeInForce == TimeInForce::FOK && matchPlan.filled < request.quantity) {
+        matchPlan = MatchPlan{};
+    }
     applyPlan(matchPlan, request.id, outcome.events);
+    const bool restsRemainder = timeInForce == TimeInForce::GTC;
     const Quantity open = request.quantity - matchPlan.filled;
     outcome.remaining = open;
     outcome.fillStatus = matchPlan.steps.empty() ? FillStatus::NONE : open == 0 ? FillStatus::FILLED : FillStatus::PARTIAL;

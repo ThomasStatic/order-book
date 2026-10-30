@@ -110,7 +110,7 @@ std::string describeProfile(const WorkloadProfile& profile) {
     return "submit=" + std::to_string(profile.submitPercent) + "% invalid=" + std::to_string(profile.invalidPercent) +
            "% buy=" + std::to_string(profile.buyPercent) + "% reuse=" + std::to_string(profile.reuseIdPercent) +
            "% order-overload=" + std::to_string(profile.orderOverloadPercent) +
-           "% ioc=" + std::to_string(profile.iocPercent) +
+           "% ioc=" + std::to_string(profile.iocPercent) + "% fok=" + std::to_string(profile.fokPercent) +
            "% marketable=" + std::to_string(profile.marketablePercent) + "% far=" + std::to_string(profile.farPercent) +
            "% through=" + std::to_string(profile.throughTicks) + " near=" + std::to_string(profile.nearTicks) +
            " farTicks=" + std::to_string(profile.farTicks) + " start=" + std::to_string(profile.startPrice) +
@@ -169,8 +169,13 @@ Command RandomCommandGenerator::validSubmit(const ReferenceBook& model) {
                                       reuse ? CommandIntent::REUSED_ID : CommandIntent::NEW_ID);
     if (chance(config.orderOverloadPercent)) {
         command.overload = SubmitOverload::ORDER;
-    } else if (chance(config.iocPercent)) {
+        return command;
+    }
+    const std::uint64_t timeInForce = below(100);
+    if (timeInForce < config.iocPercent) {
         command.timeInForce = TimeInForce::IOC;
+    } else if (timeInForce < config.iocPercent + config.fokPercent) {
+        command.timeInForce = TimeInForce::FOK;
     }
     return command;
 }
