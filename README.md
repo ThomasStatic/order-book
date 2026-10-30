@@ -1,8 +1,8 @@
 # Order Book
 
-A correctness-first limit order book and matching engine in C++20. It matches limit orders by price-time priority and cancels orders in O(1). Every command returns the lifecycle events it produced. A whole-book invariant checker can run after every command. Around the engine are a CSV replay format and CLI, seeded randomized testing against an independent model, and a benchmark and profiling harness.
+A correctness-first limit order book and matching engine in C++20. It matches orders by price-time priority and cancels orders in O(1). Beyond limit orders it takes market orders, IOC and FOK, post-only limits, self-trade prevention, stop and stop-limit orders with cascades, and cancel-replace. Every command returns the lifecycle events it produced. A whole-book invariant checker can run after every command. Around the engine are a CSV replay format and CLI, seeded randomized testing against an independent model, and a benchmark and profiling harness.
 
-Version 1.0.0. One instrument, single-threaded, limit orders only (see [Limitations](#limitations)).
+Version 2.0.0, which added the order behaviors to v1.0.0's limit orders. One instrument, single-threaded (see [Limitations](#limitations)).
 
 ## Contents
 
@@ -142,13 +142,13 @@ The code is split into libraries that depend in one direction only. The book kno
 ```text
 OrderBook
 ├── bids : std::map<Price, PriceLevel, std::greater>   begin() is the best (highest) bid
-│     101 → PriceLevel { quantity = 25, orders: [#4 qty 10] ⇄ [#7 qty 15] }   oldest first
+│     101 → PriceLevel { quantity = 25, orders: [#4 qty 10] ⇄ [#7 qty 15] }   oldest first; each node an Order and its owner
 │     100 → PriceLevel { quantity = 40, orders: [#2 qty 40] }
 ├── asks : std::map<Price, PriceLevel, std::less>      begin() is the best (lowest) ask
 │     103 → PriceLevel { ... }
-├── orderIndex : OrderIndex   OrderId → { owner, OrderLocation { price, side, list iterator, PriceLevel* } }
+├── orderIndex : OrderIndex   OrderId → OrderLocation { price, side, list iterator, PriceLevel* }
 ├── buyStops, sellStops : std::map<Price, StopLevel>   pending stops, nearest trigger first
-├── pendingIndex : OrderIndex  OrderId → StopLocation { stop price, side, list iterator, StopLevel* }
+├── pendingIndex : PendingStopIndex  OrderId → StopLocation { stop price, side, list iterator, StopLevel* }
 └── nodePool   : NodePool     the memory for every level's and stop level's list nodes, reused
 ```
 
@@ -184,7 +184,7 @@ The book matches **limit orders** by price, then time:
 
 ### Order behaviors
 
-An `OrderRequest` says how its order may trade. These rules add to the ones above, which every behavior keeps (they are being built toward v2.0.0, one at a time):
+An `OrderRequest` says how its order may trade. These rules, new in v2.0.0, add to the ones above, which every behavior keeps:
 
 - **Expiry** ([ADR 0002](docs/adr/0002-unfilled-remainders-expire.md)). A well-formed request is always accepted, whatever the book holds. Whatever it may not trade or rest **expires**: an `OrderExpired` for the whole remainder ends its events, and the remainder still counts as the result's remaining quantity, so traded plus remaining equals accepted. For a `submitOrder(OrderRequest)` result, a remaining quantity above zero therefore does not mean the order rests; only the absence of a trailing `OrderExpired` says it did. An expiring order consumes a sequence number, and its ID is free again at once.
 - **Immediate-or-cancel** (`timeInForce = IOC`). It trades while it crosses, up to its limit price, at each resting price, then its remainder expires. One that does not cross, or faces an empty side, is accepted and wholly expired. It never rests. Like a GTC submission, it is not atomic: if an allocation fails, executions already made stand.
@@ -265,13 +265,13 @@ Everything is in namespace `order_book`, with headers in `include/order_book/`. 
   - `OrderRequest` is a plain aggregate (`{id, side, price, quantity}`, then `type`, `timeInForce` (`time_in_force.hpp`: `GTC`, `IOC`, `FOK`), `stopPrice`, `postOnly`, `owner`, and `selfTradePrevention` (`self_trade_prevention.hpp`), which default to a v1 limit order) whose construction never throws. `submitOrder(OrderRequest)` checks it, in a fixed order, and reports the first failing check as a rejected result: a zero ID, a zero price, a zero quantity, an invalid side, a type that is not an enumerator (`UNSUPPORTED_ORDER_TYPE`; `LIMIT`, `MARKET`, `STOP`, and `STOP_LIMIT`), a price on a `MARKET` or `STOP` order (`PRICE_NOT_ALLOWED`; a zero price is refused only on other types), a time in force that is not an enumerator (`INVALID_TIME_IN_FORCE`), a `MARKET` or `STOP` order with GTC (`TIME_IN_FORCE_NOT_ALLOWED`), a stop without a stop price (`INVALID_STOP_PRICE`), a stop price on a type that is not a stop (`STOP_PRICE_NOT_ALLOWED`), post-only on anything but a GTC `LIMIT` order (`POST_ONLY_NOT_ALLOWED`), a self-trade prevention mode that is not an enumerator, whatever the owner (`INVALID_SELF_TRADE_PREVENTION`), then an ID that is already live, resting or pending (`DUPLICATE_ORDER_ID`). See [Order behaviors](#order-behaviors) for what each instruction does. A rejection depends only on the request and on which IDs are live, changes nothing, and consumes no sequence number or trade ID.
 - **`replace_request.hpp`**: `ReplaceRequest { id, price, quantity /* new total */, postOnly, owner, selfTradePrevention }`, what `replaceOrder` takes.
 - **`submission_result.hpp`, `cancellation_result.hpp`, `replace_result.hpp`, `trade.hpp`, `book_event.hpp`, `rejection_reason.hpp`**: what each command returns. Each result is built only through its factories (and the book's internal `ResultRecorder`, which checks every trade and event as it is appended), and holds its trades and lifecycle events in execution order. A rejected submission or cancellation is a result, not an exception.
-  - Events: `OrderAccepted`, `OrderRejected`, `TradeExecuted`, `OrderCancelled`, `CancelRejected`, and, for the order behaviors being built toward v2.0.0, `OrderExpired`, `SelfTradePrevented`, `StopTriggered`, `OrderReplaced`, and `ReplaceRejected`. No command produces the last five yet.
+  - Events: `OrderAccepted`, `OrderRejected`, `TradeExecuted`, `OrderCancelled`, `CancelRejected`, and, since v2.0.0, for the order behaviors, `OrderExpired`, `SelfTradePrevented`, `StopTriggered`, `OrderReplaced`, and `ReplaceRejected`.
   - An `OrderAccepted` at price 0 is an order with no limit price (a market or `STOP` order), and prints as `price=MARKET`.
 - **`event_format.hpp`**: one line of text per event, for callers that print them. The engine itself never prints.
 - **`invariants.hpp`**: `InvariantResult`, `formatInvariantResult`, and the `ORDER_BOOK_INVARIANT_CHECKS` switch.
 - **`replay_parser.hpp`, `replay_engine.hpp`, `replay_summary.hpp`**: the replay format, in namespace `order_book::replay` and library `order_book_replay`.
 
-**Open sets.** `BookEvent`, `RejectionReason`, replay's `Command`, and replay's `ParseErrorCode` are open: a later release may append alternatives or enumerators, but never reorders, renumbers, or removes one. Code that visits or switches over them should keep a fallback for one it does not know. From v2.0.0 on, such an addition is a minor release. (Adding to them was not promised by v1.0.0, which is why the order behaviors ship as v2.0.0; `main` is unreleased development toward it.)
+**Open sets.** `BookEvent`, `RejectionReason`, replay's `Command`, and replay's `ParseErrorCode` are open: a later release may append alternatives or enumerators, but never reorders, renumbers, or removes one. Code that visits or switches over them should keep a fallback for one it does not know. From v2.0.0 on, such an addition is a minor release. (Adding to them was not promised by v1.0.0, which is why the order behaviors shipped as v2.0.0.)
 
 Error policy:
 
@@ -524,7 +524,7 @@ All figures come from one machine (Ryzen 5 5600G, Windows 11, MSVC Release) and 
 **Scope**
 
 - **One instrument per book.** There are no symbols, sessions, auctions, or trading halts.
-- **Order types (in progress toward v2.0.0).** Limit and market orders, with GTC, IOC, and FOK, post-only limits (never repriced), and stop and stop-limit orders (triggering on this book's own trades only, never on quotes or a reference price). No DAY or GTD, and a cascade is unbounded. No stop, iceberg, or hidden orders, no DAY or GTD (they need a clock), and no price protection for market orders. `addOrder` refuses an order that would cross, which resembles post-only, but it is not an order type.
+- **Order types.** Limit and market orders, with GTC, IOC, and FOK, post-only limits (never repriced), and stop and stop-limit orders (triggering on this book's own trades only, never on quotes or a reference price; a cascade is unbounded). No iceberg or hidden orders, no DAY or GTD (they need a clock), and no price protection for market orders. `addOrder` refuses an order that would cross, which resembles post-only, but it is not an order type.
 - **Replace is cancel-replace only.** There is no amend that keeps priority on a price change, no decrement-only change outside a replace, and pending stops cannot be replaced (cancel and submit again).
 - **Participants.** An order may carry an opaque owner, used only for self-trade prevention. There is no account, no risk or credit check, no per-participant limit, and no decrement mode for self-trade prevention.
 

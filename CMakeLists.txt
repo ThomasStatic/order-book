@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(order_book VERSION 1.0.0 LANGUAGES CXX)
+project(order_book VERSION 2.0.0 LANGUAGES CXX)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
