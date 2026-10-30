@@ -4,7 +4,7 @@
 #include "order_book/submission_result.hpp"
 
 namespace order_book {
-    SubmissionResult::SubmissionResult(OrderId sId, SubmissionTrades trades, SubmissionEvents recordedEvents,
+    SubmissionResult::SubmissionResult(OrderId sId, SubmissionTrades&& trades, SubmissionEvents&& recordedEvents,
                                        Quantity remaining, FillStatus fill)
         : submissionId(sId),
           generatedTrades(std::move(trades)),

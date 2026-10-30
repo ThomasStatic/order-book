@@ -24,8 +24,8 @@ namespace order_book {
         Quantity remainingQuantity;
         FillStatus fillStatus;
 
-        ReplaceResult(bool succeeded, std::optional<RejectionReason> reason, SubmissionTrades trades,
-                      SubmissionEvents recordedEvents, Quantity remaining, FillStatus fill);
+        ReplaceResult(bool succeeded, std::optional<RejectionReason> reason, SubmissionTrades&& trades,
+                      SubmissionEvents&& recordedEvents, Quantity remaining, FillStatus fill);
 
     public:
         // A refused replace: one ReplaceRejected, no trades, nothing remaining, FillStatus NONE.

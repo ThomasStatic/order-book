@@ -1,6 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
+#include <stdexcept>
 
 #include "book_event.hpp"
 #include "side.hpp"
@@ -122,5 +124,58 @@ namespace order_book {
 
         CurrentOrder current;
     };
+
+    // The per-trade path is defined here, inline, since the book calls it once per trade from
+    // another translation unit (docs/OPTIMIZATION.md, the v2.0.0 regression).
+
+    inline void ResultRecorder::checkOpen() const {
+        if (finished) {
+            throw std::invalid_argument("append to a finished result recorder error");
+        }
+    }
+
+    inline void ResultRecorder::checkIncoming(OrderId incomingId, Side incomingSide, Price price) const {
+        checkOpen();
+        if (incomingId != current.id || incomingSide != current.side) {
+            throw std::invalid_argument("recorded execution for an order other than the current one error");
+        }
+        if (current.expired) {
+            throw std::invalid_argument("recorded execution after the order expired error");
+        }
+        // A limit price of 0 means none: a market order.
+        const bool withinLimit = current.limitPrice == 0 ||
+                                 (current.side == Side::BUY ? price <= current.limitPrice : price >= current.limitPrice);
+        if (!withinLimit) {
+            throw std::invalid_argument("recorded execution beyond the order's limit price error");
+        }
+    }
+
+    inline void ResultRecorder::checkTrade(const Trade& checked) const {
+        checkIncoming(checked.getIncomingId(), checked.getIncomingSide(), checked.getExecutionPrice());
+        if (checked.getExecutionQuantity() > current.open) {
+            throw std::invalid_argument("recorded trade for more than the order has open error");
+        }
+    }
+
+    inline void ResultRecorder::makeRoom(std::size_t addedTrades, std::size_t addedEvents) {
+        // Trades first: if events then fail to grow, the larger trade storage is harmless.
+        // Doubling keeps repeated appends amortized O(1).
+        if (trades.size() + addedTrades > trades.capacity()) {
+            trades.reserve(std::max(trades.size() + addedTrades, trades.capacity() * 2));
+        }
+        if (events.size() + addedEvents > events.capacity()) {
+            events.reserve(std::max(events.size() + addedEvents, events.capacity() * 2));
+        }
+    }
+
+    inline void ResultRecorder::trade(const Trade& executed) {
+        checkTrade(executed);
+        // Room for both first, so neither push can throw once the other has been made.
+        makeRoom(1, 1);
+        trades.push_back(executed);
+        events.push_back(TradeExecuted{executed.getIncomingId(), executed.getRestingId(), executed.getExecutionPrice(),
+                                       executed.getExecutionQuantity()});
+        current.open -= executed.getExecutionQuantity();
+    }
 
 }  // namespace order_book

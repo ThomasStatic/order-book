@@ -34,7 +34,7 @@ namespace order_book {
         SubmissionEvents events;
 
         // An accepted result, as ResultRecorder::finish has checked it.
-        SubmissionResult(OrderId sId, SubmissionTrades trades, SubmissionEvents recordedEvents, Quantity remaining,
+        SubmissionResult(OrderId sId, SubmissionTrades&& trades, SubmissionEvents&& recordedEvents, Quantity remaining,
                          FillStatus fill);
         // Unchecked, so a rejection can echo whatever ID was submitted, including zero.
         SubmissionResult(OrderId sId, Quantity remaining, RejectionReason reason);

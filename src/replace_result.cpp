@@ -4,8 +4,8 @@
 #include "order_book/replace_result.hpp"
 
 namespace order_book {
-    ReplaceResult::ReplaceResult(bool succeeded, std::optional<RejectionReason> reason, SubmissionTrades trades,
-                                 SubmissionEvents recordedEvents, Quantity remaining, FillStatus fill)
+    ReplaceResult::ReplaceResult(bool succeeded, std::optional<RejectionReason> reason, SubmissionTrades&& trades,
+                                 SubmissionEvents&& recordedEvents, Quantity remaining, FillStatus fill)
         : success(succeeded),
           rejectionReason(reason),
           generatedTrades(std::move(trades)),

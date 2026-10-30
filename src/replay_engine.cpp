@@ -94,6 +94,9 @@ namespace order_book::replay {
                                     const ReplayOptions& options) {
         const InvariantValidation validation = options.invariantValidation;
         ReplayResult result;
+        // Every command makes at least one event, so this much is certain to be used, and the
+        // vector does not copy its events through every doubling up to it.
+        result.events.reserve(records.size());
         for (const ReplayRecord& record : records) {
             try {
                 std::visit([&](const auto& command) {
