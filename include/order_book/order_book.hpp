@@ -14,6 +14,7 @@
 #include "order.hpp"
 #include "order_index.hpp"
 #include "order_location.hpp"
+#include "order_request.hpp"
 #include "price_level.hpp"
 #include "side.hpp"
 #include "submission_result.hpp"
@@ -61,6 +62,9 @@ namespace order_book {
         // Order::malformedReason (checked again here because an order may be changed after
         // construction), then a FILLED order, then an ID already resting here.
         std::optional<RejectionReason> validateNewOrder(const Order& order) const;
+        // The same for a request: its malformed checks in their fixed order, then an ID
+        // already live here.
+        std::optional<RejectionReason> validateNewRequest(const OrderRequest& request) const;
 
         // Move to the next number, wrapping from the maximum back to 1 (zero is invalid),
         // so numbers are silently reused once a counter overflows.
@@ -77,6 +81,10 @@ namespace order_book {
         Trade executeOnce(Order& incoming);
 
         SubmissionTrades matchOrder(Order& incoming);
+
+        // submitOrder's steps once the order is accepted, shared by both overloads: number it,
+        // match it, build the result, and rest any remainder.
+        SubmissionResult matchAndRest(Order& incoming);
 
         // Fills resting orders at one price level in FIFO order, unindexing fully filled
         // orders and erasing the level once it is empty. It makes no trades and reports no
@@ -172,6 +180,15 @@ namespace order_book {
         SubmissionResult addOrder(Order order);
 
         SubmissionResult submitOrder(Order incoming);
+
+        // Submits a request. It is checked first, and a malformed one (by the first failing
+        // check: a zero ID, a zero price, a zero quantity, an invalid side, then a type that
+        // is not an enumerator; only LIMIT is accepted for now, and any other type is
+        // UNSUPPORTED_ORDER_TYPE) or one whose ID is live is a REJECTED result that changes
+        // nothing. A request with every field after quantity at its default behaves exactly
+        // as submitOrder(Order) does for an Order with the same ID, side, price, and quantity,
+        // and allocates no more.
+        SubmissionResult submitOrder(OrderRequest request);
 
         // Number of orders resting on the book (both sides), not of price levels.
         std::size_t activeOrderCount() const;

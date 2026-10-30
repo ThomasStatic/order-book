@@ -1,6 +1,7 @@
 #include <stdexcept>
 
 #include "order_book/order.hpp"
+#include "order_checks.hpp"
 
 namespace order_book {
 
@@ -23,17 +24,9 @@ Order::Order(OrderId id, Price price, Quantity quantity, SequenceNum sequence, S
 }
 
 std::optional<RejectionReason> Order::malformedReason() const {
-    if(orderId == 0) {
-        return RejectionReason::INVALID_ORDER_ID;
-    }
-    if(priceTick == 0) {
-        return RejectionReason::INVALID_PRICE;
-    }
-    if(remainingQuantity == 0) {
-        return RejectionReason::INVALID_QUANTITY;
-    }
-    if(!isValidSide(side)) {
-        return RejectionReason::INVALID_SIDE;
+    if(const std::optional<RejectionReason> reason =
+           checks::fieldReason(orderId, priceTick, true, remainingQuantity, side)) {
+        return reason;
     }
     if(!isSupportedOrderType(type)) {
         return RejectionReason::UNSUPPORTED_ORDER_TYPE;

@@ -8,11 +8,13 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 #include "order_book/order.hpp"
 #include "order_book/order_book.hpp"
+#include "order_book/order_request.hpp"
 #include "order_book/submission_result.hpp"
 
 namespace order_book {
@@ -546,7 +548,143 @@ void testAddOrderRefusesToCross() {
 
 }  // namespace
 
+// An OrderRequest is a plain aggregate: building one never throws, and every check runs
+// when it is submitted.
+static_assert(std::is_aggregate_v<order_book::OrderRequest>, "OrderRequest should be a plain aggregate");
+static_assert(std::is_nothrow_copy_constructible_v<order_book::OrderRequest>,
+              "copying an OrderRequest should never throw");
+
+// Submits a request the book must reject and checks that nothing observable changed.
+void expectRequestRejectedUnchanged(OrderBook& book, const order_book::OrderRequest& request, RejectionReason reason,
+                                    const std::string& context) {
+    const BookState before = capture(book);
+    const SubmissionResult result = book.submitOrder(request);
+    expectRejected(result, request.id, request.quantity, reason, context);
+    expect(result.getEvents() == std::vector<order_book::BookEvent>{order_book::OrderRejected{request.id, reason}},
+           context + ": a rejected request should report exactly one OrderRejected");
+    expect(capture(book) == before, context + ": a rejected request should leave the book exactly as it was");
+    expectBookConsistent(book, context);
+}
+
+// The request's checks run in a fixed order, and the first that fails names the rejection.
+void testMalformedRequestsAreRejectedInOrder() {
+    using order_book::OrderRequest;
+    const std::string context = "malformed request";
+    OrderBook book = restingBook();
+    const OrderType badType = static_cast<OrderType>(7);
+    const Side badSide = static_cast<Side>(2);
+
+    expectRequestRejectedUnchanged(book, OrderRequest{0, Side::BUY, 102, 20}, RejectionReason::INVALID_ORDER_ID,
+                                   context + " reserved id 0");
+    expectRequestRejectedUnchanged(book, OrderRequest{0, badSide, 0, 0, badType}, RejectionReason::INVALID_ORDER_ID,
+                                   context + " id 0 before every other check");
+    for (Side side : {Side::BUY, Side::SELL}) {
+        expectRequestRejectedUnchanged(book, OrderRequest{9, side, 0, 5}, RejectionReason::INVALID_PRICE,
+                                       context + " zero price " + sideName(side));
+    }
+    expectRequestRejectedUnchanged(book, OrderRequest{9, badSide, 0, 0, badType}, RejectionReason::INVALID_PRICE,
+                                   context + " zero price, with an invalid type, before quantity");
+    expectRequestRejectedUnchanged(book, OrderRequest{9, Side::BUY, 102, 0}, RejectionReason::INVALID_QUANTITY,
+                                   context + " zero quantity");
+    expectRequestRejectedUnchanged(book, OrderRequest{9, badSide, 102, 0, badType}, RejectionReason::INVALID_QUANTITY,
+                                   context + " zero quantity before side and type");
+    for (int rawSide : {2, -1, 255}) {
+        expectRequestRejectedUnchanged(book, OrderRequest{9, static_cast<Side>(rawSide), 102, 20},
+                                       RejectionReason::INVALID_SIDE, context + " side " + std::to_string(rawSide));
+    }
+    expectRequestRejectedUnchanged(book, OrderRequest{9, badSide, 102, 20, badType}, RejectionReason::INVALID_SIDE,
+                                   context + " invalid side before type");
+    expectRequestRejectedUnchanged(book, OrderRequest{9, Side::BUY, 102, 20, badType},
+                                   RejectionReason::UNSUPPORTED_ORDER_TYPE, context + " type not an enumerator");
+
+    // Malformed is reported ahead of duplicate when a request is both; then a live ID.
+    expectRequestRejectedUnchanged(book, OrderRequest{4, Side::BUY, 0, 20}, RejectionReason::INVALID_PRICE,
+                                   context + " and duplicate");
+    expectRequestRejectedUnchanged(book, OrderRequest{4, Side::BUY, 102, 20}, RejectionReason::DUPLICATE_ORDER_ID,
+                                   "duplicate request");
+    expectRequestRejectedUnchanged(book, OrderRequest{1, Side::SELL, 50, 1}, RejectionReason::DUPLICATE_ORDER_ID,
+                                   "duplicate request on the other side");
+}
+
+// What a book reports, without the addresses of its orders, so two books can be compared.
+BookState withoutAddresses(BookState state) {
+    for (auto* side : {&state.bids, &state.asks}) {
+        for (LevelState& level : *side) {
+            for (OrderState& order : level.orders) {
+                order.address = nullptr;
+            }
+        }
+    }
+    for (auto& entry : state.index) {
+        entry.second = nullptr;
+    }
+    return state;
+}
+
+void expectSameResult(const SubmissionResult& viaOrder, const SubmissionResult& viaRequest, const std::string& context) {
+    expect(viaRequest.getStatus() == viaOrder.getStatus() && viaRequest.getRejectionReason() == viaOrder.getRejectionReason()
+               && viaRequest.getSubmissionId() == viaOrder.getSubmissionId()
+               && viaRequest.getRemainingQuantity() == viaOrder.getRemainingQuantity()
+               && viaRequest.getFillStatus() == viaOrder.getFillStatus(),
+           context + ": the two overloads should give the same outcome");
+    expect(viaRequest.getEvents() == viaOrder.getEvents(), context + ": the two overloads should give the same events");
+    const auto& orderTrades = viaOrder.getGeneratedTrades();
+    const auto& requestTrades = viaRequest.getGeneratedTrades();
+    expect(orderTrades.size() == requestTrades.size(), context + ": the two overloads should make as many trades");
+    for (std::size_t i = 0; i < orderTrades.size(); ++i) {
+        const order_book::Trade& left = orderTrades[i];
+        const order_book::Trade& right = requestTrades[i];
+        expect(left.getTradeId() == right.getTradeId() && left.getRestingId() == right.getRestingId()
+                   && left.getIncomingId() == right.getIncomingId()
+                   && left.getExecutionPrice() == right.getExecutionPrice()
+                   && left.getExecutionQuantity() == right.getExecutionQuantity()
+                   && left.getIncomingSide() == right.getIncomingSide(),
+               context + ": the two overloads should make the same trades");
+    }
+}
+
+// submitOrder(Order) is the request with the same ID, side, price, and quantity and every
+// default: two books fed the same script, one through each overload, stay identical.
+void testRequestOverloadMatchesOrderOverload() {
+    struct Step {
+        OrderId id;
+        Side side;
+        Price price;
+        unsigned int quantity;
+    };
+    const std::vector<Step> script = {
+        {10, Side::BUY, 97, 4},    // rests below the bids
+        {11, Side::SELL, 101, 3},  // rests behind the best asks
+        {12, Side::BUY, 101, 9},   // sweeps 101 and rests the rest
+        {13, Side::SELL, 98, 30},  // sweeps every bid level and rests
+        {13, Side::BUY, 50, 1},    // duplicate of a resting ID
+        {14, Side::BUY, 0, 5},     // malformed
+        {12, Side::SELL, 120, 2},  // filled earlier, so free again
+        {15, Side::BUY, 130, 50},  // sweeps the asks
+    };
+    OrderBook viaOrder = restingBook();
+    OrderBook viaRequest = restingBook();
+    for (std::size_t i = 0; i < script.size(); ++i) {
+        const Step& step = script[i];
+        const std::string context = "overload step " + std::to_string(i);
+        Order incoming(1, 1, 1, 1, Side::BUY);
+        Access::setOrderId(incoming, step.id);
+        Access::setPrice(incoming, step.price);
+        Access::setQuantity(incoming, step.quantity);
+        Access::setSide(incoming, step.side);
+        const SubmissionResult orderResult = viaOrder.submitOrder(incoming);
+        const SubmissionResult requestResult =
+            viaRequest.submitOrder(order_book::OrderRequest{step.id, step.side, step.price, step.quantity});
+        expectSameResult(orderResult, requestResult, context);
+        expect(withoutAddresses(capture(viaRequest)) == withoutAddresses(capture(viaOrder)),
+               context + ": the two overloads should leave identical books");
+        expectBookConsistent(viaRequest, context);
+    }
+}
+
 int main() {
+    testMalformedRequestsAreRejectedInOrder();
+    testRequestOverloadMatchesOrderOverload();
     testDuplicateActiveIdIsRejected();
     testReusedCancelledIdIsAccepted();
     testReusedFilledIdIsAccepted();

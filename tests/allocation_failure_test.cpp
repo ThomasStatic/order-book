@@ -9,11 +9,13 @@
 
 #include "order_book/order.hpp"
 #include "order_book/order_book.hpp"
+#include "order_book/order_request.hpp"
 
 // Fault injection: every allocation in this executable goes through this operator new,
 // which can be armed to throw std::bad_alloc on the Nth allocation from now.
 namespace {
 long allocationsBeforeFailure = -1;  // negative = disarmed
+long allocationCount = 0;            // every allocation, failed or not, for tests that count them
 
 // MSVC's checked iterators allocate bookkeeping proxies inside noexcept container members
 // (e.g. vector's default constructor), so failing one calls std::terminate. The test only
@@ -27,6 +29,7 @@ constexpr int kSkippedExitCode = 77;  // matches SKIP_RETURN_CODE in CMakeLists.
 }
 
 void* operator new(std::size_t size) {
+    ++allocationCount;
     if (allocationsBeforeFailure == 0) {
         allocationsBeforeFailure = -1;
         throw std::bad_alloc();
@@ -349,6 +352,48 @@ void testCancelOrderDoesNotAllocate() {
     expectIndexConsistent(book, "cancelOrder without allocating");
 }
 
+// The request path costs v1 traffic nothing: a v1-shaped OrderRequest allocates exactly what
+// submitOrder(Order) does for the same book and command, whether it rests at a new or an
+// existing level, sweeps past the result's inline storage, or is rejected.
+void testRequestAllocatesLikeOrder() {
+    using order_book::OrderRequest;
+    struct Case {
+        const char* name;
+        OrderRequest request;
+    };
+    const Case cases[] = {
+        {"rest at a new level", {20, Side::BUY, 90, 5}},
+        {"rest at an existing level", {20, Side::SELL, 100, 5}},
+        {"partial fill then rest", {20, Side::BUY, 100, 7}},
+        {"six-trade sweep", {20, Side::BUY, 105, 60}},
+        {"duplicate", {10, Side::BUY, 90, 5}},
+    };
+    const auto setup = [](OrderBook& book) {
+        for (unsigned int i = 0; i < 6; ++i) {
+            book.addOrder(Order(10 + i, 100 + i, 5, 1, Side::SELL));
+        }
+    };
+    for (const Case& testCase : cases) {
+        OrderBook viaOrder;
+        OrderBook viaRequest;
+        setup(viaOrder);
+        setup(viaRequest);
+        const OrderRequest& request = testCase.request;
+        const Order incoming(request.id, request.price, request.quantity, 1, request.side);
+
+        long before = allocationCount;
+        static_cast<void>(viaOrder.submitOrder(incoming));
+        const long orderAllocations = allocationCount - before;
+        before = allocationCount;
+        static_cast<void>(viaRequest.submitOrder(request));
+        const long requestAllocations = allocationCount - before;
+
+        expect(requestAllocations == orderAllocations,
+               std::string("a v1-shaped request should allocate what submitOrder(Order) does: ") + testCase.name + " ("
+                   + std::to_string(requestAllocations) + " vs " + std::to_string(orderAllocations) + ")");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -365,6 +410,7 @@ int main() {
         testRestingSubmitRollsBack();
         testConsumeLevelFailsBeforeFilling();
         testCancelOrderDoesNotAllocate();
+        testRequestAllocatesLikeOrder();
 
         std::cout << "allocation failure tests passed" << std::endl;
         return EXIT_SUCCESS;

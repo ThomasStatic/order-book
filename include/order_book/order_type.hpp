@@ -5,7 +5,13 @@ namespace order_book {
         LIMIT
     };
 
-    // False for any value outside the enumerators, e.g. one made by a bad cast.
+    // Whether the value is one of the enumerators, which an OrderRequest may carry; false
+    // for one made by a bad cast.
+    constexpr bool isValidOrderType(OrderType type) {
+        return type == OrderType::LIMIT;
+    }
+
+    // Whether an order of this type can rest, which is what an Order accepts: LIMIT only.
     constexpr bool isSupportedOrderType(OrderType type) {
         return type == OrderType::LIMIT;
     }

@@ -228,11 +228,13 @@ With automatic invariant checks on, which is the default in Debug, every mutatin
 Everything is in namespace `order_book`, with headers in `include/order_book/`. Changes to these headers are breaking changes.
 
 - **`order_book.hpp`**: `OrderBook`.
-  - Commands: `submitOrder` (match, then rest any remainder), `addOrder` (rest without matching), `cancelOrder`.
+  - Commands: `submitOrder` (match, then rest any remainder), `addOrder` (rest without matching), `cancelOrder`. `submitOrder` takes either an `Order` or an `OrderRequest`; the two give identical results for the same ID, side, price, and quantity.
   - Queries: `findActiveOrder`, `getBestBid`/`getBestAsk`, `hasBids`/`hasAsks`, `snapshot`, `activeOrderCount`, `checkInvariants`.
   - `reserve`, a capacity hint.
   - Move-only, and not thread-safe.
-- **`order.hpp`, `side.hpp`, `order_type.hpp`, `fill_status.hpp`, `types.hpp`**: the `Order` a caller submits, and the types it is built from.
+- **`order.hpp`, `order_request.hpp`, `side.hpp`, `order_type.hpp`, `fill_status.hpp`, `types.hpp`**: what a caller submits, and the types it is built from.
+  - `Order` is the resting record: its constructor checks its fields and throws, and it accepts only `LIMIT`.
+  - `OrderRequest` is a plain aggregate (`{id, side, price, quantity}`, then instructions that default to a v1 limit order) whose construction never throws. `submitOrder(OrderRequest)` checks it, in a fixed order, and reports the first failing check as a rejected result: a zero ID, a zero price, a zero quantity, an invalid side, a type that is not an enumerator (`UNSUPPORTED_ORDER_TYPE`; only `LIMIT` exists so far), then an ID that is already live (`DUPLICATE_ORDER_ID`). A rejection depends only on the request and on which IDs are live, changes nothing, and consumes no sequence number or trade ID.
 - **`submission_result.hpp`, `cancellation_result.hpp`, `trade.hpp`, `book_event.hpp`, `rejection_reason.hpp`**: what each command returns. Each result is built only through its factories (and the book's internal `ResultRecorder`, which checks every trade and event as it is appended), and holds its trades and lifecycle events in execution order. A rejected submission or cancellation is a result, not an exception.
   - Events: `OrderAccepted`, `OrderRejected`, `TradeExecuted`, `OrderCancelled`, `CancelRejected`, and, for the order behaviors being built toward v2.0.0, `OrderExpired`, `SelfTradePrevented`, `StopTriggered`, `OrderReplaced`, and `ReplaceRejected`. No command produces the last five yet.
   - An `OrderAccepted` at price 0 is an order with no limit price (a market or `STOP` order), and prints as `price=MARKET`.

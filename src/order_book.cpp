@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "order_book/order_book.hpp"
+#include "order_checks.hpp"
 
 namespace order_book {
     OrderBook& OrderBook::operator=(OrderBook&& other) noexcept {
@@ -52,6 +53,16 @@ namespace order_book {
             return RejectionReason::ORDER_NOT_ACTIVE;
         }
         if(orderIndex.find(order.getOrderId()) != orderIndex.end()) {
+            return RejectionReason::DUPLICATE_ORDER_ID;
+        }
+        return std::nullopt;
+    }
+
+    std::optional<RejectionReason> OrderBook::validateNewRequest(const OrderRequest& request) const {
+        if(const std::optional<RejectionReason> reason = checks::requestReason(request)) {
+            return reason;
+        }
+        if(orderIndex.find(request.id) != orderIndex.end()) {
             return RejectionReason::DUPLICATE_ORDER_ID;
         }
         return std::nullopt;
@@ -208,7 +219,20 @@ namespace order_book {
         if(const std::optional<RejectionReason> reason = validateNewOrder(incoming)) {
             return SubmissionResult::rejected(incoming.getOrderId(), incoming.getRemainingQuantity(), *reason);
         }
+        return matchAndRest(incoming);
+    }
 
+    SubmissionResult OrderBook::submitOrder(OrderRequest request) {
+        const InvariantBoundary boundary(*this, "submitOrder");
+        if(const std::optional<RejectionReason> reason = validateNewRequest(request)) {
+            return SubmissionResult::rejected(request.id, request.quantity, *reason);
+        }
+        // Well formed, so the constructor cannot refuse it; matchAndRest numbers it.
+        Order incoming(request.id, request.price, request.quantity, nextSequenceNum, request.side);
+        return matchAndRest(incoming);
+    }
+
+    SubmissionResult OrderBook::matchAndRest(Order& incoming) {
         // Accepted: numbered once, before matching, and the remainder rests with this same
         // number. Consumed even if matching throws, since executions may already stand.
         incoming.assignSequenceNum(nextSequenceNum);
