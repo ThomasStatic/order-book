@@ -605,7 +605,7 @@ void testRequestRejectionsDoNotAllocate() {
         return request;
     };
     const OrderRequest limit{10, Side::BUY, 90, 5};
-    const std::vector<Case> cases{
+    const Case cases[]{
         {"a zero ID", with(limit, [](OrderRequest& r) { r.id = 0; }), RejectionReason::INVALID_ORDER_ID},
         {"a missing price", with(limit, [](OrderRequest& r) { r.price = 0; }), RejectionReason::INVALID_PRICE},
         {"a zero quantity", with(limit, [](OrderRequest& r) { r.quantity = 0; }), RejectionReason::INVALID_QUANTITY},
@@ -701,7 +701,7 @@ void testReplacePathsDoNotAllocate() {
     book.addOrder(Order(1, 100, 5, 1, Side::SELL));
     book.addOrder(Order(2, 100, 5, 1, Side::SELL));
     book.addOrder(Order(3, 99, 5, 1, Side::BUY));
-    const auto armed = [&book](const auto& operation, const std::string& what) {
+    const auto armed = [](const auto& operation, const std::string& what) {
         allocationsBeforeFailure = 0;
         bool threw = false;
         bool succeeded = false;
