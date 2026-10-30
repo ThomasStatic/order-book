@@ -125,6 +125,18 @@ _Avoid_: assignment, allocation, mapping
 The order in which an instrument's matching thread executes that instrument's commands. It alone determines the instrument's book and events, and the command log records it. It includes well-formed commands the book rejects, never malformed ones, which are refused before they enter it. Nothing orders one instrument's commands against another's.
 _Avoid_: accepted commands, order flow
 
+**Command queue**:
+Where a command waits on its way to a shard's matching thread. It is bounded. A command in it will execute and cannot be withdrawn, even if its connection closes. It enters the command sequence when the matching thread takes it.
+_Avoid_: inbox, mailbox, buffer
+
+**Response queue**:
+Where a command's events wait on their way back from a matching thread. It is bounded, and a matching thread with no room waits rather than lose an event.
+_Avoid_: outbox, result queue
+
+**Parked**:
+Said of a connection that is no longer being read because the command queue its next command needs is full. It resumes when that queue has room; being parked refuses and loses nothing.
+_Avoid_: blocked, throttled, suspended
+
 **Snapshot**:
 A summary of a book's depth at one moment: its best levels on each side, with their aggregate quantities. It describes a book; it cannot rebuild one.
 _Avoid_: checkpoint, dump
