@@ -134,7 +134,39 @@ std::string outcomeJson(const WorkloadOutcome& outcome) {
            ", \"rejections\": " + std::to_string(outcome.rejections) + ", \"trades\": " +
            std::to_string(outcome.trades) + ", \"volume\": " + std::to_string(outcome.volume) +
            ", \"final_active_orders\": " + std::to_string(outcome.finalActiveOrders) +
-           ", \"final_price_levels\": " + std::to_string(outcome.finalPriceLevels) + "}";
+           ", \"final_price_levels\": " + std::to_string(outcome.finalPriceLevels) +
+           ", \"replaces\": " + std::to_string(outcome.replaces) +
+           ", \"expirations\": " + std::to_string(outcome.expirations) +
+           ", \"preventions\": " + std::to_string(outcome.preventions) +
+           ", \"stops_triggered\": " + std::to_string(outcome.stopsTriggered) +
+           ", \"final_pending_stops\": " + std::to_string(outcome.finalPendingStops) + "}";
+}
+
+std::string behaviorJson(const WorkloadConfig& config) {
+    if (config.family != WorkloadFamily::BEHAVIOR) {
+        return "";
+    }
+    const BehaviorMix& mix = config.behavior;
+    if (!mix.replaysWorkload.empty()) {
+        return ", \"behavior\": {\"replays\": " + jsonString(mix.replaysWorkload) +
+               ", \"owner_per_order\": " + boolText(mix.ownerPerOrder) + "}";
+    }
+    return ", \"behavior\": {\"commands_percent\": {\"submit\": " + std::to_string(mix.submitPercent) +
+           ", \"replace\": " + std::to_string(mix.replacePercent) + ", \"cancel\": " + std::to_string(mix.cancelPercent) +
+           ", \"stop\": " + std::to_string(mix.stopPercent) + ", \"cancel_stop\": " + std::to_string(mix.cancelStopPercent) +
+           "}, \"submissions_percent\": {\"passive\": " + std::to_string(mix.passivePercent) +
+           ", \"marketable\": " + std::to_string(mix.marketablePercent) + ", \"ioc\": " + std::to_string(mix.iocPercent) +
+           ", \"fok\": " + std::to_string(mix.fokPercent) + ", \"market\": " + std::to_string(mix.marketPercent) +
+           ", \"sweep\": " + std::to_string(mix.sweepPercent) + "}, \"post_only_percent\": " +
+           std::to_string(mix.postOnlyPercent) + ", \"unfillable_fok_percent\": " + std::to_string(mix.unfillableFokPercent) +
+           ", \"replaces_percent\": {\"decrease\": " + std::to_string(mix.decreasePercent) +
+           ", \"reprice\": " + std::to_string(mix.repricePercent) + ", \"increase\": " + std::to_string(mix.increasePercent) +
+           ", \"cross\": " + std::to_string(mix.crossPercent) + ", \"taker\": " + std::to_string(mix.takerPercent) +
+           "}, \"owner_percent\": " + std::to_string(mix.ownerPercent) + ", \"owner_pool\": " + std::to_string(mix.ownerPool) +
+           ", \"preload_stops\": " + std::to_string(mix.preloadStops) + ", \"stop_reach_ticks\": " +
+           std::to_string(mix.stopReachTicks) + ", \"resting_bounds\": [" + std::to_string(mix.restingFloor) + ", " +
+           std::to_string(mix.restingCap) + "], \"pending_bounds\": [" + std::to_string(mix.pendingFloor) + ", " +
+           std::to_string(mix.pendingCap) + "]}";
 }
 
 std::string workloadJson(const WorkloadRecord& record) {
@@ -158,7 +190,7 @@ std::string workloadJson(const WorkloadRecord& record) {
            ", \"preload_orders\": " + std::to_string(record.preloadOrders) +
            ", \"timed_commands\": " + std::to_string(record.timedCommands) +
            ", \"reserved_orders\": " + std::to_string(record.reservedOrders) +
-           ", \"generation_ns\": " + std::to_string(record.generationNanoseconds) +
+           ", \"generation_ns\": " + std::to_string(record.generationNanoseconds) + behaviorJson(config) +
            ", \"expected\": " + outcomeJson(record.expected) + "}";
 }
 
@@ -249,7 +281,8 @@ std::string formatMeasurementsCsv(const BenchmarkReport& report) {
     std::string csv =
         "workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,"
         "elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,"
-        "volume,final_active_orders,final_price_levels\n";
+        "volume,final_active_orders,final_price_levels,replaces,expirations,preventions,stops_triggered,"
+        "final_pending_stops\n";
     const std::string session = report.size + "," + std::to_string(report.seed) + "," +
                                 std::to_string(workloadGeneratorVersion) + "," + report.build.config + "," +
                                 boolText(report.build.optimized());
@@ -263,7 +296,9 @@ std::string formatMeasurementsCsv(const BenchmarkReport& report) {
                std::to_string(outcome.cancels) + "," + formatFixed(outcome.cancellationRate(), 6) + "," +
                std::to_string(outcome.rejections) + "," + std::to_string(outcome.trades) + "," +
                std::to_string(outcome.volume) + "," + std::to_string(outcome.finalActiveOrders) + "," +
-               std::to_string(outcome.finalPriceLevels) + "\n";
+               std::to_string(outcome.finalPriceLevels) + "," + std::to_string(outcome.replaces) + "," +
+               std::to_string(outcome.expirations) + "," + std::to_string(outcome.preventions) + "," +
+               std::to_string(outcome.stopsTriggered) + "," + std::to_string(outcome.finalPendingStops) + "\n";
     }
     return csv;
 }

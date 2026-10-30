@@ -69,5 +69,7 @@ std::vector<Measurement> runRepeated(const Workload& workload, BenchmarkKind kin
 // The workload's timed commands as a replay file (header, then one record per command,
 // numbered from 1), for the REPLAY kind and for inspecting a workload by hand.
 std::string renderReplayCsv(const std::vector<BenchmarkCommand>& commands);
+// A behavior workload's commands as v2 replay rows, under the v2 header.
+std::string renderReplayCsv(const std::vector<BehaviorCommand>& commands);
 
 }  // namespace order_book::benchmark

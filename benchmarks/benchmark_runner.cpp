@@ -3,11 +3,13 @@
 #include <algorithm>
 #include <chrono>
 #include <limits>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
 #include <variant>
 
+#include "order_book/book_event.hpp"
 #include "order_book/cancellation_result.hpp"
 #include "order_book/order.hpp"
 #include "order_book/order_book.hpp"
@@ -47,10 +49,53 @@ void execute(OrderBook& book, const BenchmarkCommand& command, WorkloadOutcome& 
     }
 }
 
+// The same for a behavior command, counting every event its command made, the cascade's
+// included.
+void countEvents(std::span<const BookEvent> events, WorkloadOutcome& outcome) {
+    for (const BookEvent& event : events) {
+        if (const auto* trade = std::get_if<TradeExecuted>(&event)) {
+            ++outcome.trades;
+            outcome.volume += trade->executionQuantity;
+        } else if (std::holds_alternative<OrderExpired>(event)) {
+            ++outcome.expirations;
+        } else if (std::holds_alternative<SelfTradePrevented>(event)) {
+            ++outcome.preventions;
+        } else if (std::holds_alternative<StopTriggered>(event)) {
+            ++outcome.stopsTriggered;
+        }
+    }
+}
+
+void execute(OrderBook& book, const BehaviorCommand& command, WorkloadOutcome& outcome) {
+    if (command.type == CommandType::SUBMIT) {
+        ++outcome.submits;
+        const SubmissionResult result = book.submitOrder(command.request);
+        if (result.getStatus() == SubmissionStatus::REJECTED) {
+            ++outcome.rejections;
+        }
+        countEvents(result.getEvents(), outcome);
+    } else if (command.type == CommandType::REPLACE) {
+        ++outcome.replaces;
+        const ReplaceResult result = book.replaceOrder(command.replacement);
+        if (!result.isSuccess()) {
+            ++outcome.rejections;
+        }
+        countEvents(result.getEvents(), outcome);
+    } else {
+        ++outcome.cancels;
+        if (!book.cancelOrder(command.request.id).isSuccess()) {
+            ++outcome.rejections;
+        }
+    }
+}
+
 void preload(OrderBook& book, const Workload& workload) {
     book.reserve(expectedBookSize(workload));
     WorkloadOutcome preloadOutcome;
     for (const BenchmarkCommand& command : workload.preload) {
+        execute(book, command, preloadOutcome);
+    }
+    for (const BehaviorCommand& command : workload.behaviorPreload) {
         execute(book, command, preloadOutcome);
     }
     if (preloadOutcome.rejections != 0 || preloadOutcome.trades != 0) {
@@ -62,13 +107,17 @@ void recordFinalBook(const OrderBook& book, WorkloadOutcome& outcome) {
     const BookSnapshot snapshot = book.snapshot(std::numeric_limits<unsigned int>::max());
     outcome.finalActiveOrders = book.activeOrderCount();
     outcome.finalPriceLevels = snapshot.bids.size() + snapshot.asks.size();
+    outcome.finalPendingStops = book.pendingStopCount();
 }
 
 std::string describeOutcome(const WorkloadOutcome& outcome) {
     return "submits=" + std::to_string(outcome.submits) + " cancels=" + std::to_string(outcome.cancels) +
-           " rejections=" + std::to_string(outcome.rejections) + " trades=" + std::to_string(outcome.trades) +
-           " volume=" + std::to_string(outcome.volume) + " active=" + std::to_string(outcome.finalActiveOrders) +
-           " levels=" + std::to_string(outcome.finalPriceLevels);
+           " replaces=" + std::to_string(outcome.replaces) + " rejections=" + std::to_string(outcome.rejections) +
+           " trades=" + std::to_string(outcome.trades) + " volume=" + std::to_string(outcome.volume) +
+           " expirations=" + std::to_string(outcome.expirations) + " preventions=" + std::to_string(outcome.preventions) +
+           " stops-triggered=" + std::to_string(outcome.stopsTriggered) + " active=" +
+           std::to_string(outcome.finalActiveOrders) + " levels=" + std::to_string(outcome.finalPriceLevels) +
+           " pending=" + std::to_string(outcome.finalPendingStops);
 }
 
 Measurement runCore(const Workload& workload) {
@@ -78,6 +127,9 @@ Measurement runCore(const Workload& workload) {
 
     const Clock::time_point start = Clock::now();
     for (const BenchmarkCommand& command : workload.timed) {
+        execute(book, command, measurement.outcome);
+    }
+    for (const BehaviorCommand& command : workload.behaviorTimed) {
         execute(book, command, measurement.outcome);
     }
     const Clock::time_point stop = Clock::now();
@@ -94,7 +146,8 @@ Measurement runReplay(const Workload& workload) {
     OrderBook book;
     preload(book, workload);
     // Built outside the timed region: the text stands in for a file already read into memory.
-    std::istringstream csv(renderReplayCsv(workload.timed));
+    std::istringstream csv(workload.config.family == WorkloadFamily::V1 ? renderReplayCsv(workload.timed)
+                                                                         : renderReplayCsv(workload.behaviorTimed));
     replay::ReplayOptions options;
     options.invariantValidation = replay::InvariantValidation::NONE;
 
@@ -112,18 +165,23 @@ Measurement runReplay(const Workload& workload) {
     const replay::ReplayStatistics& statistics = result->statistics;
     measurement.outcome.submits = statistics.addCommands;
     measurement.outcome.cancels = statistics.cancelCommands;
-    measurement.outcome.rejections = statistics.addsRejected + statistics.cancelsRejected;
+    measurement.outcome.replaces = statistics.replaceCommands;
+    measurement.outcome.rejections = statistics.addsRejected + statistics.cancelsRejected + statistics.replacesRejected;
     measurement.outcome.trades = statistics.tradesExecuted;
     measurement.outcome.volume = statistics.volumeTraded;
+    measurement.outcome.expirations = statistics.ordersExpired;
+    measurement.outcome.preventions = statistics.selfTradesPrevented;
+    measurement.outcome.stopsTriggered = statistics.stopsTriggered;
     measurement.outcome.finalActiveOrders = result->finalBook.totalActiveVisibleOrders;
     measurement.outcome.finalPriceLevels = result->finalBook.bids.size() + result->finalBook.asks.size();
+    measurement.outcome.finalPendingStops = result->pendingStops;
     return measurement;
 }
 
 }  // namespace
 
 std::size_t expectedBookSize(const Workload& workload) {
-    return std::max(workload.preload.size(), workload.expected.finalActiveOrders);
+    return std::max(workload.preloadResting, workload.expected.finalActiveOrders);
 }
 
 const char* benchmarkKindName(BenchmarkKind kind) {
@@ -162,7 +220,7 @@ Measurement runOnce(const Workload& workload, BenchmarkKind kind) {
     Measurement measurement = kind == BenchmarkKind::CORE ? runCore(workload) : runReplay(workload);
     measurement.workload = workload.config.name;
     measurement.kind = kind;
-    measurement.commands = workload.timed.size();
+    measurement.commands = workload.timedCount();
     if (measurement.outcome != workload.expected) {
         throw std::runtime_error("workload " + workload.config.name + " (" + benchmarkKindName(kind) +
                                  "): the book did " + describeOutcome(measurement.outcome) +
@@ -200,6 +258,96 @@ std::string renderReplayCsv(const std::vector<BenchmarkCommand>& commands) {
             csv += ",CANCEL,";
             csv += std::to_string(command.orderId);
             csv += ",,,";
+        }
+        csv += '\n';
+    }
+    return csv;
+}
+
+namespace {
+
+const char* typeKeyword(OrderType type) {
+    switch (type) {
+        case OrderType::LIMIT: return "LIMIT";
+        case OrderType::MARKET: return "MARKET";
+        case OrderType::STOP: return "STOP";
+        case OrderType::STOP_LIMIT: return "STOP_LIMIT";
+    }
+    return "LIMIT";
+}
+
+const char* timeInForceKeyword(TimeInForce timeInForce) {
+    switch (timeInForce) {
+        case TimeInForce::GTC: return "GTC";
+        case TimeInForce::IOC: return "IOC";
+        case TimeInForce::FOK: return "FOK";
+    }
+    return "GTC";
+}
+
+const char* modeKeyword(SelfTradePrevention mode) {
+    switch (mode) {
+        case SelfTradePrevention::CANCEL_RESTING: return "CANCEL_RESTING";
+        case SelfTradePrevention::CANCEL_INCOMING: return "CANCEL_INCOMING";
+        case SelfTradePrevention::CANCEL_BOTH: return "CANCEL_BOTH";
+    }
+    return "CANCEL_RESTING";
+}
+
+// post_only, owner, and self_trade_prevention, the mode only with an owner (the format
+// requires that, and with no owner the book ignores the mode anyway).
+void appendInstructions(std::string& csv, bool postOnly, OwnerId owner, SelfTradePrevention mode) {
+    csv += postOnly ? ",Y," : ",,";
+    if (owner != 0) {
+        csv += std::to_string(owner);
+        csv += ',';
+        csv += modeKeyword(mode);
+    } else {
+        csv += ',';
+    }
+}
+
+}  // namespace
+
+std::string renderReplayCsv(const std::vector<BehaviorCommand>& commands) {
+    std::string csv(order_book::replay::expectedHeaderV2);
+    csv += '\n';
+    std::uint64_t sequence = 0;
+    for (const BehaviorCommand& command : commands) {
+        csv += std::to_string(++sequence);
+        if (command.type == CommandType::SUBMIT) {
+            const OrderRequest& request = command.request;
+            csv += ",ADD,";
+            csv += std::to_string(request.id);
+            csv += request.side == Side::BUY ? ",BUY," : ",SELL,";
+            if (request.price != 0) {
+                csv += std::to_string(request.price);
+            }
+            csv += ',';
+            csv += std::to_string(request.quantity);
+            csv += ',';
+            csv += typeKeyword(request.type);
+            csv += ',';
+            csv += timeInForceKeyword(request.timeInForce);
+            csv += ',';
+            if (request.stopPrice != 0) {
+                csv += std::to_string(request.stopPrice);
+            }
+            appendInstructions(csv, request.postOnly, request.owner, request.selfTradePrevention);
+        } else if (command.type == CommandType::REPLACE) {
+            const ReplaceRequest& replacement = command.replacement;
+            csv += ",REPLACE,";
+            csv += std::to_string(replacement.id);
+            csv += ",,";
+            csv += std::to_string(replacement.price);
+            csv += ',';
+            csv += std::to_string(replacement.quantity);
+            csv += ",,,";
+            appendInstructions(csv, replacement.postOnly, replacement.owner, replacement.selfTradePrevention);
+        } else {
+            csv += ",CANCEL,";
+            csv += std::to_string(command.request.id);
+            csv += ",,,,,,,,,";
         }
         csv += '\n';
     }

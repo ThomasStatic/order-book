@@ -44,7 +44,8 @@ namespace {
         "prediction. Prints each run, then a summary of the measured repetitions.\n"
         "\n"
         "options:\n"
-        "  --workload NAME      run this built-in workload (repeatable; default: all of them)\n"
+        "  --workload NAME      run this workload (repeatable; default: all of them, the five v1\n"
+        "                       workloads and the behavior workloads)\n"
         "  --size SIZE          timed commands per run: smoke (10000), standard (100000, the\n"
         "                       default), or extended (1000000)\n"
         "  --commands N         exactly N timed commands per run, instead of a size\n"
@@ -161,8 +162,10 @@ namespace {
             }
         }
         if (settings.workloads.empty()) {
-            for (const bench::WorkloadConfig& config : bench::builtInWorkloads()) {
-                settings.workloads.push_back(config.name);
+            for (const auto* family : {&bench::builtInWorkloads(), &bench::behaviorWorkloads()}) {
+                for (const bench::WorkloadConfig& config : *family) {
+                    settings.workloads.push_back(config.name);
+                }
             }
         }
         return std::nullopt;
@@ -181,6 +184,21 @@ namespace {
             }
             std::cout << '\n';
         }
+        for (const bench::WorkloadConfig& config : bench::behaviorWorkloads()) {
+            const bench::BehaviorMix& mix = config.behavior;
+            std::cout << config.name << ": " << config.objective << "\n  ";
+            if (!mix.replaysWorkload.empty()) {
+                std::cout << mix.replaysWorkload << "'s commands through submitOrder(OrderRequest), "
+                          << (mix.ownerPerOrder ? "a distinct owner per order" : "owner 0") << '\n';
+                continue;
+            }
+            std::cout << "initial orders " << config.initialOrders << " (+" << mix.preloadStops << " stops), target levels "
+                      << config.targetLevels << ", submit/replace/cancel/stop/cancel-stop " << mix.submitPercent << '/'
+                      << mix.replacePercent << '/' << mix.cancelPercent << '/' << mix.stopPercent << '/'
+                      << mix.cancelStopPercent << "%, submissions passive/marketable/IOC/FOK/market/sweep "
+                      << mix.passivePercent << '/' << mix.marketablePercent << '/' << mix.iocPercent << '/'
+                      << mix.fokPercent << '/' << mix.marketPercent << '/' << mix.sweepPercent << "%\n";
+        }
     }
 
     std::string milliseconds(std::int64_t nanoseconds) {
@@ -191,7 +209,11 @@ namespace {
         std::cout << "  " << bench::benchmarkKindName(measurement.kind) << ' '
                   << (measurement.warmup ? "warm-up " : "run ") << measurement.repetition << ": "
                   << measurement.commands << " commands in " << milliseconds(measurement.elapsedNanoseconds)
-                  << ", " << bench::formatFixed(measurement.operationsPerSecond(), 0) << " ops/s\n";
+                  << ", " << bench::formatFixed(measurement.operationsPerSecond(), 0) << " ops/s";
+        if (measurement.outcome.stopsTriggered > 0) {
+            std::cout << ", " << measurement.outcome.stopsTriggered << " stops triggered";
+        }
+        std::cout << '\n';
     }
 
     // Writes text in binary mode, so the file has LF line endings on every platform.
@@ -241,8 +263,8 @@ namespace {
             bench::WorkloadRecord record;
             record.config = config;
             record.fingerprint = bench::workloadFingerprint(workload);
-            record.preloadOrders = workload.preload.size();
-            record.timedCommands = workload.timed.size();
+            record.preloadOrders = workload.preload.size() + workload.behaviorPreload.size();
+            record.timedCommands = workload.timedCount();
             record.reservedOrders = bench::expectedBookSize(workload);
             record.expected = workload.expected;
             record.generationNanoseconds =

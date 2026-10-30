@@ -4,7 +4,9 @@
 // workload is generated as the benchmark does and run once on a preloaded book. For the
 // core path every timed command is run on its own and its allocations, frees, and bytes are
 // charged to its kind: a submission that rests without trading, one that trades and rests
-// its remainder, one that fills completely, or a cancellation. A histogram of allocation
+// its remainder, one that fills completely, or a cancellation; for a behavior workload also
+// a submission whose remainder expires, a stop order, a command whose trades trigger stops,
+// and a replace that trades or does not. A histogram of allocation
 // sizes per kind says which container each allocation came from (a std::list node, an index
 // node, a map node, a result's events vector, a trades vector), since each has a distinct
 // size. The order index is watched for growth, and its capacity (slots) and fill (the share
@@ -15,6 +17,7 @@
 // replay layers can be split between them.
 //
 // Usage: allocation_profile [--size smoke|standard|extended] [--seed N] [--workload NAME]...
+// (default: every workload, the five v1 ones and the behavior ones)
 // Prints to stdout; run it from a Release build, since a Debug build's checked iterators
 // and automatic invariant checks allocate and would be counted too.
 
@@ -25,6 +28,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <new>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -36,6 +40,7 @@
 #include "order_book/order_book.hpp"
 #include "order_book/replay_engine.hpp"
 #include "order_book/replay_parser.hpp"
+#include "order_book/replace_result.hpp"
 #include "order_book/replay_summary.hpp"
 #include "order_book/submission_result.hpp"
 #include "workload.hpp"
@@ -121,7 +126,18 @@ using namespace order_book;
 using namespace order_book::benchmark;
 using Clock = std::chrono::steady_clock;
 
-enum class CommandKind { SUBMIT_RESTS, SUBMIT_TRADES_AND_RESTS, SUBMIT_FILLED, CANCEL, KINDS };
+enum class CommandKind {
+    SUBMIT_RESTS,
+    SUBMIT_TRADES_AND_RESTS,
+    SUBMIT_FILLED,
+    CANCEL,
+    SUBMIT_EXPIRES,
+    SUBMIT_STOP,
+    TRIGGERS_STOPS,
+    REPLACE,
+    REPLACE_TRADES,
+    KINDS
+};
 
 const char* commandKindName(CommandKind kind) {
     switch (kind) {
@@ -129,9 +145,80 @@ const char* commandKindName(CommandKind kind) {
         case CommandKind::SUBMIT_TRADES_AND_RESTS: return "submit, trades then rests the remainder";
         case CommandKind::SUBMIT_FILLED: return "submit, filled completely";
         case CommandKind::CANCEL: return "cancel";
+        case CommandKind::SUBMIT_EXPIRES: return "submit, the remainder (or all of it) expires";
+        case CommandKind::SUBMIT_STOP: return "submit a stop order";
+        case CommandKind::TRIGGERS_STOPS: return "submit or replace whose trades trigger stops (cascade included)";
+        case CommandKind::REPLACE: return "replace, no trade";
+        case CommandKind::REPLACE_TRADES: return "replace, crosses and trades";
         case CommandKind::KINDS: break;
     }
     return "?";
+}
+
+bool holdsEvent(std::span<const BookEvent> events, auto isKind) {
+    return std::any_of(events.begin(), events.end(), [&](const BookEvent& event) { return isKind(event); });
+}
+
+bool triggersStops(std::span<const BookEvent> events) {
+    return holdsEvent(events, [](const BookEvent& event) { return std::holds_alternative<StopTriggered>(event); });
+}
+
+// A v1 command: as the benchmark runs it, through submitOrder(Order).
+CommandKind runCommand(OrderBook& book, const BenchmarkCommand& command, std::size_t& trades) {
+    if (command.type != CommandType::SUBMIT) {
+        book.cancelOrder(command.orderId);
+        return CommandKind::CANCEL;
+    }
+    const SubmissionResult result = book.submitOrder(Order(command.orderId, command.price, command.quantity, 1, command.side));
+    trades = result.getGeneratedTrades().size();
+    return trades == 0 ? CommandKind::SUBMIT_RESTS
+         : result.getRemainingQuantity() == 0 ? CommandKind::SUBMIT_FILLED
+                                              : CommandKind::SUBMIT_TRADES_AND_RESTS;
+}
+
+// A behavior command, through submitOrder(OrderRequest), replaceOrder, or cancelOrder.
+CommandKind runCommand(OrderBook& book, const BehaviorCommand& command, std::size_t& trades) {
+    if (command.type == CommandType::CANCEL) {
+        book.cancelOrder(command.request.id);
+        return CommandKind::CANCEL;
+    }
+    if (command.type == CommandType::REPLACE) {
+        const ReplaceResult result = book.replaceOrder(command.replacement);
+        trades = result.getGeneratedTrades().size();
+        return triggersStops(result.getEvents()) ? CommandKind::TRIGGERS_STOPS
+             : trades == 0                       ? CommandKind::REPLACE
+                                                 : CommandKind::REPLACE_TRADES;
+    }
+    const SubmissionResult result = book.submitOrder(command.request);
+    trades = result.getGeneratedTrades().size();
+    if (triggersStops(result.getEvents())) {
+        return CommandKind::TRIGGERS_STOPS;
+    }
+    if (isStopType(command.request.type)) {
+        return CommandKind::SUBMIT_STOP;
+    }
+    if (holdsEvent(result.getEvents(), [](const BookEvent& event) { return std::holds_alternative<OrderExpired>(event); })) {
+        return CommandKind::SUBMIT_EXPIRES;
+    }
+    return trades == 0 ? CommandKind::SUBMIT_RESTS
+         : result.getRemainingQuantity() == 0 ? CommandKind::SUBMIT_FILLED
+                                              : CommandKind::SUBMIT_TRADES_AND_RESTS;
+}
+
+void preloadBook(OrderBook& book, const Workload& workload, std::size_t* rehashes) {
+    const auto watch = [&](auto&& submit) {
+        const std::size_t buckets = OrderBookTestAccess::bucketCount(book);
+        submit();
+        if (rehashes != nullptr && OrderBookTestAccess::bucketCount(book) != buckets) {
+            ++*rehashes;
+        }
+    };
+    for (const BenchmarkCommand& command : workload.preload) {
+        watch([&] { book.submitOrder(Order(command.orderId, command.price, command.quantity, 1, command.side)); });
+    }
+    for (const BehaviorCommand& command : workload.behaviorPreload) {
+        watch([&] { book.submitOrder(command.request); });
+    }
 }
 
 struct KindTotals {
@@ -194,19 +281,14 @@ void profileCore(const Workload& workload) {
     book.reserve(expectedBookSize(workload));
     std::size_t preloadRehashes = 0;
     const AllocationCounts beforePreload = snapshotCounts();
-    for (const BenchmarkCommand& command : workload.preload) {
-        const std::size_t buckets = OrderBookTestAccess::bucketCount(book);
-        book.submitOrder(Order(command.orderId, command.price, command.quantity, 1, command.side));
-        if (OrderBookTestAccess::bucketCount(book) != buckets) {
-            ++preloadRehashes;
-        }
-    }
+    preloadBook(book, workload, &preloadRehashes);
     const AllocationCounts preloadCounts = difference(beforePreload, snapshotCounts());
+    const std::size_t preloadSize = workload.preload.size() + workload.behaviorPreload.size();
     std::printf("  preload: %zu orders, %zu allocations (%s per order), %zu bytes, %zu index growths; "
-                "%zu slots, fill %s\n",
-                workload.preload.size(), preloadCounts.allocations, fixed(per(preloadCounts.allocations, workload.preload.size()), 3).c_str(),
+                "%zu slots, fill %s; %zu pending stops\n",
+                preloadSize, preloadCounts.allocations, fixed(per(preloadCounts.allocations, preloadSize), 3).c_str(),
                 preloadCounts.bytes, preloadRehashes, OrderBookTestAccess::bucketCount(book),
-                fixed(OrderBookTestAccess::loadFactor(book), 3).c_str());
+                fixed(OrderBookTestAccess::loadFactor(book), 3).c_str(), book.pendingStopCount());
 
     KindTotals totals[static_cast<std::size_t>(CommandKind::KINDS)];
     std::size_t rehashes = 0;
@@ -214,24 +296,14 @@ void profileCore(const Workload& workload) {
     std::size_t levelsErased = 0;
     std::size_t maxBuckets = OrderBookTestAccess::bucketCount(book);
     const AllocationCounts beforeTimed = snapshotCounts();
-    for (const BenchmarkCommand& command : workload.timed) {
+    const auto timeCommand = [&](const auto& command) {
         const std::size_t buckets = OrderBookTestAccess::bucketCount(book);
         const std::size_t levels = OrderBookTestAccess::levelCount(book);
-        CommandKind kind = CommandKind::CANCEL;
         std::size_t trades = 0;
         std::size_t histogramBefore[histogramLimit + 1];
         std::copy(sizeHistogram, sizeHistogram + histogramLimit + 1, histogramBefore);
         const AllocationCounts before = snapshotCounts();
-        if (command.type == CommandType::SUBMIT) {
-            const SubmissionResult result =
-                book.submitOrder(Order(command.orderId, command.price, command.quantity, 1, command.side));
-            trades = result.getGeneratedTrades().size();
-            kind = trades == 0 ? CommandKind::SUBMIT_RESTS
-                 : result.getRemainingQuantity() == 0 ? CommandKind::SUBMIT_FILLED
-                                                      : CommandKind::SUBMIT_TRADES_AND_RESTS;
-        } else {
-            book.cancelOrder(command.orderId);
-        }
+        const CommandKind kind = runCommand(book, command, trades);
         const AllocationCounts delta = difference(before, snapshotCounts());
         KindTotals& total = totals[static_cast<std::size_t>(kind)];
         ++total.commands;
@@ -251,13 +323,20 @@ void profileCore(const Workload& workload) {
         } else {
             levelsErased += levels - levelsAfter;
         }
+    };
+    for (const BenchmarkCommand& command : workload.timed) {
+        timeCommand(command);
+    }
+    for (const BehaviorCommand& command : workload.behaviorTimed) {
+        timeCommand(command);
     }
     const AllocationCounts timedCounts = difference(beforeTimed, snapshotCounts());
+    const std::size_t timedSize = workload.timedCount();
     std::printf("  timed: %zu commands, %zu allocations (%s per command), %zu frees (%s per command), %zu bytes "
                 "(%s per command)\n",
-                workload.timed.size(), timedCounts.allocations, fixed(per(timedCounts.allocations, workload.timed.size()), 3).c_str(),
-                timedCounts.frees, fixed(per(timedCounts.frees, workload.timed.size()), 3).c_str(), timedCounts.bytes,
-                fixed(per(timedCounts.bytes, workload.timed.size()), 1).c_str());
+                timedSize, timedCounts.allocations, fixed(per(timedCounts.allocations, timedSize), 3).c_str(),
+                timedCounts.frees, fixed(per(timedCounts.frees, timedSize), 3).c_str(), timedCounts.bytes,
+                fixed(per(timedCounts.bytes, timedSize), 1).c_str());
     std::printf("  order index: %zu growths during the timed commands, %zu slots at most, %zu at the end, fill "
                 "%s (max %s), %zu resting orders\n",
                 rehashes, maxBuckets, OrderBookTestAccess::bucketCount(book),
@@ -285,14 +364,13 @@ void profileCore(const Workload& workload) {
 void profileReplay(const Workload& workload) {
     OrderBook book;
     book.reserve(expectedBookSize(workload));
-    for (const BenchmarkCommand& command : workload.preload) {
-        book.submitOrder(Order(command.orderId, command.price, command.quantity, 1, command.side));
-    }
-    const std::string csv = renderReplayCsv(workload.timed);
+    preloadBook(book, workload, nullptr);
+    const std::string csv = workload.config.family == WorkloadFamily::V1 ? renderReplayCsv(workload.timed)
+                                                                         : renderReplayCsv(workload.behaviorTimed);
     std::istringstream input(csv);
     replay::ReplayOptions options;
     options.invariantValidation = replay::InvariantValidation::NONE;
-    const std::size_t commands = workload.timed.size();
+    const std::size_t commands = workload.timedCount();
 
     std::size_t histogramBefore[histogramLimit + 1];
     std::copy(sizeHistogram, sizeHistogram + histogramLimit + 1, histogramBefore);
@@ -385,6 +463,7 @@ int main(int argc, char** argv) {
     std::vector<WorkloadConfig> configs;
     if (names.empty()) {
         configs = builtInWorkloads();
+        configs.insert(configs.end(), behaviorWorkloads().begin(), behaviorWorkloads().end());
     } else {
         for (const std::string& name : names) {
             configs.push_back(findWorkload(name));

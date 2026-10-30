@@ -169,6 +169,19 @@ order_book_enable_sanitizers(order_book_cli)
 
 include(CTest)
 
+# The independent model of the book (tests/reference/), shared by the randomized harness and
+# the behavior benchmark workloads; it never touches an OrderBook.
+if(BUILD_TESTING OR ORDER_BOOK_BUILD_BENCHMARKS)
+    add_library(order_book_reference STATIC
+        tests/reference/reference_book.cpp
+    )
+    target_compile_features(order_book_reference PUBLIC cxx_std_20)
+    target_include_directories(order_book_reference PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/reference)
+    target_link_libraries(order_book_reference PUBLIC order_book)
+    order_book_enable_warnings(order_book_reference)
+    order_book_enable_sanitizers(order_book_reference)
+endif()
+
 if(BUILD_TESTING)
     add_executable(order_book_tests
         tests/order_book_test.cpp
@@ -451,17 +464,6 @@ if(BUILD_TESTING)
     # Randomized command testing: seeded streams of submissions and cancellations, each command
     # checked against the book's invariants and a reference model. The harness is a library so
     # its own tests can drive it.
-    # The independent model of the book, shared by the randomized harness (and, later, the
-    # benchmark workloads); it never touches an OrderBook.
-    add_library(order_book_reference STATIC
-        tests/reference/reference_book.cpp
-    )
-    target_compile_features(order_book_reference PUBLIC cxx_std_20)
-    target_include_directories(order_book_reference PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/reference)
-    target_link_libraries(order_book_reference PUBLIC order_book)
-    order_book_enable_warnings(order_book_reference)
-    order_book_enable_sanitizers(order_book_reference)
-
     add_library(order_book_randomized STATIC
         tests/randomized/abort_reporter.cpp
         tests/randomized/command.cpp
@@ -533,13 +535,14 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
     # program refuses any other unless given --allow-unoptimized.
     add_library(order_book_benchmarking STATIC
         benchmarks/workload.cpp
+        benchmarks/behavior_workload.cpp
         benchmarks/benchmark_runner.cpp
         benchmarks/benchmark_report.cpp
     )
 
     target_compile_features(order_book_benchmarking PUBLIC cxx_std_20)
     target_include_directories(order_book_benchmarking PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks)
-    target_link_libraries(order_book_benchmarking PUBLIC order_book_replay)
+    target_link_libraries(order_book_benchmarking PUBLIC order_book_replay order_book_reference)
     # Recorded with every result, so a report says which configuration produced it.
     target_compile_definitions(order_book_benchmarking PRIVATE ORDER_BOOK_BUILD_CONFIG="$<CONFIG>")
     # GCC defines no macro under UBSan, so say whether order_book_enable_sanitizers applies it.

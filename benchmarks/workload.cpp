@@ -101,6 +101,133 @@ std::vector<WorkloadConfig> makeWorkloads() {
     return workloads;
 }
 
+// The behavior workloads. Each holds its shape at every size through its floor and cap on
+// resting orders (and pending stops), rather than through a balanced mix alone; their realised
+// shapes are in benchmarks/README.md's workload table.
+std::vector<WorkloadConfig> makeBehaviorWorkloads(const std::vector<WorkloadConfig>& v1) {
+    std::vector<WorkloadConfig> workloads;
+    const auto behavior = [](std::string name, std::string objective) {
+        WorkloadConfig config;
+        config.name = std::move(name);
+        config.objective = std::move(objective);
+        config.family = WorkloadFamily::BEHAVIOR;
+        return config;
+    };
+
+    WorkloadConfig quoteRefresh = behavior(
+        "quote-refresh", "replace-heavy quoting: about 2,000 post-only quotes on 100 levels, 60% replaces, 25% submissions, 15% cancels");
+    quoteRefresh.initialOrders = 2000;
+    quoteRefresh.targetLevels = 100;
+    quoteRefresh.uniformPercent = 30;
+    quoteRefresh.concentratedPercent = 70;
+    quoteRefresh.marketablePercent = 0;
+    quoteRefresh.smallPercent = 60;
+    quoteRefresh.mediumPercent = 40;
+    quoteRefresh.behavior.submitPercent = 25;
+    quoteRefresh.behavior.replacePercent = 60;
+    quoteRefresh.behavior.cancelPercent = 15;
+    quoteRefresh.behavior.passivePercent = 80;
+    quoteRefresh.behavior.marketablePercent = 20;
+    quoteRefresh.behavior.postOnlyPercent = 100;
+    quoteRefresh.behavior.restingFloor = 1800;
+    quoteRefresh.behavior.restingCap = 2200;
+    workloads.push_back(quoteRefresh);
+
+    WorkloadConfig pendingStops = behavior(
+        "pending-stops", "stop triggering: 10,000 resting orders on 200 levels and about 5,000 pending stops, with cascades");
+    pendingStops.initialOrders = 10000;
+    pendingStops.targetLevels = 200;
+    pendingStops.uniformPercent = 70;
+    pendingStops.concentratedPercent = 30;
+    pendingStops.marketablePercent = 0;
+    pendingStops.throughTicks = 1;
+    pendingStops.smallPercent = 40;
+    pendingStops.mediumPercent = 50;
+    pendingStops.largePercent = 10;
+    pendingStops.behavior.submitPercent = 55;
+    pendingStops.behavior.stopPercent = 20;
+    pendingStops.behavior.cancelStopPercent = 15;
+    pendingStops.behavior.cancelPercent = 10;
+    pendingStops.behavior.passivePercent = 52;
+    pendingStops.behavior.marketablePercent = 30;
+    pendingStops.behavior.sweepPercent = 18;
+    pendingStops.behavior.preloadStops = 5000;
+    pendingStops.behavior.preloadStopSpread = 150;
+    pendingStops.behavior.stopReachTicks = 30;
+    pendingStops.behavior.sweepTicks = 4;
+    pendingStops.behavior.restingFloor = 9000;
+    pendingStops.behavior.restingCap = 11000;
+    pendingStops.behavior.pendingFloor = 4500;
+    pendingStops.behavior.pendingCap = 5500;
+    workloads.push_back(pendingStops);
+
+    WorkloadConfig selfTrade = behavior(
+        "self-trade", "self-trade prevention: matching-heavy's mix with owners from a pool of 20, and FOKs that walk per order");
+    selfTrade.initialOrders = 10000;
+    selfTrade.targetLevels = 200;
+    selfTrade.uniformPercent = 24;
+    selfTrade.concentratedPercent = 76;
+    selfTrade.marketablePercent = 0;
+    selfTrade.throughTicks = 2;
+    selfTrade.smallPercent = 20;
+    selfTrade.mediumPercent = 60;
+    selfTrade.largePercent = 20;
+    selfTrade.behavior.submitPercent = 92;
+    selfTrade.behavior.cancelPercent = 8;
+    selfTrade.behavior.passivePercent = 42;
+    selfTrade.behavior.marketablePercent = 49;
+    selfTrade.behavior.fokPercent = 9;
+    selfTrade.behavior.ownerPercent = 90;
+    selfTrade.behavior.ownerPool = 20;
+    selfTrade.behavior.topOwnerPercent = 70;
+    selfTrade.behavior.topOwners = 2;
+    selfTrade.behavior.cancelRestingPercent = 60;
+    selfTrade.behavior.cancelIncomingPercent = 20;
+    selfTrade.behavior.restingFloor = 8000;
+    selfTrade.behavior.restingCap = 12000;
+    workloads.push_back(selfTrade);
+
+    WorkloadConfig immediate = behavior(
+        "immediate", "immediate orders: IOC limits, market orders, and FOKs (a third unfillable) against a replenished 10,000-order book");
+    immediate.initialOrders = 10000;
+    immediate.targetLevels = 200;
+    immediate.uniformPercent = 75;
+    immediate.concentratedPercent = 25;
+    immediate.marketablePercent = 0;
+    immediate.throughTicks = 2;
+    immediate.smallPercent = 50;
+    immediate.mediumPercent = 45;
+    immediate.largePercent = 5;
+    immediate.behavior.submitPercent = 95;
+    immediate.behavior.cancelPercent = 5;
+    immediate.behavior.passivePercent = 42;
+    immediate.behavior.iocPercent = 26;
+    immediate.behavior.marketPercent = 16;
+    immediate.behavior.fokPercent = 16;
+    immediate.behavior.unfillableFokPercent = 33;
+    immediate.behavior.restingFloor = 8000;
+    immediate.behavior.restingCap = 12000;
+    workloads.push_back(immediate);
+
+    // matching-heavy's exact stream, through the request path: owner 0, then a distinct
+    // nonzero owner per order, so comparing the two isolates the owner probe on each match.
+    const WorkloadConfig& matchingHeavy = v1[2];
+    WorkloadConfig request = matchingHeavy;
+    request.name = "matching-heavy-request";
+    request.objective = "matching-heavy's exact stream through submitOrder(OrderRequest), owner 0";
+    request.family = WorkloadFamily::BEHAVIOR;
+    request.behavior.replaysWorkload = matchingHeavy.name;
+    workloads.push_back(request);
+
+    WorkloadConfig owned = request;
+    owned.name = "matching-heavy-owned";
+    owned.objective = "matching-heavy's exact stream through submitOrder(OrderRequest), a distinct owner on every order";
+    owned.behavior.ownerPerOrder = true;
+    workloads.push_back(owned);
+
+    return workloads;
+}
+
 // The book as the generator sees it: price-time priority matching, enough to know each
 // side's best price, which orders rest, and what every command will do. Kept apart from
 // OrderBook, so a workload never depends on the engine it measures.
@@ -375,6 +502,37 @@ void hashCommand(std::uint64_t& hash, const BenchmarkCommand& command) {
     hashValue(hash, command.quantity);
 }
 
+void hashCommand(std::uint64_t& hash, const BehaviorCommand& command) {
+    const OrderRequest& request = command.request;
+    const ReplaceRequest& replacement = command.replacement;
+    hashValue(hash, static_cast<int>(command.type));
+    hashValue(hash, request.id);
+    hashValue(hash, request.side == Side::BUY ? 0 : 1);
+    hashValue(hash, request.price);
+    hashValue(hash, request.quantity);
+    hashValue(hash, static_cast<int>(request.type));
+    hashValue(hash, static_cast<int>(request.timeInForce));
+    hashValue(hash, request.stopPrice);
+    hashValue(hash, request.postOnly ? 1 : 0);
+    hashValue(hash, request.owner);
+    hashValue(hash, static_cast<int>(request.selfTradePrevention));
+    hashValue(hash, replacement.id);
+    hashValue(hash, replacement.price);
+    hashValue(hash, replacement.quantity);
+    hashValue(hash, replacement.postOnly ? 1 : 0);
+    hashValue(hash, replacement.owner);
+    hashValue(hash, static_cast<int>(replacement.selfTradePrevention));
+}
+
+void hashV1Outcome(std::uint64_t& hash, const WorkloadOutcome& expected) {
+    hashValue(hash, expected.submits);
+    hashValue(hash, expected.cancels);
+    hashValue(hash, expected.trades);
+    hashValue(hash, expected.volume);
+    hashValue(hash, expected.finalActiveOrders);
+    hashValue(hash, expected.finalPriceLevels);
+}
+
 }  // namespace
 
 std::size_t timedCommandCount(BenchmarkSize size) {
@@ -425,6 +583,23 @@ void validateWorkloadConfig(const WorkloadConfig& config) {
     if (config.cancelPercent > 100 || config.buyPercent > 100) {
         fail("cancelPercent and buyPercent must be at most 100");
     }
+    if (config.family == WorkloadFamily::BEHAVIOR && config.behavior.replaysWorkload.empty()) {
+        const BehaviorMix& mix = config.behavior;
+        if (mix.submitPercent + mix.replacePercent + mix.cancelPercent + mix.stopPercent + mix.cancelStopPercent != 100) {
+            fail("the command mix must sum to 100%");
+        }
+        if (mix.passivePercent + mix.marketablePercent + mix.iocPercent + mix.fokPercent + mix.marketPercent +
+                mix.sweepPercent != 100) {
+            fail("the submission mix must sum to 100%");
+        }
+        if (mix.decreasePercent + mix.repricePercent + mix.increasePercent + mix.crossPercent + mix.takerPercent != 100) {
+            fail("the replace mix must sum to 100%");
+        }
+        if (mix.ownerPool == 0 || mix.topOwners == 0 || mix.topOwners > mix.ownerPool ||
+            mix.cancelRestingPercent + mix.cancelIncomingPercent > 100) {
+            fail("owners need a pool holding the top owners, and the modes must sum to at most 100%");
+        }
+    }
     if (config.uniformPercent + config.concentratedPercent + config.marketablePercent != 100) {
         fail("the price modes must sum to 100%");
     }
@@ -450,18 +625,28 @@ const std::vector<WorkloadConfig>& builtInWorkloads() {
     return workloads;
 }
 
+const std::vector<WorkloadConfig>& behaviorWorkloads() {
+    static const std::vector<WorkloadConfig> workloads = makeBehaviorWorkloads(builtInWorkloads());
+    return workloads;
+}
+
 const WorkloadConfig& findWorkload(std::string_view name) {
     std::string known;
-    for (const WorkloadConfig& config : builtInWorkloads()) {
-        if (config.name == name) {
-            return config;
+    for (const auto* family : {&builtInWorkloads(), &behaviorWorkloads()}) {
+        for (const WorkloadConfig& config : *family) {
+            if (config.name == name) {
+                return config;
+            }
+            known += (known.empty() ? "" : ", ") + config.name;
         }
-        known += (known.empty() ? "" : ", ") + config.name;
     }
     throw std::invalid_argument("unknown workload '" + std::string(name) + "' (known: " + known + ")");
 }
 
 Workload generateWorkload(const WorkloadConfig& config, std::size_t timedCommands, std::uint64_t seed) {
+    if (config.family == WorkloadFamily::BEHAVIOR) {
+        return generateBehaviorWorkload(config, timedCommands, seed);
+    }
     validateWorkloadConfig(config);
     if (config.initialOrders + timedCommands > maxOrderId) {
         throw std::length_error("workload " + config.name + " needs more order IDs than OrderId holds");
@@ -490,10 +675,11 @@ Workload generateWorkload(const WorkloadConfig& config, std::size_t timedCommand
     }
     workload.expected.finalActiveOrders = model.restingCount();
     workload.expected.finalPriceLevels = model.levelCount();
+    workload.preloadResting = workload.preload.size();
     return workload;
 }
 
-std::uint64_t workloadFingerprint(const Workload& workload) {
+std::uint64_t workloadFingerprintV2(const Workload& workload) {
     std::uint64_t hash = 14695981039346656037ULL;
     for (const BenchmarkCommand& command : workload.preload) {
         hashCommand(hash, command);
@@ -501,13 +687,24 @@ std::uint64_t workloadFingerprint(const Workload& workload) {
     for (const BenchmarkCommand& command : workload.timed) {
         hashCommand(hash, command);
     }
+    hashV1Outcome(hash, workload.expected);
+    return hash;
+}
+
+std::uint64_t workloadFingerprint(const Workload& workload) {
+    std::uint64_t hash = workloadFingerprintV2(workload);
+    for (const BehaviorCommand& command : workload.behaviorPreload) {
+        hashCommand(hash, command);
+    }
+    for (const BehaviorCommand& command : workload.behaviorTimed) {
+        hashCommand(hash, command);
+    }
     const WorkloadOutcome& expected = workload.expected;
-    hashValue(hash, expected.submits);
-    hashValue(hash, expected.cancels);
-    hashValue(hash, expected.trades);
-    hashValue(hash, expected.volume);
-    hashValue(hash, expected.finalActiveOrders);
-    hashValue(hash, expected.finalPriceLevels);
+    hashValue(hash, expected.replaces);
+    hashValue(hash, expected.expirations);
+    hashValue(hash, expected.preventions);
+    hashValue(hash, expected.stopsTriggered);
+    hashValue(hash, expected.finalPendingStops);
     return hash;
 }
 

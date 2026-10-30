@@ -56,11 +56,18 @@ std::string hex(std::uint64_t value) {
 }
 
 // A copy of a built-in workload small enough to run against the book in a Debug build, where
-// every command checks the whole book: at most 200 levels and a fiftieth of the preload.
+// every command checks the whole book: at most 200 levels and a fiftieth of the preload (and
+// of a behavior workload's preloaded stops and bounds).
 WorkloadConfig scaledDown(const WorkloadConfig& config) {
     WorkloadConfig scaled = config;
     scaled.targetLevels = std::min(config.targetLevels, 200U);
     scaled.initialOrders = std::max<std::size_t>(scaled.targetLevels, config.initialOrders / 50);
+    BehaviorMix& mix = scaled.behavior;
+    mix.preloadStops /= 50;
+    mix.restingFloor /= 50;
+    mix.restingCap /= 50;
+    mix.pendingFloor /= 50;
+    mix.pendingCap /= 50;
     return scaled;
 }
 
@@ -179,22 +186,131 @@ void testDeterminism() {
     }
 }
 
-// Pins what each built-in workload generates at the smoke size, so the stream is the same on
-// every compiler and standard library, and a change to what is drawn cannot go unnoticed: it
-// must bump workloadGeneratorVersion and re-pin these.
+// Pins what each workload generates at the smoke size, so the stream is the same on every
+// compiler and standard library, and a change to what is drawn cannot go unnoticed: it must
+// bump workloadGeneratorVersion and re-pin these.
 void testPinnedFingerprints() {
-    expect(workloadGeneratorVersion == 2, "re-pin these fingerprints whenever workloadGeneratorVersion changes");
+    expect(workloadGeneratorVersion == 3, "re-pin these fingerprints whenever workloadGeneratorVersion changes");
     const std::vector<std::pair<std::string, std::uint64_t>> pinned{
+        {"small-book", 0x9b1e4b372b451be9ULL},
+        {"deep-book", 0x85872a86cb0fcf6eULL},
+        {"matching-heavy", 0x788622a292126437ULL},
+        {"cancellation-heavy", 0x94756f6173fa6c39ULL},
+        {"mostly-resting", 0x538c21fd4569cc73ULL},
+        {"quote-refresh", 0xe487fb15dfad9064ULL},
+        {"pending-stops", 0xc7faedd7210867ddULL},
+        {"self-trade", 0xc59ccf802f6a027eULL},
+        {"immediate", 0x5cf10f331c391c2aULL},
+        {"matching-heavy-request", 0x3b561cc1febbdffbULL},
+        {"matching-heavy-owned", 0x908a46d3caf7694aULL},
+    };
+    for (const auto& [name, fingerprint] : pinned) {
+        const Workload workload = generateWorkload(findWorkload(name), timedCommandCount(BenchmarkSize::SMOKE), 42);
+        const std::uint64_t actual = workloadFingerprint(workload);
+        expect(actual == fingerprint, name + " fingerprint is " + hex(actual) + ", pinned " + hex(fingerprint));
+    }
+}
+
+// The five v1 workloads' commands did not change with version 3: their v2 fingerprints, over
+// the commands and v1's counters alone, are still what version 2 pinned.
+void testV1WorkloadsUnchanged() {
+    const std::vector<std::pair<std::string, std::uint64_t>> version2{
         {"small-book", 0xcf205caa3ffc8449ULL},
         {"deep-book", 0xf66145ef12d4f6aeULL},
         {"matching-heavy", 0x081c56a4ef2427d7ULL},
         {"cancellation-heavy", 0x2d31b2d4322ec299ULL},
         {"mostly-resting", 0xfee0e8b12f2dc293ULL},
     };
-    for (const auto& [name, fingerprint] : pinned) {
+    for (const auto& [name, fingerprint] : version2) {
         const Workload workload = generateWorkload(findWorkload(name), timedCommandCount(BenchmarkSize::SMOKE), 42);
-        const std::uint64_t actual = workloadFingerprint(workload);
-        expect(actual == fingerprint, name + " fingerprint is " + hex(actual) + ", pinned " + hex(fingerprint));
+        const std::uint64_t actual = workloadFingerprintV2(workload);
+        expect(actual == fingerprint, name + " commands changed: " + hex(actual) + ", version 2 " + hex(fingerprint));
+        expect(workload.behaviorPreload.empty() && workload.behaviorTimed.empty(), name + " stays on v1's commands");
+    }
+}
+
+void testBehaviorWorkloads() {
+    const std::vector<std::string> names{"quote-refresh", "pending-stops", "self-trade", "immediate",
+                                         "matching-heavy-request", "matching-heavy-owned"};
+    expect(behaviorWorkloads().size() == names.size(), "six behavior workloads");
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        const WorkloadConfig& config = behaviorWorkloads()[i];
+        expect(config.name == names[i], "behavior workload " + names[i] + " in its place");
+        expect(&findWorkload(names[i]) == &config, "findWorkload finds " + names[i]);
+        expect(config.family == WorkloadFamily::BEHAVIOR, names[i] + " is a behavior workload");
+        validateWorkloadConfig(config);
+    }
+
+    BehaviorMix unbalanced;
+    unbalanced.submitPercent = 90;
+    WorkloadConfig bad = behaviorWorkloads()[0];
+    bad.behavior = unbalanced;
+    expectThrows([&bad] { validateWorkloadConfig(bad); }, "a command mix that does not sum to 100% is refused");
+    bad.behavior = BehaviorMix{};
+    bad.behavior.passivePercent = 50;
+    expectThrows([&bad] { validateWorkloadConfig(bad); }, "so is a submission mix");
+    bad.behavior = BehaviorMix{};
+    bad.behavior.topOwners = 2;
+    expectThrows([&bad] { validateWorkloadConfig(bad); }, "and top owners outside the pool");
+
+    for (const WorkloadConfig& config : behaviorWorkloads()) {
+        const Workload first = generateWorkload(config, 1500, 7);
+        const Workload second = generateWorkload(config, 1500, 7);
+        expect(first.behaviorTimed == second.behaviorTimed && first.expected == second.expected,
+               config.name + ": the same seed gives the same commands and outcome");
+        expect(first.timed.empty() && first.preload.empty(), config.name + ": only behavior commands");
+        expect(first.behaviorTimed.size() == 1500 && first.timedCount() == 1500, config.name + ": timed command count");
+        expect(first.expected.rejections == 0, config.name + ": nothing generated is refused");
+        expect(first.expected.submits + first.expected.cancels + first.expected.replaces == 1500,
+               config.name + ": every command counted");
+        if (config.behavior.replaysWorkload.empty()) {
+            expect(generateWorkload(config, 1500, 8).behaviorTimed != first.behaviorTimed,
+                   config.name + ": another seed gives other commands");
+        }
+    }
+}
+
+// Each behavior workload exercises the behavior it is named for.
+void testBehaviorTargets() {
+    const auto smoke = [](const std::string& name) {
+        return generateWorkload(findWorkload(name), timedCommandCount(BenchmarkSize::SMOKE), 42);
+    };
+    const Workload quotes = smoke("quote-refresh");
+    expect(quotes.expected.replaces >= 5500 && quotes.expected.expirations > 0,
+           "quote-refresh mostly replaces, and some post-only quotes would take");
+    for (const BehaviorCommand& command : quotes.behaviorPreload) {
+        expect(command.request.postOnly, "quote-refresh's preload is post-only quotes");
+    }
+    const Workload stops = smoke("pending-stops");
+    expect(stops.expected.stopsTriggered >= 1000, "pending-stops triggers stops");
+    expect(stops.expected.finalPendingStops >= 4000 && stops.expected.finalPendingStops <= 6000,
+           "and keeps about 5,000 pending");
+    const Workload owned = smoke("self-trade");
+    expect(owned.expected.preventions >= 500, "self-trade prevents self-trades");
+    const Workload immediate = smoke("immediate");
+    expect(immediate.expected.expirations >= 500, "immediate orders expire what they cannot fill");
+
+    // matching-heavy-request is matching-heavy's stream exactly, owner 0; -owned gives each
+    // order its own ID as owner, so nothing is prevented and the outcome is the same.
+    const Workload v1 = smoke("matching-heavy");
+    for (const std::string name : {"matching-heavy-request", "matching-heavy-owned"}) {
+        const Workload request = smoke(name);
+        const bool ownedStream = name == "matching-heavy-owned";
+        expect(request.behaviorPreload.size() == v1.preload.size() && request.behaviorTimed.size() == v1.timed.size(),
+               name + " has matching-heavy's commands");
+        for (std::size_t i = 0; i < v1.timed.size(); ++i) {
+            const BenchmarkCommand& original = v1.timed[i];
+            const BehaviorCommand& command = request.behaviorTimed[i];
+            const OrderId expectedOwner = ownedStream && original.type == CommandType::SUBMIT ? original.orderId : 0;
+            expect(command.type == original.type && command.request.id == original.orderId &&
+                       (original.type == CommandType::CANCEL ||
+                        (command.request.side == original.side && command.request.price == original.price &&
+                         command.request.quantity == original.quantity)) &&
+                       command.request.owner == expectedOwner,
+                   name + ": command " + std::to_string(i) + " is matching-heavy's");
+        }
+        WorkloadOutcome v1Counters = request.expected;
+        expect(v1Counters == v1.expected, name + " predicts matching-heavy's outcome");
     }
 }
 
@@ -309,7 +425,9 @@ void testActiveOrderCap() {
 // Every built-in workload, scaled down, run on the real book in both kinds: runOnce throws if
 // the book's outcome differs from the model's prediction.
 void testEngineAgreesWithModel() {
-    for (const WorkloadConfig& config : builtInWorkloads()) {
+    std::vector<WorkloadConfig> all = builtInWorkloads();
+    all.insert(all.end(), behaviorWorkloads().begin(), behaviorWorkloads().end());
+    for (const WorkloadConfig& config : all) {
         const Workload workload = generateWorkload(scaledDown(config), 2000, 42);
         for (const BenchmarkKind kind : {BenchmarkKind::CORE, BenchmarkKind::REPLAY}) {
             const Measurement measurement = runOnce(workload, kind);
@@ -418,23 +536,24 @@ void testCsvExport() {
     const std::string expected =
         "workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,"
         "elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,"
-        "volume,final_active_orders,final_price_levels\n"
-        "small-book,core,custom,42,2,Release,true,1,true,600,1500000000,400.000,2500000.000,400,200,0.333333,0,50,"
-        "700,90,12\n"
-        "small-book,core,custom,42,2,Release,true,1,false,600,3000000000,200.000,5000000.000,400,200,0.333333,0,50,"
-        "700,90,12\n";
+        "volume,final_active_orders,final_price_levels,replaces,expirations,preventions,stops_triggered,"
+        "final_pending_stops\n"
+        "small-book,core,custom,42,3,Release,true,1,true,600,1500000000,400.000,2500000.000,400,200,0.333333,0,50,"
+        "700,90,12,0,0,0,0,0\n"
+        "small-book,core,custom,42,3,Release,true,1,false,600,3000000000,200.000,5000000.000,400,200,0.333333,0,50,"
+        "700,90,12,0,0,0,0,0\n";
     expect(csv == expected, "CSV export:\n" + csv);
 }
 
 void testJsonExport() {
     const std::string json = formatReportJson(fabricatedReport());
     for (const std::string part :
-         {"\"generator_version\": 2", "\"seed\": 42", "\"size\": \"custom\"", "\"timed_commands\": 600",
+         {"\"generator_version\": 3", "\"seed\": 42", "\"size\": \"custom\"", "\"timed_commands\": 600",
           "\"started_at_unix_seconds\": 1700000000", "\"config\": \"Release\"",
           "\"compiler\": \"Test \\\"compiler\\\"\"", "\"optimized\": true", "\"name\": \"small-book\"",
           "\"fingerprint\": \"0xabc\"", "\"target_levels\": 10", "\"marketable\": 25", "\"active_order_cap\": 200", "\"reserved_orders\": 173", "\"warmup\": true",
           "\"elapsed_ns\": 3000000000", "\"ops_per_second\": 200.000", "\"repetitions\": 1",
-          "\"median\": 200.000"}) {
+          "\"median\": 200.000", "\"stops_triggered\": 0", "\"final_pending_stops\": 0"}) {
         expect(contains(json, part), "JSON export holds " + part + ":\n" + json);
     }
     expect(std::count(json.begin(), json.end(), '{') == std::count(json.begin(), json.end(), '}'), "balanced braces");
@@ -465,6 +584,53 @@ void testReplayCsv() {
     expect(add != nullptr && add->orderId == 8 && add->side == Side::SELL && add->price == 101 && add->quantity == 6,
            "as the commands they came from");
     expect(std::holds_alternative<order_book::replay::CancelCommand>(parsed.records[2].command), "cancel parsed");
+}
+
+// A behavior workload's commands render as v2 rows that parse back to the same requests.
+void testBehaviorReplayCsv() {
+    using order_book::OrderRequest;
+    using order_book::OrderType;
+    using order_book::ReplaceRequest;
+    using order_book::SelfTradePrevention;
+    using order_book::TimeInForce;
+    std::vector<BehaviorCommand> commands(5);
+    commands[0].request = OrderRequest{7, Side::BUY, 100, 5};
+    commands[0].request.postOnly = true;
+    commands[1].request = OrderRequest{8, Side::SELL, 0, 6, OrderType::MARKET, TimeInForce::IOC};
+    commands[1].request.owner = 3;
+    commands[1].request.selfTradePrevention = SelfTradePrevention::CANCEL_BOTH;
+    commands[2].request = OrderRequest{9, Side::BUY, 0, 4, OrderType::STOP, TimeInForce::IOC, 105};
+    commands[3].type = CommandType::REPLACE;
+    commands[3].replacement = ReplaceRequest{7, 99, 8, false, 2, SelfTradePrevention::CANCEL_INCOMING};
+    commands[4].type = CommandType::CANCEL;
+    commands[4].request.id = 9;
+    const std::string csv = renderReplayCsv(commands);
+    expect(csv == std::string(order_book::replay::expectedHeaderV2) + "\n" +
+                      "1,ADD,7,BUY,100,5,LIMIT,GTC,,Y,,\n"
+                      "2,ADD,8,SELL,,6,MARKET,IOC,,,3,CANCEL_BOTH\n"
+                      "3,ADD,9,BUY,,4,STOP,IOC,105,,,\n"
+                      "4,REPLACE,7,,99,8,,,,,2,CANCEL_INCOMING\n"
+                      "5,CANCEL,9,,,,,,,,,\n",
+           "v2 replay CSV:\n" + csv);
+
+    std::istringstream input(csv);
+    const order_book::replay::ReplayInput parsed = order_book::replay::readReplayInput(input);
+    expect(!parsed.error && parsed.records.size() == 5, "the parser reads every rendered v2 record");
+    for (std::size_t i = 0; i < 3; ++i) {
+        const OrderRequest& request = commands[i].request;
+        const order_book::replay::AddCommand expected{request.id,          request.side,        request.price,
+                                                      request.quantity,    request.type,        request.timeInForce,
+                                                      request.stopPrice,   request.postOnly,    request.owner,
+                                                      request.selfTradePrevention};
+        expect(parsed.records[i].command == order_book::replay::Command{expected},
+               "ADD " + std::to_string(i + 1) + " round-trips");
+    }
+    const ReplaceRequest& replacement = commands[3].replacement;
+    const order_book::replay::ReplaceCommand expectedReplace{replacement.id,      replacement.price,
+                                                             replacement.quantity, replacement.postOnly,
+                                                             replacement.owner,    replacement.selfTradePrevention};
+    expect(parsed.records[3].command == order_book::replay::Command{expectedReplace}, "REPLACE round-trips");
+    expect(std::holds_alternative<order_book::replay::CancelCommand>(parsed.records[4].command), "cancel parsed");
 }
 
 void testFormatting() {
@@ -512,6 +678,9 @@ int main() {
     testConfigValidation();
     testDeterminism();
     testPinnedFingerprints();
+    testV1WorkloadsUnchanged();
+    testBehaviorWorkloads();
+    testBehaviorTargets();
     testPreloadShape();
     testTimedCommands();
     testPriceModes();
@@ -525,6 +694,7 @@ int main() {
     testJsonExport();
     testExpectedBookSize();
     testReplayCsv();
+    testBehaviorReplayCsv();
     testFormatting();
     testBuildInfo();
 

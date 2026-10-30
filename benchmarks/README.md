@@ -15,7 +15,7 @@ With the Visual Studio generator, build and run the Release configuration: `cmak
 
 | Option | Effect |
 |---|---|
-| `--workload NAME` | run this built-in workload; repeat for several (default: all) |
+| `--workload NAME` | run this workload; repeat for several (default: all eleven, the five v1 workloads then the six behavior workloads) |
 | `--size smoke\|standard\|extended` | 10,000, 100,000 (default), or 1,000,000 timed commands per run |
 | `--commands N` | exactly N timed commands, instead of a size (recorded as size `custom`) |
 | `--kind core\|replay\|both` | which path to time (default `core`, see below) |
@@ -44,8 +44,8 @@ A measurement is one run: commands, elapsed nanoseconds, operations per second (
 
 The two kinds differ only in what sits between the commands and the book:
 
-- **`core`** times the engine alone. Each command is an `Order` passed straight to `submitOrder`, or an ID passed to `cancelOrder`. Inside the timed loop, only each result's trades, volume, and rejections are tallied. That keeps the results from being optimized away and is needed for the outcome check. No CSV is involved.
-- **`replay`** times the end-to-end path of [`docs/replay-format.md`](../docs/replay-format.md): CSV parsing, the replay engine's dispatch and event collection, the final snapshot, and the formatted summary. The same commands are first rendered as CSV text in memory (untimed). Reading a file from disk is left out on purpose, since it would mostly measure the OS file cache. Invariant validation is `none`, so this path does no checking work that `core` skips.
+- **`core`** times the engine alone. In the five v1 workloads each command is an `Order` passed straight to `submitOrder`, or an ID passed to `cancelOrder`; in the behavior workloads it is an `OrderRequest` passed to `submitOrder`, a `ReplaceRequest` passed to `replaceOrder`, or an ID passed to `cancelOrder`. Inside the timed loop, only each result's trades, volume, and rejections are tallied (and, for a behavior workload, its events: expirations, prevented self-trades, triggered stops). That keeps the results from being optimized away and is needed for the outcome check. No CSV is involved.
+- **`replay`** times the end-to-end path of [`docs/replay-format.md`](../docs/replay-format.md): CSV parsing, the replay engine's dispatch and event collection, the final snapshot, and the formatted summary. The same commands are first rendered as CSV text in memory (untimed): six-column v1 rows for the v1 workloads, twelve-column v2 rows for the behavior workloads. Reading a file from disk is left out on purpose, since it would mostly measure the OS file cache. Invariant validation is `none`, so this path does no checking work that `core` skips.
 
 The difference between the two kinds is the cost of the replay layers.
 
@@ -66,11 +66,26 @@ The difference between the two kinds is the cost of the replay layers.
 - **Steady state.** No command depends on the book's size, so an unbalanced mix drifts steadily and a balanced one wanders like a random walk. The mixes are tuned to keep each book's shape from 10k to 1M commands. Small-book also has a cap of 200 resting orders: a submission drawn at the cap is priced marketable instead, which leaves the cancellation rate unchanged. A book cannot sustain a cancellation rate above 50%, since every cancellation removes an order that a submission had to add. Cancellation-heavy sits exactly at that balance: none of its submissions trade, so each one rests an order and each cancellation removes one. Deep-book relies on matching for part of its removal, so it can stay clearly lower, at 35%. Mostly-resting is meant to grow, and does: from 1,000 to about 87,000 orders at the standard size.
 - **Pre-sized index.** Since the first optimization experiments (`docs/OPTIMIZATION-EXPERIMENTS.md`, experiment 2), every run reserves the order index for the book's expected size before the preload. The hint is the larger of the preload and the predicted *final* count, not the peak; the index rounds its capacity up to a power of two, which covers every built-in workload's peak but small-book's, whose 256-slot table grows once during each run. So mostly-resting measures insertion and growth of the levels and queues, but no longer the index's growth. The recorded baseline in `docs/BENCHMARKS.md` predates the hint: its mostly-resting numbers, especially at the extended size, are not comparable with later runs, and the other workloads' tables were already sized by their preloads.
 
+### Behavior workloads
+
+Six more workloads exercise the order behaviors of v2.0.0 (spec #40): requests, replaces, stops, and owners. Their commands are `BehaviorCommand`s rather than the v1 workloads' compact `BenchmarkCommand`s, so the five v1 workloads still run v1's `submitOrder(Order)` path, unchanged, and their numbers stay comparable with the earlier baselines. The behavior workloads are generated and predicted with `ReferenceBook` (`tests/reference/`, library `order_book_reference`), the randomized harness's independent model, never an `OrderBook`, under the same RNG rules (`behavior_workload.cpp`).
+
+| Workload | Preload | Timed mix | Objective | Realised shape (standard / extended) |
+|---|---|---|---|---|
+| `quote-refresh` | 2,000 post-only quotes on 100 levels | 60% replaces (35 decrease / 40 reprice / 10 increase / 10 cross / 5 post-only taker), 25% submissions (80% post-only quotes), 15% cancels | replace-heavy quoting | about 1,800 orders on 101 levels at both sizes; 0.16 trades per command |
+| `pending-stops` | 10,000 orders on 200 levels, then 5,000 stops | 55% submissions (52 passive / 30 marketable / 18 sweeps), 20% new stops, 15% stop cancels, 10% cancels | triggering and cascades | 9,000 orders on 112 / 134 levels, about 4,500 pending stops; about 0.3 stops triggered per command |
+| `self-trade` | 10,000 orders on 200 levels | 92% submissions (42 passive / 49 marketable / 9 FOK), 8% cancels; 90% of orders owned, 70% of those by one of two large owners, the rest from a pool of 20; modes 60 / 20 / 20 | self-trade prevention, and FOKs that walk per order | 8,000 orders on 186 / 192 levels; about 0.15 preventions per command |
+| `immediate` | 10,000 orders on 200 levels | 95% submissions (42 passive / 26 IOC / 16 market / 16 FOK, a third of the FOKs unfillable), 5% cancels | IOC, market, and FOK orders | 11,000 / 12,000 orders on 86 / 108 levels; about 0.14 expirations per command |
+| `matching-heavy-request` | matching-heavy's | matching-heavy's exact stream, through `submitOrder(OrderRequest)`, owner 0 | the request path's cost over v1's | as matching-heavy |
+| `matching-heavy-owned` | matching-heavy's | the same, with each order owned by its own ID, so the owner probe runs on every match and never prevents | the owner probe's cost | as matching-heavy |
+
+A behavior workload keeps its shape through bounds on the model's state rather than through a balanced mix alone: below a floor of resting orders a submission rests (and a cancel or a taking replace becomes one that does not take), above a cap it trades, and likewise new stops and stop cancels turn into each other outside their own floor and cap. pending-stops and immediate settle near 110-130 levels, fewer than their preload's 200, and stay there from 100k to 1M commands. Stop prices lie 1 to `stopReachTicks` (30) beyond the last trade price, so a sweep that moves the price triggers a cluster of them and their own trades can reach the next. Every generated command is accepted; the generator throws if the model refuses one.
+
 ### Determinism
 
 The same configuration, size, seed, and `workloadGeneratorVersion` (in `workload.hpp`) give exactly the same commands on every platform. The generator draws from `std::mt19937_64`'s raw output with its own unbiased reduction, never a standard distribution, whose results differ between standard libraries. Each draw is a statement of its own, since argument evaluation order differs between compilers. It also never touches `OrderBook`. It follows its own small model of the book (`WorkloadModel`, in `workload.cpp`), so a workload does not depend on the engine it measures, and the model's prediction checks each run independently. Order IDs are fresh for every order and never reused.
 
-`benchmark_harness_tests` pins a fingerprint of each built-in workload at the smoke size. Any change to what is generated must bump `workloadGeneratorVersion` and re-pin. Results are only comparable under the same generator version, seed, and size. Each result records all three, plus the workload's fingerprint (JSON).
+`benchmark_harness_tests` pins a fingerprint of each workload at the smoke size. Any change to what is generated must bump `workloadGeneratorVersion` and re-pin. Version 3 added the behavior workloads and their counters; the five v1 workloads' commands did not change, which the test shows by checking their `workloadFingerprintV2` (the commands and v1's counters alone) against version 2's pins. Results are only comparable under the same generator version, seed, and size. Each result records all three, plus the workload's fingerprint (JSON).
 
 ## Results
 
@@ -79,8 +94,10 @@ Every run is printed as it completes, followed by a summary per workload and kin
 `--csv` writes one line per run, warm-ups included (the `warmup` column marks them):
 
 ```text
-workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,volume,final_active_orders,final_price_levels
+workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,volume,final_active_orders,final_price_levels,replaces,expirations,preventions,stops_triggered,final_pending_stops
 ```
+
+The last five columns, added in generator version 3, are zero for the v1 workloads. Each run's console line also gives the number of stops triggered when there were any.
 
 `--json` writes the whole session: generator version, seed, size, warm-ups and repetitions, start time (Unix seconds), the build (configuration, compiler, `NDEBUG`, invariant checks, AddressSanitizer, UBSan), each workload's configuration, fingerprint, expected outcome, and untimed generation time, the summaries, and every raw measurement. Both files, like the console output, are written with LF line endings on every platform, and numbers are formatted without regard to locale.
 
@@ -124,10 +141,11 @@ Record any departure from these, and anything else that could move the numbers: 
 ## Code
 
 - `workload.hpp`, `workload.cpp`: sizes, workload configurations, the built-in workloads, the model, and the generator.
+- `behavior_workload.cpp`: the behavior workloads' generator, on `ReferenceBook`.
 - `benchmark_runner.hpp`, `benchmark_runner.cpp`: timed runs of both kinds, repetitions, outcome checks, and rendering commands as replay CSV.
 - `benchmark_report.hpp`, `benchmark_report.cpp`: build detection, summaries, and the CSV, JSON, and table formats.
 - `order_book_benchmark.cpp`: the program.
 
-These are built into the `order_book_benchmarking` library (linking `order_book_replay`) when `ORDER_BOOK_BUILD_BENCHMARKS` is on. `tests/benchmark_harness_test.cpp` (`benchmark_harness_tests`) tests the library. `benchmark_cli_smoke` runs the program once on a tiny workload, writing both files.
+These are built into the `order_book_benchmarking` library (linking `order_book_replay` and `order_book_reference`) when `ORDER_BOOK_BUILD_BENCHMARKS` is on. `tests/benchmark_harness_test.cpp` (`benchmark_harness_tests`) tests the library. `benchmark_cli_smoke` runs the program once on a tiny workload, writing both files.
 
 Recorded results live in `results/`, one directory per session set, kept byte for byte as the program wrote them. The baseline is `results/2026-10-25-baseline/`, written up in [`docs/BENCHMARKS.md`](../docs/BENCHMARKS.md); its `summarize.py` recomputes that page's tables from the raw CSV files.
