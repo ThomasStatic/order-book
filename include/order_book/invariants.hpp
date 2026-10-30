@@ -45,7 +45,8 @@ namespace order_book {
         EMPTY_STOP_LEVEL,
         MALFORMED_PENDING_STOP,       // a request check fails, it is no stop, or it has no sequence number
         MISPLACED_PENDING_STOP,       // a stop's stop price or side differs from its level's
-        INVALID_STOP_FIFO_SEQUENCE    // a stop level's sequence numbers out of acceptance order
+        INVALID_STOP_FIFO_SEQUENCE,   // a stop level's sequence numbers out of acceptance order
+        STOP_PENDING_PAST_TRIGGER     // a pending stop whose trigger the last trade price meets
     };
 
     // The enumerator's name, for printing violations as identifiers.
@@ -70,6 +71,7 @@ namespace order_book {
             case InvariantViolation::MALFORMED_PENDING_STOP: return "MALFORMED_PENDING_STOP";
             case InvariantViolation::MISPLACED_PENDING_STOP: return "MISPLACED_PENDING_STOP";
             case InvariantViolation::INVALID_STOP_FIFO_SEQUENCE: return "INVALID_STOP_FIFO_SEQUENCE";
+            case InvariantViolation::STOP_PENDING_PAST_TRIGGER: return "STOP_PENDING_PAST_TRIGGER";
         }
         return "UNKNOWN";
     }
@@ -91,7 +93,7 @@ namespace order_book {
         // AGGREGATE_QUANTITY_MISMATCH; the level's and the recorded price, or the resting
         // order count and the index size, for INVALID_INDEX_ENTRY; the best ask and the best
         // bid for CROSSED_BOOK. The stop violations follow their price-level counterparts, with
-        // stop prices for prices.
+        // stop prices for prices; STOP_PENDING_PAST_TRIGGER gives the last trade price as actual.
         std::optional<std::uint64_t> expected{};
         std::optional<std::uint64_t> actual{};
         // Which check failed, in words. A string literal, so building a result never allocates.

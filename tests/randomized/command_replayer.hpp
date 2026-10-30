@@ -49,12 +49,15 @@ struct RunStats {
     std::size_t mostTradesInOneSubmission = 0;
     std::size_t expired = 0;
     std::size_t preventions = 0;
+    std::size_t stopsTriggered = 0;
+    std::size_t longestCascade = 0;  // stops triggered by one command
     std::size_t cancellations = 0;
     std::size_t cancelled = 0;
     std::size_t cancelsRejected = 0;
     std::size_t intentionallyInvalid = 0;
     std::size_t peakResting = 0;
     std::size_t peakLevels = 0;
+    std::size_t peakPending = 0;
 
     std::string summary() const;
 };
@@ -73,12 +76,13 @@ using PropertyCheck = std::function<std::optional<std::string>(const OrderBook& 
 // Runs commands against an OrderBook beside a ReferenceBook, stopping at the first failure.
 // After every command, whatever it did (accepted, rejected, traded, cancelled, refused), it
 // runs the book's complete invariant check, then checks the behavior properties against the
-// engine's own result and book alone (so a misreading the model shares still fails: no IOC
-// or FOK order rests, an unfilled remainder of one ends its events as an OrderExpired, and a
-// FOK trades all or nothing; a post-only order never takes; no two orders of the same nonzero
-// owner trade, judged from the commands' owners), then
-// compares the result and its exact events with the model's prediction, and every level and
-// FIFO queue with the model's.
+// engine's own result and book alone, for the submitted order and each stop its trades
+// triggered (so a misreading the model shares still fails: no market, IOC, FOK, or STOP order
+// rests, and an unfilled one ends its events as an OrderExpired; a FOK trades all or nothing;
+// a post-only order never takes; no two orders of the same nonzero owner trade, judged from
+// the commands' requests; no stop pends past the last trade price), then
+// compares the result and its exact events with the model's prediction, and every level, FIFO
+// queue, pending stop, and the last trade price with the model's.
 class CommandReplayer {
 public:
     explicit CommandReplayer(PropertyCheck extraProperty = {}) : property(std::move(extraProperty)) {}
@@ -92,11 +96,12 @@ public:
     RunResult run(OrderBook& book, RandomCommandGenerator& generator, std::size_t count,
                   CommandRecorder& recorder) const;
 
-private:
-    // Each accepted request's owner by order ID, from the commands run, for the behavior check.
-    using OwnerLedger = std::unordered_map<OrderId, OwnerId>;
+    // Each accepted submission's request by order ID (an Order's with owner 0), from the
+    // commands run, for the behavior checks.
+    using RequestLedger = std::unordered_map<OrderId, OrderRequest>;
 
-    std::optional<Failure> execute(OrderBook& book, ReferenceBook& model, OwnerLedger& owners, const Command& command,
+private:
+    std::optional<Failure> execute(OrderBook& book, ReferenceBook& model, RequestLedger& owners, const Command& command,
                                    std::size_t index, RunStats& stats) const;
 
     PropertyCheck property;

@@ -394,6 +394,22 @@ namespace order_book {
             return {.violation = InvariantViolation::CROSSED_BOOK, .expected = asks.begin()->first,
                     .actual = bids.begin()->first, .detail = "the best bid should be strictly below the best ask"};
         }
+
+        // 5: no stop pends once its trigger is met. The nearest stop on each side decides.
+        if(lastTradePrice) {
+            if(!buyStops.empty() && buyStops.begin()->first <= *lastTradePrice) {
+                return {.violation = InvariantViolation::STOP_PENDING_PAST_TRIGGER, .side = Side::BUY,
+                        .price = buyStops.begin()->first,
+                        .orderId = buyStops.begin()->second.stops.front().request.id, .actual = *lastTradePrice,
+                        .detail = "a buy stop should pend strictly above the last trade price"};
+            }
+            if(!sellStops.empty() && sellStops.begin()->first >= *lastTradePrice) {
+                return {.violation = InvariantViolation::STOP_PENDING_PAST_TRIGGER, .side = Side::SELL,
+                        .price = sellStops.begin()->first,
+                        .orderId = sellStops.begin()->second.stops.front().request.id, .actual = *lastTradePrice,
+                        .detail = "a sell stop should pend strictly below the last trade price"};
+            }
+        }
         return {};
     }
 

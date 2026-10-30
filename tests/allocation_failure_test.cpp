@@ -65,6 +65,7 @@ struct OrderBookTestAccess {
     static SequenceNum nextSequenceNum(const OrderBook& book) { return book.nextSequenceNum; }
 
     static const order_book::OrderQueue& orders(const PriceLevel& level) { return level.orders; }
+    static bool noneTriggered(const OrderBook& book) { return !book.triggeredStops || book.triggeredStops->empty(); }
 };
 
 }  // namespace order_book
@@ -580,6 +581,44 @@ void testStopPathsDoNotAllocate() {
     expect(book.pendingStopCount() == 2, "two stops should pend");
 }
 
+// A cascade of three stops that fails inside the second stop's run: the submitter has
+// finished, the first stop's trade stands, the second keeps a market order's contract (its
+// trades made stand), and the third, triggered by the second, is discarded: nowhere, and
+// nothing pends past its trigger.
+void testCascadeFailureDiscardsTriggeredStops() {
+    std::vector<long> secondStopTrades;
+    const long failures = failEachAllocationInTurn(
+        [](OrderBook& book) {
+            for (unsigned int i = 0; i < 8; ++i) {
+                book.addOrder(Order(10 + i, 100 + i, 1, 1, Side::SELL));  // asks 100..107
+            }
+            order_book::OrderRequest first = stopRequest(31, Side::BUY, 100);  // runs first: buys at 101
+            first.quantity = 1;
+            order_book::OrderRequest second = stopRequest(32, Side::BUY, 101);  // sweeps 102..106
+            order_book::OrderRequest third = stopRequest(33, Side::BUY, 102);   // triggered by the second
+            third.quantity = 1;
+            book.submitOrder(first);
+            book.submitOrder(second);
+            book.submitOrder(third);
+        },
+        [](OrderBook& book) { book.submitOrder(order_book::OrderRequest{2, Side::BUY, 100, 1}); },
+        [&secondStopTrades](const OrderBook& book, const std::string& context) {
+            expect(Access::noneTriggered(book), context + ": triggered stops should be discarded");
+            expect(book.pendingStopCount() == 0 && !book.findPendingStop(33) && Access::index(book).count(33) == 0,
+                   context + ": the third stop should be nowhere");
+            expect(Access::index(book).count(10) == 0 && Access::index(book).count(11) == 0,
+                   context + ": the submitter's and the first stop's trades should stand");
+            const unsigned int executions = Access::nextTradeId(book) - 1;
+            expect(executions >= 2 && Access::index(book).size() == 8 - executions,
+                   context + ": every trade made should have filled one ask");
+            secondStopTrades.push_back(static_cast<long>(executions) - 2);
+        },
+        "three-stop cascade");
+    expect(failures > 0, "three-stop cascade: at least one allocation failure should have been injected");
+    expect(!secondStopTrades.empty() && secondStopTrades.front() >= 1,
+           "the first failure should come inside the second stop's run, after its first trade");
+}
+
 void testConsumeLevelFailsBeforeFilling() {
     const long failures = failEachAllocationInTurn(
         [](OrderBook& book) {
@@ -689,6 +728,7 @@ int main() {
         testFillOrKillWithPreventionsIsAllOrNothing();
         testStopStorageRollsBack();
         testStopPathsDoNotAllocate();
+        testCascadeFailureDiscardsTriggeredStops();
         testConsumeLevelFailsBeforeFilling();
         testCancelOrderDoesNotAllocate();
         testRequestAllocatesLikeOrder();

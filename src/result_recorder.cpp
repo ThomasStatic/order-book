@@ -69,9 +69,9 @@ namespace order_book {
         growFor(events, addedEvents);
     }
 
-    void ResultRecorder::reserve(std::size_t totalTrades, std::size_t totalEvents) {
-        trades.reserve(totalTrades);
-        events.reserve(totalEvents);
+    void ResultRecorder::reserve(std::size_t addedTrades, std::size_t addedEvents) {
+        trades.reserve(trades.size() + addedTrades);
+        events.reserve(events.size() + addedEvents);
     }
 
     void ResultRecorder::trade(const Trade& executed) {

@@ -46,6 +46,7 @@ struct OrderBookTestAccess {
         return side == Side::BUY ? book.buyStops.at(stopPrice) : book.sellStops.at(stopPrice);
     }
     static auto& stops(OrderBook& book, Side side, Price stopPrice) { return stopLevel(book, side, stopPrice).stops; }
+    static void setLastTradePrice(OrderBook& book, Price price) { book.lastTradePrice = price; }
 };
 
 }  // namespace order_book
@@ -496,6 +497,32 @@ void testPendingStopChecks() {
     }
 }
 
+// No stop may pend once its trigger is met: a buy stop strictly above the last trade price, a
+// sell stop strictly below. Checked last, after the top of the book.
+void testStopPendingPastTrigger() {
+    {
+        OrderBook book = bookWithStops();
+        Access::setLastTradePrice(book, 110);
+        expectViolation(book,
+                        {.violation = InvariantViolation::STOP_PENDING_PAST_TRIGGER, .side = Side::BUY, .price = 110,
+                         .orderId = 20, .actual = 110},
+                        "buy stop at the last trade price");
+    }
+    {
+        OrderBook book = bookWithStops();
+        Access::setLastTradePrice(book, 89);
+        expectViolation(book,
+                        {.violation = InvariantViolation::STOP_PENDING_PAST_TRIGGER, .side = Side::SELL, .price = 90,
+                         .orderId = 23, .actual = 89},
+                        "sell stop at or above the last trade price");
+    }
+    {
+        OrderBook book = bookWithStops();
+        Access::setLastTradePrice(book, 109);
+        expectSound(book, "stops beyond the last trade price");
+    }
+}
+
 void testCrossedBook() {
     for (const Price bidPrice : {Price{101}, Price{102}}) {
         const std::string context = "bid resting at " + std::to_string(bidPrice) + " against an ask at 101";
@@ -546,6 +573,7 @@ int main() {
     testOrderChecks();
     testIndexChecks();
     testPendingStopChecks();
+    testStopPendingPastTrigger();
     testCrossedBook();
     testStopsAtFirstViolation();
     testFormat();

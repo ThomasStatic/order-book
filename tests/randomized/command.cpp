@@ -21,6 +21,8 @@ constexpr CommandIntent allIntents[] = {
     CommandIntent::INVALID_SIDE,    CommandIntent::UNSUPPORTED_TYPE, CommandIntent::MARKED_FILLED,
     CommandIntent::INVALID_TIME_IN_FORCE, CommandIntent::MARKET_WITH_PRICE, CommandIntent::MARKET_GTC,
     CommandIntent::TYPE_CANNOT_REST, CommandIntent::POST_ONLY_NOT_GTC_LIMIT, CommandIntent::INVALID_STP_MODE,
+    CommandIntent::STOP_GTC,        CommandIntent::POST_ONLY_STOP,  CommandIntent::MISSING_STOP_PRICE,
+    CommandIntent::STOP_PRICE_ON_LIMIT, CommandIntent::CANCEL_PENDING_STOP,
     CommandIntent::CANCEL_ACTIVE,   CommandIntent::CANCEL_REMOVED,  CommandIntent::CANCEL_UNKNOWN,
     CommandIntent::CANCEL_ZERO_ID,  CommandIntent::UNSPECIFIED};
 
@@ -63,6 +65,8 @@ std::string typeText(OrderType type) {
     switch (type) {
         case OrderType::LIMIT: return "LIMIT";
         case OrderType::MARKET: return "MARKET";
+        case OrderType::STOP: return "STOP";
+        case OrderType::STOP_LIMIT: return "STOP_LIMIT";
     }
     return std::to_string(static_cast<int>(type));
 }
@@ -73,6 +77,12 @@ OrderType parseType(const std::string& text) {
     }
     if (text == "MARKET") {
         return OrderType::MARKET;
+    }
+    if (text == "STOP") {
+        return OrderType::STOP;
+    }
+    if (text == "STOP_LIMIT") {
+        return OrderType::STOP_LIMIT;
     }
     return static_cast<OrderType>(parseNumber(text, std::numeric_limits<int>::max(), "type"));
 }
@@ -146,6 +156,11 @@ const char* intentName(CommandIntent intent) {
         case CommandIntent::TYPE_CANNOT_REST: return "TYPE_CANNOT_REST";
         case CommandIntent::POST_ONLY_NOT_GTC_LIMIT: return "POST_ONLY_NOT_GTC_LIMIT";
         case CommandIntent::INVALID_STP_MODE: return "INVALID_STP_MODE";
+        case CommandIntent::STOP_GTC: return "STOP_GTC";
+        case CommandIntent::POST_ONLY_STOP: return "POST_ONLY_STOP";
+        case CommandIntent::MISSING_STOP_PRICE: return "MISSING_STOP_PRICE";
+        case CommandIntent::STOP_PRICE_ON_LIMIT: return "STOP_PRICE_ON_LIMIT";
+        case CommandIntent::CANCEL_PENDING_STOP: return "CANCEL_PENDING_STOP";
         case CommandIntent::CANCEL_ACTIVE: return "CANCEL_ACTIVE";
         case CommandIntent::CANCEL_REMOVED: return "CANCEL_REMOVED";
         case CommandIntent::CANCEL_UNKNOWN: return "CANCEL_UNKNOWN";
@@ -160,6 +175,7 @@ bool isIntentionallyInvalid(CommandIntent intent) {
         case CommandIntent::NEW_ID:
         case CommandIntent::REUSED_ID:
         case CommandIntent::CANCEL_ACTIVE:
+        case CommandIntent::CANCEL_PENDING_STOP:
         case CommandIntent::UNSPECIFIED:
             return false;
         default:
@@ -198,6 +214,9 @@ std::string formatCommand(const Command& command) {
         }
         if (command.timeInForce != TimeInForce::GTC) {
             line += " tif=" + timeInForceText(command.timeInForce);
+        }
+        if (command.stopPrice != 0) {
+            line += " stop_price=" + std::to_string(command.stopPrice);
         }
         if (command.postOnly) {
             line += " post_only=Y";
@@ -248,7 +267,7 @@ Command parseCommand(const std::string& line) {
         const std::string value = token.substr(equals + 1);
         const bool submitOnly = key == "side" || key == "price" || key == "qty" || key == "type" || key == "status" ||
                                 key == "overload" || key == "tif" || key == "post_only" || key == "owner" ||
-                                key == "stp";
+                                key == "stp" || key == "stop_price";
         if (submitOnly && command.type == CommandType::CANCEL) {
             throw std::invalid_argument("a cancellation has no " + key);
         }
@@ -266,6 +285,8 @@ Command parseCommand(const std::string& line) {
             sawQuantity = true;
         } else if (key == "type") {
             command.orderType = parseType(value);
+        } else if (key == "stop_price") {
+            command.stopPrice = parseField(value, "stop price");
         } else if (key == "owner") {
             command.owner = parseField(value, "owner");
         } else if (key == "stp") {
@@ -300,7 +321,7 @@ Command parseCommand(const std::string& line) {
         throw std::invalid_argument("status=FILLED needs overload=ORDER: a request has no fill status");
     }
     if (command.overload == SubmitOverload::ORDER &&
-        (command.timeInForce != TimeInForce::GTC || command.postOnly || command.owner != 0 ||
+        (command.timeInForce != TimeInForce::GTC || command.stopPrice != 0 || command.postOnly || command.owner != 0 ||
          command.selfTradePrevention != SelfTradePrevention::CANCEL_RESTING)) {
         throw std::invalid_argument("an Order has no time in force or post-only flag: they need the request overload");
     }

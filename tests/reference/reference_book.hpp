@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <list>
 #include <map>
@@ -49,7 +50,7 @@ struct ModelOrder {
 };
 
 // Everything a command should report: whether it succeeded, why not, its exact events, and
-// for a submission what was left of it and its fill status.
+// for a submission what was left of it and its fill status (at the end of its own match).
 struct ExpectedOutcome {
     bool success = false;
     std::optional<RejectionReason> rejection;
@@ -91,6 +92,7 @@ struct ModelCounters {
     std::size_t trades = 0;
     std::size_t expired = 0;
     std::size_t preventions = 0;
+    std::size_t stopsTriggered = 0;
     std::size_t cancelled = 0;
     std::size_t cancelsRejected = 0;
 };
@@ -98,21 +100,25 @@ struct ModelCounters {
 // A deliberately plain model of the book: validation in the documented order, then
 // price-time matching at the resting price, worked out as a match plan that walks the
 // opposing queues order by order (never a level's aggregate, so a bug in the engine's
-// shortcuts shows) and then applied. It predicts each command's exact outcome and tracks which
-// IDs rest and which have been used, which is the view a generator draws from. Starts empty.
+// shortcuts shows) and then applied. Each trade triggers the pending stops it reaches, which
+// run after the command's own order, breadth first. It predicts each command's exact outcome
+// and tracks which IDs rest, which pend, and which have been used, which is the view a
+// generator draws from. Starts empty.
 class ReferenceBook {
 public:
     // Oldest first.
     using Queue = std::list<OrderId>;
 
-    // submitOrder(OrderRequest): the request's checks in their fixed order, then a live ID; an
-    // IOC remainder expires rather than rests, and a FOK applies its plan only if the plan
-    // fills it, and otherwise discards it and expires whole; a post-only order that would take
-    // expires whole.
+    // submitOrder(OrderRequest): the request's checks in their fixed order, then a live ID
+    // (resting or pending). An IOC remainder expires rather than rests; a FOK applies its plan
+    // only if the plan fills it, and otherwise discards it and expires whole; a post-only
+    // order that would take expires whole; a stop pends, or expires whole if already past its
+    // trigger.
     ExpectedOutcome submit(const OrderRequest& request);
     // submitOrder(Order), for an Order with these fields, marked FILLED if markedFilled: the
     // Order's own checks (which accept only a type that can rest), then FILLED, then a live ID.
     ExpectedOutcome submitOrder(const OrderRequest& fields, bool markedFilled);
+    // Cancels a resting order or a pending stop.
     ExpectedOutcome cancel(OrderId orderId);
 
     // The plan for an incoming order on `side` with this limit price (0 for none, a market
@@ -121,16 +127,20 @@ public:
                    SelfTradePrevention mode = SelfTradePrevention::CANCEL_RESTING) const;
 
     const IdPool& restingIds() const { return resting; }
-    // IDs accepted at some point that rest no longer: filled, cancelled, or filled or expired on
-    // arrival.
+    const IdPool& pendingIds() const { return pending; }
+    // IDs accepted at some point that are live no longer: filled, cancelled, expired, or a
+    // stop that triggered and did not rest.
     const IdPool& removedIds() const { return removed; }
 
     const ModelOrder* find(OrderId orderId) const;
+    // The request a pending stop was accepted with, or nothing.
+    const OrderRequest* findPendingStop(OrderId orderId) const;
     std::optional<Price> best(Side side) const;
     // The price of the most recent trade, or nothing before the first.
     std::optional<Price> lastTradePrice() const { return lastTrade; }
     const ModelCounters& counters() const { return seen; }
     std::size_t restingCount() const { return orders.size(); }
+    std::size_t pendingCount() const { return stops.size(); }
     std::size_t levelCount() const { return bids.size() + asks.size(); }
     // Best price first.
     std::vector<ModelLevel> levels(Side side) const;
@@ -143,13 +153,29 @@ private:
         ModelOrder order;
         Queue::iterator position;  // in its level's queue
     };
+    struct StopEntry {
+        OrderRequest request;
+        Queue::iterator position;  // in its stop level's queue
+    };
+    struct Triggered {
+        OrderRequest request;
+        Price tradePrice;
+    };
 
+    std::optional<RejectionReason> requestRejection(const OrderRequest& request) const;
     ExpectedOutcome reject(OrderId orderId, Quantity quantity, RejectionReason reason);
-    ExpectedOutcome accept(const OrderRequest& request, TimeInForce timeInForce);
+    ExpectedOutcome expireWhole(const OrderRequest& request);
+    // Runs an incoming order (the submitted one, or a triggered stop as its market or limit
+    // order) to the end of its own lifecycle, appending its events; returns how much it filled.
+    Quantity runOrder(const OrderRequest& order, std::vector<BookEvent>& events);
+    void runCascade(std::vector<BookEvent>& events);
     void applyPlan(const MatchPlan& plan, OrderId incomingId, std::vector<BookEvent>& events);
+    void triggerAt(Price tradePrice);
     void rest(const ModelOrder& order);
+    void pend(const OrderRequest& stop);
     // Takes a resting order off its level and forgets it.
     void remove(OrderId orderId);
+    void unpend(OrderId orderId);
     template <typename Levels>
     void planAgainst(const Levels& levels, Side side, Price limitPrice, Quantity quantity, OwnerId owner,
                      SelfTradePrevention mode, MatchPlan& plan) const;
@@ -159,7 +185,12 @@ private:
     std::unordered_map<OrderId, Entry> orders;
     std::map<Price, Queue, std::greater<Price>> bids;
     std::map<Price, Queue, std::less<Price>> asks;
+    std::unordered_map<OrderId, StopEntry> stops;
+    std::map<Price, Queue, std::less<Price>> buyStops;     // nearest to triggering first
+    std::map<Price, Queue, std::greater<Price>> sellStops;
+    std::deque<Triggered> triggered;                       // during a command only
     IdPool resting;
+    IdPool pending;
     IdPool removed;
     std::optional<Price> lastTrade;
     ModelCounters seen;

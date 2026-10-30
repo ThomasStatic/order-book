@@ -33,6 +33,8 @@ struct OrderBookTestAccess {
 
     static const auto& bids(const OrderBook& book) { return book.bids; }
     static const auto& asks(const OrderBook& book) { return book.asks; }
+    static const auto& buyStops(const OrderBook& book) { return book.buyStops; }
+    static const auto& sellStops(const OrderBook& book) { return book.sellStops; }
     static const order_book::OrderQueue& orders(const PriceLevel& level) { return level.orders; }
 };
 
@@ -170,7 +172,28 @@ std::optional<std::string> compareState(const OrderBook& book, const ReferenceBo
     if (auto difference = compareLevels(Access::bids(book), model.bidQueues(), model, "bids")) {
         return difference;
     }
-    return compareLevels(Access::asks(book), model.askQueues(), model, "asks");
+    if (auto difference = compareLevels(Access::asks(book), model.askQueues(), model, "asks")) {
+        return difference;
+    }
+    if (book.pendingStopCount() != model.pendingCount()) {
+        return "the book has " + std::to_string(book.pendingStopCount()) + " pending stops, the model " +
+               std::to_string(model.pendingCount());
+    }
+    const order_book::reference::IdPool& pending = model.pendingIds();
+    for (std::size_t i = 0; i < pending.size(); ++i) {
+        const OrderId stopId = pending.at(i);
+        const std::optional<OrderRequest> inBook = book.findPendingStop(stopId);
+        if (!inBook || !(*inBook == *model.findPendingStop(stopId))) {
+            return "pending stop #" + std::to_string(stopId) +
+                   (inBook ? std::string(" differs between the book and the model") : std::string(" pends only in the model"));
+        }
+    }
+    if (book.getLastTradePrice() != model.lastTradePrice()) {
+        const auto text = [](std::optional<Price> price) { return price ? std::to_string(*price) : std::string("none"); };
+        return "the book's last trade price is " + text(book.getLastTradePrice()) + ", the model's " +
+               text(model.lastTradePrice());
+    }
+    return std::nullopt;
 }
 
 std::string describeQueue(std::uint64_t total, const std::vector<std::pair<OrderId, Quantity>>& orders,
@@ -234,56 +257,94 @@ std::optional<std::string> locateInLevels(const Levels& levels, OrderId orderId,
     return std::nullopt;
 }
 
-// The behavior properties, judged from the engine's result and book alone.
+std::optional<std::string> locateResting(const OrderBook& book, OrderId orderId) {
+    std::optional<std::string> resting = locateInLevels(Access::bids(book), orderId, Side::BUY);
+    return resting ? resting : locateInLevels(Access::asks(book), orderId, Side::SELL);
+}
+
+// The behavior properties, judged from the engine's result and book alone, segment by
+// segment: the submitted order's events, then each triggered stop's. Each order's
+// instructions come from the command, or for a stop from the request it was accepted with.
 std::optional<std::string> checkBehavior(const OrderBook& book, const Command& command, const ActualOutcome& actual,
-                                         const std::unordered_map<OrderId, OwnerId>& owners) {
-    if (command.type != CommandType::SUBMIT || command.overload != SubmitOverload::REQUEST || !actual.outcome.success) {
+                                         const CommandReplayer::RequestLedger& ledger) {
+    // No stop pends once a trade has reached its stop price.
+    if (const std::optional<Price> last = book.getLastTradePrice()) {
+        const auto& buyStops = Access::buyStops(book);
+        const auto& sellStops = Access::sellStops(book);
+        if (!buyStops.empty() && buyStops.begin()->first <= *last) {
+            return "a buy stop at " + std::to_string(buyStops.begin()->first) + " pends past the last trade price " +
+                   std::to_string(*last);
+        }
+        if (!sellStops.empty() && sellStops.begin()->first >= *last) {
+            return "a sell stop at " + std::to_string(sellStops.begin()->first) + " pends past the last trade price " +
+                   std::to_string(*last);
+        }
+    }
+    if (command.type != CommandType::SUBMIT || !actual.outcome.success) {
         return std::nullopt;
     }
-    if (command.owner != 0) {
-        for (const BookEvent& event : actual.outcome.events) {
-            if (const auto* trade = std::get_if<TradeExecuted>(&event)) {
-                const auto resting = owners.find(trade->restingOrderId);
-                if (resting != owners.end() && resting->second == command.owner) {
-                    return "two orders of owner " + std::to_string(command.owner) + " traded: " + formatEvent(event);
+    const OrderRequest submitted = requestOf(command);
+    const std::vector<BookEvent>& events = actual.outcome.events;
+    if (hasNoPrice(submitted.type)) {
+        const auto* acceptance = events.empty() ? nullptr : std::get_if<OrderAccepted>(&events.front());
+        if (acceptance == nullptr || acceptance->price != 0) {
+            return "a market or STOP order's acceptance should report price 0";
+        }
+    }
+    const auto ownerOf = [&](OrderId orderId) -> OwnerId {
+        if (orderId == submitted.id) {
+            return command.overload == SubmitOverload::REQUEST ? submitted.owner : 0;
+        }
+        const auto found = ledger.find(orderId);
+        return found == ledger.end() ? 0 : found->second.owner;
+    };
+
+    std::size_t begin = 0;
+    while (begin < events.size()) {
+        std::size_t end = begin + 1;
+        while (end < events.size() && !std::holds_alternative<StopTriggered>(events[end])) {
+            ++end;
+        }
+        OrderRequest order = submitted;
+        if (const auto* trigger = std::get_if<StopTriggered>(&events[begin])) {
+            const auto found = ledger.find(trigger->orderId);
+            if (found == ledger.end()) {
+                return "a stop triggered that was never accepted: " + formatEvent(events[begin]);
+            }
+            order = found->second;
+        } else if (command.overload == SubmitOverload::ORDER) {
+            order.timeInForce = TimeInForce::GTC;
+        }
+        Quantity traded = 0;
+        for (std::size_t i = begin; i < end; ++i) {
+            if (const auto* trade = std::get_if<TradeExecuted>(&events[i])) {
+                traded += trade->executionQuantity;
+                const OwnerId owner = ownerOf(trade->incomingOrderId);
+                if (owner != 0 && ownerOf(trade->restingOrderId) == owner) {
+                    return "two orders of owner " + std::to_string(owner) + " traded: " + formatEvent(events[i]);
                 }
             }
         }
-    }
-    if (command.postOnly) {
-        for (const BookEvent& event : actual.outcome.events) {
-            if (std::holds_alternative<TradeExecuted>(event)) {
-                return "a post-only order took liquidity: " + formatEvent(event);
+        const bool pendsNow = begin == 0 && isStopType(order.type) && book.findPendingStop(order.id);
+        const bool immediate = hasNoPrice(order.type) || order.timeInForce != TimeInForce::GTC;
+        if (immediate && !pendsNow) {
+            if (const std::optional<std::string> resting = locateResting(book, order.id)) {
+                return "a market, IOC, FOK, or STOP order rests: #" + std::to_string(order.id) + " " + *resting;
+            }
+            const Quantity unfilled = order.quantity - traded;
+            if (unfilled > 0 && events[end - 1] != BookEvent{OrderExpired{order.id, unfilled}}) {
+                return "#" + std::to_string(order.id) + "'s unfilled " + std::to_string(unfilled) +
+                       " should end its events as an OrderExpired for that quantity";
             }
         }
-    }
-    if (command.orderType == OrderType::MARKET) {
-        const std::vector<BookEvent>& events = actual.outcome.events;
-        const auto* acceptance = events.empty() ? nullptr : std::get_if<OrderAccepted>(&events.front());
-        if (acceptance == nullptr || acceptance->price != 0) {
-            return "a market order's acceptance should report price 0";
+        if (order.timeInForce == TimeInForce::FOK && traded != 0 && traded != order.quantity) {
+            return "a FOK order traded part of its quantity: " + std::to_string(traded) + " of " +
+                   std::to_string(order.quantity);
         }
-    }
-    if (command.timeInForce == TimeInForce::IOC || command.timeInForce == TimeInForce::FOK) {
-        const char* kind = command.timeInForce == TimeInForce::IOC ? "an IOC" : "a FOK";
-        std::optional<std::string> resting = locateInLevels(Access::bids(book), command.orderId, Side::BUY);
-        if (!resting) {
-            resting = locateInLevels(Access::asks(book), command.orderId, Side::SELL);
+        if (order.postOnly && traded != 0) {
+            return "a post-only order took liquidity: #" + std::to_string(order.id);
         }
-        if (resting) {
-            return std::string(kind) + " order rests: " + *resting;
-        }
-        const std::vector<BookEvent>& events = actual.outcome.events;
-        const Quantity remaining = actual.outcome.remaining;
-        const bool expiredLast = !events.empty() && events.back() == BookEvent{OrderExpired{command.orderId, remaining}};
-        if (remaining > 0 && !expiredLast) {
-            return std::string(kind) + " order's unfilled " + std::to_string(remaining) +
-                   " should end its events as an OrderExpired for that quantity";
-        }
-        if (command.timeInForce == TimeInForce::FOK && remaining > 0 && remaining != command.quantity) {
-            return "a FOK order traded part of its quantity: " + std::to_string(command.quantity - remaining) + " of " +
-                   std::to_string(command.quantity);
-        }
+        begin = end;
     }
     return std::nullopt;
 }
@@ -313,8 +374,9 @@ std::string RunStats::summary() const {
            std::to_string(cancelsRejected) + ") intentionally-invalid=" + std::to_string(intentionallyInvalid) +
            " trades=" + std::to_string(trades) + " (at most " + std::to_string(mostTradesInOneSubmission) +
            " per submission) expired=" + std::to_string(expired) + " prevented=" + std::to_string(preventions) +
-           " peak-resting=" + std::to_string(peakResting) +
-           " peak-levels=" + std::to_string(peakLevels);
+           " stops-triggered=" + std::to_string(stopsTriggered) + " (longest cascade " + std::to_string(longestCascade) +
+           ") peak-resting=" + std::to_string(peakResting) + " peak-levels=" + std::to_string(peakLevels) +
+           " peak-pending=" + std::to_string(peakPending);
 }
 
 std::string describeBookState(const OrderBook& book, const ReferenceBook& model, const Command& command) {
@@ -348,7 +410,7 @@ RunResult CommandReplayer::replay(OrderBook& book, const std::vector<Command>& c
         throw std::invalid_argument("CommandReplayer::replay needs an empty book: the reference model starts empty");
     }
     ReferenceBook model;
-    OwnerLedger owners;
+    RequestLedger owners;
     RunResult result;
     for (std::size_t i = 0; i < commands.size(); ++i) {
         if (std::optional<Failure> failure = execute(book, model, owners, commands[i], i, result.stats)) {
@@ -365,7 +427,7 @@ RunResult CommandReplayer::run(OrderBook& book, RandomCommandGenerator& generato
         throw std::invalid_argument("CommandReplayer::run needs an empty book: the reference model starts empty");
     }
     ReferenceBook model;
-    OwnerLedger owners;
+    RequestLedger owners;
     RunResult result;
     for (std::size_t i = 0; i < count; ++i) {
         const Command command = generator.next(model);
@@ -378,7 +440,7 @@ RunResult CommandReplayer::run(OrderBook& book, RandomCommandGenerator& generato
     return result;
 }
 
-std::optional<Failure> CommandReplayer::execute(OrderBook& book, ReferenceBook& model, OwnerLedger& owners,
+std::optional<Failure> CommandReplayer::execute(OrderBook& book, ReferenceBook& model, RequestLedger& owners,
                                                 const Command& command, std::size_t index, RunStats& stats) const {
     noteCommand(index, command);
     ++stats.commands;
@@ -432,7 +494,11 @@ std::optional<Failure> CommandReplayer::execute(OrderBook& book, ReferenceBook& 
         return fail(FailureType::BEHAVIOR_VIOLATION, *broken);
     }
     if (submission && actual.outcome.success) {
-        owners[command.orderId] = command.overload == SubmitOverload::REQUEST ? command.owner : 0;
+        OrderRequest accepted = requestOf(command);
+        if (command.overload == SubmitOverload::ORDER) {
+            accepted.owner = 0;
+        }
+        owners.insert_or_assign(command.orderId, accepted);
     }
     if (std::optional<std::string> difference = compareOutcomes(expected, actual, command)) {
         return fail(FailureType::OUTCOME_MISMATCH, *difference);
@@ -454,12 +520,16 @@ std::optional<Failure> CommandReplayer::execute(OrderBook& book, ReferenceBook& 
         const std::size_t trades = count([](const BookEvent& event) { return std::holds_alternative<TradeExecuted>(event); });
         stats.expired += count([](const BookEvent& event) { return std::holds_alternative<OrderExpired>(event); });
         stats.preventions += count([](const BookEvent& event) { return std::holds_alternative<SelfTradePrevented>(event); });
+        const std::size_t cascade = count([](const BookEvent& event) { return std::holds_alternative<StopTriggered>(event); });
+        stats.stopsTriggered += cascade;
+        stats.longestCascade = std::max(stats.longestCascade, cascade);
         stats.trades += trades;
         stats.mostTradesInOneSubmission = std::max(stats.mostTradesInOneSubmission, trades);
     } else {
         ++(expected.success ? stats.cancelled : stats.cancelsRejected);
     }
     stats.peakResting = std::max(stats.peakResting, model.restingCount());
+    stats.peakPending = std::max(stats.peakPending, model.pendingCount());
     stats.peakLevels = std::max(stats.peakLevels, model.levelCount());
     return std::nullopt;
 }

@@ -88,18 +88,19 @@ void testSameSeedSameStream() {
 // and update these values (the failure prints the new ones).
 void testGeneratorFingerprints() {
     const std::map<std::string, std::uint64_t> pinned = {
-        {"balanced", 1256948402184570592ULL},
-        {"aggressive", 15564890074746293941ULL},
-        {"passive", 4513328097151289785ULL},
-        {"cancel-heavy", 4039300296230370349ULL},
-        {"queue", 15866627438205874611ULL},
-        {"one-sided", 17449804457086351482ULL},
-        {"invalid-heavy", 9872866986915840162ULL},
-        {"limits", 11190759334658035344ULL},
-        {"self-trade", 9694923690401000569ULL},
-        {"immediate", 9740767023990187601ULL},
+        {"balanced", 5564879061556947044ULL},
+        {"aggressive", 8481657866503503821ULL},
+        {"passive", 6763976021892944449ULL},
+        {"cancel-heavy", 3611834777573128470ULL},
+        {"queue", 7739213142561390673ULL},
+        {"one-sided", 18072558173000573765ULL},
+        {"invalid-heavy", 2685711784982307739ULL},
+        {"limits", 8556868042740139041ULL},
+        {"self-trade", 8315979448594823842ULL},
+        {"stop-cascade", 736736494424531975ULL},
+        {"immediate", 15317620537276013285ULL},
     };
-    expect(generatorVersion == 7, "the fingerprints below are for generator version 7");
+    expect(generatorVersion == 8, "the fingerprints below are for generator version 8");
     bool allMatch = true;
     std::string actual;
     for (const WorkloadProfile& profile : workloadProfiles()) {
@@ -172,6 +173,13 @@ void testStreamRoundTrip() {
     oddMode.selfTradePrevention = static_cast<order_book::SelfTradePrevention>(4);
     stream.commands.push_back(ownedOrder);
     stream.commands.push_back(oddMode);
+    Command stopLimit = Command::submit(18, Side::BUY, 101, 5, CommandIntent::NEW_ID);
+    stopLimit.orderType = order_book::OrderType::STOP_LIMIT;
+    stopLimit.stopPrice = 103;
+    expect(formatCommand(stopLimit) == "SUBMIT id=18 side=BUY price=101 qty=5 type=STOP_LIMIT stop_price=103 intent=NEW_ID",
+           context + ": a stop-limit should print its type and stop price");
+    stream.commands.push_back(stopLimit);
+    stream.commands.push_back(Command::cancel(18, CommandIntent::CANCEL_PENDING_STOP));
     Command killer = Command::submit(13, Side::SELL, 100, 5, CommandIntent::NEW_ID);
     killer.timeInForce = order_book::TimeInForce::FOK;
     expect(formatCommand(killer) == "SUBMIT id=13 side=SELL price=100 qty=5 tif=FOK intent=NEW_ID",
@@ -245,6 +253,12 @@ void testDistributions() {
         std::size_t ioc = 0;
         std::size_t fok = 0;
         std::size_t markets = 0;
+        std::size_t stops = 0;
+        std::size_t stopLimits = 0;
+        std::size_t requestLimits = 0;
+        std::size_t stopLimitIoc = 0;
+        std::size_t pastTrigger = 0;
+        std::size_t stopsAfterATrade = 0;
         std::size_t postOnly = 0;
         std::size_t ownedRequests = 0;
         std::size_t cancelIncoming = 0;
@@ -265,15 +279,24 @@ void testDistributions() {
                 viaOrder += command.overload == SubmitOverload::ORDER ? 1 : 0;
                 buys += command.side == Side::BUY ? 1 : 0;
                 large += command.quantity > profile.smallQuantityMax ? 1 : 0;
-                const bool market = command.orderType == order_book::OrderType::MARKET;
+                using order_book::OrderType;
+                using order_book::TimeInForce;
+                const bool market = command.orderType == OrderType::MARKET;
+                const bool stop = command.orderType == OrderType::STOP;
+                const bool stopLimit = command.orderType == OrderType::STOP_LIMIT;
+                const bool limit = command.orderType == OrderType::LIMIT;
+                const bool viaRequest = command.overload == SubmitOverload::REQUEST;
                 markets += market ? 1 : 0;
-                ioc += !market && command.timeInForce == order_book::TimeInForce::IOC ? 1 : 0;
-                fok += !market && command.timeInForce == order_book::TimeInForce::FOK ? 1 : 0;
-                const bool gtcLimit = !market && command.timeInForce == order_book::TimeInForce::GTC &&
-                                      command.overload == SubmitOverload::REQUEST;
+                stops += stop ? 1 : 0;
+                stopLimits += stopLimit ? 1 : 0;
+                requestLimits += limit && viaRequest ? 1 : 0;
+                ioc += limit && command.timeInForce == TimeInForce::IOC ? 1 : 0;
+                fok += limit && command.timeInForce == TimeInForce::FOK ? 1 : 0;
+                stopLimitIoc += stopLimit && command.timeInForce == TimeInForce::IOC ? 1 : 0;
+                const bool gtcLimit = limit && command.timeInForce == TimeInForce::GTC && viaRequest;
                 gtcLimits += gtcLimit ? 1 : 0;
                 postOnly += command.postOnly ? 1 : 0;
-                if (command.overload == SubmitOverload::REQUEST) {
+                if (viaRequest) {
                     ownedRequests += command.owner != 0 ? 1 : 0;
                     cancelIncoming +=
                         command.selfTradePrevention == order_book::SelfTradePrevention::CANCEL_INCOMING ? 1 : 0;
@@ -281,27 +304,43 @@ void testDistributions() {
                                order_book::isValidSelfTradePrevention(command.selfTradePrevention),
                            context + ": a valid request's owner comes from the pool: " + formatCommand(command));
                 } else {
-                    expect(command.owner == 0, context + ": an Order has no owner: " + formatCommand(command));
+                    expect(command.owner == 0 && limit, context + ": an Order is a limit with no owner: " + formatCommand(command));
                 }
                 expect(!command.postOnly || gtcLimit,
                        context + ": a valid post-only order is a GTC limit request: " + formatCommand(command));
-                expect(!market || (command.price == 0 && command.timeInForce != order_book::TimeInForce::GTC &&
-                                   command.overload == SubmitOverload::REQUEST),
-                       context + ": a valid market order has no price and is IOC or FOK: " + formatCommand(command));
-                expect(command.overload == SubmitOverload::REQUEST || command.timeInForce == order_book::TimeInForce::GTC,
+                expect(!(market || stop) || (command.price == 0 && command.timeInForce != TimeInForce::GTC && viaRequest),
+                       context + ": a valid market or STOP order has no price and is IOC or FOK: " + formatCommand(command));
+                expect((stop || stopLimit) == (command.stopPrice != 0),
+                       context + ": exactly the stops carry a stop price: " + formatCommand(command));
+                if ((stop || stopLimit) && model.lastTradePrice()) {
+                    const std::int64_t last = *model.lastTradePrice();
+                    const std::int64_t ahead = (command.side == Side::BUY ? 1 : -1) *
+                                               (static_cast<std::int64_t>(command.stopPrice) - last);
+                    const std::int64_t near = static_cast<std::int64_t>(profile.stopNearTicks);
+                    expect(ahead <= near && ahead >= -near,
+                           context + ": a stop price should be near the last trade price: " + formatCommand(command));
+                    // Clamped to the price range, a stop near either end may land past its
+                    // trigger, so only those away from the ends count toward the share.
+                    const std::int64_t top = std::numeric_limits<order_book::Price>::max();
+                    if (last > near + 1 && last < top - near - 1) {
+                        pastTrigger += ahead <= 0 ? 1 : 0;
+                        ++stopsAfterATrade;
+                    }
+                }
+                expect(viaRequest || command.timeInForce == TimeInForce::GTC,
                        context + ": an Order-overload submission has no time in force: " + formatCommand(command));
-                expect(command.orderId != 0 && (command.price != 0 || market) && command.quantity != 0 &&
+                expect(command.orderId != 0 && (command.price != 0 || market || stop) && command.quantity != 0 &&
                            command.quantity <= profile.largeQuantityMax && !command.markedFilled &&
-                           (command.orderType == order_book::OrderType::LIMIT || market) &&
+                           order_book::isValidOrderType(command.orderType) &&
                            order_book::isValidTimeInForce(command.timeInForce) &&
                            (command.side == Side::BUY || command.side == Side::SELL),
                        context + ": a valid submission should be well formed: " + formatCommand(command));
                 expect(command.intent == CommandIntent::NEW_ID || model.removedIds().contains(command.orderId),
-                       context + ": a reused ID should be one that was filled or cancelled");
-                if (market) {
+                       context + ": a reused ID should be one that was filled, cancelled, or expired");
+                if (market || stop) {
                     ++nearTouch;  // no price to be near or far
                 }
-                const std::int64_t price = market ? 0 : command.price;
+                const std::int64_t price = command.price;
                 std::int64_t distance = std::numeric_limits<std::int64_t>::max();
                 for (Side side : {Side::BUY, Side::SELL}) {
                     if (const std::optional<order_book::Price> best = model.best(side)) {
@@ -313,7 +352,7 @@ void testDistributions() {
                 }
                 const std::int64_t nearBand =
                     static_cast<std::int64_t>(std::max(profile.nearTicks, profile.throughTicks)) + 1;
-                nearTouch += !market && distance <= nearBand ? 1 : 0;
+                nearTouch += !(market || stop) && distance <= nearBand ? 1 : 0;
             }
             if (command.intent != CommandIntent::NEW_ID && command.intent != CommandIntent::REUSED_ID &&
                 command.intent != CommandIntent::MARKED_FILLED && command.intent != CommandIntent::TYPE_CANNOT_REST) {
@@ -323,7 +362,28 @@ void testDistributions() {
             }
             switch (command.intent) {
                 case CommandIntent::DUPLICATE_ACTIVE_ID:
-                    expect(model.restingIds().contains(command.orderId), context + ": a duplicate should rest");
+                    expect(model.restingIds().contains(command.orderId) || model.pendingIds().contains(command.orderId),
+                           context + ": a duplicate should be live");
+                    break;
+                case CommandIntent::STOP_GTC:
+                    expect(command.orderType == order_book::OrderType::STOP && command.price == 0 &&
+                               command.stopPrice != 0 && command.timeInForce == order_book::TimeInForce::GTC,
+                           context + ": a GTC STOP");
+                    break;
+                case CommandIntent::POST_ONLY_STOP:
+                    expect(command.orderType == order_book::OrderType::STOP_LIMIT && command.postOnly && command.stopPrice != 0,
+                           context + ": a post-only stop-limit");
+                    break;
+                case CommandIntent::MISSING_STOP_PRICE:
+                    expect(order_book::isStopType(command.orderType) && command.stopPrice == 0,
+                           context + ": a stop without a stop price");
+                    break;
+                case CommandIntent::STOP_PRICE_ON_LIMIT:
+                    expect(!order_book::isStopType(command.orderType) && command.stopPrice != 0,
+                           context + ": a stop price on an order that is not a stop");
+                    break;
+                case CommandIntent::CANCEL_PENDING_STOP:
+                    expect(model.pendingIds().contains(command.orderId), context + ": a valid stop cancel should pend");
                     break;
                 case CommandIntent::ZERO_ORDER_ID: expect(command.orderId == 0, context + ": zero ID"); break;
                 case CommandIntent::ZERO_PRICE: expect(command.price == 0, context + ": zero price"); break;
@@ -373,6 +433,7 @@ void testDistributions() {
                     break;
                 case CommandIntent::CANCEL_UNKNOWN:
                     expect(!model.restingIds().contains(command.orderId) &&
+                               !model.pendingIds().contains(command.orderId) &&
                                !model.removedIds().contains(command.orderId),
                            context + ": an unknown ID should never have been accepted");
                     break;
@@ -386,7 +447,7 @@ void testDistributions() {
         for (const auto& [intent, seen] : intents) {
             invalid += isIntentionallyInvalid(intent) ? seen : 0;
         }
-        expect(intents.size() == 19 && intents.count(CommandIntent::UNSPECIFIED) == 0,
+        expect(intents.size() == 24 && intents.count(CommandIntent::UNSPECIFIED) == 0,
                context + ": every intent should occur, got " + std::to_string(intents.size()));
         const auto share = [](std::size_t part, std::size_t whole) {
             return 100.0 * static_cast<double>(part) / static_cast<double>(whole);
@@ -399,10 +460,21 @@ void testDistributions() {
         const std::size_t viaRequest = validSubmissions - viaOrder;
         expect(near(share(markets, viaRequest), profile.marketPercent),
                context + ": market share " + std::to_string(share(markets, viaRequest)));
-        expect(near(share(ioc, viaRequest - markets), profile.iocPercent),
-               context + ": IOC share " + std::to_string(share(ioc, viaRequest - markets)));
-        expect(near(share(fok, viaRequest - markets), profile.fokPercent),
-               context + ": FOK share " + std::to_string(share(fok, viaRequest - markets)));
+        expect(near(share(stops, viaRequest), profile.stopPercent),
+               context + ": STOP share " + std::to_string(share(stops, viaRequest)));
+        expect(near(share(stopLimits, viaRequest), profile.stopLimitPercent),
+               context + ": STOP_LIMIT share " + std::to_string(share(stopLimits, viaRequest)));
+        expect(near(share(ioc, requestLimits), profile.iocPercent),
+               context + ": IOC share " + std::to_string(share(ioc, requestLimits)));
+        expect(near(share(fok, requestLimits), profile.fokPercent),
+               context + ": FOK share " + std::to_string(share(fok, requestLimits)));
+        // Smaller samples (about a thousand stops), so a wider band.
+        const auto roughly = [](double actual, double target) { return actual > target - 5 && actual < target + 5; };
+        expect(roughly(share(stopLimitIoc, stopLimits), profile.stopLimitIocPercent),
+               context + ": stop-limit IOC share " + std::to_string(share(stopLimitIoc, stopLimits)));
+        // The queue profile trades only at the bottom of the range, so it has no such stops.
+        expect(stopsAfterATrade < 200 || roughly(share(pastTrigger, stopsAfterATrade), profile.stopPastTriggerPercent),
+               context + ": past-trigger share " + std::to_string(share(pastTrigger, stopsAfterATrade)));
         expect(near(share(ownedRequests, viaRequest), profile.ownerPercent),
                context + ": owner share " + std::to_string(share(ownedRequests, viaRequest)));
         expect(near(share(cancelIncoming, viaRequest), profile.cancelIncomingPercent),
@@ -527,6 +599,12 @@ void testProfilesHitTheirTargets() {
                  }
              }
              return modes.size() == 3;
+         }},
+        {"stop-cascade", "one command running a cascade of three stops",
+         [](const ReferenceBook&, const Command&, const auto& outcome) {
+             return std::count_if(outcome.events.begin(), outcome.events.end(), [](const auto& event) {
+                        return std::holds_alternative<order_book::StopTriggered>(event);
+                    }) >= 3;
          }},
         {"immediate", "a market order that trades and expires the rest",
          [](const ReferenceBook&, const Command& command, const auto& outcome) {

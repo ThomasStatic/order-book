@@ -30,7 +30,7 @@ ExpectedOutcome applyCommand(ReferenceBook& model, const Command& command);
 // only a reproduction recipe together with this version and the profile; saved streams replay
 // exactly whatever the version. randomized_harness_tests pins a fingerprint of each profile's
 // output, so a change that forgets to bump this fails there.
-inline constexpr unsigned int generatorVersion = 7;
+inline constexpr unsigned int generatorVersion = 8;
 
 // The shape of a generated workload. Percentages are out of 100.
 struct WorkloadProfile {
@@ -45,8 +45,20 @@ struct WorkloadProfile {
     unsigned int orderOverloadPercent = 10;  // of valid submissions, through submitOrder(Order)
     unsigned int iocPercent = 12;            // of valid request submissions, IOC rather than GTC
     unsigned int fokPercent = 8;             // of valid request submissions, FOK
-    unsigned int marketPercent = 10;         // of valid request submissions, MARKET (before IOC/FOK)
-    unsigned int marketIocPercent = 60;      // of market orders, IOC; the rest FOK
+    // Valid request types, out of 100: MARKET, then STOP, then STOP_LIMIT, the rest LIMIT.
+    unsigned int marketPercent = 10;
+    unsigned int stopPercent = 8;
+    unsigned int stopLimitPercent = 12;
+    unsigned int marketIocPercent = 60;      // of market and STOP orders, IOC; the rest FOK
+    unsigned int stopLimitIocPercent = 20;   // of STOP_LIMIT orders, IOC; then FOK; the rest GTC
+    unsigned int stopLimitFokPercent = 10;
+    // A stop price is 1 to stopNearTicks on the untriggered side of the last trade price (above
+    // for a buy, below for a sell), or, stopPastTriggerPercent of the time once something has
+    // traded, at or past it, so it expires on arrival. Before the first trade the anchor is the
+    // touch, or startPrice.
+    Price stopNearTicks = 5;
+    unsigned int stopPastTriggerPercent = 5;
+    unsigned int cancelPendingPercent = 30;  // of valid cancels while stops pend, a pending stop
     unsigned int postOnlyPercent = 10;       // of valid GTC limit requests, post-only
 
     // Self-trade prevention, on every valid request: ownerPercent have an owner from
@@ -110,6 +122,7 @@ private:
     Command validSubmit(const ReferenceBook& model);
     // Draws a request's owner, then its mode.
     void drawOwnership(Command& command);
+    Price pickStopPrice(const ReferenceBook& model, Side side);
     Price pickPrice(const ReferenceBook& model, Side side);
     Quantity pickQuantity();
     // Throws std::length_error once IDs would pass the largest OrderId.

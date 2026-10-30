@@ -36,6 +36,7 @@ namespace order_book {
     struct PendingStop {
         OrderRequest request;
         SequenceNum sequenceNum;
+        Price triggeredAt = 0;  // the trade price that triggered it, once in the triggered queue
     };
 
     // A stop price's FIFO queue of pending stops, its nodes from the book's NodePool.

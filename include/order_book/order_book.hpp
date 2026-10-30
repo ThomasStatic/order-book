@@ -63,6 +63,13 @@ namespace order_book {
         std::map<Price, StopLevel, std::less<Price>> buyStops;
         std::map<Price, StopLevel, std::greater<Price>> sellStops;
 
+        // Stops a trade has triggered, waiting their turn in this command's cascade, oldest
+        // first. Empty between commands. Same allocator as the stop levels, so a stop moves
+        // here by splicing, without allocating. Created with the first pending stop, and held
+        // by pointer: a list's own sentinel node comes from its allocator, so as a plain member
+        // a moved-from book would keep a node in the pool the book it moved to now owns.
+        std::unique_ptr<StopQueue> triggeredStops;
+
         // The price of the book's most recent trade: what stops trigger on.
         std::optional<Price> lastTradePrice;
 
@@ -135,17 +142,51 @@ namespace order_book {
         // match it, build the result, then rest any remainder (GTC) or expire it (IOC). A FOK
         // instead decides first whether it fills, makes room for its whole result, and only
         // then is numbered and matched, so it either completes or throws having changed nothing.
-        // acceptance is what the result reports: the incoming order as submitted, at price 0 for
-        // a market order, which runs as a limit order at the furthest price on its side.
-        SubmissionResult matchAndRest(Order& incoming, const OrderAccepted& acceptance, const Instructions& how);
-        SubmissionResult fillOrKill(Order& incoming, const OrderAccepted& acceptance, const Instructions& how);
+        // The steps below record into the command's ResultRecorder, which the command finishes
+        // once its cascade has run.
+        //
+        // The Order a request runs as: an order with no price (market, or a triggered STOP) as a
+        // limit at the furthest price on its side.
+        Order incomingOrder(const OrderRequest& request) const;
+        // runIncoming numbers the order, matches it, then rests its remainder (GTC) or expires
+        // it (IOC, or stopped by self-trade prevention); a FOK goes to runFillOrKill, which
+        // decides first whether it fills, makes room for all it records, and only then is
+        // numbered and matched, so it either completes or throws having changed nothing.
+        void runIncoming(Order& incoming, const Instructions& how, ResultRecorder& recorder);
+        void runFillOrKill(Order& incoming, const Instructions& how, ResultRecorder& recorder);
         // Rests the order, or expires it whole if it would take. Strongly atomic and numbered
         // last, like addOrder, so a throw changes nothing.
-        SubmissionResult postOnly(Order& incoming, OwnerId owner);
+        void runPostOnly(Order& incoming, OwnerId owner, ResultRecorder& recorder);
 
         // A STOP or STOP_LIMIT request: accepted and wholly expired if it is already past its
         // trigger, else stored pending. Strongly atomic and numbered last.
-        SubmissionResult submitStop(const OrderRequest& request);
+        void submitStop(const OrderRequest& request, ResultRecorder& recorder);
+
+        // Moves every pending stop a trade at tradePrice triggers into triggeredStops: on one
+        // side, nearest stop price first, acceptance order within a price. Unindexes each.
+        // Allocates nothing; a trade that triggers nothing costs O(1).
+        void triggerStops(Price tradePrice) noexcept;
+        // Runs the triggered stops one at a time, each as its market or limit order with a fresh
+        // sequence number, appending what their trades trigger, until none is left.
+        void runCascade(ResultRecorder& recorder);
+
+        // Placed in each submission after its InvariantBoundary, so it runs first as an
+        // exception unwinds: stops triggered but not yet run are discarded. They have already
+        // left the pending set, so none is left pending past its trigger.
+        class TriggeredStopsGuard {
+        public:
+            explicit TriggeredStopsGuard(OrderBook& owner) noexcept : book(owner) {}
+            TriggeredStopsGuard(const TriggeredStopsGuard&) = delete;
+            TriggeredStopsGuard& operator=(const TriggeredStopsGuard&) = delete;
+            ~TriggeredStopsGuard() {
+                if(book.triggeredStops) {
+                    book.triggeredStops->clear();
+                }
+            }
+
+        private:
+            OrderBook& book;
+        };
         // Whether a trade at the last trade price would already have triggered this stop.
         bool isPastTrigger(const OrderRequest& stop) const noexcept;
         // Queues a stop at the back of its stop level with the next sequence number and indexes

@@ -96,6 +96,17 @@ std::vector<WorkloadProfile> makeProfiles() {
     selfTrade.marketablePercent = 50;
     profiles.push_back(selfTrade);
 
+    WorkloadProfile stopCascade = balanced;
+    stopCascade.name = "stop-cascade";
+    stopCascade.purpose = "stops half of all submissions, one tick from the last trade, and large marketable orders, so cascades chain";
+    stopCascade.stopPercent = 20;
+    stopCascade.stopLimitPercent = 30;
+    stopCascade.stopNearTicks = 1;
+    stopCascade.marketablePercent = 40;
+    stopCascade.largeQuantityPercent = 25;
+    stopCascade.largeQuantityMax = 40;
+    profiles.push_back(stopCascade);
+
     WorkloadProfile immediate = balanced;
     immediate.name = "immediate";
     immediate.purpose = "market, IOC, and FOK orders 60% of submissions, often large, so FOKs fail and remainders expire";
@@ -114,7 +125,8 @@ std::vector<WorkloadProfile> makeProfiles() {
 
 OrderRequest requestOf(const Command& command) {
     return OrderRequest{command.orderId, command.side, command.price, command.quantity, command.orderType,
-                        command.timeInForce, 0, command.postOnly, command.owner, command.selfTradePrevention};
+                        command.timeInForce, command.stopPrice, command.postOnly, command.owner,
+                        command.selfTradePrevention};
 }
 
 ExpectedOutcome applyCommand(ReferenceBook& model, const Command& command) {
@@ -132,8 +144,11 @@ std::string describeProfile(const WorkloadProfile& profile) {
            "% buy=" + std::to_string(profile.buyPercent) + "% reuse=" + std::to_string(profile.reuseIdPercent) +
            "% order-overload=" + std::to_string(profile.orderOverloadPercent) +
            "% ioc=" + std::to_string(profile.iocPercent) + "% fok=" + std::to_string(profile.fokPercent) +
-           "% market=" + std::to_string(profile.marketPercent) + "% (ioc " + std::to_string(profile.marketIocPercent) +
-           "%) post-only=" + std::to_string(profile.postOnlyPercent) + "% owner=" +
+           "% market=" + std::to_string(profile.marketPercent) + "% stop=" + std::to_string(profile.stopPercent) +
+           "% (ioc " + std::to_string(profile.marketIocPercent) + "%) stop-limit=" + std::to_string(profile.stopLimitPercent) +
+           "% (ioc " + std::to_string(profile.stopLimitIocPercent) + "%, fok " + std::to_string(profile.stopLimitFokPercent) +
+           "%) stop-near=" + std::to_string(profile.stopNearTicks) + " stop-past=" + std::to_string(profile.stopPastTriggerPercent) +
+           "% cancel-pending=" + std::to_string(profile.cancelPendingPercent) + "% post-only=" + std::to_string(profile.postOnlyPercent) + "% owner=" +
            std::to_string(profile.ownerPercent) + "% of " + std::to_string(profile.ownerPool) + " (resting " +
            std::to_string(profile.cancelRestingPercent) + "%, incoming " + std::to_string(profile.cancelIncomingPercent) +
            "%)" +
@@ -198,10 +213,30 @@ Command RandomCommandGenerator::validSubmit(const ReferenceBook& model) {
         command.overload = SubmitOverload::ORDER;
         return command;
     }
-    if (chance(config.marketPercent)) {
+    const std::uint64_t type = below(100);
+    if (type < config.marketPercent) {
         command.orderType = OrderType::MARKET;
         command.price = 0;
         command.timeInForce = chance(config.marketIocPercent) ? TimeInForce::IOC : TimeInForce::FOK;
+        drawOwnership(command);
+        return command;
+    }
+    if (type < config.marketPercent + config.stopPercent) {
+        command.orderType = OrderType::STOP;
+        command.price = 0;
+        command.timeInForce = chance(config.marketIocPercent) ? TimeInForce::IOC : TimeInForce::FOK;
+        command.stopPrice = pickStopPrice(model, side);
+        drawOwnership(command);
+        return command;
+    }
+    if (type < config.marketPercent + config.stopPercent + config.stopLimitPercent) {
+        command.orderType = OrderType::STOP_LIMIT;
+        const std::uint64_t stopTimeInForce = below(100);
+        command.timeInForce = stopTimeInForce < config.stopLimitIocPercent ? TimeInForce::IOC
+                            : stopTimeInForce < config.stopLimitIocPercent + config.stopLimitFokPercent
+                                ? TimeInForce::FOK
+                                : TimeInForce::GTC;
+        command.stopPrice = pickStopPrice(model, side);
         drawOwnership(command);
         return command;
     }
@@ -215,6 +250,23 @@ Command RandomCommandGenerator::validSubmit(const ReferenceBook& model) {
     }
     drawOwnership(command);
     return command;
+}
+
+Price RandomCommandGenerator::pickStopPrice(const ReferenceBook& model, Side side) {
+    const Side opposingSide = side == Side::BUY ? Side::SELL : Side::BUY;
+    const std::optional<Price> last = model.lastTradePrice();
+    const std::optional<Price> touch = model.best(opposingSide) ? model.best(opposingSide) : model.best(side);
+    const std::int64_t anchor = last    ? static_cast<std::int64_t>(*last)
+                              : touch ? static_cast<std::int64_t>(*touch)
+                                      : static_cast<std::int64_t>(config.startPrice);
+    // +1 is the untriggered direction: up for a buy stop, down for a sell stop.
+    const std::int64_t untriggered = side == Side::BUY ? 1 : -1;
+    if (last && chance(config.stopPastTriggerPercent)) {
+        const auto past = static_cast<std::int64_t>(below(std::uint64_t{config.stopNearTicks} + 1));
+        return clampPrice(anchor - untriggered * past);
+    }
+    const auto ahead = static_cast<std::int64_t>(1 + below(std::max<std::uint64_t>(config.stopNearTicks, 1)));
+    return clampPrice(anchor + untriggered * ahead);
 }
 
 void RandomCommandGenerator::drawOwnership(Command& command) {
@@ -240,9 +292,13 @@ Command RandomCommandGenerator::nextSubmit(const ReferenceBook& model, bool inva
                                         CommandIntent::INVALID_TIME_IN_FORCE, CommandIntent::MARKET_WITH_PRICE,
                                         CommandIntent::MARKET_GTC,       CommandIntent::TYPE_CANNOT_REST,
                                         CommandIntent::POST_ONLY_NOT_GTC_LIMIT, CommandIntent::INVALID_STP_MODE,
+                                        CommandIntent::STOP_GTC,         CommandIntent::POST_ONLY_STOP,
+                                        CommandIntent::MISSING_STOP_PRICE, CommandIntent::STOP_PRICE_ON_LIMIT,
                                         CommandIntent::DUPLICATE_ACTIVE_ID};
     const IdPool& resting = model.restingIds();
-    const std::size_t choices = std::size(faults) - (resting.empty() ? 1 : 0);
+    const IdPool& pendingStops = model.pendingIds();
+    const std::size_t live = resting.size() + pendingStops.size();
+    const std::size_t choices = std::size(faults) - (live == 0 ? 1 : 0);
     const CommandIntent fault = faults[below(choices)];
 
     const Side side = chance(config.buyPercent) ? Side::BUY : Side::SELL;
@@ -254,9 +310,12 @@ Command RandomCommandGenerator::nextSubmit(const ReferenceBook& model, bool inva
     switch (fault) {
         case CommandIntent::ZERO_ORDER_ID:
             break;
-        case CommandIntent::DUPLICATE_ACTIVE_ID:
-            command.orderId = resting.at(below(resting.size()));
+        case CommandIntent::DUPLICATE_ACTIVE_ID: {
+            // A live ID, resting or pending.
+            const std::size_t pick = static_cast<std::size_t>(below(live));
+            command.orderId = pick < resting.size() ? resting.at(pick) : pendingStops.at(pick - resting.size());
             break;
+        }
         default:
             command.orderId = freshId();
             break;
@@ -302,6 +361,33 @@ Command RandomCommandGenerator::nextSubmit(const ReferenceBook& model, bool inva
             command.markedFilled = true;
             command.overload = SubmitOverload::ORDER;
             break;
+        case CommandIntent::STOP_GTC:
+            command.orderType = OrderType::STOP;
+            command.price = 0;
+            command.stopPrice = pickStopPrice(model, side);
+            break;
+        case CommandIntent::POST_ONLY_STOP:
+            command.orderType = OrderType::STOP_LIMIT;
+            command.postOnly = true;
+            command.stopPrice = pickStopPrice(model, side);
+            break;
+        case CommandIntent::MISSING_STOP_PRICE:
+            if (chance(50)) {
+                command.orderType = OrderType::STOP;
+                command.price = 0;
+                command.timeInForce = TimeInForce::IOC;
+            } else {
+                command.orderType = OrderType::STOP_LIMIT;
+            }
+            break;
+        case CommandIntent::STOP_PRICE_ON_LIMIT:
+            command.stopPrice = pickStopPrice(model, side);
+            if (chance(50)) {
+                command.orderType = OrderType::MARKET;
+                command.price = 0;
+                command.timeInForce = TimeInForce::IOC;
+            }
+            break;
         // Past every enumerator, including those still to come.
         case CommandIntent::INVALID_TIME_IN_FORCE: command.timeInForce = static_cast<TimeInForce>(3 + below(6)); break;
         default: break;
@@ -311,10 +397,15 @@ Command RandomCommandGenerator::nextSubmit(const ReferenceBook& model, bool inva
 
 Command RandomCommandGenerator::nextCancel(const ReferenceBook& model, bool invalid) {
     const IdPool& resting = model.restingIds();
+    const IdPool& pendingStops = model.pendingIds();
     if (!invalid) {
-        if (resting.empty()) {
-            // Nothing rests to cancel; submit instead, so the command stays valid.
+        if (resting.empty() && pendingStops.empty()) {
+            // Nothing is live to cancel; submit instead, so the command stays valid.
             return validSubmit(model);
+        }
+        const bool cancelStop = !pendingStops.empty() && (resting.empty() || chance(config.cancelPendingPercent));
+        if (cancelStop) {
+            return Command::cancel(pendingStops.at(below(pendingStops.size())), CommandIntent::CANCEL_PENDING_STOP);
         }
         return Command::cancel(resting.at(below(resting.size())), CommandIntent::CANCEL_ACTIVE);
     }

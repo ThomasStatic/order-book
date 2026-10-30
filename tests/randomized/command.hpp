@@ -43,8 +43,13 @@ enum class CommandIntent {
     TYPE_CANNOT_REST,   // through submitOrder(Order): a valid type other than LIMIT
     POST_ONLY_NOT_GTC_LIMIT,  // POST_ONLY_NOT_ALLOWED: on a market order, or an IOC or FOK limit
     INVALID_STP_MODE,         // INVALID_SELF_TRADE_PREVENTION, with or without an owner
-    // A valid cancellation, then intentionally invalid ones.
+    STOP_GTC,                 // TIME_IN_FORCE_NOT_ALLOWED on a STOP
+    POST_ONLY_STOP,           // POST_ONLY_NOT_ALLOWED on a GTC STOP_LIMIT
+    MISSING_STOP_PRICE,       // INVALID_STOP_PRICE: a stop with none
+    STOP_PRICE_ON_LIMIT,      // STOP_PRICE_NOT_ALLOWED: a limit or market order with one
+    // Valid cancellations, then intentionally invalid ones.
     CANCEL_ACTIVE,
+    CANCEL_PENDING_STOP,
     CANCEL_REMOVED,  // filled or cancelled already
     CANCEL_UNKNOWN,  // never issued
     CANCEL_ZERO_ID,
@@ -65,6 +70,7 @@ struct Command {
     Quantity quantity = 0;
     OrderType orderType = OrderType::LIMIT;
     TimeInForce timeInForce = TimeInForce::GTC;  // only through the REQUEST overload
+    Price stopPrice = 0;                         // likewise
     bool postOnly = false;                       // likewise
     OwnerId owner = 0;                           // likewise
     SelfTradePrevention selfTradePrevention = SelfTradePrevention::CANCEL_RESTING;  // likewise
@@ -81,9 +87,9 @@ struct Command {
 
 // One line, e.g. "SUBMIT id=17 side=BUY price=10002 qty=5 intent=NEW_ID" or
 // "CANCEL id=291 intent=CANCEL_ACTIVE". A side or type outside its enum prints as a number,
-// and type, time in force, post-only, owner, mode, status, and overload appear only when they
-// differ from LIMIT, GTC, not post-only, owner 0, CANCEL_RESTING, an unfilled order, and the
-// request overload.
+// and type, time in force, stop price, post-only, owner, mode, status, and overload appear only
+// when they differ from LIMIT, GTC, 0, not post-only, owner 0, CANCEL_RESTING, an unfilled
+// order, and the request overload.
 std::string formatCommand(const Command& command);
 
 // The inverse of formatCommand; throws std::invalid_argument saying what is wrong, including

@@ -18,12 +18,14 @@ namespace order_book {
             asks.clear();
             buyStops.clear();
             sellStops.clear();
+            triggeredStops.reset();
             orderIndex = std::move(other.orderIndex);
             pendingIndex = std::move(other.pendingIndex);
             bids = std::move(other.bids);
             asks = std::move(other.asks);
             buyStops = std::move(other.buyStops);
             sellStops = std::move(other.sellStops);
+            triggeredStops = std::move(other.triggeredStops);
             lastTradePrice = other.lastTradePrice;
             nextTradeId = other.nextTradeId;
             nextSequenceNum = other.nextSequenceNum;
@@ -259,6 +261,7 @@ namespace order_book {
         incoming.fillQuantity(execQuantity);
         advanceTradeId();
         lastTradePrice = restingPrice;
+        triggerStops(restingPrice);
 
         if(level.isEmpty()) {
             if(restingIsAsk) {
@@ -315,9 +318,12 @@ namespace order_book {
         if(const std::optional<RejectionReason> reason = validateNewOrder(incoming)) {
             return SubmissionResult::rejected(incoming.getOrderId(), incoming.getRemainingQuantity(), *reason);
         }
-        const OrderAccepted acceptance{incoming.getOrderId(), incoming.getSide(), incoming.getPriceTick(),
-                                       incoming.getRemainingQuantity()};
-        return matchAndRest(incoming, acceptance, Instructions{});
+        ResultRecorder recorder(OrderAccepted{incoming.getOrderId(), incoming.getSide(), incoming.getPriceTick(),
+                                              incoming.getRemainingQuantity()});
+        const TriggeredStopsGuard discardOnThrow(*this);
+        runIncoming(incoming, Instructions{}, recorder);
+        runCascade(recorder);
+        return recorder.finish();
     }
 
     SubmissionResult OrderBook::submitOrder(OrderRequest request) {
@@ -325,95 +331,135 @@ namespace order_book {
         if(const std::optional<RejectionReason> reason = validateNewRequest(request)) {
             return SubmissionResult::rejected(request.id, request.quantity, *reason);
         }
+        // Its price is 0 for an order with none (a market or STOP order).
+        ResultRecorder recorder(OrderAccepted{request.id, request.side, request.price, request.quantity});
+        const TriggeredStopsGuard discardOnThrow(*this);
         if(isStopType(request.type)) {
-            return submitStop(request);
+            submitStop(request, recorder);  // makes no trades, so triggers nothing
+            return recorder.finish();
         }
-        // A market order has no limit, so it runs as a limit at the furthest price on its side,
-        // which every resting price is within; it never rests, so that price is never seen.
-        const Price limit = request.type != OrderType::MARKET ? request.price
-                          : request.side == Side::BUY     ? std::numeric_limits<Price>::max()
-                                                          : Price{1};
-        // Well formed, so the constructor cannot refuse it; matchAndRest numbers it.
-        Order incoming(request.id, limit, request.quantity, nextSequenceNum, request.side);
+        Order incoming = incomingOrder(request);
         if(request.postOnly) {
-            return postOnly(incoming, request.owner);
+            runPostOnly(incoming, request.owner, recorder);
         }
-        return matchAndRest(incoming, OrderAccepted{request.id, request.side, request.price, request.quantity},
-                            Instructions{request.timeInForce, request.owner, request.selfTradePrevention});
+        else {
+            runIncoming(incoming, Instructions{request.timeInForce, request.owner, request.selfTradePrevention}, recorder);
+        }
+        runCascade(recorder);
+        return recorder.finish();
     }
 
-    SubmissionResult OrderBook::matchAndRest(Order& incoming, const OrderAccepted& acceptance, const Instructions& how) {
+    Order OrderBook::incomingOrder(const OrderRequest& request) const {
+        // An order with no price (a market order, or a triggered STOP) has no limit, so it runs
+        // as a limit at the furthest price on its side, which every resting price is within; it
+        // never rests, so that price is never seen.
+        const Price limit = !hasNoPrice(request.type) ? request.price
+                          : request.side == Side::BUY ? std::numeric_limits<Price>::max()
+                                                      : Price{1};
+        // Well formed, so the constructor cannot refuse it; it is numbered when it runs.
+        return Order(request.id, limit, request.quantity, nextSequenceNum, request.side);
+    }
+
+    void OrderBook::runIncoming(Order& incoming, const Instructions& how, ResultRecorder& recorder) {
         if(how.timeInForce == TimeInForce::FOK) {
-            return fillOrKill(incoming, acceptance, how);
+            runFillOrKill(incoming, how, recorder);
+            return;
         }
         // Accepted: numbered once, before matching, and the remainder rests with this same
         // number. Consumed even if matching throws, since executions may already stand.
         incoming.assignSequenceNum(nextSequenceNum);
         advanceSequenceNum();
 
-        // Not atomic: if an allocation fails mid-match, while building the result, or while
+        // Not atomic: if an allocation fails mid-match, or while recording the expiry or
         // resting the remainder, executions already made stay made and their trades and events
         // are lost with the exception. The book itself is left consistent.
-
-        // The result, events included, is built before the remainder rests, so resting is
-        // the last step that can fail: a remainder is never left resting behind a throw.
-        ResultRecorder recorder(acceptance);
         const bool stopped = matchOrder(incoming, how, recorder);
+        if(incoming.getRemainingQuantity() == 0) {
+            return;
+        }
         // Stopped by self-trade prevention, even a GTC remainder expires: it is at or through
         // its own resting order's price, so resting it would cross the book.
-        const bool expires = how.timeInForce == TimeInForce::IOC || stopped;
-        if(expires && incoming.getRemainingQuantity() > 0) {
+        if(how.timeInForce == TimeInForce::IOC || stopped) {
             // Changes nothing in the book, so it may allocate here.
             recorder.expire(incoming.getRemainingQuantity());
+            return;
         }
-        SubmissionResult result = recorder.finish();
-        if(!expires && incoming.getRemainingQuantity() > 0) {
-            // Rests at the incoming limit price (fills never change it), not at the price
-            // of its last execution. Validation already passed, so it cannot be rejected now.
-            restOrder(incoming, how.owner);
-        }
-        return result;
+        // Everything this order reports is recorded, so resting it is its last step that can
+        // fail: its remainder never rests behind a throw of its own. Rests at its limit price
+        // (fills never change it), not at the price of its last execution.
+        restOrder(incoming, how.owner);
     }
 
-    SubmissionResult OrderBook::fillOrKill(Order& incoming, const OrderAccepted& acceptance, const Instructions& how) {
+    void OrderBook::runFillOrKill(Order& incoming, const Instructions& how, ResultRecorder& recorder) {
         const std::optional<FillPlan> plan = fillOrKillPlan(incoming, how);
         incoming.assignSequenceNum(nextSequenceNum);
-        ResultRecorder recorder(acceptance);
         if(!plan) {
-            // Its acceptance and expiry fit inline, so nothing here allocates or throws.
+            // Accepted then wholly expired. A submitted FOK's acceptance and expiry fit inline,
+            // so nothing here allocates; a triggered stop's expiry may, before it is numbered.
             recorder.expire(incoming.getRemainingQuantity());
-            SubmissionResult result = recorder.finish();
             advanceSequenceNum();
-            return result;
+            return;
         }
-        // Room for the whole result before anything is numbered or traded: the only step that
+        // Room for all it will record before anything is numbered or traded: the only step that
         // can fail. After it, matching cannot throw (executeOnce and the erasures it makes never
         // allocate), so the FOK either completes or changes nothing.
-        recorder.reserve(plan->trades, plan->trades + plan->preventions + 1);
+        recorder.reserve(plan->trades, plan->trades + plan->preventions);
         advanceSequenceNum();
         matchOrder(incoming, how, recorder);
-        return recorder.finish();
     }
 
-    SubmissionResult OrderBook::postOnly(Order& incoming, OwnerId owner) {
-        ResultRecorder recorder(OrderAccepted{incoming.getOrderId(), incoming.getSide(), incoming.getPriceTick(),
-                                              incoming.getRemainingQuantity()});
+    void OrderBook::runPostOnly(Order& incoming, OwnerId owner, ResultRecorder& recorder) {
         if(crossesBestOpposing(incoming)) {
             // Its acceptance and expiry fit inline, so nothing here allocates or throws.
             recorder.expire(incoming.getRemainingQuantity());
-        }
-        else {
-            // Rests exactly as addOrder does: numbered with the next number, which is consumed
-            // only once it has rested, so a failed allocation leaves no trace.
-            incoming.assignSequenceNum(nextSequenceNum);
-            SubmissionResult result = recorder.finish();
-            restOrder(incoming, owner);
             advanceSequenceNum();
-            return result;
+            return;
         }
-        SubmissionResult result = recorder.finish();
+        // Rests exactly as addOrder does: numbered with the next number, which is consumed only
+        // once it has rested, so a failed allocation leaves no trace.
+        incoming.assignSequenceNum(nextSequenceNum);
+        restOrder(incoming, owner);
         advanceSequenceNum();
-        return result;
+    }
+
+    void OrderBook::triggerStops(Price tradePrice) noexcept {
+        if(!triggeredStops) {
+            return;  // no stop has ever pended here
+        }
+        // Only stops whose trigger this trade meets: none is past the previous last trade price,
+        // so these are exactly the band between it and this one, on one side, nearest first.
+        auto trigger = [this, tradePrice](auto& levels, auto reached) {
+            while(!levels.empty() && reached(levels.begin()->first)) {
+                StopLevel& level = levels.begin()->second;
+                for(PendingStop& stop : level.stops) {
+                    pendingIndex.erase(stop.request.id);
+                    stop.triggeredAt = tradePrice;
+                }
+                // The same nodes, moved: equal allocators, so this allocates nothing.
+                triggeredStops->splice(triggeredStops->end(), level.stops);
+                levels.erase(levels.begin());
+            }
+        };
+        trigger(buyStops, [tradePrice](Price stopPrice) { return stopPrice <= tradePrice; });
+        trigger(sellStops, [tradePrice](Price stopPrice) { return stopPrice >= tradePrice; });
+    }
+
+    void OrderBook::runCascade(ResultRecorder& recorder) {
+        // Breadth first: each stop runs to completion, and what its trades trigger joins the
+        // back of the queue. If anything throws, the guard in the command discards the stops
+        // still queued, which have already left the pending set.
+        while(triggeredStops && !triggeredStops->empty()) {
+            const OrderRequest stop = triggeredStops->front().request;
+            const Price tradePrice = triggeredStops->front().triggeredAt;
+            // Room for its StopTriggered first: if that fails, this stop has not run.
+            recorder.makeRoom(0, 1);
+            recorder.triggered(OrderAccepted{stop.id, stop.side, stop.price, stop.quantity}, stop.stopPrice, tradePrice);
+            triggeredStops->pop_front();
+            // It becomes its market or limit order, under its own time in force, owner, and mode,
+            // and takes a fresh sequence number when it runs.
+            Order incoming = incomingOrder(stop);
+            runIncoming(incoming, Instructions{stop.timeInForce, stop.owner, stop.selfTradePrevention}, recorder);
+        }
     }
 
     bool OrderBook::isPastTrigger(const OrderRequest& stop) const noexcept {
@@ -423,24 +469,24 @@ namespace order_book {
         return stop.side == Side::BUY ? stop.stopPrice <= *lastTradePrice : stop.stopPrice >= *lastTradePrice;
     }
 
-    SubmissionResult OrderBook::submitStop(const OrderRequest& request) {
-        // Its acceptance, and any expiry, fit inline, so building the result cannot throw.
-        ResultRecorder recorder(OrderAccepted{request.id, request.side, request.price, request.quantity});
+    void OrderBook::submitStop(const OrderRequest& request, ResultRecorder& recorder) {
         if(isPastTrigger(request)) {
+            // Its acceptance and expiry fit inline, so nothing here allocates or throws.
             recorder.expire(request.quantity);
-            SubmissionResult result = recorder.finish();
             advanceSequenceNum();
-            return result;
+            return;
         }
-        SubmissionResult result = recorder.finish();
         // Numbered last: consumed only once the stop is stored, so a failed allocation leaves
-        // no trace.
+        // no trace. Its result is its acceptance alone.
         storePendingStop(request);
         advanceSequenceNum();
-        return result;
     }
 
     void OrderBook::storePendingStop(const OrderRequest& stop) {
+        // First, so a failure changes nothing: the queue a triggered stop will move to.
+        if(!triggeredStops) {
+            triggeredStops = std::make_unique<StopQueue>(PoolAllocator<PendingStop>(nodePool.get()));
+        }
         auto store = [this, &stop](auto& levels) {
             const auto levelItr = levels.try_emplace(stop.stopPrice, stop.stopPrice, stop.side, nodePool.get()).first;
             StopLevel& level = levelItr->second;

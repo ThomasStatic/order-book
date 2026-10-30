@@ -68,11 +68,11 @@ namespace order_book {
         // std::bad_alloc, leaving the recorder unchanged.
         void makeRoom(std::size_t addedTrades, std::size_t addedEvents);
 
-        // Makes room for this many trades and events in all, exactly, so a match known in advance
+        // Makes room for exactly this many more trades and events, so a match known in advance
         // to make that many cannot fail to record them. A fill-or-kill order calls it before it
-        // is numbered. Allocates only beyond the inline capacities; throws std::bad_alloc,
-        // leaving what has been recorded unchanged.
-        void reserve(std::size_t totalTrades, std::size_t totalEvents);
+        // is numbered. Allocates only beyond the capacity it has; throws std::bad_alloc, leaving
+        // what has been recorded unchanged.
+        void reserve(std::size_t addedTrades, std::size_t addedEvents);
 
         // The result. The recorder is spent afterwards: any further call throws
         // std::invalid_argument.

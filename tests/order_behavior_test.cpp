@@ -30,6 +30,7 @@ struct OrderBookTestAccess {
     static OwnerId owner(const OrderBook& book, OrderId id) { return book.orderIndex.find(id)->owner; }
     static const auto& buyStops(const OrderBook& book) { return book.buyStops; }
     static const auto& sellStops(const OrderBook& book) { return book.sellStops; }
+    static bool noneTriggered(const OrderBook& book) { return !book.triggeredStops || book.triggeredStops->empty(); }
 };
 
 }  // namespace order_book
@@ -49,6 +50,7 @@ using order_book::OrderType;
 using order_book::OwnerId;
 using order_book::SelfTradePrevented;
 using order_book::SelfTradePrevention;
+using order_book::StopTriggered;
 using order_book::Price;
 using order_book::SequenceNum;
 using order_book::Side;
@@ -675,6 +677,131 @@ void testLastTradePrice() {
     expectSound(assigned, "moved book");
 }
 
+// A trade at or through a pending stop's stop price triggers it. It runs after the order that
+// traded has finished, as its market or limit order, with a fresh sequence number, and its
+// events (opened by StopTriggered) follow in the same result.
+void testTriggeredStops() {
+    {
+        // A sell stop at 99, triggered by a trade at 99: it becomes a market order and sells
+        // into the bids that remain, after the submitting sell has finished.
+        OrderBook book;
+        book.submitOrder(Order(1, 99, 2, 1, Side::BUY));
+        book.submitOrder(Order(2, 98, 3, 1, Side::BUY));
+        book.submitOrder(stopOrder(10, Side::SELL, 99, 4));
+        const SubmissionResult result = book.submitOrder(OrderRequest{20, Side::SELL, 99, 5});
+        expectAcceptedWith(result,
+                           Events{OrderAccepted{20, Side::SELL, 99, 5}, TradeExecuted{20, 1, 99, 2},
+                                  StopTriggered{10, 99, 99}, TradeExecuted{10, 2, 98, 3}, OrderExpired{10, 1}},
+                           3, FillStatus::PARTIAL, 2, "triggered sell stop");
+        expect(book.findActiveOrder(20).getRemainingQuantity() == 3 && book.pendingStopCount() == 0 &&
+                   book.getLastTradePrice() == Price{98},
+               "triggered sell stop: the submitter's remainder rests first, then the stop runs");
+        expectSound(book, "triggered sell stop");
+    }
+    {
+        // One trade triggers a whole band, nearest stop price first, then acceptance order;
+        // the trade price that triggered each is reported.
+        OrderBook book;
+        book.submitOrder(Order(1, 100, 1, 1, Side::BUY));  // last trade at 100 after the next line
+        book.submitOrder(OrderRequest{2, Side::SELL, 100, 1});
+        book.submitOrder(Order(3, 97, 9, 1, Side::BUY));
+        book.submitOrder(stopOrder(10, Side::SELL, 98, 1));
+        book.submitOrder(stopOrder(11, Side::SELL, 99, 1));
+        book.submitOrder(stopOrder(12, Side::SELL, 98, 1));
+        book.submitOrder(stopOrder(13, Side::SELL, 96, 1));  // below the trade: stays pending
+        const SubmissionResult result = book.submitOrder(OrderRequest{20, Side::SELL, 97, 1});
+        expect(result.getEvents() == Events{OrderAccepted{20, Side::SELL, 97, 1}, TradeExecuted{20, 3, 97, 1},
+                                            StopTriggered{11, 99, 97}, TradeExecuted{11, 3, 97, 1},
+                                            StopTriggered{10, 98, 97}, TradeExecuted{10, 3, 97, 1},
+                                            StopTriggered{12, 98, 97}, TradeExecuted{12, 3, 97, 1}},
+               "a band of stops runs nearest first, then in acceptance order");
+        expect(result.getGeneratedTrades().size() == 4 && result.getRemainingQuantity() == 0 &&
+                   result.getFillStatus() == FillStatus::FILLED,
+               "the result's trades include the cascade's; its fill describes the submitted order");
+        expect(book.pendingStopCount() == 1 && book.findPendingStop(13), "a stop beyond the trade stays pending");
+        expectSound(book, "band of stops");
+    }
+    {
+        // Breadth first: a stop triggered by a triggered stop's trade runs after every stop
+        // already triggered. Buy stops 10 (at 101) and 11 (at 101) trigger on the submitter's
+        // trade; 10's trade at 103 triggers 12 (at 103), which runs after 11.
+        OrderBook book;
+        book.submitOrder(Order(1, 101, 1, 1, Side::SELL));
+        book.submitOrder(Order(2, 103, 1, 1, Side::SELL));
+        book.submitOrder(Order(3, 104, 2, 1, Side::SELL));
+        book.submitOrder(stopOrder(10, Side::BUY, 101, 1));
+        book.submitOrder(stopOrder(11, Side::BUY, 101, 1));
+        book.submitOrder(stopOrder(12, Side::BUY, 103, 1));
+        const SubmissionResult result = book.submitOrder(OrderRequest{20, Side::BUY, 101, 1});
+        expect(result.getEvents() == Events{OrderAccepted{20, Side::BUY, 101, 1}, TradeExecuted{20, 1, 101, 1},
+                                            StopTriggered{10, 101, 101}, TradeExecuted{10, 2, 103, 1},
+                                            StopTriggered{11, 101, 101}, TradeExecuted{11, 3, 104, 1},
+                                            StopTriggered{12, 103, 103}, TradeExecuted{12, 3, 104, 1}},
+               "a cascade runs breadth first");
+        expectSound(book, "breadth-first cascade");
+    }
+    {
+        // A triggered stop-limit takes a fresh sequence number: resting, it queues behind every
+        // order accepted while it was pending. It may also trade with the submitter's remainder.
+        OrderBook book;
+        book.submitOrder(stopLimit(10, Side::SELL, 100, 101, 3));
+        book.submitOrder(Order(1, 101, 1, 1, Side::SELL));  // accepted after the stop
+        book.submitOrder(Order(2, 100, 1, 1, Side::BUY));
+        const SubmissionResult result = book.submitOrder(OrderRequest{20, Side::SELL, 100, 1});
+        expect(result.getEvents() == Events{OrderAccepted{20, Side::SELL, 100, 1}, TradeExecuted{20, 2, 100, 1},
+                                            StopTriggered{10, 100, 100}},
+               "a stop-limit that cannot trade at once rests");
+        const auto& asks = Access::asks(book);
+        expect(asks.at(101).getOrderCount() == 2 && Access::orders(asks.at(101)).back().getOrderId() == 10,
+               "a triggered stop-limit should queue behind orders accepted while it was pending");
+        const SequenceNum restedAt = book.findActiveOrder(10).getSequenceNum();
+        expect(restedAt > book.findActiveOrder(1).getSequenceNum(), "a triggered stop should take a fresh number");
+        // The submitting buy's remainder rests first, so a triggered sell stop can trade with it.
+        OrderBook other;
+        other.submitOrder(Order(1, 100, 1, 1, Side::SELL));
+        other.submitOrder(stopOrder(10, Side::SELL, 100, 2));
+        const SubmissionResult crossed = other.submitOrder(OrderRequest{20, Side::BUY, 100, 3});
+        expect(crossed.getEvents() == Events{OrderAccepted{20, Side::BUY, 100, 3}, TradeExecuted{20, 1, 100, 1},
+                                             StopTriggered{10, 100, 100}, TradeExecuted{10, 20, 100, 2}},
+               "a triggered stop should trade with the submitter's freshly rested remainder");
+        expect(crossed.getRemainingQuantity() == 2 && crossed.getFillStatus() == FillStatus::PARTIAL &&
+                   other.activeOrderCount() == 0,
+               "the submitter's remaining quantity is as at the end of its own match");
+        expectSound(other, "stop against the submitter's remainder");
+    }
+    {
+        // A FOK stop-limit walks the book as it stands at trigger time; unfillable, it expires.
+        // Self-trade prevention applies with the stop's own owner and mode.
+        OrderBook book;
+        book.submitOrder(Order(1, 100, 1, 1, Side::SELL));
+        book.submitOrder(owned(OrderRequest{2, Side::SELL, 101, 2}, 5));
+        book.submitOrder(Order(3, 101, 1, 1, Side::SELL));
+        book.submitOrder(stopLimit(10, Side::BUY, 100, 101, 9, TimeInForce::FOK));
+        OrderRequest ownedStop = stopOrder(11, Side::BUY, 100, 2);
+        ownedStop.owner = 5;
+        book.submitOrder(ownedStop);
+        const SubmissionResult result = book.submitOrder(OrderRequest{20, Side::BUY, 100, 1});
+        expect(result.getEvents() == Events{OrderAccepted{20, Side::BUY, 100, 1}, TradeExecuted{20, 1, 100, 1},
+                                            StopTriggered{10, 100, 100}, OrderExpired{10, 9}, StopTriggered{11, 100, 100},
+                                            SelfTradePrevented{11, 2, 101, 2}, TradeExecuted{11, 3, 101, 1},
+                                            OrderExpired{11, 1}},
+               "a FOK stop walks the book at trigger time, and STP runs with the stop's own owner");
+        expectSound(book, "FOK and owned stops");
+    }
+    {
+        // submitOrder(Order) trades trigger stops too.
+        OrderBook book;
+        book.submitOrder(Order(1, 100, 1, 1, Side::SELL));
+        book.submitOrder(Order(2, 102, 1, 1, Side::SELL));
+        book.submitOrder(stopOrder(10, Side::BUY, 100, 1));
+        const SubmissionResult result = book.submitOrder(Order(20, 100, 1, 1, Side::BUY));
+        expect(result.getEvents() == Events{OrderAccepted{20, Side::BUY, 100, 1}, TradeExecuted{20, 1, 100, 1},
+                                            StopTriggered{10, 100, 100}, TradeExecuted{10, 2, 102, 1}},
+               "a v1 submission's trades trigger stops");
+        expect(Access::noneTriggered(book), "the triggered queue is empty between commands");
+    }
+}
+
 // An expired order's ID is free again, as a filled one's is.
 void testExpiredIdIsFree() {
     OrderBook book;
@@ -740,6 +867,7 @@ int main() {
         testStopsPastTheirTrigger(side);
     }
     testLastTradePrice();
+    testTriggeredStops();
     testExpiredIdIsFree();
     testGoodTillCancelledRests();
     testScriptIsDeterministic();
