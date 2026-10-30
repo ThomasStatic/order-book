@@ -109,6 +109,22 @@ _Avoid_: ticker, instrument ID, security ID
 The instruments an engine may trade, fixed when it starts. A later start may add to it but never remove from it.
 _Avoid_: universe, security master
 
+**Shard**:
+A group of instruments handled together by one matching thread, sharing nothing with any other shard. Every instrument belongs to exactly one shard.
+_Avoid_: partition, worker
+
+**Matching thread**:
+The one thread allowed to touch a shard's books, from when a book is built or restored until it is destroyed.
+_Avoid_: business thread, engine thread, worker thread
+
+**Placement**:
+Which shard each instrument belongs to. It never changes while the engine runs, and changes between runs only after a clean stop.
+_Avoid_: assignment, allocation, mapping
+
+**Command sequence**:
+The order in which an instrument's matching thread executes that instrument's commands. It alone determines the instrument's book and events, and the command log records it. It includes commands the book rejects. Nothing orders one instrument's commands against another's.
+_Avoid_: accepted commands, order flow
+
 **Snapshot**:
 A summary of a book's depth at one moment: its best levels on each side, with their aggregate quantities. It describes a book; it cannot rebuild one.
 _Avoid_: checkpoint, dump
