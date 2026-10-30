@@ -20,7 +20,7 @@ constexpr CommandIntent allIntents[] = {
     CommandIntent::ZERO_ORDER_ID,   CommandIntent::ZERO_PRICE,      CommandIntent::ZERO_QUANTITY,
     CommandIntent::INVALID_SIDE,    CommandIntent::UNSUPPORTED_TYPE, CommandIntent::MARKED_FILLED,
     CommandIntent::INVALID_TIME_IN_FORCE, CommandIntent::MARKET_WITH_PRICE, CommandIntent::MARKET_GTC,
-    CommandIntent::TYPE_CANNOT_REST,
+    CommandIntent::TYPE_CANNOT_REST, CommandIntent::POST_ONLY_NOT_GTC_LIMIT,
     CommandIntent::CANCEL_ACTIVE,   CommandIntent::CANCEL_REMOVED,  CommandIntent::CANCEL_UNKNOWN,
     CommandIntent::CANCEL_ZERO_ID,  CommandIntent::UNSPECIFIED};
 
@@ -125,6 +125,7 @@ const char* intentName(CommandIntent intent) {
         case CommandIntent::MARKET_WITH_PRICE: return "MARKET_WITH_PRICE";
         case CommandIntent::MARKET_GTC: return "MARKET_GTC";
         case CommandIntent::TYPE_CANNOT_REST: return "TYPE_CANNOT_REST";
+        case CommandIntent::POST_ONLY_NOT_GTC_LIMIT: return "POST_ONLY_NOT_GTC_LIMIT";
         case CommandIntent::CANCEL_ACTIVE: return "CANCEL_ACTIVE";
         case CommandIntent::CANCEL_REMOVED: return "CANCEL_REMOVED";
         case CommandIntent::CANCEL_UNKNOWN: return "CANCEL_UNKNOWN";
@@ -178,6 +179,9 @@ std::string formatCommand(const Command& command) {
         if (command.timeInForce != TimeInForce::GTC) {
             line += " tif=" + timeInForceText(command.timeInForce);
         }
+        if (command.postOnly) {
+            line += " post_only=Y";
+        }
         if (command.markedFilled) {
             line += " status=FILLED";
         }
@@ -217,7 +221,7 @@ Command parseCommand(const std::string& line) {
         const std::string key = token.substr(0, equals);
         const std::string value = token.substr(equals + 1);
         const bool submitOnly = key == "side" || key == "price" || key == "qty" || key == "type" || key == "status" ||
-                                key == "overload" || key == "tif";
+                                key == "overload" || key == "tif" || key == "post_only";
         if (submitOnly && command.type == CommandType::CANCEL) {
             throw std::invalid_argument("a cancellation has no " + key);
         }
@@ -235,6 +239,11 @@ Command parseCommand(const std::string& line) {
             sawQuantity = true;
         } else if (key == "type") {
             command.orderType = parseType(value);
+        } else if (key == "post_only") {
+            if (value != "Y") {
+                throw std::invalid_argument("post_only can only be Y, got '" + value + "'");
+            }
+            command.postOnly = true;
         } else if (key == "tif") {
             command.timeInForce = parseTimeInForce(value);
         } else if (key == "status") {
@@ -259,8 +268,8 @@ Command parseCommand(const std::string& line) {
     if (command.markedFilled && command.overload != SubmitOverload::ORDER) {
         throw std::invalid_argument("status=FILLED needs overload=ORDER: a request has no fill status");
     }
-    if (command.overload == SubmitOverload::ORDER && command.timeInForce != TimeInForce::GTC) {
-        throw std::invalid_argument("an Order has no time in force: tif needs the request overload");
+    if (command.overload == SubmitOverload::ORDER && (command.timeInForce != TimeInForce::GTC || command.postOnly)) {
+        throw std::invalid_argument("an Order has no time in force or post-only flag: they need the request overload");
     }
     return command;
 }

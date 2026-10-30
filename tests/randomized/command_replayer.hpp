@@ -73,7 +73,7 @@ using PropertyCheck = std::function<std::optional<std::string>(const OrderBook& 
 // runs the book's complete invariant check, then checks the behavior properties against the
 // engine's own result and book alone (so a misreading the model shares still fails: no IOC
 // or FOK order rests, an unfilled remainder of one ends its events as an OrderExpired, and a
-// FOK trades all or nothing), then
+// FOK trades all or nothing; a post-only order never takes), then
 // compares the result and its exact events with the model's prediction, and every level and
 // FIFO queue with the model's.
 class CommandReplayer {

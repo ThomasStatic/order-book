@@ -321,6 +321,48 @@ void testMarketOrders(Side side) {
     expect(capture(unfillable) == before, context + " FOK unfillable: only the sequence number should change");
 }
 
+OrderRequest postOnly(OrderId id, Side side, Price price, unsigned int quantity) {
+    OrderRequest request{id, side, price, quantity};
+    request.postOnly = true;
+    return request;
+}
+
+// A post-only order that would take (at or through the best opposing price) is accepted and
+// wholly expired, never repriced; otherwise it rests as an ordinary limit order.
+void testPostOnly(Side side) {
+    const std::string context = "post-only " + sideName(side);
+    for (int ticks : {0, 1, 5}) {
+        OrderBook book = seededBook(side);
+        BookState before = capture(book);
+        const SubmissionResult result = book.submitOrder(postOnly(9, side, priceAway(side, ticks), 6));
+        expectAcceptedWith(result, Events{OrderAccepted{9, side, priceAway(side, ticks), 6}, OrderExpired{9, 6}}, 6,
+                           FillStatus::NONE, 0, context + " would take " + std::to_string(ticks));
+        ++before.nextSequenceNum;
+        expect(capture(book) == before, context + " would take: only the sequence number should change");
+        expectSound(book, context + " would take");
+    }
+    {
+        // Rests behind the touch, exactly as a GTC limit order would, with the next number.
+        OrderBook book = seededBook(side);
+        book.submitOrder(Order(5, priceAway(side, -1), 2, 1, side));
+        const SequenceNum sequence = Access::nextSequenceNum(book);
+        const SubmissionResult result = book.submitOrder(postOnly(9, side, priceAway(side, -1), 6));
+        expectAcceptedWith(result, Events{OrderAccepted{9, side, priceAway(side, -1), 6}}, 6, FillStatus::NONE, 0,
+                           context + " rests");
+        const Order rested = book.findActiveOrder(9);
+        expect(rested.getSequenceNum() == sequence && Access::nextSequenceNum(book) == sequence + 1,
+               context + " rests: it should take the next sequence number");
+        expectSound(book, context + " rests");
+    }
+    {
+        // An empty opposite side never takes.
+        OrderBook book;
+        expectAcceptedWith(book.submitOrder(postOnly(9, side, 100, 6)), Events{OrderAccepted{9, side, 100, 6}}, 6,
+                           FillStatus::NONE, 0, context + " empty side");
+        expect(book.activeOrderCount() == 1, context + " empty side: it should rest");
+    }
+}
+
 // An expired order's ID is free again, as a filled one's is.
 void testExpiredIdIsFree() {
     OrderBook book;
@@ -379,6 +421,7 @@ int main() {
         testImmediateOrCancel(side);
         testFillOrKill(side);
         testMarketOrders(side);
+        testPostOnly(side);
     }
     testExpiredIdIsFree();
     testGoodTillCancelledRests();

@@ -239,6 +239,13 @@ std::optional<std::string> checkBehavior(const OrderBook& book, const Command& c
     if (command.type != CommandType::SUBMIT || command.overload != SubmitOverload::REQUEST || !actual.outcome.success) {
         return std::nullopt;
     }
+    if (command.postOnly) {
+        for (const BookEvent& event : actual.outcome.events) {
+            if (std::holds_alternative<TradeExecuted>(event)) {
+                return "a post-only order took liquidity: " + formatEvent(event);
+            }
+        }
+    }
     if (command.orderType == OrderType::MARKET) {
         const std::vector<BookEvent>& events = actual.outcome.events;
         const auto* acceptance = events.empty() ? nullptr : std::get_if<OrderAccepted>(&events.front());

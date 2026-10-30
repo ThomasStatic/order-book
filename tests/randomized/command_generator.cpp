@@ -44,6 +44,7 @@ std::vector<WorkloadProfile> makeProfiles() {
     passive.nearTicks = 20;
     passive.farTicks = 2000;
     passive.marketPercent = 2;  // a market order sweeps the depth this profile is for
+    passive.postOnlyPercent = 30;
     profiles.push_back(passive);
 
     WorkloadProfile cancelHeavy = balanced;
@@ -105,7 +106,7 @@ std::vector<WorkloadProfile> makeProfiles() {
 
 OrderRequest requestOf(const Command& command) {
     return OrderRequest{command.orderId, command.side, command.price, command.quantity, command.orderType,
-                        command.timeInForce};
+                        command.timeInForce, command.postOnly};
 }
 
 ExpectedOutcome applyCommand(ReferenceBook& model, const Command& command) {
@@ -124,7 +125,7 @@ std::string describeProfile(const WorkloadProfile& profile) {
            "% order-overload=" + std::to_string(profile.orderOverloadPercent) +
            "% ioc=" + std::to_string(profile.iocPercent) + "% fok=" + std::to_string(profile.fokPercent) +
            "% market=" + std::to_string(profile.marketPercent) + "% (ioc " + std::to_string(profile.marketIocPercent) +
-           "%)" +
+           "%) post-only=" + std::to_string(profile.postOnlyPercent) + "%" +
            " marketable=" + std::to_string(profile.marketablePercent) + "% far=" + std::to_string(profile.farPercent) +
            "% through=" + std::to_string(profile.throughTicks) + " near=" + std::to_string(profile.nearTicks) +
            " farTicks=" + std::to_string(profile.farTicks) + " start=" + std::to_string(profile.startPrice) +
@@ -196,6 +197,8 @@ Command RandomCommandGenerator::validSubmit(const ReferenceBook& model) {
         command.timeInForce = TimeInForce::IOC;
     } else if (timeInForce < config.iocPercent + config.fokPercent) {
         command.timeInForce = TimeInForce::FOK;
+    } else if (chance(config.postOnlyPercent)) {
+        command.postOnly = true;
     }
     return command;
 }
@@ -211,6 +214,7 @@ Command RandomCommandGenerator::nextSubmit(const ReferenceBook& model, bool inva
                                         CommandIntent::UNSUPPORTED_TYPE, CommandIntent::MARKED_FILLED,
                                         CommandIntent::INVALID_TIME_IN_FORCE, CommandIntent::MARKET_WITH_PRICE,
                                         CommandIntent::MARKET_GTC,       CommandIntent::TYPE_CANNOT_REST,
+                                        CommandIntent::POST_ONLY_NOT_GTC_LIMIT,
                                         CommandIntent::DUPLICATE_ACTIVE_ID};
     const IdPool& resting = model.restingIds();
     const std::size_t choices = std::size(faults) - (resting.empty() ? 1 : 0);
@@ -246,6 +250,18 @@ Command RandomCommandGenerator::nextSubmit(const ReferenceBook& model, bool inva
             command.orderType = OrderType::MARKET;
             command.price = 0;
             break;
+        case CommandIntent::POST_ONLY_NOT_GTC_LIMIT: {
+            command.postOnly = true;
+            const std::uint64_t which = below(3);
+            if (which == 0) {
+                command.orderType = OrderType::MARKET;
+                command.price = 0;
+                command.timeInForce = TimeInForce::IOC;
+            } else {
+                command.timeInForce = which == 1 ? TimeInForce::IOC : TimeInForce::FOK;
+            }
+            break;
+        }
         // A type an Order refuses since it cannot rest, among the request's enumerators to come.
         case CommandIntent::TYPE_CANNOT_REST:
             command.orderType = static_cast<OrderType>(1 + below(3));

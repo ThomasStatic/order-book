@@ -104,11 +104,30 @@ ExpectedOutcome ReferenceBook::submit(const OrderRequest& request) {
     if (!reason && market && request.timeInForce == TimeInForce::GTC) {
         reason = RejectionReason::TIME_IN_FORCE_NOT_ALLOWED;
     }
+    if (!reason && request.postOnly && (market || request.timeInForce != TimeInForce::GTC)) {
+        reason = RejectionReason::POST_ONLY_NOT_ALLOWED;
+    }
     if (!reason && resting.contains(request.id)) {
         reason = RejectionReason::DUPLICATE_ORDER_ID;
     }
     if (reason) {
         return reject(request.id, request.quantity, *reason);
+    }
+    if (request.postOnly) {
+        // Decided on price alone: at or through the opposing best would take, so it expires.
+        const std::optional<Price> opposing = best(request.side == Side::BUY ? Side::SELL : Side::BUY);
+        const bool takes = opposing && (request.side == Side::BUY ? request.price >= *opposing : request.price <= *opposing);
+        if (takes) {
+            ExpectedOutcome outcome;
+            outcome.success = true;
+            ++seen.submissionsAccepted;
+            ++seen.expired;
+            outcome.events = {OrderAccepted{request.id, request.side, request.price, request.quantity},
+                              OrderExpired{request.id, request.quantity}};
+            outcome.remaining = request.quantity;
+            removed.insert(request.id);
+            return outcome;
+        }
     }
     return accept(request, request.timeInForce);
 }

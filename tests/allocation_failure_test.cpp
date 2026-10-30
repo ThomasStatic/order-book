@@ -411,6 +411,57 @@ void testMarketSweepStaysConsistent() {
     expect(failures > 0, "market (six-trade sweep): at least one allocation failure should have been injected");
 }
 
+// A post-only order that rests is strongly atomic and numbered last: whatever allocation fails
+// (its level, its queue node, the index), the book and its counters are as they were. Only a
+// new level, or the first order of a book, allocates.
+void expectPostOnlyRestRollsBack(bool seeded, const std::string& context) {
+    const auto setup = [seeded](OrderBook& book) {
+        if (seeded) {
+            book.addOrder(Order(1, 100, 5, 1, Side::BUY));
+            book.addOrder(Order(3, 102, 5, 1, Side::SELL));
+        }
+    };
+    const std::size_t resting = seeded ? 2 : 0;
+    const long failures = failEachAllocationInTurn(
+        setup,
+        [](OrderBook& book) {
+            order_book::OrderRequest request{2, Side::BUY, 101, 5};
+            request.postOnly = true;
+            book.submitOrder(request);
+        },
+        [resting](const OrderBook& book, const std::string& attempt) {
+            expect(Access::index(book).size() == resting && Access::bids(book).size() == resting / 2,
+                   attempt + ": a failed post-only order should not rest");
+            expect(Access::nextSequenceNum(book) == resting + 1 && Access::nextTradeId(book) == 1,
+                   attempt + ": a failed post-only order should consume no sequence number");
+        },
+        context);
+    expect(failures > 0, context + ": at least one allocation failure should have been injected");
+}
+
+void testPostOnlyRestRollsBack() {
+    expectPostOnlyRestRollsBack(true, "post-only resting (new level)");
+    expectPostOnlyRestRollsBack(false, "post-only resting (first order of a book)");
+}
+
+// A post-only order that would take is accepted then wholly expired without allocating.
+void testPostOnlyThatWouldTakeDoesNotAllocate() {
+    OrderBook book{};
+    book.addOrder(Order(3, 102, 5, 1, Side::SELL));
+    order_book::OrderRequest request{2, Side::BUY, 102, 5};
+    request.postOnly = true;
+    allocationsBeforeFailure = 0;
+    bool threw = false;
+    try {
+        book.submitOrder(request);
+    } catch (const std::bad_alloc&) {
+        threw = true;
+    }
+    const bool stillArmed = allocationsBeforeFailure == 0;
+    allocationsBeforeFailure = -1;
+    expect(!threw && stillArmed && book.activeOrderCount() == 1, "a post-only order that would take should not allocate");
+}
+
 void testConsumeLevelFailsBeforeFilling() {
     const long failures = failEachAllocationInTurn(
         [](OrderBook& book) {
@@ -514,6 +565,8 @@ int main() {
         testFillOrKillIsAllOrNothing();
         testUnfillableFillOrKillDoesNotAllocate();
         testMarketSweepStaysConsistent();
+        testPostOnlyRestRollsBack();
+        testPostOnlyThatWouldTakeDoesNotAllocate();
         testConsumeLevelFailsBeforeFilling();
         testCancelOrderDoesNotAllocate();
         testRequestAllocatesLikeOrder();

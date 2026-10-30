@@ -40,6 +40,7 @@ enum class CommandIntent {
     MARKET_WITH_PRICE,  // PRICE_NOT_ALLOWED
     MARKET_GTC,         // TIME_IN_FORCE_NOT_ALLOWED
     TYPE_CANNOT_REST,   // through submitOrder(Order): a valid type other than LIMIT
+    POST_ONLY_NOT_GTC_LIMIT,  // POST_ONLY_NOT_ALLOWED: on a market order, or an IOC or FOK limit
     // A valid cancellation, then intentionally invalid ones.
     CANCEL_ACTIVE,
     CANCEL_REMOVED,  // filled or cancelled already
@@ -62,6 +63,7 @@ struct Command {
     Quantity quantity = 0;
     OrderType orderType = OrderType::LIMIT;
     TimeInForce timeInForce = TimeInForce::GTC;  // only through the REQUEST overload
+    bool postOnly = false;                       // likewise
     bool markedFilled = false;  // only through the ORDER overload: a request has no fill status
     SubmitOverload overload = SubmitOverload::REQUEST;
     CommandIntent intent = CommandIntent::UNSPECIFIED;
@@ -75,12 +77,12 @@ struct Command {
 
 // One line, e.g. "SUBMIT id=17 side=BUY price=10002 qty=5 intent=NEW_ID" or
 // "CANCEL id=291 intent=CANCEL_ACTIVE". A side or type outside its enum prints as a number,
-// and type, time in force, status, and overload appear only when they differ from LIMIT, GTC,
-// an unfilled order, and the request overload.
+// and type, time in force, post-only, status, and overload appear only when they differ from
+// LIMIT, GTC, not post-only, an unfilled order, and the request overload.
 std::string formatCommand(const Command& command);
 
 // The inverse of formatCommand; throws std::invalid_argument saying what is wrong, including
-// for status=FILLED without overload=ORDER, or a time in force with it.
+// for status=FILLED without overload=ORDER, or a time in force or post-only with it.
 Command parseCommand(const std::string& line);
 
 // Where a saved stream came from. Replay never needs any of it: the commands alone fix

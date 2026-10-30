@@ -34,7 +34,8 @@ namespace order_book::checks {
     // book's check, made after this one.
     // The checks, numbered as in the spec's request table: 1-4 the fields (a price is needed
     // unless the type has none; an invalid type needs one, keeping v1's order), 5 the type, 6 a
-    // price on a type that has none, 7a the time in force, 7b a MARKET order that is GTC.
+    // price on a type that has none, 7a the time in force, 7b a MARKET order that is GTC, 9
+    // post-only on anything but a GTC LIMIT order.
     inline std::optional<RejectionReason> requestReason(const OrderRequest& request) {
         if(const std::optional<RejectionReason> reason =
                fieldReason(request.id, request.price, !hasNoPrice(request.type), request.quantity, request.side)) {
@@ -51,6 +52,9 @@ namespace order_book::checks {
         }
         if(request.type == OrderType::MARKET && request.timeInForce == TimeInForce::GTC) {
             return RejectionReason::TIME_IN_FORCE_NOT_ALLOWED;
+        }
+        if(request.postOnly && (request.type != OrderType::LIMIT || request.timeInForce != TimeInForce::GTC)) {
+            return RejectionReason::POST_ONLY_NOT_ALLOWED;
         }
         return std::nullopt;
     }

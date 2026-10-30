@@ -265,6 +265,9 @@ namespace order_book {
                                                           : Price{1};
         // Well formed, so the constructor cannot refuse it; matchAndRest numbers it.
         Order incoming(request.id, limit, request.quantity, nextSequenceNum, request.side);
+        if(request.postOnly) {
+            return postOnly(incoming);
+        }
         return matchAndRest(incoming, OrderAccepted{request.id, request.side, request.price, request.quantity},
                             request.timeInForce);
     }
@@ -319,6 +322,27 @@ namespace order_book {
         advanceSequenceNum();
         matchOrder(incoming, recorder);
         return recorder.finish();
+    }
+
+    SubmissionResult OrderBook::postOnly(Order& incoming) {
+        ResultRecorder recorder(OrderAccepted{incoming.getOrderId(), incoming.getSide(), incoming.getPriceTick(),
+                                              incoming.getRemainingQuantity()});
+        if(crossesBestOpposing(incoming)) {
+            // Its acceptance and expiry fit inline, so nothing here allocates or throws.
+            recorder.expire(incoming.getRemainingQuantity());
+        }
+        else {
+            // Rests exactly as addOrder does: numbered with the next number, which is consumed
+            // only once it has rested, so a failed allocation leaves no trace.
+            incoming.assignSequenceNum(nextSequenceNum);
+            SubmissionResult result = recorder.finish();
+            restOrder(incoming);
+            advanceSequenceNum();
+            return result;
+        }
+        SubmissionResult result = recorder.finish();
+        advanceSequenceNum();
+        return result;
     }
 
     std::size_t OrderBook::activeOrderCount() const {

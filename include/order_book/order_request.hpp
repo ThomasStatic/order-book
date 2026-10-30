@@ -26,6 +26,11 @@ namespace order_book {
         // fills whole or makes no trades and expires whole.
         // A MARKET order must be IOC or FOK: it can never rest.
         TimeInForce timeInForce = TimeInForce::GTC;
+        // Post-only (FIX ExecInst=6, participate don't initiate), on a GTC LIMIT order only: it
+        // rests, or if it would take liquidity on arrival (at or through the best opposing
+        // price) it is accepted and wholly expired, never repriced. The flag is not kept once it
+        // rests.
+        bool postOnly = false;
     };
 
 }  // namespace order_book

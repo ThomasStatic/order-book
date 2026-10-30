@@ -622,6 +622,26 @@ void testMalformedRequestsAreRejectedInOrder() {
                                    RejectionReason::TIME_IN_FORCE_NOT_ALLOWED, context + " market GTC before duplicate");
     expectRequestRejectedUnchanged(book, OrderRequest{4, Side::BUY, 0, 20, OrderType::MARKET, TimeInForce::IOC},
                                    RejectionReason::DUPLICATE_ORDER_ID, context + " market duplicate");
+
+    // Post-only only on a GTC limit order (check 9), after the time-in-force checks.
+    const auto postOnly = [](OrderRequest request) {
+        request.postOnly = true;
+        return request;
+    };
+    expectRequestRejectedUnchanged(book, postOnly(OrderRequest{9, Side::BUY, 102, 20, OrderType::LIMIT, TimeInForce::IOC}),
+                                   RejectionReason::POST_ONLY_NOT_ALLOWED, context + " post-only IOC");
+    expectRequestRejectedUnchanged(book, postOnly(OrderRequest{9, Side::BUY, 102, 20, OrderType::LIMIT, TimeInForce::FOK}),
+                                   RejectionReason::POST_ONLY_NOT_ALLOWED, context + " post-only FOK");
+    expectRequestRejectedUnchanged(book, postOnly(OrderRequest{9, Side::SELL, 0, 20, OrderType::MARKET, TimeInForce::IOC}),
+                                   RejectionReason::POST_ONLY_NOT_ALLOWED, context + " post-only market");
+    expectRequestRejectedUnchanged(book, postOnly(OrderRequest{9, Side::SELL, 0, 20, OrderType::MARKET, TimeInForce::GTC}),
+                                   RejectionReason::TIME_IN_FORCE_NOT_ALLOWED, context + " market GTC before post-only");
+    expectRequestRejectedUnchanged(book, postOnly(OrderRequest{9, Side::SELL, 5, 20, OrderType::LIMIT, badTimeInForce}),
+                                   RejectionReason::INVALID_TIME_IN_FORCE, context + " time in force before post-only");
+    expectRequestRejectedUnchanged(book, postOnly(OrderRequest{4, Side::BUY, 102, 20, OrderType::LIMIT, TimeInForce::IOC}),
+                                   RejectionReason::POST_ONLY_NOT_ALLOWED, context + " post-only before duplicate");
+    expectRequestRejectedUnchanged(book, postOnly(OrderRequest{4, Side::BUY, 50, 20}), RejectionReason::DUPLICATE_ORDER_ID,
+                                   context + " post-only duplicate");
     expectRequestRejectedUnchanged(book, OrderRequest{9, Side::BUY, 102, 20, badType, badTimeInForce},
                                    RejectionReason::UNSUPPORTED_ORDER_TYPE, context + " type before time in force");
     expectRequestRejectedUnchanged(book, OrderRequest{9, Side::BUY, 102, 20, OrderType::LIMIT, badTimeInForce},

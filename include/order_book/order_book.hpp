@@ -78,6 +78,9 @@ namespace order_book {
         // ID is already indexed: callers must validate first.
         void restOrder(const Order& order);
 
+        // Whether the order is at or through the best opposing price: an incoming order that
+        // would take liquidity. A locked price counts; an empty opposite side never does. Shared
+        // by addOrder, which refuses such an order, and post-only, which expires it.
         bool crossesBestOpposing(const Order& incoming) const;
 
         // How many trades a fill-or-kill order would make, or nothing if the opposing levels
@@ -99,6 +102,9 @@ namespace order_book {
         // a market order, which runs as a limit order at the furthest price on its side.
         SubmissionResult matchAndRest(Order& incoming, const OrderAccepted& acceptance, TimeInForce timeInForce);
         SubmissionResult fillOrKill(Order& incoming, const OrderAccepted& acceptance);
+        // Rests the order, or expires it whole if it would take. Strongly atomic and numbered
+        // last, like addOrder, so a throw changes nothing.
+        SubmissionResult postOnly(Order& incoming);
 
         // Fills resting orders at one price level in FIFO order, unindexing fully filled
         // orders and erasing the level once it is empty. It makes no trades and reports no
@@ -185,7 +191,9 @@ namespace order_book {
         // submission's events; addOrder's are only its OrderAccepted, and it throws
         // std::invalid_argument on a rejection rather than returning one. Since addOrder
         // never matches, it also refuses an order that would cross the best opposing price
-        // (WOULD_CROSS_BOOK), so the book is never left crossed.
+        // (WOULD_CROSS_BOOK), so the book is never left crossed. It is the setup and seeding
+        // command; a post-only submitOrder(OrderRequest) is the version that reports a would-be
+        // taker through its events instead.
         //
         // With invariantChecksAfterCommands set, every command below that can change the book
         // also checks it when it returns or throws, and aborts on a broken invariant. So an
@@ -202,7 +210,10 @@ namespace order_book {
         // MARKET order with GTC (TIME_IN_FORCE_NOT_ALLOWED)) or one whose ID is live is a
         // REJECTED result that changes nothing. A MARKET order has no price protection: it trades
         // at each resting price, as far through the opposite side as its quantity takes it, and
-        // its acceptance reports price 0; as IOC or FOK, its remainder expires. A well-formed request is always
+        // its acceptance reports price 0; as IOC or FOK, its remainder expires. A post-only
+        // order (GTC LIMIT only, else POST_ONLY_NOT_ALLOWED) rests like any limit order, or, if
+        // it would take liquidity (at or through the best opposing price), is accepted and
+        // wholly expired without trading or allocating; it is strongly atomic and numbered last. A well-formed request is always
         // accepted and matched like submitOrder(Order); then a GTC remainder rests, and an IOC
         // remainder expires instead (a trailing OrderExpired for the whole remainder, which still
         // counts as the result's remaining quantity). An IOC that does not cross, or faces an

@@ -100,7 +100,8 @@ public:
 
     // submitOrder(OrderRequest): the request's checks in their fixed order, then a live ID; an
     // IOC remainder expires rather than rests, and a FOK applies its plan only if the plan
-    // fills it, and otherwise discards it and expires whole.
+    // fills it, and otherwise discards it and expires whole; a post-only order that would take
+    // expires whole.
     ExpectedOutcome submit(const OrderRequest& request);
     // submitOrder(Order), for an Order with these fields, marked FILLED if markedFilled: the
     // Order's own checks (which accept only a type that can rest), then FILLED, then a live ID.
