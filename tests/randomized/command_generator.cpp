@@ -43,6 +43,7 @@ std::vector<WorkloadProfile> makeProfiles() {
     passive.farPercent = 15;
     passive.nearTicks = 20;
     passive.farTicks = 2000;
+    passive.marketPercent = 2;  // a market order sweeps the depth this profile is for
     profiles.push_back(passive);
 
     WorkloadProfile cancelHeavy = balanced;
@@ -86,6 +87,17 @@ std::vector<WorkloadProfile> makeProfiles() {
     limits.firstOrderId = maxOrderId - 1000000;
     profiles.push_back(limits);
 
+    WorkloadProfile immediate = balanced;
+    immediate.name = "immediate";
+    immediate.purpose = "market, IOC, and FOK orders 60% of submissions, often large, so FOKs fail and remainders expire";
+    immediate.marketPercent = 25;
+    immediate.iocPercent = 27;
+    immediate.fokPercent = 20;
+    immediate.marketablePercent = 40;
+    immediate.largeQuantityPercent = 30;
+    immediate.largeQuantityMax = 60;
+    profiles.push_back(immediate);
+
     return profiles;
 }
 
@@ -111,7 +123,9 @@ std::string describeProfile(const WorkloadProfile& profile) {
            "% buy=" + std::to_string(profile.buyPercent) + "% reuse=" + std::to_string(profile.reuseIdPercent) +
            "% order-overload=" + std::to_string(profile.orderOverloadPercent) +
            "% ioc=" + std::to_string(profile.iocPercent) + "% fok=" + std::to_string(profile.fokPercent) +
-           "% marketable=" + std::to_string(profile.marketablePercent) + "% far=" + std::to_string(profile.farPercent) +
+           "% market=" + std::to_string(profile.marketPercent) + "% (ioc " + std::to_string(profile.marketIocPercent) +
+           "%)" +
+           " marketable=" + std::to_string(profile.marketablePercent) + "% far=" + std::to_string(profile.farPercent) +
            "% through=" + std::to_string(profile.throughTicks) + " near=" + std::to_string(profile.nearTicks) +
            " farTicks=" + std::to_string(profile.farTicks) + " start=" + std::to_string(profile.startPrice) +
            " small<=" + std::to_string(profile.smallQuantityMax) + " large=" +
@@ -171,6 +185,12 @@ Command RandomCommandGenerator::validSubmit(const ReferenceBook& model) {
         command.overload = SubmitOverload::ORDER;
         return command;
     }
+    if (chance(config.marketPercent)) {
+        command.orderType = OrderType::MARKET;
+        command.price = 0;
+        command.timeInForce = chance(config.marketIocPercent) ? TimeInForce::IOC : TimeInForce::FOK;
+        return command;
+    }
     const std::uint64_t timeInForce = below(100);
     if (timeInForce < config.iocPercent) {
         command.timeInForce = TimeInForce::IOC;
@@ -189,7 +209,9 @@ Command RandomCommandGenerator::nextSubmit(const ReferenceBook& model, bool inva
     constexpr CommandIntent faults[] = {CommandIntent::ZERO_ORDER_ID,    CommandIntent::ZERO_PRICE,
                                         CommandIntent::ZERO_QUANTITY,    CommandIntent::INVALID_SIDE,
                                         CommandIntent::UNSUPPORTED_TYPE, CommandIntent::MARKED_FILLED,
-                                        CommandIntent::INVALID_TIME_IN_FORCE, CommandIntent::DUPLICATE_ACTIVE_ID};
+                                        CommandIntent::INVALID_TIME_IN_FORCE, CommandIntent::MARKET_WITH_PRICE,
+                                        CommandIntent::MARKET_GTC,       CommandIntent::TYPE_CANNOT_REST,
+                                        CommandIntent::DUPLICATE_ACTIVE_ID};
     const IdPool& resting = model.restingIds();
     const std::size_t choices = std::size(faults) - (resting.empty() ? 1 : 0);
     const CommandIntent fault = faults[below(choices)];
@@ -214,7 +236,21 @@ Command RandomCommandGenerator::nextSubmit(const ReferenceBook& model, bool inva
         case CommandIntent::ZERO_PRICE: command.price = 0; break;
         case CommandIntent::ZERO_QUANTITY: command.quantity = 0; break;
         case CommandIntent::INVALID_SIDE: command.side = static_cast<Side>(2 + below(6)); break;
-        case CommandIntent::UNSUPPORTED_TYPE: command.orderType = static_cast<OrderType>(1 + below(6)); break;
+        // Past every enumerator, including those still to come.
+        case CommandIntent::UNSUPPORTED_TYPE: command.orderType = static_cast<OrderType>(4 + below(6)); break;
+        case CommandIntent::MARKET_WITH_PRICE:
+            command.orderType = OrderType::MARKET;
+            command.timeInForce = TimeInForce::IOC;
+            break;
+        case CommandIntent::MARKET_GTC:
+            command.orderType = OrderType::MARKET;
+            command.price = 0;
+            break;
+        // A type an Order refuses since it cannot rest, among the request's enumerators to come.
+        case CommandIntent::TYPE_CANNOT_REST:
+            command.orderType = static_cast<OrderType>(1 + below(3));
+            command.overload = SubmitOverload::ORDER;
+            break;
         case CommandIntent::MARKED_FILLED:
             command.markedFilled = true;
             command.overload = SubmitOverload::ORDER;

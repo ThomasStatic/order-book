@@ -19,11 +19,12 @@ namespace order_book {
     struct OrderRequest {
         OrderId id;
         Side side;
-        Price price;  // the limit price, in ticks
+        Price price;  // the limit price, in ticks; 0 for a MARKET order, which has none
         Quantity quantity;
         OrderType type = OrderType::LIMIT;
         // GTC rests what does not trade at once; IOC expires it (reported by OrderExpired); FOK
         // fills whole or makes no trades and expires whole.
+        // A MARKET order must be IOC or FOK: it can never rest.
         TimeInForce timeInForce = TimeInForce::GTC;
     };
 

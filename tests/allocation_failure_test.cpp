@@ -388,6 +388,29 @@ void testUnfillableFillOrKillDoesNotAllocate() {
     expectIndexConsistent(book, "unfillable FOK without allocating");
 }
 
+// A market sweep of six trades past the result's inline storage keeps v1's contract: every
+// execution made stands, and nothing rests.
+void testMarketSweepStaysConsistent() {
+    const long failures = failEachAllocationInTurn(
+        [](OrderBook& book) {
+            for (unsigned int i = 0; i < 6; ++i) {
+                book.addOrder(Order(10 + i, 100 + 50 * i, 1, 1, Side::BUY));
+            }
+        },
+        [](OrderBook& book) {
+            book.submitOrder(order_book::OrderRequest{2, Side::SELL, 0, 9, order_book::OrderType::MARKET,
+                                                      order_book::TimeInForce::IOC});
+        },
+        [](const OrderBook& book, const std::string& context) {
+            expect(!book.hasAsks() && Access::index(book).count(2) == 0, context + ": a market order should never rest");
+            const unsigned int executions = Access::nextTradeId(book) - 1;
+            expect(Access::index(book).size() == 6 - executions && Access::bids(book).size() == 6 - executions,
+                   context + ": every execution made should have filled exactly one resting order and its level");
+        },
+        "market submitOrder (six-trade sweep)");
+    expect(failures > 0, "market (six-trade sweep): at least one allocation failure should have been injected");
+}
+
 void testConsumeLevelFailsBeforeFilling() {
     const long failures = failEachAllocationInTurn(
         [](OrderBook& book) {
@@ -490,6 +513,7 @@ int main() {
         testImmediateOrCancelSweepStaysConsistent();
         testFillOrKillIsAllOrNothing();
         testUnfillableFillOrKillDoesNotAllocate();
+        testMarketSweepStaysConsistent();
         testConsumeLevelFailsBeforeFilling();
         testCancelOrderDoesNotAllocate();
         testRequestAllocatesLikeOrder();

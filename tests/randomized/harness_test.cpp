@@ -87,16 +87,17 @@ void testSameSeedSameStream() {
 // and update these values (the failure prints the new ones).
 void testGeneratorFingerprints() {
     const std::map<std::string, std::uint64_t> pinned = {
-        {"balanced", 3512178794005860028ULL},
-        {"aggressive", 5766683271771282662ULL},
-        {"passive", 13930655518994184595ULL},
-        {"cancel-heavy", 5800708897898125254ULL},
-        {"queue", 4716475145451889468ULL},
-        {"one-sided", 16132073300433426455ULL},
-        {"invalid-heavy", 11040785032181077416ULL},
-        {"limits", 16066685275371287177ULL},
+        {"balanced", 16106672915528795159ULL},
+        {"aggressive", 5843958396364495608ULL},
+        {"passive", 459305585582429895ULL},
+        {"cancel-heavy", 3811620677600583150ULL},
+        {"queue", 7159553509326690141ULL},
+        {"one-sided", 351659565586814915ULL},
+        {"invalid-heavy", 15960934727470567501ULL},
+        {"limits", 3645498996577499816ULL},
+        {"immediate", 17346947554609235776ULL},
     };
-    expect(generatorVersion == 4, "the fingerprints below are for generator version 4");
+    expect(generatorVersion == 5, "the fingerprints below are for generator version 5");
     bool allMatch = true;
     std::string actual;
     for (const WorkloadProfile& profile : workloadProfiles()) {
@@ -149,6 +150,12 @@ void testStreamRoundTrip() {
     immediate.timeInForce = order_book::TimeInForce::IOC;
     expect(formatCommand(immediate) == "SUBMIT id=11 side=BUY price=100 qty=5 tif=IOC intent=NEW_ID",
            context + ": IOC should print as tif=IOC");
+    Command marketOrder = Command::submit(14, Side::BUY, 0, 5, CommandIntent::NEW_ID);
+    marketOrder.orderType = order_book::OrderType::MARKET;
+    marketOrder.timeInForce = order_book::TimeInForce::IOC;
+    expect(formatCommand(marketOrder) == "SUBMIT id=14 side=BUY price=0 qty=5 type=MARKET tif=IOC intent=NEW_ID",
+           context + ": a market order should print its type by name");
+    stream.commands.push_back(marketOrder);
     Command killer = Command::submit(13, Side::SELL, 100, 5, CommandIntent::NEW_ID);
     killer.timeInForce = order_book::TimeInForce::FOK;
     expect(formatCommand(killer) == "SUBMIT id=13 side=SELL price=100 qty=5 tif=FOK intent=NEW_ID",
@@ -218,6 +225,7 @@ void testDistributions() {
         std::size_t viaOrder = 0;
         std::size_t ioc = 0;
         std::size_t fok = 0;
+        std::size_t markets = 0;
         std::size_t buys = 0;
         std::size_t nearTouch = 0;
         std::size_t large = 0;
@@ -234,19 +242,27 @@ void testDistributions() {
                 viaOrder += command.overload == SubmitOverload::ORDER ? 1 : 0;
                 buys += command.side == Side::BUY ? 1 : 0;
                 large += command.quantity > profile.smallQuantityMax ? 1 : 0;
-                ioc += command.timeInForce == order_book::TimeInForce::IOC ? 1 : 0;
-                fok += command.timeInForce == order_book::TimeInForce::FOK ? 1 : 0;
+                const bool market = command.orderType == order_book::OrderType::MARKET;
+                markets += market ? 1 : 0;
+                ioc += !market && command.timeInForce == order_book::TimeInForce::IOC ? 1 : 0;
+                fok += !market && command.timeInForce == order_book::TimeInForce::FOK ? 1 : 0;
+                expect(!market || (command.price == 0 && command.timeInForce != order_book::TimeInForce::GTC &&
+                                   command.overload == SubmitOverload::REQUEST),
+                       context + ": a valid market order has no price and is IOC or FOK: " + formatCommand(command));
                 expect(command.overload == SubmitOverload::REQUEST || command.timeInForce == order_book::TimeInForce::GTC,
                        context + ": an Order-overload submission has no time in force: " + formatCommand(command));
-                expect(command.orderId != 0 && command.price != 0 && command.quantity != 0 &&
+                expect(command.orderId != 0 && (command.price != 0 || market) && command.quantity != 0 &&
                            command.quantity <= profile.largeQuantityMax && !command.markedFilled &&
-                           command.orderType == order_book::OrderType::LIMIT &&
+                           (command.orderType == order_book::OrderType::LIMIT || market) &&
                            order_book::isValidTimeInForce(command.timeInForce) &&
                            (command.side == Side::BUY || command.side == Side::SELL),
                        context + ": a valid submission should be well formed: " + formatCommand(command));
                 expect(command.intent == CommandIntent::NEW_ID || model.removedIds().contains(command.orderId),
                        context + ": a reused ID should be one that was filled or cancelled");
-                const std::int64_t price = command.price;
+                if (market) {
+                    ++nearTouch;  // no price to be near or far
+                }
+                const std::int64_t price = market ? 0 : command.price;
                 std::int64_t distance = std::numeric_limits<std::int64_t>::max();
                 for (Side side : {Side::BUY, Side::SELL}) {
                     if (const std::optional<order_book::Price> best = model.best(side)) {
@@ -258,12 +274,12 @@ void testDistributions() {
                 }
                 const std::int64_t nearBand =
                     static_cast<std::int64_t>(std::max(profile.nearTicks, profile.throughTicks)) + 1;
-                nearTouch += distance <= nearBand ? 1 : 0;
+                nearTouch += !market && distance <= nearBand ? 1 : 0;
             }
             if (command.intent != CommandIntent::NEW_ID && command.intent != CommandIntent::REUSED_ID &&
-                command.intent != CommandIntent::MARKED_FILLED) {
+                command.intent != CommandIntent::MARKED_FILLED && command.intent != CommandIntent::TYPE_CANNOT_REST) {
                 expect(command.overload == SubmitOverload::REQUEST,
-                       context + ": only valid limits and MARKED_FILLED go through the Order overload: " +
+                       context + ": only valid limits and the Order-only faults go through the Order overload: " +
                            formatCommand(command));
             }
             switch (command.intent) {
@@ -277,7 +293,22 @@ void testDistributions() {
                     expect(command.side != Side::BUY && command.side != Side::SELL, context + ": invalid side");
                     break;
                 case CommandIntent::UNSUPPORTED_TYPE:
-                    expect(command.orderType != order_book::OrderType::LIMIT, context + ": unsupported type");
+                    expect(!order_book::isValidOrderType(command.orderType) && command.overload == SubmitOverload::REQUEST,
+                           context + ": a type that is no enumerator");
+                    break;
+                case CommandIntent::TYPE_CANNOT_REST:
+                    expect(command.orderType != order_book::OrderType::LIMIT && command.overload == SubmitOverload::ORDER,
+                           context + ": a type an Order cannot hold, through the Order overload");
+                    break;
+                case CommandIntent::MARKET_WITH_PRICE:
+                    expect(command.orderType == order_book::OrderType::MARKET && command.price != 0 &&
+                               command.timeInForce == order_book::TimeInForce::IOC,
+                           context + ": a market order with a price");
+                    break;
+                case CommandIntent::MARKET_GTC:
+                    expect(command.orderType == order_book::OrderType::MARKET && command.price == 0 &&
+                               command.timeInForce == order_book::TimeInForce::GTC,
+                           context + ": a GTC market order");
                     break;
                 case CommandIntent::MARKED_FILLED:
                     expect(command.markedFilled && command.overload == SubmitOverload::ORDER,
@@ -307,7 +338,7 @@ void testDistributions() {
         for (const auto& [intent, seen] : intents) {
             invalid += isIntentionallyInvalid(intent) ? seen : 0;
         }
-        expect(intents.size() == 14 && intents.count(CommandIntent::UNSPECIFIED) == 0,
+        expect(intents.size() == 17 && intents.count(CommandIntent::UNSPECIFIED) == 0,
                context + ": every intent should occur, got " + std::to_string(intents.size()));
         const auto share = [](std::size_t part, std::size_t whole) {
             return 100.0 * static_cast<double>(part) / static_cast<double>(whole);
@@ -317,10 +348,13 @@ void testDistributions() {
                context + ": invalid share " + std::to_string(share(invalid, count)));
         expect(near(share(viaOrder, validSubmissions), profile.orderOverloadPercent),
                context + ": Order-overload share " + std::to_string(share(viaOrder, validSubmissions)));
-        expect(near(share(ioc, validSubmissions - viaOrder), profile.iocPercent),
-               context + ": IOC share " + std::to_string(share(ioc, validSubmissions - viaOrder)));
-        expect(near(share(fok, validSubmissions - viaOrder), profile.fokPercent),
-               context + ": FOK share " + std::to_string(share(fok, validSubmissions - viaOrder)));
+        const std::size_t viaRequest = validSubmissions - viaOrder;
+        expect(near(share(markets, viaRequest), profile.marketPercent),
+               context + ": market share " + std::to_string(share(markets, viaRequest)));
+        expect(near(share(ioc, viaRequest - markets), profile.iocPercent),
+               context + ": IOC share " + std::to_string(share(ioc, viaRequest - markets)));
+        expect(near(share(fok, viaRequest - markets), profile.fokPercent),
+               context + ": FOK share " + std::to_string(share(fok, viaRequest - markets)));
         expect(near(share(buys, validSubmissions), profile.buyPercent),
                context + ": buy share " + std::to_string(share(buys, validSubmissions)));
         expect(share(nearTouch, validSubmissions) > 100.0 - profile.farPercent - 5,
@@ -425,6 +459,11 @@ void testProfilesHitTheirTargets() {
         {"invalid-heavy", "a reused ID accepted",
          [](const ReferenceBook&, const Command& command, const auto& outcome) {
              return command.intent == CommandIntent::REUSED_ID && outcome.success;
+         }},
+        {"immediate", "a market order that trades and expires the rest",
+         [](const ReferenceBook&, const Command& command, const auto& outcome) {
+             return command.orderType == order_book::OrderType::MARKET && tradesIn(outcome) > 0 &&
+                    std::holds_alternative<order_book::OrderExpired>(outcome.events.back());
          }},
         {"limits", "a level holding more than one Quantity in total",
          [](const ReferenceBook& model, const Command&, const auto&) {

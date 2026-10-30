@@ -273,6 +273,54 @@ void testFillOrKill(Side side) {
            context + " empty side: should consume a sequence number and no trade ID");
 }
 
+OrderRequest market(OrderId id, Side side, unsigned int quantity, TimeInForce timeInForce = TimeInForce::IOC) {
+    return OrderRequest{id, side, 0, quantity, OrderType::MARKET, timeInForce};
+}
+
+// A market order has no price protection: it trades at each resting price, as far through the
+// opposite side as its quantity takes it, and expires whatever is left. Its acceptance reports
+// price 0.
+void testMarketOrders(Side side) {
+    const std::string context = "market " + sideName(side);
+    OrderBook book = seededBook(side);
+    // A far level that no limit near the touch would reach.
+    book.submitOrder(Order(4, side == Side::BUY ? 4000000000u : 1u, 2, 1, opposite(side)));
+    const SubmissionResult sweep = book.submitOrder(market(9, side, 20));
+    expectAcceptedWith(sweep,
+                       Events{OrderAccepted{9, side, 0, 20}, TradeExecuted{9, 1, priceAway(side, 0), 3},
+                              TradeExecuted{9, 2, priceAway(side, 0), 4}, TradeExecuted{9, 3, priceAway(side, 1), 5},
+                              TradeExecuted{9, 4, side == Side::BUY ? 4000000000u : 1u, 2}, OrderExpired{9, 6}},
+                       6, FillStatus::PARTIAL, 4, context + " sweep");
+    expect(book.activeOrderCount() == 0 && !book.hasBids() && !book.hasAsks(),
+           context + " sweep: it should empty the opposite side and rest nothing");
+    expectSound(book, context + " sweep");
+
+    OrderBook partial = seededBook(side);
+    expectAcceptedWith(partial.submitOrder(market(9, side, 5)),
+                       Events{OrderAccepted{9, side, 0, 5}, TradeExecuted{9, 1, priceAway(side, 0), 3},
+                              TradeExecuted{9, 2, priceAway(side, 0), 2}},
+                       0, FillStatus::FILLED, 2, context + " filled");
+
+    OrderBook empty;
+    expectAcceptedWith(empty.submitOrder(market(9, side, 5)), Events{OrderAccepted{9, side, 0, 5}, OrderExpired{9, 5}}, 5,
+                       FillStatus::NONE, 0, context + " empty side");
+    expect(Access::nextSequenceNum(empty) == 2 && Access::nextTradeId(empty) == 1, context + " empty side: one number");
+
+    // Market FOK: all of it, or none.
+    OrderBook fillable = seededBook(side);
+    expectAcceptedWith(fillable.submitOrder(market(9, side, 12, TimeInForce::FOK)),
+                       Events{OrderAccepted{9, side, 0, 12}, TradeExecuted{9, 1, priceAway(side, 0), 3},
+                              TradeExecuted{9, 2, priceAway(side, 0), 4}, TradeExecuted{9, 3, priceAway(side, 1), 5}},
+                       0, FillStatus::FILLED, 3, context + " FOK fillable");
+    OrderBook unfillable = seededBook(side);
+    BookState before = capture(unfillable);
+    expectAcceptedWith(unfillable.submitOrder(market(9, side, 13, TimeInForce::FOK)),
+                       Events{OrderAccepted{9, side, 0, 13}, OrderExpired{9, 13}}, 13, FillStatus::NONE, 0,
+                       context + " FOK unfillable");
+    ++before.nextSequenceNum;
+    expect(capture(unfillable) == before, context + " FOK unfillable: only the sequence number should change");
+}
+
 // An expired order's ID is free again, as a filled one's is.
 void testExpiredIdIsFree() {
     OrderBook book;
@@ -330,6 +378,7 @@ int main() {
     for (Side side : {Side::BUY, Side::SELL}) {
         testImmediateOrCancel(side);
         testFillOrKill(side);
+        testMarketOrders(side);
     }
     testExpiredIdIsFree();
     testGoodTillCancelledRests();

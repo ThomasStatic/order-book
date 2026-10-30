@@ -186,6 +186,7 @@ An `OrderRequest` says how its order may trade. These rules add to the ones abov
 
 - **Expiry** ([ADR 0002](docs/adr/0002-unfilled-remainders-expire.md)). A well-formed request is always accepted, whatever the book holds. Whatever it may not trade or rest **expires**: an `OrderExpired` for the whole remainder ends its events, and the remainder still counts as the result's remaining quantity, so traded plus remaining equals accepted. For a `submitOrder(OrderRequest)` result, a remaining quantity above zero therefore does not mean the order rests; only the absence of a trailing `OrderExpired` says it did. An expiring order consumes a sequence number, and its ID is free again at once.
 - **Immediate-or-cancel** (`timeInForce = IOC`). It trades while it crosses, up to its limit price, at each resting price, then its remainder expires. One that does not cross, or faces an empty side, is accepted and wholly expired. It never rests. Like a GTC submission, it is not atomic: if an allocation fails, executions already made stand.
+- **Market orders** (`type = MARKET`, price 0, and `IOC` or `FOK`: a GTC market order is malformed, `TIME_IN_FORCE_NOT_ALLOWED`, and a price on one is `PRICE_NOT_ALLOWED`). It has **no price protection**: it trades at each resting price, as far through the opposite side as its quantity takes it, possibly the whole side, and its remainder expires. One facing an empty side is accepted and wholly expired. Its `OrderAccepted` reports price 0 (`price=MARKET` when printed). It is sized by quantity only.
 - **Fill-or-kill** (`timeInForce = FOK`). Before anything changes, a read-only walk sums the opposing levels' aggregates within its limit to decide whether it can fill its whole quantity, counting the trades it would make. If it can, it matches normally and nothing expires. If not, it makes no trades and its whole quantity expires (`FillStatus::NONE`, no trade ID consumed, the book otherwise untouched, nothing allocated). It is **strongly atomic**: it makes room for its whole result before it is numbered or trades, so if an allocation fails it throws with the book, the next sequence number, and the next trade ID unchanged.
 
 Worked example, from [`tests/replay/valid/price_time_priority.csv`](tests/replay/valid/price_time_priority.csv):
@@ -243,8 +244,8 @@ Everything is in namespace `order_book`, with headers in `include/order_book/`. 
   - `reserve`, a capacity hint.
   - Move-only, and not thread-safe.
 - **`order.hpp`, `order_request.hpp`, `side.hpp`, `order_type.hpp`, `time_in_force.hpp`, `fill_status.hpp`, `types.hpp`**: what a caller submits, and the types it is built from.
-  - `Order` is the resting record: its constructor checks its fields and throws, and it accepts only `LIMIT`.
-  - `OrderRequest` is a plain aggregate (`{id, side, price, quantity}`, then `type` and `timeInForce` (`time_in_force.hpp`: `GTC`, `IOC`, `FOK`), which default to a v1 limit order) whose construction never throws. `submitOrder(OrderRequest)` checks it, in a fixed order, and reports the first failing check as a rejected result: a zero ID, a zero price, a zero quantity, an invalid side, a type that is not an enumerator (`UNSUPPORTED_ORDER_TYPE`; only `LIMIT` exists so far), a time in force that is not an enumerator (`INVALID_TIME_IN_FORCE`), then an ID that is already live (`DUPLICATE_ORDER_ID`). See [Order behaviors](#order-behaviors) for what each instruction does. A rejection depends only on the request and on which IDs are live, changes nothing, and consumes no sequence number or trade ID.
+  - `Order` is the resting record: its constructor checks its fields and throws, and it accepts only `LIMIT`, the one type that can rest (`isSupportedOrderType`; `isValidOrderType` says whether a request's type is an enumerator).
+  - `OrderRequest` is a plain aggregate (`{id, side, price, quantity}`, then `type` and `timeInForce` (`time_in_force.hpp`: `GTC`, `IOC`, `FOK`), which default to a v1 limit order) whose construction never throws. `submitOrder(OrderRequest)` checks it, in a fixed order, and reports the first failing check as a rejected result: a zero ID, a zero price, a zero quantity, an invalid side, a type that is not an enumerator (`UNSUPPORTED_ORDER_TYPE`; `LIMIT` and `MARKET` exist so far), a price on a `MARKET` order (`PRICE_NOT_ALLOWED`; a zero price is refused only on other types), a time in force that is not an enumerator (`INVALID_TIME_IN_FORCE`), a `MARKET` order with GTC (`TIME_IN_FORCE_NOT_ALLOWED`), then an ID that is already live (`DUPLICATE_ORDER_ID`). See [Order behaviors](#order-behaviors) for what each instruction does. A rejection depends only on the request and on which IDs are live, changes nothing, and consumes no sequence number or trade ID.
 - **`submission_result.hpp`, `cancellation_result.hpp`, `trade.hpp`, `book_event.hpp`, `rejection_reason.hpp`**: what each command returns. Each result is built only through its factories (and the book's internal `ResultRecorder`, which checks every trade and event as it is appended), and holds its trades and lifecycle events in execution order. A rejected submission or cancellation is a result, not an exception.
   - Events: `OrderAccepted`, `OrderRejected`, `TradeExecuted`, `OrderCancelled`, `CancelRejected`, and, for the order behaviors being built toward v2.0.0, `OrderExpired`, `SelfTradePrevented`, `StopTriggered`, `OrderReplaced`, and `ReplaceRejected`. No command produces the last five yet.
   - An `OrderAccepted` at price 0 is an order with no limit price (a market or `STOP` order), and prints as `price=MARKET`.
@@ -503,7 +504,7 @@ All figures come from one machine (Ryzen 5 5600G, Windows 11, MSVC Release) and 
 **Scope**
 
 - **One instrument per book.** There are no symbols, sessions, auctions, or trading halts.
-- **Limit orders only.** No market, stop, iceberg, or hidden orders, and no time-in-force qualifiers (IOC, FOK, GTD). `addOrder` refuses an order that would cross, which resembles post-only, but it is not an order type.
+- **Order types (in progress toward v2.0.0).** Limit and market orders, with GTC, IOC, and FOK. No stop, iceberg, or hidden orders, no DAY or GTD (they need a clock), and no price protection for market orders. `addOrder` refuses an order that would cross, which resembles post-only, but it is not an order type.
 - **No modify or replace.** Changing an order means cancelling it and submitting again, which loses its time priority.
 - **No participants.** Orders carry no owner or account, so there is no self-trade prevention, no risk or credit check, and no per-participant limits.
 
@@ -517,7 +518,7 @@ All figures come from one machine (Ryzen 5 5600G, Windows 11, MSVC Release) and 
 
 - **Single-threaded and not thread-safe.** A caller must serialize all access to a book.
 - **In memory only.** There is no persistence, recovery, networking, or market-data publication. Events are returned to the caller, not published, and the replay format is the only way to reconstruct a session.
-- **`submitOrder` is not atomic under allocation failure.** Executions made before the failure stand, and the book stays consistent, but the trades and events are lost with the exception.
+- **`submitOrder` is not atomic under allocation failure** for a GTC or IOC order (a FOK is). Executions made before the failure stand, and the book stays consistent, but the trades and events are lost with the exception.
 - **Memory is not returned early.** The node pool and the index keep their peak size until the book is destroyed.
 - **The index hash is not hardened** against adversarially chosen IDs (see [Complexity](#complexity)).
 
@@ -531,7 +532,7 @@ All figures come from one machine (Ryzen 5 5600G, Windows 11, MSVC Release) and 
 
 Roughly in order of how much of the existing design they reuse:
 
-- **Order types.** Add IOC and FOK, which match and then discard or refuse the remainder instead of resting it. Add market orders and a post-only type. The matching loop and result types already separate matching from resting.
+- **Order types.** A post-only type, stops, and self-trade prevention are being built now (spec [#40](https://github.com/ThomasStatic/order-book/issues/40)); beyond them, iceberg and pegged orders.
 - **Modify and replace.** A quantity decrease could keep time priority, and a price change or increase could lose it, as on most venues. The index already locates the order in O(1).
 - **Multiple instruments.** Keep one `OrderBook` per symbol behind a router that owns symbol lookup and per-instrument tick and lot sizes.
 - **Participants.** Add an owner ID to `Order`, enabling self-trade prevention, per-participant limits, and cancel-all-for-participant.

@@ -19,7 +19,8 @@ constexpr CommandIntent allIntents[] = {
     CommandIntent::NEW_ID,          CommandIntent::REUSED_ID,       CommandIntent::DUPLICATE_ACTIVE_ID,
     CommandIntent::ZERO_ORDER_ID,   CommandIntent::ZERO_PRICE,      CommandIntent::ZERO_QUANTITY,
     CommandIntent::INVALID_SIDE,    CommandIntent::UNSUPPORTED_TYPE, CommandIntent::MARKED_FILLED,
-    CommandIntent::INVALID_TIME_IN_FORCE,
+    CommandIntent::INVALID_TIME_IN_FORCE, CommandIntent::MARKET_WITH_PRICE, CommandIntent::MARKET_GTC,
+    CommandIntent::TYPE_CANNOT_REST,
     CommandIntent::CANCEL_ACTIVE,   CommandIntent::CANCEL_REMOVED,  CommandIntent::CANCEL_UNKNOWN,
     CommandIntent::CANCEL_ZERO_ID,  CommandIntent::UNSPECIFIED};
 
@@ -58,9 +59,20 @@ Side parseSide(const std::string& text) {
     return static_cast<Side>(parseNumber(text, std::numeric_limits<int>::max(), "side"));
 }
 
+std::string typeText(OrderType type) {
+    switch (type) {
+        case OrderType::LIMIT: return "LIMIT";
+        case OrderType::MARKET: return "MARKET";
+    }
+    return std::to_string(static_cast<int>(type));
+}
+
 OrderType parseType(const std::string& text) {
     if (text == "LIMIT") {
         return OrderType::LIMIT;
+    }
+    if (text == "MARKET") {
+        return OrderType::MARKET;
     }
     return static_cast<OrderType>(parseNumber(text, std::numeric_limits<int>::max(), "type"));
 }
@@ -110,6 +122,9 @@ const char* intentName(CommandIntent intent) {
         case CommandIntent::UNSUPPORTED_TYPE: return "UNSUPPORTED_TYPE";
         case CommandIntent::MARKED_FILLED: return "MARKED_FILLED";
         case CommandIntent::INVALID_TIME_IN_FORCE: return "INVALID_TIME_IN_FORCE";
+        case CommandIntent::MARKET_WITH_PRICE: return "MARKET_WITH_PRICE";
+        case CommandIntent::MARKET_GTC: return "MARKET_GTC";
+        case CommandIntent::TYPE_CANNOT_REST: return "TYPE_CANNOT_REST";
         case CommandIntent::CANCEL_ACTIVE: return "CANCEL_ACTIVE";
         case CommandIntent::CANCEL_REMOVED: return "CANCEL_REMOVED";
         case CommandIntent::CANCEL_UNKNOWN: return "CANCEL_UNKNOWN";
@@ -158,7 +173,7 @@ std::string formatCommand(const Command& command) {
         line = "SUBMIT id=" + std::to_string(command.orderId) + " side=" + sideText(command.side) +
                " price=" + std::to_string(command.price) + " qty=" + std::to_string(command.quantity);
         if (command.orderType != OrderType::LIMIT) {
-            line += " type=" + std::to_string(static_cast<int>(command.orderType));
+            line += " type=" + typeText(command.orderType);
         }
         if (command.timeInForce != TimeInForce::GTC) {
             line += " tif=" + timeInForceText(command.timeInForce);

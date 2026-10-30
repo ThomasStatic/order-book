@@ -239,6 +239,13 @@ std::optional<std::string> checkBehavior(const OrderBook& book, const Command& c
     if (command.type != CommandType::SUBMIT || command.overload != SubmitOverload::REQUEST || !actual.outcome.success) {
         return std::nullopt;
     }
+    if (command.orderType == OrderType::MARKET) {
+        const std::vector<BookEvent>& events = actual.outcome.events;
+        const auto* acceptance = events.empty() ? nullptr : std::get_if<OrderAccepted>(&events.front());
+        if (acceptance == nullptr || acceptance->price != 0) {
+            return "a market order's acceptance should report price 0";
+        }
+    }
     if (command.timeInForce == TimeInForce::IOC || command.timeInForce == TimeInForce::FOK) {
         const char* kind = command.timeInForce == TimeInForce::IOC ? "an IOC" : "a FOK";
         std::optional<std::string> resting = locateInLevels(Access::bids(book), command.orderId, Side::BUY);

@@ -330,8 +330,12 @@ void testMalformedOrdersAreRejected() {
                                 context + " side " + std::to_string(rawSide));
     }
 
+    // An Order accepts only a type that can rest: MARKET is an enumerator, but cannot.
+    Order marketOrder = crossingBuy();
+    Access::setOrderType(marketOrder, OrderType::MARKET);
+    expectRejectedUnchanged(book, marketOrder, RejectionReason::UNSUPPORTED_ORDER_TYPE, context + " market Order");
     Order badType = crossingBuy();
-    Access::setOrderType(badType, static_cast<OrderType>(1));
+    Access::setOrderType(badType, static_cast<OrderType>(9));
     expectRejectedUnchanged(book, badType, RejectionReason::UNSUPPORTED_ORDER_TYPE, context + " unsupported type");
 
     // Reachable without test access: marked FILLED while quantity remains.
@@ -597,6 +601,27 @@ void testMalformedRequestsAreRejectedInOrder() {
     expectRequestRejectedUnchanged(book, OrderRequest{9, Side::BUY, 102, 20, badType},
                                    RejectionReason::UNSUPPORTED_ORDER_TYPE, context + " type not an enumerator");
     const order_book::TimeInForce badTimeInForce = static_cast<order_book::TimeInForce>(9);
+    using order_book::TimeInForce;
+    // A market order needs no price, so its zero price passes check 2; it must carry none (6)
+    // and must not be GTC (7b, after 7a's enumerator check).
+    expectRequestRejectedUnchanged(book, OrderRequest{9, Side::BUY, 0, 0, OrderType::MARKET, TimeInForce::IOC},
+                                   RejectionReason::INVALID_QUANTITY, context + " market with zero quantity");
+    expectRequestRejectedUnchanged(book, OrderRequest{9, badSide, 0, 20, OrderType::MARKET, TimeInForce::IOC},
+                                   RejectionReason::INVALID_SIDE, context + " market with invalid side");
+    expectRequestRejectedUnchanged(book, OrderRequest{9, Side::BUY, 5, 20, OrderType::MARKET, TimeInForce::IOC},
+                                   RejectionReason::PRICE_NOT_ALLOWED, context + " market with a price");
+    expectRequestRejectedUnchanged(book, OrderRequest{9, Side::SELL, 5, 20, OrderType::MARKET, badTimeInForce},
+                                   RejectionReason::PRICE_NOT_ALLOWED, context + " market price before time in force");
+    expectRequestRejectedUnchanged(book, OrderRequest{9, Side::SELL, 0, 20, OrderType::MARKET, badTimeInForce},
+                                   RejectionReason::INVALID_TIME_IN_FORCE, context + " market with invalid time in force");
+    expectRequestRejectedUnchanged(book, OrderRequest{9, Side::BUY, 0, 20, OrderType::MARKET, TimeInForce::GTC},
+                                   RejectionReason::TIME_IN_FORCE_NOT_ALLOWED, context + " market GTC");
+    expectRequestRejectedUnchanged(book, OrderRequest{9, Side::BUY, 0, 20, OrderType::MARKET},
+                                   RejectionReason::TIME_IN_FORCE_NOT_ALLOWED, context + " market with the default GTC");
+    expectRequestRejectedUnchanged(book, OrderRequest{4, Side::BUY, 0, 20, OrderType::MARKET, TimeInForce::GTC},
+                                   RejectionReason::TIME_IN_FORCE_NOT_ALLOWED, context + " market GTC before duplicate");
+    expectRequestRejectedUnchanged(book, OrderRequest{4, Side::BUY, 0, 20, OrderType::MARKET, TimeInForce::IOC},
+                                   RejectionReason::DUPLICATE_ORDER_ID, context + " market duplicate");
     expectRequestRejectedUnchanged(book, OrderRequest{9, Side::BUY, 102, 20, badType, badTimeInForce},
                                    RejectionReason::UNSUPPORTED_ORDER_TYPE, context + " type before time in force");
     expectRequestRejectedUnchanged(book, OrderRequest{9, Side::BUY, 102, 20, OrderType::LIMIT, badTimeInForce},

@@ -37,6 +37,9 @@ enum class CommandIntent {
     UNSUPPORTED_TYPE,
     MARKED_FILLED,
     INVALID_TIME_IN_FORCE,
+    MARKET_WITH_PRICE,  // PRICE_NOT_ALLOWED
+    MARKET_GTC,         // TIME_IN_FORCE_NOT_ALLOWED
+    TYPE_CANNOT_REST,   // through submitOrder(Order): a valid type other than LIMIT
     // A valid cancellation, then intentionally invalid ones.
     CANCEL_ACTIVE,
     CANCEL_REMOVED,  // filled or cancelled already

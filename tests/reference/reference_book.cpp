@@ -68,13 +68,13 @@ ExpectedOutcome ReferenceBook::reject(OrderId orderId, Quantity quantity, Reject
 
 namespace {
 
-// The checks every submission shares, in the documented order: a zero ID, a zero price, a zero
-// quantity, then a side that is neither BUY nor SELL.
-std::optional<RejectionReason> fieldRejection(const OrderRequest& request) {
+// The checks every submission shares, in the documented order: a zero ID, a zero price (none
+// is needed on a market order), a zero quantity, then a side that is neither BUY nor SELL.
+std::optional<RejectionReason> fieldRejection(const OrderRequest& request, bool priceRequired) {
     if (request.id == 0) {
         return RejectionReason::INVALID_ORDER_ID;
     }
-    if (request.price == 0) {
+    if (priceRequired && request.price == 0) {
         return RejectionReason::INVALID_PRICE;
     }
     if (request.quantity == 0) {
@@ -89,13 +89,20 @@ std::optional<RejectionReason> fieldRejection(const OrderRequest& request) {
 }  // namespace
 
 ExpectedOutcome ReferenceBook::submit(const OrderRequest& request) {
-    std::optional<RejectionReason> reason = fieldRejection(request);
-    if (!reason && request.type != OrderType::LIMIT) {
+    const bool market = request.type == OrderType::MARKET;
+    std::optional<RejectionReason> reason = fieldRejection(request, !market);
+    if (!reason && request.type != OrderType::LIMIT && !market) {
         reason = RejectionReason::UNSUPPORTED_ORDER_TYPE;
+    }
+    if (!reason && market && request.price != 0) {
+        reason = RejectionReason::PRICE_NOT_ALLOWED;
     }
     if (!reason && request.timeInForce != TimeInForce::GTC && request.timeInForce != TimeInForce::IOC &&
         request.timeInForce != TimeInForce::FOK) {
         reason = RejectionReason::INVALID_TIME_IN_FORCE;
+    }
+    if (!reason && market && request.timeInForce == TimeInForce::GTC) {
+        reason = RejectionReason::TIME_IN_FORCE_NOT_ALLOWED;
     }
     if (!reason && resting.contains(request.id)) {
         reason = RejectionReason::DUPLICATE_ORDER_ID;
@@ -107,7 +114,7 @@ ExpectedOutcome ReferenceBook::submit(const OrderRequest& request) {
 }
 
 ExpectedOutcome ReferenceBook::submitOrder(const OrderRequest& fields, bool markedFilled) {
-    std::optional<RejectionReason> reason = fieldRejection(fields);
+    std::optional<RejectionReason> reason = fieldRejection(fields, true);
     if (!reason && fields.type != OrderType::LIMIT) {
         reason = RejectionReason::UNSUPPORTED_ORDER_TYPE;  // only a LIMIT order can rest
     }
@@ -169,7 +176,7 @@ template <typename Levels>
 void ReferenceBook::planAgainst(const Levels& levels, Side side, Price limitPrice, Quantity quantity,
                                 MatchPlan& matchPlan) const {
     for (const auto& [price, queue] : levels) {
-        const bool reaches = side == Side::BUY ? price <= limitPrice : price >= limitPrice;
+        const bool reaches = limitPrice == 0 || (side == Side::BUY ? price <= limitPrice : price >= limitPrice);
         if (!reaches) {
             return;
         }

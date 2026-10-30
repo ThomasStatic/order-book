@@ -107,8 +107,8 @@ public:
     ExpectedOutcome submitOrder(const OrderRequest& fields, bool markedFilled);
     ExpectedOutcome cancel(OrderId orderId);
 
-    // The plan for an incoming order on `side` with this limit price and quantity. Changes
-    // nothing.
+    // The plan for an incoming order on `side` with this limit price (0 for none, a market
+    // order) and quantity. Changes nothing.
     MatchPlan plan(Side side, Price limitPrice, Quantity quantity) const;
 
     const IdPool& restingIds() const { return resting; }

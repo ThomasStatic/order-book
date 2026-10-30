@@ -32,16 +32,25 @@ namespace order_book::checks {
     // Why a request is malformed, by the first failing check, or nothing if it is well
     // formed. It reads only the request, never a book: whether its ID is live is the
     // book's check, made after this one.
+    // The checks, numbered as in the spec's request table: 1-4 the fields (a price is needed
+    // unless the type has none; an invalid type needs one, keeping v1's order), 5 the type, 6 a
+    // price on a type that has none, 7a the time in force, 7b a MARKET order that is GTC.
     inline std::optional<RejectionReason> requestReason(const OrderRequest& request) {
         if(const std::optional<RejectionReason> reason =
-               fieldReason(request.id, request.price, true, request.quantity, request.side)) {
+               fieldReason(request.id, request.price, !hasNoPrice(request.type), request.quantity, request.side)) {
             return reason;
         }
         if(!isValidOrderType(request.type)) {
             return RejectionReason::UNSUPPORTED_ORDER_TYPE;
         }
+        if(hasNoPrice(request.type) && request.price != 0) {
+            return RejectionReason::PRICE_NOT_ALLOWED;
+        }
         if(!isValidTimeInForce(request.timeInForce)) {
             return RejectionReason::INVALID_TIME_IN_FORCE;
+        }
+        if(request.type == OrderType::MARKET && request.timeInForce == TimeInForce::GTC) {
+            return RejectionReason::TIME_IN_FORCE_NOT_ALLOWED;
         }
         return std::nullopt;
     }

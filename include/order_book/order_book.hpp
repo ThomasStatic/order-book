@@ -95,8 +95,10 @@ namespace order_book {
         // match it, build the result, then rest any remainder (GTC) or expire it (IOC). A FOK
         // instead decides first whether it fills, makes room for its whole result, and only
         // then is numbered and matched, so it either completes or throws having changed nothing.
-        SubmissionResult matchAndRest(Order& incoming, TimeInForce timeInForce);
-        SubmissionResult fillOrKill(Order& incoming);
+        // acceptance is what the result reports: the incoming order as submitted, at price 0 for
+        // a market order, which runs as a limit order at the furthest price on its side.
+        SubmissionResult matchAndRest(Order& incoming, const OrderAccepted& acceptance, TimeInForce timeInForce);
+        SubmissionResult fillOrKill(Order& incoming, const OrderAccepted& acceptance);
 
         // Fills resting orders at one price level in FIFO order, unindexing fully filled
         // orders and erasing the level once it is empty. It makes no trades and reports no
@@ -194,10 +196,13 @@ namespace order_book {
         SubmissionResult submitOrder(Order incoming);
 
         // Submits a request. It is checked first, and a malformed one (by the first failing
-        // check: a zero ID, a zero price, a zero quantity, an invalid side, a type that is not
-        // an enumerator (only LIMIT is accepted for now, and any other type is
-        // UNSUPPORTED_ORDER_TYPE), then a time in force that is not an enumerator) or one whose
-        // ID is live is a REJECTED result that changes nothing. A well-formed request is always
+        // check: a zero ID, a zero price other than on a MARKET order, a zero quantity, an
+        // invalid side, a type that is not an enumerator (UNSUPPORTED_ORDER_TYPE), a price on a
+        // MARKET order (PRICE_NOT_ALLOWED), a time in force that is not an enumerator, then a
+        // MARKET order with GTC (TIME_IN_FORCE_NOT_ALLOWED)) or one whose ID is live is a
+        // REJECTED result that changes nothing. A MARKET order has no price protection: it trades
+        // at each resting price, as far through the opposite side as its quantity takes it, and
+        // its acceptance reports price 0; as IOC or FOK, its remainder expires. A well-formed request is always
         // accepted and matched like submitOrder(Order); then a GTC remainder rests, and an IOC
         // remainder expires instead (a trailing OrderExpired for the whole remainder, which still
         // counts as the result's remaining quantity). An IOC that does not cross, or faces an

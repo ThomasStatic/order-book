@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -247,7 +248,9 @@ namespace order_book {
         if(const std::optional<RejectionReason> reason = validateNewOrder(incoming)) {
             return SubmissionResult::rejected(incoming.getOrderId(), incoming.getRemainingQuantity(), *reason);
         }
-        return matchAndRest(incoming, TimeInForce::GTC);
+        const OrderAccepted acceptance{incoming.getOrderId(), incoming.getSide(), incoming.getPriceTick(),
+                                       incoming.getRemainingQuantity()};
+        return matchAndRest(incoming, acceptance, TimeInForce::GTC);
     }
 
     SubmissionResult OrderBook::submitOrder(OrderRequest request) {
@@ -255,22 +258,26 @@ namespace order_book {
         if(const std::optional<RejectionReason> reason = validateNewRequest(request)) {
             return SubmissionResult::rejected(request.id, request.quantity, *reason);
         }
+        // A market order has no limit, so it runs as a limit at the furthest price on its side,
+        // which every resting price is within; it never rests, so that price is never seen.
+        const Price limit = request.type != OrderType::MARKET ? request.price
+                          : request.side == Side::BUY     ? std::numeric_limits<Price>::max()
+                                                          : Price{1};
         // Well formed, so the constructor cannot refuse it; matchAndRest numbers it.
-        Order incoming(request.id, request.price, request.quantity, nextSequenceNum, request.side);
-        return matchAndRest(incoming, request.timeInForce);
+        Order incoming(request.id, limit, request.quantity, nextSequenceNum, request.side);
+        return matchAndRest(incoming, OrderAccepted{request.id, request.side, request.price, request.quantity},
+                            request.timeInForce);
     }
 
-    SubmissionResult OrderBook::matchAndRest(Order& incoming, TimeInForce timeInForce) {
+    SubmissionResult OrderBook::matchAndRest(Order& incoming, const OrderAccepted& acceptance,
+                                             TimeInForce timeInForce) {
         if(timeInForce == TimeInForce::FOK) {
-            return fillOrKill(incoming);
+            return fillOrKill(incoming, acceptance);
         }
         // Accepted: numbered once, before matching, and the remainder rests with this same
         // number. Consumed even if matching throws, since executions may already stand.
         incoming.assignSequenceNum(nextSequenceNum);
         advanceSequenceNum();
-        // Captured before matching, so it reports the quantity as submitted.
-        const OrderAccepted acceptance{incoming.getOrderId(), incoming.getSide(), incoming.getPriceTick(),
-                                       incoming.getRemainingQuantity()};
 
         // Not atomic: if an allocation fails mid-match, while building the result, or while
         // resting the remainder, executions already made stay made and their trades and events
@@ -294,9 +301,7 @@ namespace order_book {
         return result;
     }
 
-    SubmissionResult OrderBook::fillOrKill(Order& incoming) {
-        const OrderAccepted acceptance{incoming.getOrderId(), incoming.getSide(), incoming.getPriceTick(),
-                                       incoming.getRemainingQuantity()};
+    SubmissionResult OrderBook::fillOrKill(Order& incoming, const OrderAccepted& acceptance) {
         const std::optional<std::size_t> trades = fillOrKillTrades(incoming);
         incoming.assignSequenceNum(nextSequenceNum);
         ResultRecorder recorder(acceptance);
