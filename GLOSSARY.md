@@ -172,3 +172,41 @@ _Avoid_: load, recover
 **Recovery**:
 Bringing the books back after a stop or crash: restoring each from its checkpoint, then replaying the command log after it.
 _Avoid_: restore, restart
+
+## The gateway
+
+**Gateway**:
+The part of the engine that clients talk to over TCP. It takes commands from connections, refuses those that may not enter, and sends each command's events back to whoever sent it.
+_Avoid_: server, front end
+
+**Gateway thread**:
+One of the threads that serve connections. A connection stays on one gateway thread for its whole life.
+_Avoid_: I/O thread, network thread
+
+**Connection**:
+One TCP connection from a client to the gateway. Nothing about it outlives it: no identity, no numbering, nothing to resume. Its resting orders are unaffected when it closes, and the book never knows which connection sent a command.
+_Avoid_: session (nothing here survives a reconnect, and the word also names a trading session), client (a client may open several)
+
+**Frame**:
+One message on a connection, in either direction.
+_Avoid_: packet, message
+
+**Correlation**:
+A number the client picks for a command, which every response to that command echoes. The engine never reads it or requires it to be unique.
+_Avoid_: request ID, client order ID
+
+**In flight**:
+Said of a command handed to a command queue whose response has not been fully received back. A command refused at entry is never in flight.
+_Avoid_: pending (a pending stop is something else), outstanding
+
+**Backlogged**:
+Said of a connection that is no longer being read because its client has fallen behind on its responses. It resumes once the client catches up, and is closed if it falls too far behind. Parked means the engine cannot take more; backlogged means the client is not taking its answers.
+_Avoid_: parked, throttled, slow consumer
+
+**Refused**:
+Said of a command the gateway turns away at entry, so that it never reaches a command queue or the command log: its instrument is unknown, it is malformed, or the engine is stopping. A refused command has certainly not run.
+_Avoid_: rejected (a rejection is the book's answer to a command in its command sequence, though a malformed command is refused with the same reason the book would give)
+
+**Protocol error**:
+A fault in a connection's frames rather than in a command: nothing can answer it as a command, so the gateway answers what is in flight, reports the error, and closes the connection.
+_Avoid_: reject, parse error (a parse error belongs to a file)
