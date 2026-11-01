@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "order_book/order_book.hpp"
+#include "order_book/replay_parser.hpp"
 #include "workload.hpp"
 
 // Runs generated workloads against the book and times them. Only the timed commands are
@@ -19,10 +20,12 @@ namespace order_book::benchmark {
 // docs/replay-format.md from text already in memory: parsing, the replay engine's dispatch
 // and event collection, the final snapshot, and the formatted summary. Disk I/O is left out
 // of both, since it would mostly measure the file cache.
-enum class BenchmarkKind { CORE, REPLAY };
+// REPLAY_LOG is REPLAY's path with the same commands as a binary command log in memory, so the
+// difference between the two is the cost of the text.
+enum class BenchmarkKind { CORE, REPLAY, REPLAY_LOG };
 
 const char* benchmarkKindName(BenchmarkKind kind);
-// Throws std::invalid_argument on a name other than core or replay.
+// Throws std::invalid_argument on a name other than core, replay, or replay-log.
 BenchmarkKind parseBenchmarkKind(std::string_view name);
 
 // One timed run of a workload's timed commands on a freshly preloaded book.
@@ -83,5 +86,10 @@ std::vector<Measurement> runRepeated(const Workload& workload, BenchmarkKind kin
 std::string renderReplayCsv(const std::vector<BenchmarkCommand>& commands);
 // A behavior workload's commands as v2 replay rows, under the v2 header.
 std::string renderReplayCsv(const std::vector<BehaviorCommand>& commands);
+
+// The workload's timed commands as the replay records they are, naming no instrument's book.
+std::vector<order_book::replay::ReplayRecord> workloadRecords(const Workload& workload, order_book::replay::Symbol symbol);
+// The same as a command log in memory, with no placement at position 0.
+std::string renderCommandLog(const Workload& workload, order_book::replay::Symbol symbol);
 
 }  // namespace order_book::benchmark

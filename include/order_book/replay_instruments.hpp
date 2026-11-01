@@ -48,6 +48,8 @@ namespace order_book::replay {
         bool events = false;  // every event, which covers trades
         bool book = false;
         bool statistics = true;
+        // From several files: an event's line is an index into these, which replace "line N".
+        const std::vector<std::string>* lineTags = nullptr;
     };
 
     // One book's output: the trades or events asked for, a blank line if statistics follow any,

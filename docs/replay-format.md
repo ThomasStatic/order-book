@@ -307,6 +307,10 @@ sequence,command,order_id,side,price,quantity,order_type,time_in_force,stop_pric
 
 **Output.** One section per symbol, sorted by symbol bytes, each `symbol <text>` then exactly what one book prints, with a blank line between sections. A one-symbol file gets its heading too, and a file with no commands prints nothing. `--symbol SYM` lets a v1 or v2 file stand in for one instrument, with the same output, and on a v3 file it is a usage error. `--no-statistics` leaves out the statistics.
 
+**Several inputs.** `replay` takes several paths, and a directory means every log file in it. Logs an engine wrote run by shard then first position, whatever the argument order, and it exits 1 on a shard's logs that don't start at position 0, a gap between files, or a symbol in two shards' logs. v3 CSVs and converted logs stay in argument order. A v1 or v2 file with no `--symbol` runs alone, before any file that names symbols. An event then reads `<file name>:<line>:`, since lines repeat across files.
+
+**`convert <path>... --out <path> [--symbol SYM]`.** Direction comes from the first bytes: a CSV becomes a log with no placement at position 0, and a log a v3 CSV. One input keeps its interleaving. Several inputs or a directory make `--out` a directory of `commands-<symbol>.csv`. `--symbol` is required for v1 and v2 input and a usage error otherwise. An existing output is refused, and a damaged input's good prefix is still written, with exit 1.
+
 If a file stops part-way, every record before the error runs, all sections print, then the diagnostic, and it exits 1. If a book fails, only its diagnostic prints, prefixed with its symbol, and it exits 3: books run in symbol order, so later ones do not run. `--validate` applies per book, and a failed `final` check reruns that book alone with per-command checks.
 
 ## Versioning and scope

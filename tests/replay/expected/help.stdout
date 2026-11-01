@@ -1,5 +1,6 @@
-usage: order_book_cli replay <file.csv> [--trades] [--events] [--book] [--validate none|final|per-command]
-                                        [--symbol SYM] [--no-statistics]
+usage: order_book_cli replay <path>... [--trades] [--events] [--book] [--validate none|final|per-command]
+                                       [--symbol SYM] [--no-statistics]
+       order_book_cli convert <path>... --out <path> [--symbol SYM]
        order_book_cli demo
        order_book_cli --help
 
@@ -8,7 +9,10 @@ Replays a CSV command file (docs/replay-format.md) or a binary command log
 prints replay statistics. Never prompts: everything is set on the command line.
 
 commands:
-  replay <file.csv>  replay the file, then print its statistics
+  replay <path>...   replay the input, then print its statistics; a directory means every
+                     log file in it
+  convert <path>...  turn a CSV into a log, or a log into a v3 CSV; several inputs or a
+                     directory make --out a directory of commands-<symbol>.csv
   demo               print the events of a short scripted session
   help               print this help
 

@@ -152,6 +152,7 @@ add_library(order_book_replay STATIC
     src/command_log.cpp
     src/replay_parser.cpp
     src/replay_engine.cpp
+    src/replay_inputs.cpp
     src/replay_instruments.cpp
     src/replay_summary.cpp
 )
@@ -548,8 +549,29 @@ if(BUILD_TESTING)
     order_book_add_replay_cli_test(usage_unknown_command
         ARGS play valid/basic.csv EXIT 2 STDERR usage_unknown_command.stderr)
     order_book_add_replay_cli_test(usage_missing_file ARGS replay --trades EXIT 2 STDERR usage_missing_file.stderr)
-    order_book_add_replay_cli_test(usage_two_files
-        ARGS replay valid/basic.csv valid/limits.csv EXIT 2 STDERR usage_two_files.stderr)
+    # Several inputs: v1 and v2 files run one at a time; files that name symbols run together.
+    order_book_add_replay_cli_test(two_v1_files
+        ARGS replay valid/header_only.csv valid/v2_header_only.csv EXIT 0 STDOUT two_header_only.stdout)
+    order_book_add_replay_cli_test(two_v3_files
+        ARGS replay valid/v3_two_instruments.csv log/every_command.oblog --events --no-statistics
+        EXIT 0 STDOUT two_named_inputs.stdout)
+    order_book_add_replay_cli_test(directory_of_logs ARGS replay log/shards --no-statistics --events EXIT 0 STDOUT shard_logs.stdout)
+    order_book_add_replay_cli_test(logs_not_from_zero
+        ARGS replay log/shards/shard0-part2.oblog EXIT 1 STDERR logs_not_from_zero.stderr)
+    order_book_add_replay_cli_test(logs_with_a_gap
+        ARGS replay log/shards/shard0-part1.oblog log/gap/shard0-part3.oblog EXIT 1 STDERR logs_with_a_gap.stderr)
+    order_book_add_replay_cli_test(symbol_in_two_shards
+        ARGS replay log/shards log/moved/shard2-aapl.oblog EXIT 1 STDERR symbol_in_two_shards.stderr)
+    order_book_add_replay_cli_test(usage_convert_no_out ARGS convert valid/basic.csv EXIT 2 STDERR usage_convert_no_out.stderr)
+    order_book_add_replay_cli_test(usage_convert_no_input ARGS convert --out somewhere EXIT 2 STDERR usage_convert_no_input.stderr)
+    order_book_add_replay_cli_test(usage_convert_needs_symbol
+        ARGS convert valid/basic.csv --out ${CMAKE_CURRENT_BINARY_DIR}/no-such-output.oblog
+        EXIT 2 STDERR usage_convert_needs_symbol.stderr)
+    order_book_add_replay_cli_test(usage_convert_symbol_on_v3
+        ARGS convert valid/v3_one_instrument.csv --symbol AAPL --out ${CMAKE_CURRENT_BINARY_DIR}/no-such-output.oblog
+        EXIT 2 STDERR usage_convert_symbol_on_v3.stderr)
+    order_book_add_replay_cli_test(convert_existing_output
+        ARGS convert valid/v3_one_instrument.csv --out valid/basic.csv EXIT 1 STDERR convert_existing_output.stderr)
     order_book_add_replay_cli_test(usage_unknown_option
         ARGS replay valid/basic.csv --trade EXIT 2 STDERR usage_unknown_option.stderr)
     order_book_add_replay_cli_test(usage_missing_validation

@@ -686,8 +686,10 @@ void testRunsStayInsideTheirCapacity() {
             const Workload workload = generateWorkload(scaledDown(config), 300, 7);
             runOnce(workload, BenchmarkKind::CORE);
             runOnce(workload, BenchmarkKind::REPLAY);
+            runOnce(workload, BenchmarkKind::REPLAY_LOG);
         }
     }
+    expect(parseBenchmarkKind("replay-log") == BenchmarkKind::REPLAY_LOG, "the log path has a name");
 
     Workload tampered = generateWorkload(scaledDown(findWorkload("small-book")), 300, 7);
     tampered.peak = order_book::BookCapacity{1, 0, 1};

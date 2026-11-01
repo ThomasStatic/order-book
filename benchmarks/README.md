@@ -18,7 +18,7 @@ With the Visual Studio generator, build and run the Release configuration: `cmak
 | `--workload NAME` | run this workload; repeat for several (default: all eleven, the five v1 workloads then the six behavior workloads) |
 | `--size smoke\|standard\|extended` | 10,000, 100,000 (default), or 1,000,000 timed commands per run |
 | `--commands N` | exactly N timed commands, instead of a size (recorded as size `custom`) |
-| `--kind core\|replay\|both` | which path to time (default `core`, see below) |
+| `--kind core\|replay\|replay-log\|both` | which path to time (default `core`, see below); `both` is `core` and `replay` |
 | `--repetitions N` | measured runs per workload and kind (default 5) |
 | `--warmup N` | runs before those, recorded but left out of summaries (default 1) |
 | `--seed N` | generator seed (default 42) |
@@ -47,7 +47,9 @@ The two kinds differ only in what sits between the commands and the book:
 - **`core`** times the engine alone. In the five v1 workloads each command is an `Order` passed straight to `submitOrder`, or an ID passed to `cancelOrder`; in the behavior workloads it is an `OrderRequest` passed to `submitOrder`, a `ReplaceRequest` passed to `replaceOrder`, or an ID passed to `cancelOrder`. Inside the timed loop, only each result's trades, volume, and rejections are tallied (and, for a behavior workload, its events: expirations, prevented self-trades, triggered stops). That keeps the results from being optimized away and is needed for the outcome check. No CSV is involved.
 - **`replay`** times the end-to-end path of [`docs/replay-format.md`](../docs/replay-format.md): CSV parsing, the replay engine's dispatch and event collection, the final snapshot, and the formatted summary. The same commands are first rendered as CSV text in memory (untimed): six-column v1 rows for the v1 workloads, twelve-column v2 rows for the behavior workloads. Reading a file from disk is left out on purpose, since it would mostly measure the OS file cache. Invariant validation is `none`, so this path does no checking work that `core` skips.
 
-The difference between the two kinds is the cost of the replay layers.
+- **`replay-log`** is `replay` with the same commands as a binary command log in memory instead of CSV text, which is what a `--kind` of its own keeps apart from `replay`'s unchanged path.
+
+The difference between the kinds is the cost of the replay layers.
 
 ## Workloads
 
@@ -166,6 +168,11 @@ Recorded results live in `results/`, one directory per session set, kept byte fo
 | | `reserve-capacity` | `reserve(BookCapacity)` on a new book, at the same sizes, with a quarter as many stops and a tenth as many levels per side |
 | | `new-level-near` | A resting order on a new level just behind the touch, at 2,000, 20,000, and 200,000 levels per side |
 | | `new-level-far` | The same, behind every other level |
+| `log` | `log-encode` | One record encoded and checksummed, chained, on a workload's real commands |
+| | `log-read` | `CommandLogReader` on those commands in memory, reading and verifying |
+| | `csv-read` | `ReplayReader` on the same commands as v3 CSV text |
+| `entry` | `symbol-compare` | One comparison of two symbols |
+| | `execute-command` | One command through `executeCommand`, overwriting a reused result |
 | `controls` | `cpu-loop` | A loop touching no memory |
 | | `memory-walk` | A random cycle through memory, one cache line at a time, at 256 KiB, 8 MiB, and 256 MiB |
 

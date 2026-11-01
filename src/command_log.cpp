@@ -1,6 +1,7 @@
 #include "order_book/command_log.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cassert>
 #include <cstring>
 #include <fstream>
@@ -77,16 +78,25 @@ namespace order_book::replay {
             store8(out, offset + 1, static_cast<std::uint8_t>(value >> 8));
         }
 
-        void store32(std::span<std::byte> out, std::size_t offset, std::uint32_t value) noexcept {
-            for (std::size_t i = 0; i < 4; ++i) {
-                store8(out, offset + i, static_cast<std::uint8_t>((value >> (i * 8)) & 0xFFU));
+        // A memcpy where the machine is little-endian: MSVC does not merge a loop of byte stores,
+        // and a record's encode and read run per command.
+        template <typename Word>
+        void storeWord(std::span<std::byte> out, std::size_t offset, Word value) noexcept {
+            if constexpr (std::endian::native == std::endian::little) {
+                std::memcpy(out.data() + offset, &value, sizeof(value));
+            } else {
+                for (std::size_t i = 0; i < sizeof(value); ++i) {
+                    store8(out, offset + i, static_cast<std::uint8_t>((value >> (i * 8)) & 0xFFU));
+                }
             }
         }
 
+        void store32(std::span<std::byte> out, std::size_t offset, std::uint32_t value) noexcept {
+            storeWord(out, offset, value);
+        }
+
         void store64(std::span<std::byte> out, std::size_t offset, std::uint64_t value) noexcept {
-            for (std::size_t i = 0; i < 8; ++i) {
-                store8(out, offset + i, static_cast<std::uint8_t>((value >> (i * 8)) & 0xFFU));
-            }
+            storeWord(out, offset, value);
         }
 
         std::uint8_t load8(std::span<const std::byte> in, std::size_t offset) noexcept {
@@ -97,20 +107,25 @@ namespace order_book::replay {
             return static_cast<std::uint16_t>(load8(in, offset) | (load8(in, offset + 1) << 8));
         }
 
-        std::uint32_t load32(std::span<const std::byte> in, std::size_t offset) noexcept {
-            std::uint32_t value = 0;
-            for (std::size_t i = 0; i < 4; ++i) {
-                value |= static_cast<std::uint32_t>(load8(in, offset + i)) << (i * 8);
+        template <typename Word>
+        Word loadWord(std::span<const std::byte> in, std::size_t offset) noexcept {
+            Word value = 0;
+            if constexpr (std::endian::native == std::endian::little) {
+                std::memcpy(&value, in.data() + offset, sizeof(value));
+            } else {
+                for (std::size_t i = 0; i < sizeof(value); ++i) {
+                    value = static_cast<Word>(value | (static_cast<Word>(load8(in, offset + i)) << (i * 8)));
+                }
             }
             return value;
         }
 
+        std::uint32_t load32(std::span<const std::byte> in, std::size_t offset) noexcept {
+            return loadWord<std::uint32_t>(in, offset);
+        }
+
         std::uint64_t load64(std::span<const std::byte> in, std::size_t offset) noexcept {
-            std::uint64_t value = 0;
-            for (std::size_t i = 0; i < 8; ++i) {
-                value |= static_cast<std::uint64_t>(load8(in, offset + i)) << (i * 8);
-            }
-            return value;
+            return loadWord<std::uint64_t>(in, offset);
         }
 
         std::uint32_t chainChecksum(std::span<const std::byte> record, std::uint32_t previousChecksum) noexcept {

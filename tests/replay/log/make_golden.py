@@ -130,6 +130,25 @@ def main():
     # Two good records, then a third cut short: what a crash mid-write leaves.
     (here / 'torn_tail.oblog').write_bytes(log(header(), PLACEMENT + EVERY_COMMAND[:1])[:-7])
 
+    # One session on two shards: shard 0 across two files, shard 1 in one. Named so that sorting
+    # by name would run them in the wrong order, which is what shard then position must beat.
+    shards = here / 'shards'
+    shards.mkdir(exist_ok=True)
+    first = [record('ADD', 1, 'AAPL', 'SELL', 101, 5, 'LIMIT', 'GTC'), record('ADD', 2, 'AAPL', 'SELL', 102, 5, 'LIMIT', 'GTC')]
+    second = [record('CANCEL', 1, 'AAPL')]
+    (shards / 'shard0-part1.oblog').write_bytes(log(header(0, 2, 0, ('AAPL',)), first))
+    (shards / 'shard0-part2.oblog').write_bytes(log(header(2, 2, 0, ('AAPL',)), second))
+    (shards / 'a-shard1.oblog').write_bytes(
+        log(header(0, 2, 1, ('MSFT',)), [record('ADD', 1, 'MSFT', 'BUY', 99, 1, 'LIMIT', 'GTC')]))
+
+    gap = here / 'gap'
+    gap.mkdir(exist_ok=True)
+    (gap / 'shard0-part3.oblog').write_bytes(log(header(3, 2, 0, ('AAPL',)), [record('CANCEL', 2, 'AAPL')]))
+
+    moved = here / 'moved'
+    moved.mkdir(exist_ok=True)
+    (moved / 'shard2-aapl.oblog').write_bytes(log(header(0, 3, 2, ('AAPL',)), [record('CANCEL', 2, 'AAPL')]))
+
 
 if __name__ == '__main__':
     main()

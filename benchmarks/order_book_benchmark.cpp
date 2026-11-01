@@ -32,7 +32,7 @@ namespace {
 
     constexpr std::string_view usageText =
         "usage: order_book_benchmarks [--workload NAME]... [--size smoke|standard|extended | --commands N]\n"
-        "                             [--kind core|replay|both] [--repetitions N] [--warmup N] [--seed N]\n"
+        "                             [--kind core|replay|replay-log|both] [--repetitions N] [--warmup N] [--seed N]\n"
         "                             [--csv FILE] [--json FILE] [--allow-unoptimized]\n"
         "       order_book_benchmarks --list\n"
         "       order_book_benchmarks --help\n";
@@ -50,7 +50,8 @@ namespace {
         "                       default), or extended (1000000)\n"
         "  --commands N         exactly N timed commands per run, instead of a size\n"
         "  --kind KIND          core (the default) times the engine alone; replay times parsing and\n"
-        "                       replaying the same commands as CSV text in memory; both runs each\n"
+        "                       replaying the same commands as CSV text in memory; replay-log the\n"
+        "                       same as a binary command log; both runs core and replay\n"
         "  --repetitions N      measured runs per workload and kind (default 5)\n"
         "  --warmup N           runs before those, recorded but left out of summaries (default 1)\n"
         "  --seed N             generator seed (default 42); the same seed, configuration, and\n"

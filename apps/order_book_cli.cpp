@@ -1,9 +1,11 @@
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <variant>
 #include <vector>
 
@@ -19,6 +21,7 @@
 #include "order_book/order.hpp"
 #include "order_book/order_book.hpp"
 #include "order_book/replay_engine.hpp"
+#include "order_book/replay_inputs.hpp"
 #include "order_book/replay_instruments.hpp"
 #include "order_book/replay_summary.hpp"
 #include "order_book/symbol.hpp"
@@ -33,8 +36,9 @@ namespace {
     constexpr int engineFailure = 3; // the book threw, or failed an invariant check
 
     constexpr std::string_view usageText =
-        "usage: order_book_cli replay <file.csv> [--trades] [--events] [--book] [--validate none|final|per-command]\n"
-        "                                        [--symbol SYM] [--no-statistics]\n"
+        "usage: order_book_cli replay <path>... [--trades] [--events] [--book] [--validate none|final|per-command]\n"
+        "                                       [--symbol SYM] [--no-statistics]\n"
+        "       order_book_cli convert <path>... --out <path> [--symbol SYM]\n"
         "       order_book_cli demo\n"
         "       order_book_cli --help\n";
 
@@ -44,7 +48,10 @@ namespace {
         "prints replay statistics. Never prompts: everything is set on the command line.\n"
         "\n"
         "commands:\n"
-        "  replay <file.csv>  replay the file, then print its statistics\n"
+        "  replay <path>...   replay the input, then print its statistics; a directory means every\n"
+        "                     log file in it\n"
+        "  convert <path>...  turn a CSV into a log, or a log into a v3 CSV; several inputs or a\n"
+        "                     directory make --out a directory of commands-<symbol>.csv\n"
         "  demo               print the events of a short scripted session\n"
         "  help               print this help\n"
         "\n"
@@ -117,6 +124,7 @@ namespace {
     }
 
     struct ReplaySettings {
+        std::vector<std::string> paths;
         std::string path;
         bool printTrades = false;
         bool printEvents = false;  // every event, which covers printTrades
@@ -163,6 +171,70 @@ namespace {
         return EXIT_SUCCESS;
     }
 
+    // Several inputs. A v1 or v2 file runs alone, unless --symbol makes it one instrument; files
+    // that name symbols run together, in one set of sections, after them. Lines repeat across
+    // files, so an event names its file too. Reading stopped at the first error, so what came
+    // before it still runs and prints, and then the diagnostic.
+    int runSeveral(const ReplaySettings& settings) {
+        const std::vector<std::filesystem::path> paths(settings.paths.begin(), settings.paths.end());
+        const replay::ReplayInputs inputs = replay::readReplayInputs(paths);
+        if (inputs.refusal) {
+            std::cerr << "order_book_cli: " << *inputs.refusal << '\n';
+            return inputError;
+        }
+
+        std::vector<const replay::LoadedInput*> named;
+        std::vector<const replay::LoadedInput*> alone;
+        for (const replay::LoadedInput& file : inputs.files) {
+            const bool namesSymbols = file.input.format == replay::ReplayFormat::V3;
+            if (namesSymbols && settings.symbol) {
+                return usage("--symbol is for a v1 or v2 file; '" + file.path.generic_string() + "' names its own symbols");
+            }
+            (namesSymbols || settings.symbol ? named : alone).push_back(&file);
+        }
+
+        replay::ReplayOptions options;
+        options.invariantValidation = settings.validation;
+        bool printedAny = false;
+        for (const replay::LoadedInput* file : alone) {
+            const replay::MergedRecords merged = replay::mergeRecords({file});
+            order_book::OrderBook book;
+            const replay::ReplayOutcome outcome = replay::ReplayEngine::run(merged.records, book, options);
+            if (const replay::ReplayError* failure = std::get_if<replay::ReplayError>(&outcome)) {
+                std::cout.flush();
+                std::cerr << replay::formatReplayError(*failure, file->path.generic_string()) << '\n';
+                return engineFailure;
+            }
+            replay::ReplayOutput output = outputOf(settings);
+            output.lineTags = &merged.tags;
+            std::cout << (printedAny ? "\n" : "") << replay::formatReplayOutput(std::get<replay::ReplayResult>(outcome), output);
+            printedAny = true;
+        }
+
+        const replay::MergedRecords merged = replay::mergeRecords(named);
+        const replay::InstrumentsOutcome outcome =
+            replay::replayInstruments(replay::groupBySymbol(merged.records, settings.symbol.value_or(replay::Symbol{})), options);
+        if (const auto* failure = std::get_if<replay::InstrumentFailure>(&outcome)) {
+            std::cout.flush();
+            std::cerr << "symbol " << failure->symbol.text() << ": " << replay::formatReplayError(failure->error, "several inputs")
+                      << '\n';
+            return engineFailure;
+        }
+        replay::ReplayOutput output = outputOf(settings);
+        output.lineTags = &merged.tags;
+        const std::string sections =
+            replay::formatInstrumentSections(std::get<std::vector<replay::InstrumentReplay>>(outcome), output);
+        std::cout << (printedAny && !sections.empty() ? "\n" : "") << sections;
+        std::cout.flush();
+
+        if (!inputs.files.empty() && inputs.files.back().input.error) {
+            const replay::LoadedInput& last = inputs.files.back();
+            std::cerr << replay::formatReplayError(*last.input.error, last.path.generic_string()) << '\n';
+            return inputError;
+        }
+        return EXIT_SUCCESS;
+    }
+
     // Replays settings.path on an empty book. On stdout: the trades or events asked for, a
     // blank line if any were printed, the statistics, then the final book if asked for.
     // Input that stops part-way still prints what ran, then the diagnostic on stderr. An
@@ -171,6 +243,14 @@ namespace {
     // the first line after which the book is broken.
     int runReplay(const ReplaySettings& settings) {
         const std::string& path = settings.path;
+        // One engine log still has to stand at position 0, or its books would start wrong.
+        if (replay::isCommandLogFile(path)) {
+            const replay::ReplayInputs checked = replay::readReplayInputs({std::filesystem::path(path)});
+            if (checked.refusal) {
+                std::cerr << "order_book_cli: " << *checked.refusal << '\n';
+                return inputError;
+            }
+        }
         const replay::ReplayInput input = replay::readReplayOrLogFile(path);
         if (input.format == replay::ReplayFormat::V3) {
             if (settings.symbol) {
@@ -218,7 +298,6 @@ namespace {
     // "--", the next argument is the file whatever it looks like.
     int replayCommand(const std::vector<std::string_view>& args) {
         ReplaySettings settings;
-        bool havePath = false;
         bool optionsEnded = false;
         for (std::size_t i = 0; i < args.size(); ++i) {
             const std::string_view arg = args[i];
@@ -258,17 +337,67 @@ namespace {
                 }
             } else if (!optionsEnded && arg.starts_with('-')) {
                 return usage("unknown option '" + std::string(arg) + "'");
-            } else if (havePath) {
-                return usage("unexpected argument '" + std::string(arg) + "'; replay takes one file");
             } else {
-                settings.path = std::string(arg);
-                havePath = true;
+                settings.paths.emplace_back(arg);
             }
         }
-        if (!havePath) {
+        if (settings.paths.empty()) {
             return usage("replay needs a file to read");
         }
-        return runReplay(settings);
+        std::error_code ignored;
+        if (settings.paths.size() == 1 && !std::filesystem::is_directory(settings.paths[0], ignored)) {
+            settings.path = settings.paths[0];
+            return runReplay(settings);
+        }
+        return runSeveral(settings);
+    }
+
+    // args are what follows "convert".
+    int convertCommand(const std::vector<std::string_view>& args) {
+        std::vector<std::filesystem::path> inputs;
+        std::optional<std::filesystem::path> out;
+        std::optional<replay::Symbol> symbol;
+        for (std::size_t i = 0; i < args.size(); ++i) {
+            const std::string_view arg = args[i];
+            if (arg == "--out" || arg == "--symbol") {
+                if (i + 1 == args.size()) {
+                    return usage(std::string(arg) + " needs a value");
+                }
+                const std::string_view value = args[++i];
+                if (arg == "--out") {
+                    out = std::filesystem::path(value);
+                } else {
+                    symbol = replay::Symbol::parse(value);
+                    if (!symbol) {
+                        return usage("'" + std::string(value) + "' is not a symbol (1 to 8 of A-Z, 0-9, '.', '-')");
+                    }
+                }
+            } else if (arg.starts_with('-')) {
+                return usage("unknown option '" + std::string(arg) + "'");
+            } else {
+                inputs.emplace_back(arg);
+            }
+        }
+        if (inputs.empty()) {
+            return usage("convert needs a file to read");
+        }
+        if (!out) {
+            return usage("convert needs --out");
+        }
+
+        const replay::ConvertOutcome outcome = replay::convertReplayFiles(inputs, *out, symbol);
+        if (outcome.usage) {
+            return usage(*outcome.usage);
+        }
+        if (outcome.refusal) {
+            std::cerr << "order_book_cli: " << *outcome.refusal << '\n';
+            return inputError;
+        }
+        if (outcome.error) {
+            std::cerr << replay::formatReplayError(*outcome.error, outcome.errorPath.generic_string()) << '\n';
+            return inputError;
+        }
+        return EXIT_SUCCESS;
     }
 }  // namespace
 
@@ -297,6 +426,9 @@ int main(int argc, char** argv) {
     const std::vector<std::string_view> rest(args.begin() + 1, args.end());
     if (command == "replay") {
         return replayCommand(rest);
+    }
+    if (command == "convert") {
+        return convertCommand(rest);
     }
     if (command == "demo" || command == "help") {
         if (!rest.empty()) {

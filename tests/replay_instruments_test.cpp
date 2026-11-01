@@ -1,13 +1,20 @@
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
+#include <optional>
 #include <string>
+#include <system_error>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
 #include "order_book/command.hpp"
+#include "order_book/command_log.hpp"
 #include "order_book/order_book.hpp"
 #include "order_book/replay_engine.hpp"
+#include "order_book/replay_inputs.hpp"
 #include "order_book/replay_instruments.hpp"
 #include "order_book/replay_summary.hpp"
 
@@ -130,6 +137,106 @@ void testExecuteCommandAgreesWithTheBook() {
            "the books end alike");
 }
 
+// A directory of its own for one test, gone when it ends.
+class TemporaryDirectory {
+public:
+    explicit TemporaryDirectory(const std::string& name)
+        : path_(std::filesystem::temp_directory_path() / ("order-book-" + name)) {
+        std::filesystem::remove_all(path_);
+        std::filesystem::create_directories(path_);
+    }
+    ~TemporaryDirectory() {
+        std::error_code ignored;
+        std::filesystem::remove_all(path_, ignored);
+    }
+    const std::filesystem::path& path() const { return path_; }
+
+private:
+    std::filesystem::path path_;
+};
+
+std::string fileText(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    expect(file.is_open(), "cannot open " + path.string());
+    return std::string((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+}
+
+void testConvertRoundTrips(const std::filesystem::path& root) {
+    const TemporaryDirectory directory("convert-round-trip");
+    const std::filesystem::path log = directory.path() / "one.oblog";
+    const std::filesystem::path csv = directory.path() / "one.csv";
+    const std::filesystem::path logAgain = directory.path() / "two.oblog";
+
+    ConvertOutcome outcome = convertReplayFiles({root / "log" / "every_command.csv"}, log, std::nullopt);
+    expect(!outcome.usage && !outcome.refusal && !outcome.error && outcome.records == 10, "a CSV converts to a log");
+    expect(isCommandLogFile(log), "the output is a log");
+    outcome = convertReplayFiles({log}, csv, std::nullopt);
+    expect(!outcome.error && outcome.records == 10, "a log converts to a CSV");
+    expect(fileText(csv) == fileText(root / "log" / "every_command.csv"), "canonical CSV to log to CSV is byte-identical");
+    outcome = convertReplayFiles({csv}, logAgain, std::nullopt);
+    expect(!outcome.error, "and back");
+    expect(fileText(logAgain) == fileText(log), "log to CSV to log is byte-identical");
+}
+
+void testConvertStandsInASymbol(const std::filesystem::path& root) {
+    const TemporaryDirectory directory("convert-symbol");
+    const std::filesystem::path log = directory.path() / "basic.oblog";
+    const ConvertOutcome outcome = convertReplayFiles({root / "valid" / "basic.csv"}, log, symbolOf("AAPL"));
+    expect(!outcome.usage && !outcome.error, "--symbol names a v1 file's instrument");
+    const ReplayInput read = readCommandLogFile(log);
+    expect(!read.error && read.records.size() == 4 && read.records[0].symbol == symbolOf("AAPL"), "every record takes it");
+}
+
+void testConvertRefuses(const std::filesystem::path& root) {
+    const TemporaryDirectory directory("convert-refuses");
+    const std::filesystem::path out = directory.path() / "out.oblog";
+    ConvertOutcome outcome = convertReplayFiles({root / "valid" / "basic.csv"}, out, std::nullopt);
+    expect(outcome.usage.has_value() && !std::filesystem::exists(out), "a v1 file needs --symbol");
+    outcome = convertReplayFiles({root / "valid" / "v3_one_instrument.csv"}, out, symbolOf("AAPL"));
+    expect(outcome.usage.has_value() && !std::filesystem::exists(out), "a file that names symbols refuses --symbol");
+
+    outcome = convertReplayFiles({root / "valid" / "v3_one_instrument.csv"}, out, std::nullopt);
+    expect(!outcome.usage && !outcome.refusal && std::filesystem::exists(out), "a good conversion writes");
+    const std::string first = fileText(out);
+    outcome = convertReplayFiles({root / "valid" / "v3_two_instruments.csv"}, out, std::nullopt);
+    expect(outcome.refusal.has_value() && fileText(out) == first, "an existing output is refused, never overwritten");
+}
+
+// A damaged input's good prefix is still written, and the conversion reports what stopped it.
+void testConvertKeepsTheGoodPrefix(const std::filesystem::path& root) {
+    const TemporaryDirectory directory("convert-prefix");
+    const std::filesystem::path out = directory.path() / "prefix.csv";
+    const ConvertOutcome outcome = convertReplayFiles({root / "log" / "torn_tail.oblog"}, out, std::nullopt);
+    expect(outcome.error.has_value() && outcome.records == 2, "the good records are counted, and the error reported");
+    expect(fileText(out) == std::string(expectedHeaderV3) + "\n1,ADD,1,SELL,101,5,LIMIT,GTC,,,,,AAPL\n2,CANCEL,1,,,,,,,,,,AAPL\n",
+           "the good prefix is written");
+}
+
+void testConvertSeveralMakesADirectory(const std::filesystem::path& root) {
+    const TemporaryDirectory directory("convert-several");
+    const std::filesystem::path out = directory.path() / "commands";
+    const ConvertOutcome outcome = convertReplayFiles({root / "log" / "shards"}, out, std::nullopt);
+    expect(!outcome.refusal && !outcome.error && outcome.outputs.size() == 2, "one file per instrument");
+    const std::string header = std::string(expectedHeaderV3) + "\n";
+    expect(fileText(out / "commands-AAPL.csv") == header + "1,ADD,1,SELL,101,5,LIMIT,GTC,,,,,AAPL\n"
+                                                           "2,ADD,2,SELL,102,5,LIMIT,GTC,,,,,AAPL\n"
+                                                           "3,CANCEL,1,,,,,,,,,,AAPL\n",
+           "an instrument's commands, in order across files, numbered from 1");
+    expect(fileText(out / "commands-MSFT.csv") == header + "1,ADD,1,BUY,99,1,LIMIT,GTC,,,,,MSFT\n", "each instrument alone");
+}
+
+// Whatever order they are named in, an engine's logs run by shard then position.
+void testEngineLogsRunInOrder(const std::filesystem::path& root) {
+    const std::filesystem::path shards = root / "log" / "shards";
+    const ReplayInputs inputs =
+        readReplayInputs({shards / "shard0-part2.oblog", shards / "a-shard1.oblog", shards / "shard0-part1.oblog"});
+    expect(!inputs.refusal && inputs.files.size() == 3, "all three read");
+    expect(inputs.files[0].path.filename() == "shard0-part1.oblog", "shard 0 first, from position 0");
+    expect(inputs.files[1].path.filename() == "shard0-part2.oblog", "then shard 0's next file");
+    expect(inputs.files[2].path.filename() == "a-shard1.oblog", "then shard 1");
+    expect(expandInputs({shards}).size() == 3, "a directory means every log in it");
+}
+
 void testResultKeepsEachKind() {
     OrderBook book;
     CommandResult result;
@@ -155,6 +262,12 @@ int main(int argc, char** argv) {
     testASectionIsOneBooksOutput();
     testExecuteCommandAgreesWithTheBook();
     testResultKeepsEachKind();
+    testConvertRoundTrips(argv[1]);
+    testConvertStandsInASymbol(argv[1]);
+    testConvertRefuses(argv[1]);
+    testConvertKeepsTheGoodPrefix(argv[1]);
+    testConvertSeveralMakesADirectory(argv[1]);
+    testEngineLogsRunInOrder(argv[1]);
     std::cout << "replay instruments tests passed\n";
     return EXIT_SUCCESS;
 }

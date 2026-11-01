@@ -1,26 +1,40 @@
 #include "component_benchmark.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <exception>
 #include <latch>
 #include <limits>
 #include <random>
+#include <sstream>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <utility>
+#include <variant>
 
 #include "benchmark_report.hpp"
+#include "benchmark_runner.hpp"
+#include "order_book/command.hpp"
+#include "order_book/command_log.hpp"
 #include "order_book/order.hpp"
 #include "order_book/order_book.hpp"
 #include "order_book/order_index.hpp"
+#include "order_book/replay_parser.hpp"
 #include "order_book/submission_result.hpp"
+#include "workload.hpp"
 
 namespace order_book::benchmark {
 
 namespace {
 
+namespace replay = order_book::replay;
+
 using Clock = std::chrono::steady_clock;
+
+// A result nothing else reads must still be made.
+volatile std::uint64_t controlSink = 0;
 
 constexpr Price midPrice = 2000000;
 constexpr std::size_t cacheLine = 64;
@@ -120,6 +134,88 @@ ComponentResult newLevelResult(bool far, std::size_t levels, std::size_t passes)
     return result;
 }
 
+replay::Symbol componentSymbol() {
+    return *replay::Symbol::parse("BENCH");
+}
+
+ComponentResult logEncodeResult(const Workload& workload, const std::vector<replay::ReplayRecord>& records, std::size_t passes) {
+    ComponentResult result{"log-encode", workload.config.name, "chained", 0, 0, passes, 0, passes * records.size()};
+    std::vector<std::array<std::byte, replay::logRecordBytes>> sink(1);
+    std::uint32_t checksum = 0;
+    for (std::size_t pass = 0; pass < passes; ++pass) {
+        const Clock::time_point start = Clock::now();
+        for (const replay::ReplayRecord& record : records) {
+            checksum = replay::encodeLogRecord(record.symbol, record.command, checksum, sink[0]);
+        }
+        result.elapsedNanoseconds += nanosecondsBetween(start, Clock::now());
+    }
+    controlSink = checksum;
+    return result;
+}
+
+template <typename Reader>
+ComponentResult readResult(const char* operation, const Workload& workload, const std::string& bytes, std::size_t records,
+                           std::size_t passes) {
+    ComponentResult result{operation, workload.config.name, "in-memory", 0, 0, passes, 0, passes * records};
+    for (std::size_t pass = 0; pass < passes; ++pass) {
+        std::istringstream input(bytes);
+        Reader reader(input);
+        std::size_t read = 0;
+        const Clock::time_point start = Clock::now();
+        while (std::holds_alternative<replay::ReplayRecord>(reader.next())) {
+            ++read;
+        }
+        result.elapsedNanoseconds += nanosecondsBetween(start, Clock::now());
+        if (read != records) {
+            throw std::runtime_error(std::string(operation) + ": read " + std::to_string(read) + " records, not " + std::to_string(records));
+        }
+    }
+    return result;
+}
+
+std::string renderCsv(const std::vector<replay::ReplayRecord>& records) {
+    std::string text(replay::expectedHeaderV3);
+    text += '\n';
+    for (const replay::ReplayRecord& record : records) {
+        text += replay::formatReplayRow(record);
+        text += '\n';
+    }
+    return text;
+}
+
+ComponentResult executeCommandResult(const Workload& workload, const std::vector<replay::ReplayRecord>& records, std::size_t passes) {
+    ComponentResult result{"execute-command", workload.config.name, "warm", 0, 0, passes, 0, passes * records.size()};
+    for (std::size_t pass = 0; pass < passes; ++pass) {
+        OrderBook book;
+        preloadBook(book, workload);
+        replay::CommandResult commandResult;
+        commandResult.reserve(512, 1024);
+        const Clock::time_point start = Clock::now();
+        for (const replay::ReplayRecord& record : records) {
+            replay::executeCommand(book, record.command, commandResult);
+        }
+        result.elapsedNanoseconds += nanosecondsBetween(start, Clock::now());
+    }
+    return result;
+}
+
+ComponentResult symbolCompareResult(std::size_t passes) {
+    const std::vector<replay::Symbol> symbols{*replay::Symbol::parse("AAPL"), *replay::Symbol::parse("MSFT"),
+                                              *replay::Symbol::parse("BRK.B"), *replay::Symbol::parse("ES-Z26")};
+    constexpr std::size_t comparisons = 100000000;
+    ComponentResult result{"symbol-compare", "four-symbols", "word", 0, 0, passes, 0, passes * comparisons};
+    std::uint64_t matches = 0;
+    for (std::size_t pass = 0; pass < passes; ++pass) {
+        const Clock::time_point start = Clock::now();
+        for (std::size_t i = 0; i < comparisons; ++i) {
+            matches += symbols[i & 3] == symbols[(i >> 2) & 3] ? 1U : 0U;
+        }
+        result.elapsedNanoseconds += nanosecondsBetween(start, Clock::now());
+    }
+    controlSink = matches;
+    return result;
+}
+
 // xorshift64: no load or store, so only the core's clock can change how long this takes.
 std::uint64_t cpuLoop(std::size_t iterations) {
     std::uint64_t state = 88172645463325252ULL;
@@ -158,9 +254,6 @@ std::size_t memoryWalk(const std::vector<std::size_t>& walk, std::size_t steps) 
     }
     return at;
 }
-
-// A result nothing else reads must still be made.
-volatile std::uint64_t controlSink = 0;
 
 std::string sizeLabel(std::size_t bytes) {
     return std::to_string(bytes / 1024) + "KiB";
@@ -239,6 +332,29 @@ std::vector<ComponentResult> runCapacityGroup(const CapacitySettings& settings) 
         for (const std::size_t levels : settings.levelCounts) {
             results.push_back(newLevelResult(far, levels, settings.levelPasses));
         }
+    }
+    return results;
+}
+
+std::vector<ComponentResult> runLogGroup(const WorkloadComponentSettings& settings) {
+    std::vector<ComponentResult> results;
+    for (const std::string& name : settings.workloads) {
+        const Workload workload = generateWorkload(findWorkload(name), settings.commands, settings.seed);
+        const std::vector<replay::ReplayRecord> records = workloadRecords(workload, componentSymbol());
+        results.push_back(logEncodeResult(workload, records, settings.passes));
+        results.push_back(readResult<replay::CommandLogReader>("log-read", workload, renderCommandLog(workload, componentSymbol()),
+                                                               records.size(), settings.passes));
+        results.push_back(readResult<replay::ReplayReader>("csv-read", workload, renderCsv(records), records.size(), settings.passes));
+    }
+    return results;
+}
+
+std::vector<ComponentResult> runEntryGroup(const WorkloadComponentSettings& settings) {
+    std::vector<ComponentResult> results;
+    results.push_back(symbolCompareResult(settings.passes));
+    for (const std::string& name : settings.workloads) {
+        const Workload workload = generateWorkload(findWorkload(name), settings.commands, settings.seed);
+        results.push_back(executeCommandResult(workload, workloadRecords(workload, componentSymbol()), settings.passes));
     }
     return results;
 }

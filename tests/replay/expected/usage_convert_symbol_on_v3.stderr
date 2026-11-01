@@ -1,0 +1,6 @@
+order_book_cli: --symbol is for a v1 or v2 file; 'valid/v3_one_instrument.csv' names its own symbols
+usage: order_book_cli replay <path>... [--trades] [--events] [--book] [--validate none|final|per-command]
+                                       [--symbol SYM] [--no-statistics]
+       order_book_cli convert <path>... --out <path> [--symbol SYM]
+       order_book_cli demo
+       order_book_cli --help

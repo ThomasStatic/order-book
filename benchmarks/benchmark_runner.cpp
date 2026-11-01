@@ -1,7 +1,10 @@
 #include "benchmark_runner.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -10,6 +13,7 @@
 
 #include "order_book/book_event.hpp"
 #include "order_book/cancellation_result.hpp"
+#include "order_book/command_log.hpp"
 #include "order_book/order.hpp"
 #include "order_book/order_book.hpp"
 #include "order_book/replay_engine.hpp"
@@ -20,7 +24,13 @@ namespace order_book::benchmark {
 
 namespace {
 
+namespace replay = order_book::replay;
+
 using Clock = std::chrono::steady_clock;
+
+replay::Symbol benchmarkSymbol() {
+    return *replay::Symbol::parse("BENCH");
+}
 
 std::int64_t nanosecondsBetween(Clock::time_point start, Clock::time_point stop) {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
@@ -93,20 +103,37 @@ Measurement runCore(const Workload& workload) {
     return measurement;
 }
 
-Measurement runReplay(const Workload& workload) {
-    namespace replay = order_book::replay;
+replay::ReplayInput readLogInMemory(std::istream& bytes) {
+    replay::ReplayInput input;
+    input.format = replay::ReplayFormat::V3;
+    replay::CommandLogReader reader(bytes);
+    while (true) {
+        replay::ReadResult result = reader.next();
+        if (replay::ReplayRecord* record = std::get_if<replay::ReplayRecord>(&result)) {
+            input.records.push_back(*record);
+        } else {
+            if (std::holds_alternative<replay::ParseError>(result)) {
+                input.error = replay::ReplayError{replay::ReplayErrorCode::INPUT_READ_FAILURE, std::nullopt,
+                                                  std::get<replay::ParseError>(result).message, std::nullopt};
+            }
+            return input;
+        }
+    }
+}
 
+Measurement runReplay(const Workload& workload, bool fromLog) {
     Measurement measurement;
     OrderBook book;
     preloadBook(book, workload);
     // Built outside the timed region: the text stands in for a file already read into memory.
-    std::istringstream csv(workload.config.family == WorkloadFamily::V1 ? renderReplayCsv(workload.timed)
-                                                                         : renderReplayCsv(workload.behaviorTimed));
+    std::istringstream source(fromLog ? renderCommandLog(workload, benchmarkSymbol())
+                              : workload.config.family == WorkloadFamily::V1 ? renderReplayCsv(workload.timed)
+                                                                             : renderReplayCsv(workload.behaviorTimed));
     replay::ReplayOptions options;
     options.invariantValidation = replay::InvariantValidation::NONE;
 
     const Clock::time_point start = Clock::now();
-    const replay::ReplayInput input = replay::readReplayInput(csv);
+    const replay::ReplayInput input = fromLog ? readLogInMemory(source) : replay::readReplayInput(source);
     const replay::ReplayOutcome outcome = replay::ReplayEngine::run(input.records, book, options);
     const replay::ReplayResult* result = std::get_if<replay::ReplayResult>(&outcome);
     const std::string summary = result != nullptr ? replay::formatReplaySummary(*result) : std::string();
@@ -181,17 +208,18 @@ const char* benchmarkKindName(BenchmarkKind kind) {
     switch (kind) {
         case BenchmarkKind::CORE: return "core";
         case BenchmarkKind::REPLAY: return "replay";
+        case BenchmarkKind::REPLAY_LOG: return "replay-log";
     }
     return "unknown";
 }
 
 BenchmarkKind parseBenchmarkKind(std::string_view name) {
-    for (const BenchmarkKind kind : {BenchmarkKind::CORE, BenchmarkKind::REPLAY}) {
+    for (const BenchmarkKind kind : {BenchmarkKind::CORE, BenchmarkKind::REPLAY, BenchmarkKind::REPLAY_LOG}) {
         if (name == benchmarkKindName(kind)) {
             return kind;
         }
     }
-    throw std::invalid_argument("unknown kind '" + std::string(name) + "' (known: core, replay)");
+    throw std::invalid_argument("unknown kind '" + std::string(name) + "' (known: core, replay, replay-log)");
 }
 
 double operationsPerSecond(std::size_t commands, std::int64_t elapsedNanoseconds) {
@@ -210,7 +238,7 @@ double Measurement::nanosecondsPerCommand() const {
 }
 
 Measurement runOnce(const Workload& workload, BenchmarkKind kind) {
-    Measurement measurement = kind == BenchmarkKind::CORE ? runCore(workload) : runReplay(workload);
+    Measurement measurement = kind == BenchmarkKind::CORE ? runCore(workload) : runReplay(workload, kind == BenchmarkKind::REPLAY_LOG);
     measurement.workload = workload.config.name;
     measurement.kind = kind;
     measurement.commands = workload.timedCount();
@@ -232,6 +260,49 @@ std::vector<Measurement> runRepeated(const Workload& workload, BenchmarkKind kin
         measurements.push_back(std::move(measurement));
     }
     return measurements;
+}
+
+std::vector<replay::ReplayRecord> workloadRecords(const Workload& workload, replay::Symbol symbol) {
+    std::vector<replay::ReplayRecord> records;
+    records.reserve(workload.timedCount());
+    const auto add = [&](replay::Command command) {
+        const std::uint64_t sequence = records.size() + 1;
+        records.push_back(replay::ReplayRecord{static_cast<std::size_t>(sequence + 1), sequence, std::move(command), symbol});
+    };
+    for (const BenchmarkCommand& command : workload.timed) {
+        if (command.type == CommandType::SUBMIT) {
+            add(replay::AddCommand{command.orderId, command.side, command.price, command.quantity});
+        } else {
+            add(replay::CancelCommand{command.orderId});
+        }
+    }
+    for (const BehaviorCommand& command : workload.behaviorTimed) {
+        if (command.type == CommandType::SUBMIT) {
+            const OrderRequest& request = command.request;
+            add(replay::AddCommand{request.id, request.side, request.price, request.quantity, request.type, request.timeInForce,
+                                   request.stopPrice, request.postOnly, request.owner, request.selfTradePrevention});
+        } else if (command.type == CommandType::REPLACE) {
+            const ReplaceRequest& request = command.replacement;
+            add(replay::ReplaceCommand{request.id, request.price, request.quantity, request.postOnly, request.owner,
+                                       request.selfTradePrevention});
+        } else {
+            add(replay::CancelCommand{command.request.id});
+        }
+    }
+    return records;
+}
+
+std::string renderCommandLog(const Workload& workload, replay::Symbol symbol) {
+    const std::vector<std::byte> header = replay::encodeLogHeader(replay::LogHeader{});
+    std::uint32_t checksum = replay::logChainSeed(header);
+    std::string bytes(reinterpret_cast<const char*>(header.data()), header.size());
+    bytes.reserve(bytes.size() + workload.timedCount() * replay::logRecordBytes);
+    for (const replay::ReplayRecord& record : workloadRecords(workload, symbol)) {
+        std::array<std::byte, replay::logRecordBytes> encoded;
+        checksum = replay::encodeLogRecord(record.symbol, record.command, checksum, encoded);
+        bytes.append(reinterpret_cast<const char*>(encoded.data()), encoded.size());
+    }
+    return bytes;
 }
 
 std::string renderReplayCsv(const std::vector<BenchmarkCommand>& commands) {

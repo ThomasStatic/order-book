@@ -4,6 +4,7 @@
 #include <map>
 #include <utility>
 
+#include "order_book/event_format.hpp"
 #include "order_book/order_book.hpp"
 #include "order_book/replay_summary.hpp"
 
@@ -51,7 +52,9 @@ namespace order_book::replay {
         for (const ReplayEvent& event : result.events) {
             const bool isTrade = std::holds_alternative<TradeExecuted>(event.event);
             if (output.events || (output.trades && isTrade)) {
-                text += formatReplayEvent(event) + '\n';
+                text += output.lineTags == nullptr ? formatReplayEvent(event)
+                                                   : (*output.lineTags)[event.lineNumber] + ": " + formatEvent(event.event);
+                text += '\n';
             }
         }
         if (output.statistics) {

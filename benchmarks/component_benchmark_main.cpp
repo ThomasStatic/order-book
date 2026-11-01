@@ -31,7 +31,7 @@ constexpr int usageError = 2;
 constexpr int unoptimizedBuild = 3;
 
 constexpr std::string_view usageText =
-    "usage: order_book_component_benchmarks [--group capacity|controls]... [--size smoke|full]\n"
+    "usage: order_book_component_benchmarks [--group capacity|controls|log|entry]... [--size smoke|full]\n"
     "                                       [--threads N] [--pin-cores A,B,...] [--priority normal|high]\n"
     "                                       [--csv FILE] [--allow-unoptimized]\n"
     "       order_book_component_benchmarks --help\n";
@@ -41,8 +41,9 @@ constexpr std::string_view helpText =
     "percentile comes from the latency harness, not from here.\n"
     "\n"
     "options:\n"
-    "  --group NAME         capacity (growth, reserve, new levels) or controls (a CPU-only loop\n"
-    "                       and a memory walk at three sizes); repeatable (default: both)\n"
+    "  --group NAME         capacity (growth, reserve, new levels), controls (a CPU-only loop and\n"
+    "                       a memory walk at three sizes), log (encoding and reading a command log\n"
+    "                       against CSV), or entry (symbols, executeCommand); repeatable (default: all)\n"
     "  --size SIZE          full (the default) or smoke, a tiny run for testing the program\n"
     "  --threads N          threads running the controls at once (default 1)\n"
     "  --pin-cores LIST     pin controls thread i to the i-th core listed\n"
@@ -61,6 +62,8 @@ constexpr std::string_view helpText =
 struct Settings {
     bool capacity = false;
     bool controls = false;
+    bool log = false;
+    bool entry = false;
     bool smoke = false;
     std::size_t threads = 1;
     std::vector<unsigned int> pinCores;
@@ -125,8 +128,12 @@ std::optional<std::string> parseArguments(const std::vector<std::string_view>& a
                 settings.capacity = true;
             } else if (value == "controls") {
                 settings.controls = true;
+            } else if (value == "log") {
+                settings.log = true;
+            } else if (value == "entry") {
+                settings.entry = true;
             } else {
-                return "unknown group '" + std::string(value) + "' (known: capacity, controls)";
+                return "unknown group '" + std::string(value) + "' (known: capacity, controls, log, entry)";
             }
         } else if (arg == "--size") {
             if (value != "full" && value != "smoke") {
@@ -154,9 +161,11 @@ std::optional<std::string> parseArguments(const std::vector<std::string_view>& a
             settings.csvPath = std::string(value);
         }
     }
-    if (!settings.capacity && !settings.controls) {
+    if (!settings.capacity && !settings.controls && !settings.log && !settings.entry) {
         settings.capacity = true;
         settings.controls = true;
+        settings.log = true;
+        settings.entry = true;
     }
     if (!settings.pinCores.empty() && settings.pinCores.size() != settings.threads) {
         return "--pin-cores lists " + std::to_string(settings.pinCores.size()) + " cores for " +
@@ -196,6 +205,22 @@ int runBenchmarks(const Settings& settings) {
             capacity.levelPasses = 2;
         }
         for (bench::ComponentResult& result : bench::runCapacityGroup(capacity)) {
+            results.push_back(std::move(result));
+        }
+    }
+    bench::WorkloadComponentSettings workloads;
+    if (settings.smoke) {
+        workloads.commands = 200;
+        workloads.passes = 1;
+        workloads.workloads = {"small-book", "quote-refresh"};
+    }
+    if (settings.log) {
+        for (bench::ComponentResult& result : bench::runLogGroup(workloads)) {
+            results.push_back(std::move(result));
+        }
+    }
+    if (settings.entry) {
+        for (bench::ComponentResult& result : bench::runEntryGroup(workloads)) {
             results.push_back(std::move(result));
         }
     }

@@ -44,6 +44,20 @@ struct CapacitySettings {
 // building a structure and cancelling what a pass added are not.
 std::vector<ComponentResult> runCapacityGroup(const CapacitySettings& settings);
 
+// The log group, on a workload's real commands, since cancels and replaces encode differently:
+// log-encode, an encoded and checksummed record into memory; log-read, reading and verifying a
+// whole log in memory; and csv-read, ReplayReader on the same commands as v3 CSV text.
+// The entry group: symbol-compare, one comparison of two symbols; execute-command, a command
+// through executeCommand on a book, overwriting one reused result.
+struct WorkloadComponentSettings {
+    std::size_t commands = 1000000;
+    std::size_t passes = 5;
+    std::uint64_t seed = 42;
+    std::vector<std::string> workloads{"matching-heavy-request", "quote-refresh", "pending-stops"};
+};
+std::vector<ComponentResult> runLogGroup(const WorkloadComponentSettings& settings);
+std::vector<ComponentResult> runEntryGroup(const WorkloadComponentSettings& settings);
+
 // The controls that find the cause of a fall in scaling, each on the same threads as the run it
 // explains. If the CPU loop falls too, the cause is frequency. If only the walks fall, it is
 // the shared cache or memory.

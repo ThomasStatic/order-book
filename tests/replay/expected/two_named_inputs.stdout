@@ -1,0 +1,28 @@
+symbol AAPL
+v3_two_instruments.csv:3: OrderAccepted id=1 side=BUY price=99 qty=4
+v3_two_instruments.csv:5: OrderCancelled id=1 qty=4
+every_command.oblog:2: OrderAccepted id=1 side=SELL price=101 qty=5
+every_command.oblog:4: OrderAccepted id=2 side=BUY price=101 qty=2
+every_command.oblog:4: TradeExecuted incoming=2 resting=1 price=101 qty=2
+every_command.oblog:5: OrderAccepted id=3 side=BUY price=MARKET qty=1
+every_command.oblog:5: TradeExecuted incoming=3 resting=1 price=101 qty=1
+every_command.oblog:6: OrderAccepted id=4 side=SELL price=MARKET qty=2
+every_command.oblog:7: OrderAccepted id=5 side=BUY price=120 qty=2
+every_command.oblog:8: OrderReplaced id=1 side=SELL price=102 qty=6 open=3 priority=LOST
+every_command.oblog:10: OrderCancelled id=5 qty=2
+
+symbol BRK.B
+v3_two_instruments.csv:6: OrderAccepted id=3 side=BUY price=98 qty=1
+every_command.oblog:3: OrderAccepted id=1 side=BUY price=100 qty=3
+every_command.oblog:9: OrderReplaced id=1 side=BUY price=99 qty=3 open=3 priority=LOST
+
+symbol ES-Z26
+every_command.oblog:11: CancelRejected id=77 reason=ORDER_NOT_FOUND
+
+symbol MSFT
+v3_two_instruments.csv:2: OrderAccepted id=1 side=SELL price=101 qty=5
+v3_two_instruments.csv:4: OrderAccepted id=2 side=BUY price=101 qty=2
+v3_two_instruments.csv:4: TradeExecuted incoming=2 resting=1 price=101 qty=2
+
+symbol ZZZ
+v3_two_instruments.csv:7: CancelRejected id=9 reason=ORDER_NOT_FOUND
