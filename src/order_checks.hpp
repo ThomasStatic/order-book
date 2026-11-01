@@ -3,6 +3,7 @@
 #include <optional>
 
 #include "order_book/order_request.hpp"
+#include "order_book/replace_request.hpp"
 #include "order_book/rejection_reason.hpp"
 #include "order_book/side.hpp"
 #include "order_book/types.hpp"
@@ -72,6 +73,17 @@ namespace order_book::checks {
         }
         if(request.postOnly && (request.type != OrderType::LIMIT || request.timeInForce != TimeInForce::GTC)) {
             return RejectionReason::POST_ONLY_NOT_ALLOWED;
+        }
+        if(!isValidSelfTradePrevention(request.selfTradePrevention)) {
+            return RejectionReason::INVALID_SELF_TRADE_PREVENTION;
+        }
+        return std::nullopt;
+    }
+
+    // Why a replace is malformed: the amounts, then the mode, whatever the owner.
+    inline std::optional<RejectionReason> replaceReason(const ReplaceRequest& request) {
+        if(const std::optional<RejectionReason> reason = amountReason(request.id, request.price, true, request.quantity)) {
+            return reason;
         }
         if(!isValidSelfTradePrevention(request.selfTradePrevention)) {
             return RejectionReason::INVALID_SELF_TRADE_PREVENTION;

@@ -1,0 +1,21 @@
+symbol AAPL
+line 2: OrderAccepted id=1 side=SELL price=101 qty=5
+line 3: OrderCancelled id=1 qty=5
+
+commands processed: 2
+add commands: 1
+adds accepted: 1
+adds rejected: 0
+cancel commands: 1
+cancels accepted: 1
+cancels rejected: 0
+replace commands: 0
+replaces accepted: 0
+replaces rejected: 0
+trades executed: 0
+volume traded: 0
+self-trades prevented: 0
+orders expired: 0
+stops triggered: 0
+resting orders: 0
+pending stops: 0

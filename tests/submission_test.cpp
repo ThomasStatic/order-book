@@ -802,7 +802,41 @@ void testRequestOverloadMatchesOrderOverload() {
     }
 }
 
+// A public check that a caller can make before submitting: it says what the book would.
+void testMalformedReasonMatchesTheBook() {
+    using order_book::OrderRequest;
+    using order_book::OrderType;
+    using order_book::RejectionReason;
+    using order_book::ReplaceRequest;
+    using order_book::TimeInForce;
+
+    OrderRequest post{1, Side::BUY, 100, 5, OrderType::LIMIT, TimeInForce::IOC};
+    post.postOnly = true;
+    OrderRequest stop{1, Side::BUY, 0, 5, OrderType::STOP, TimeInForce::IOC};
+    const std::vector<OrderRequest> requests{OrderRequest{0, Side::BUY, 100, 5}, OrderRequest{1, Side::BUY, 0, 5},
+                                             OrderRequest{1, Side::BUY, 100, 0}, OrderRequest{1, static_cast<Side>(9), 100, 5},
+                                             post, stop};
+    for (const OrderRequest& request : requests) {
+        const std::optional<RejectionReason> reason = order_book::malformedReason(request);
+        OrderBook book;
+        const order_book::SubmissionResult result = book.submitOrder(request);
+        expect(reason.has_value() && result.getRejectionReason() == *reason, "malformedReason says what the book says");
+    }
+    expect(!order_book::malformedReason(OrderRequest{1, Side::BUY, 100, 5}), "a well-formed request has no reason");
+
+    ReplaceRequest badMode{1, 100, 5};
+    badMode.selfTradePrevention = static_cast<order_book::SelfTradePrevention>(9);
+    for (const ReplaceRequest& request : {ReplaceRequest{0, 100, 5}, ReplaceRequest{1, 0, 5}, ReplaceRequest{1, 100, 0}, badMode}) {
+        const std::optional<RejectionReason> reason = order_book::malformedReason(request);
+        OrderBook book;
+        const order_book::ReplaceResult result = book.replaceOrder(request);
+        expect(reason.has_value() && result.getRejectionReason() == reason, "malformedReason says what a replace says");
+    }
+    expect(!order_book::malformedReason(ReplaceRequest{1, 100, 5}), "a well-formed replace has no reason");
+}
+
 int main() {
+    testMalformedReasonMatchesTheBook();
     testMalformedRequestsAreRejectedInOrder();
     testRequestOverloadMatchesOrderOverload();
     testDuplicateActiveIdIsRejected();

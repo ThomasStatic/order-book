@@ -1,5 +1,8 @@
 #pragma once
 
+#include <optional>
+
+#include "rejection_reason.hpp"
 #include "self_trade_prevention.hpp"
 #include "types.hpp"
 
@@ -22,5 +25,9 @@ namespace order_book {
 
         bool operator==(const ReplaceRequest&) const = default;
     };
+
+    // Why the book would refuse this replace whatever it held, or nothing if it is well formed:
+    // the same reason, by the same first failing check, as replaceOrder's ReplaceRejected.
+    std::optional<RejectionReason> malformedReason(const ReplaceRequest& request);
 
 }  // namespace order_book

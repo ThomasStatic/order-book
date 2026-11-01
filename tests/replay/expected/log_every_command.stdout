@@ -1,0 +1,86 @@
+symbol AAPL
+line 2: OrderAccepted id=1 side=SELL price=101 qty=5
+line 4: OrderAccepted id=2 side=BUY price=101 qty=2
+line 4: TradeExecuted incoming=2 resting=1 price=101 qty=2
+line 5: OrderAccepted id=3 side=BUY price=MARKET qty=1
+line 5: TradeExecuted incoming=3 resting=1 price=101 qty=1
+line 6: OrderAccepted id=4 side=SELL price=MARKET qty=2
+line 7: OrderAccepted id=5 side=BUY price=120 qty=2
+line 8: OrderReplaced id=1 side=SELL price=102 qty=6 open=3 priority=LOST
+line 10: OrderCancelled id=5 qty=2
+
+commands processed: 7
+add commands: 5
+adds accepted: 5
+adds rejected: 0
+cancel commands: 1
+cancels accepted: 1
+cancels rejected: 0
+replace commands: 1
+replaces accepted: 1
+replaces rejected: 0
+trades executed: 2
+volume traded: 3
+self-trades prevented: 0
+orders expired: 0
+stops triggered: 0
+resting orders: 1
+pending stops: 1
+bids:
+  none
+asks:
+  price=102 qty=3 orders=1
+last trade price: 101
+
+symbol BRK.B
+line 3: OrderAccepted id=1 side=BUY price=100 qty=3
+line 9: OrderReplaced id=1 side=BUY price=99 qty=3 open=3 priority=LOST
+
+commands processed: 2
+add commands: 1
+adds accepted: 1
+adds rejected: 0
+cancel commands: 0
+cancels accepted: 0
+cancels rejected: 0
+replace commands: 1
+replaces accepted: 1
+replaces rejected: 0
+trades executed: 0
+volume traded: 0
+self-trades prevented: 0
+orders expired: 0
+stops triggered: 0
+resting orders: 1
+pending stops: 0
+bids:
+  price=99 qty=3 orders=1
+asks:
+  none
+last trade price: none
+
+symbol ES-Z26
+line 11: CancelRejected id=77 reason=ORDER_NOT_FOUND
+
+commands processed: 1
+add commands: 0
+adds accepted: 0
+adds rejected: 0
+cancel commands: 1
+cancels accepted: 0
+cancels rejected: 1
+replace commands: 0
+replaces accepted: 0
+replaces rejected: 0
+trades executed: 0
+volume traded: 0
+self-trades prevented: 0
+orders expired: 0
+stops triggered: 0
+resting orders: 0
+pending stops: 0
+bids:
+  none
+asks:
+  none
+last trade price: none

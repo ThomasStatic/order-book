@@ -1,6 +1,9 @@
 #pragma once
 
+#include <optional>
+
 #include "order_type.hpp"
+#include "rejection_reason.hpp"
 #include "self_trade_prevention.hpp"
 #include "side.hpp"
 #include "time_in_force.hpp"
@@ -43,5 +46,10 @@ namespace order_book {
 
         bool operator==(const OrderRequest&) const = default;
     };
+
+    // Why the book would refuse this request whatever it held, or nothing if it is well formed:
+    // the same reason, by the same first failing check, as submitOrder's OrderRejected. Reads
+    // only the request, never a book, so a request's ID may still be live.
+    std::optional<RejectionReason> malformedReason(const OrderRequest& request);
 
 }  // namespace order_book

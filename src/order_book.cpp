@@ -9,6 +9,14 @@
 #include "order_checks.hpp"
 
 namespace order_book {
+    std::optional<RejectionReason> malformedReason(const OrderRequest& request) {
+        return checks::requestReason(request);
+    }
+
+    std::optional<RejectionReason> malformedReason(const ReplaceRequest& request) {
+        return checks::replaceReason(request);
+    }
+
     OrderBook::OrderBook(OrderBook&& other) noexcept
         : nodePool(std::move(other.nodePool)),
           orderIndex(std::move(other.orderIndex)),
@@ -380,10 +388,7 @@ namespace order_book {
 
     ORDER_BOOK_SHARED_STEP std::optional<RejectionReason> OrderBook::planReplace(const ReplaceRequest& request, ReplacePlan& plan) {
         // The malformed checks first, then the state checks; nothing has changed yet.
-        std::optional<RejectionReason> reason = checks::amountReason(request.id, request.price, true, request.quantity);
-        if(!reason && !isValidSelfTradePrevention(request.selfTradePrevention)) {
-            reason = RejectionReason::INVALID_SELF_TRADE_PREVENTION;
-        }
+        std::optional<RejectionReason> reason = checks::replaceReason(request);
         if(!reason && pendingIndex.find(request.id) != pendingIndex.end()) {
             reason = RejectionReason::ORDER_NOT_REPLACEABLE;
         }

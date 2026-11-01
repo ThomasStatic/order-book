@@ -3,3 +3,5 @@
 # Expected CLI output, compared byte for byte.
 *.stdout -text
 *.stderr -text
+# Golden command logs, compared byte for byte.
+*.oblog -text

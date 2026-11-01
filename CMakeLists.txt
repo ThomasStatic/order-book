@@ -149,6 +149,7 @@ endif()
 # order_book itself knows nothing about CSV or replays.
 add_library(order_book_replay STATIC
     src/command.cpp
+    src/command_log.cpp
     src/replay_parser.cpp
     src/replay_engine.cpp
     src/replay_instruments.cpp
@@ -403,6 +404,16 @@ if(BUILD_TESTING)
     # Also reads every sample file in tests/replay/.
     add_test(NAME replay_parser_tests COMMAND replay_parser_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay)
 
+    add_executable(command_log_tests
+        tests/command_log_test.cpp
+    )
+
+    target_compile_features(command_log_tests PRIVATE cxx_std_20)
+    target_link_libraries(command_log_tests PRIVATE order_book_replay)
+    order_book_enable_warnings(command_log_tests)
+    order_book_enable_sanitizers(command_log_tests)
+    add_test(NAME command_log_tests COMMAND command_log_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay)
+
     add_executable(symbol_tests
         tests/symbol_test.cpp
     )
@@ -504,6 +515,14 @@ if(BUILD_TESTING)
     order_book_add_replay_cli_test(help_after_end_of_options
         ARGS replay -- --help EXIT 1 STDOUT empty_statistics.stdout STDERR help_as_file.stderr)
     order_book_add_replay_cli_test(demo ARGS demo EXIT 0 STDOUT demo.stdout)
+    # A log and its CSV twin print the same bytes: both are checked against one expected file.
+    order_book_add_replay_cli_test(log_twin_log
+        ARGS replay log/every_command.oblog --events --book EXIT 0 STDOUT log_every_command.stdout)
+    order_book_add_replay_cli_test(log_twin_csv
+        ARGS replay log/every_command.csv --events --book EXIT 0 STDOUT log_every_command.stdout)
+    order_book_add_replay_cli_test(log_header_only ARGS replay log/header_only.oblog EXIT 0)
+    order_book_add_replay_cli_test(log_torn_tail
+        ARGS replay log/torn_tail.oblog --events EXIT 1 STDOUT log_torn_tail.stdout STDERR log_torn_tail.stderr)
     # v3 and --symbol: one section per symbol, sorted by symbol bytes. v1 and v2 stay unchanged.
     order_book_add_replay_cli_test(v3_two_instruments
         ARGS replay valid/v3_two_instruments.csv --events --book EXIT 0 STDOUT v3_two_instruments.stdout)

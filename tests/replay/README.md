@@ -4,6 +4,10 @@ Sample input for the CSV replay format defined in [`docs/replay-format.md`](../.
 
 `.gitattributes` marks every `*.csv` here `-text`, so Git keeps the bytes exactly as committed, whatever `core.autocrlf` says. Several files depend on that: `crlf_line_endings.csv`, `no_final_newline.csv`, `header_with_bom.csv`, and `trailing_blank_line.csv`. Don't re-save these files in an editor that normalizes line endings or encoding.
 
+## `log/`
+
+Golden command logs, compared byte for byte, written by the standalone `make_golden.py` from `docs/command-log-format.md`: `every_command.oblog` (every command type, with its CSV twin `every_command.csv`), `placement.oblog` (a placement and a nonzero first position), `header_only.oblog`, and `torn_tail.oblog` (two records, then a third cut short).
+
 ## `valid/`
 
 Every file here should replay to the end with exit status 0. The events are the `formatEvent` lines each command produces on a fresh book. They were checked against the engine when the files were written.

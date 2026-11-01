@@ -14,6 +14,7 @@
 #endif
 
 #include "order_book/book_event.hpp"
+#include "order_book/command_log.hpp"
 #include "order_book/event_format.hpp"
 #include "order_book/order.hpp"
 #include "order_book/order_book.hpp"
@@ -38,8 +39,9 @@ namespace {
         "       order_book_cli --help\n";
 
     constexpr std::string_view helpText =
-        "Replays a CSV command file (docs/replay-format.md) on an empty order book and prints\n"
-        "replay statistics. Never prompts: everything is set on the command line.\n"
+        "Replays a CSV command file (docs/replay-format.md) or a binary command log\n"
+        "(docs/command-log-format.md), told apart by its first bytes, on an empty order book and\n"
+        "prints replay statistics. Never prompts: everything is set on the command line.\n"
         "\n"
         "commands:\n"
         "  replay <file.csv>  replay the file, then print its statistics\n"
@@ -169,7 +171,7 @@ namespace {
     // the first line after which the book is broken.
     int runReplay(const ReplaySettings& settings) {
         const std::string& path = settings.path;
-        const replay::ReplayInput input = replay::readReplayFile(path);
+        const replay::ReplayInput input = replay::readReplayOrLogFile(path);
         if (input.format == replay::ReplayFormat::V3) {
             if (settings.symbol) {
                 return usage("--symbol is for a v1 or v2 file; '" + path + "' names its own symbols");

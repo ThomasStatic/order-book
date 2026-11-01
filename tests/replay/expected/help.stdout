@@ -3,8 +3,9 @@ usage: order_book_cli replay <file.csv> [--trades] [--events] [--book] [--valida
        order_book_cli demo
        order_book_cli --help
 
-Replays a CSV command file (docs/replay-format.md) on an empty order book and prints
-replay statistics. Never prompts: everything is set on the command line.
+Replays a CSV command file (docs/replay-format.md) or a binary command log
+(docs/command-log-format.md), told apart by its first bytes, on an empty order book and
+prints replay statistics. Never prompts: everything is set on the command line.
 
 commands:
   replay <file.csv>  replay the file, then print its statistics
