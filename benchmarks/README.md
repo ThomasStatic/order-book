@@ -1,6 +1,6 @@
 # Benchmarks
 
-`order_book_benchmarks` measures how fast the book executes commands. Each workload is generated from its configuration and a seed. Its commands are then timed on a freshly preloaded book, and every run is repeated. Everything is recorded, and results can be written as CSV or JSON.
+`order_book_benchmarks` measures how fast the book executes commands, as throughput only. Latency comes from the [latency harness](latency/README.md). Each workload is generated from its configuration and a seed. Its commands are then timed on a freshly preloaded book, and every run is repeated. Everything is recorded, and results can be written as CSV or JSON.
 
 ```bash
 cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DORDER_BOOK_BUILD_BENCHMARKS=ON
@@ -149,3 +149,25 @@ Record any departure from these, and anything else that could move the numbers: 
 These are built into the `order_book_benchmarking` library (linking `order_book_replay` and `order_book_reference`) when `ORDER_BOOK_BUILD_BENCHMARKS` is on. `tests/benchmark_harness_test.cpp` (`benchmark_harness_tests`) tests the library. `benchmark_cli_smoke` runs the program once on a tiny workload, writing both files.
 
 Recorded results live in `results/`, one directory per session set, kept byte for byte as the program wrote them. The current baseline is `results/2026-10-29-order-behaviors/` (v2.0.0, all eleven workloads, with the paired regression check against v1.0.0), and the first is `results/2026-10-25-baseline/`, both written up in [`docs/BENCHMARKS.md`](../docs/BENCHMARKS.md); each one's `summarize.py` recomputes its tables from the raw CSV files. Paired comparisons are merged into one `runs.csv` per comparison.
+
+## Component costs
+
+`order_book_component_benchmarks` times one operation in bulk on a prepared structure, for costs no workload shows. It reports a mean cost per operation, never a percentile. It refuses an unoptimized build as `order_book_benchmarks` does.
+
+```bash
+./build/release/order_book_component_benchmarks --group capacity --csv capacity.csv
+./build/release/order_book_component_benchmarks --group controls --threads 2 --pin-cores 2,4 --priority high
+```
+
+| Group | Operation | What is timed |
+|---|---|---|
+| `capacity` | `grow-to` | The one index insert that grows a full table, at 12,288, 98,304, and 786,432 orders |
+| | `reserve-orders` | `OrderBook::reserve` on a new book, at the same sizes |
+| | `new-level-near` | A resting order on a new level just behind the touch, at 2,000, 20,000, and 200,000 levels per side |
+| | `new-level-far` | The same, behind every other level |
+| `controls` | `cpu-loop` | A loop touching no memory |
+| | `memory-walk` | A random cycle through memory, one cache line at a time, at 256 KiB, 8 MiB, and 256 MiB |
+
+The controls run on every thread at once, on the same pinned cores as the run they explain. If the CPU loop falls as far as the run did, the cause is frequency. If only the walks fall, it is the shared cache or memory.
+
+The CSV has its own columns: `operation`, `workload`, `state`, `orders`, `levels`, `passes`, `elapsed_ns`, `ns_per_op`. Building a structure and undoing what a pass added are never timed.

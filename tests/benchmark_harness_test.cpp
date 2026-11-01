@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -7,6 +8,7 @@
 #include <limits>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <variant>
@@ -14,6 +16,7 @@
 
 #include "benchmark_report.hpp"
 #include "benchmark_runner.hpp"
+#include "component_benchmark.hpp"
 #include "order_book/invariants.hpp"
 #include "order_book/replay_engine.hpp"
 #include "order_book/replay_parser.hpp"
@@ -671,6 +674,65 @@ void testExpectedBookSize() {
     expect(expectedBookSize(growing) == growing.expected.finalActiveOrders, "a growing book is sized for its final size");
 }
 
+void testComponentCsv() {
+    const ComponentResult result{"grow-to", "order-index", "full", 12288, 0, 5, 1000, 4};
+    expect(result.nanosecondsPerOperation() == 250.0, "a mean cost is elapsed over operations");
+    expect(formatComponentCsv({result}) ==
+               "operation,workload,state,orders,levels,passes,elapsed_ns,ns_per_op\n"
+               "grow-to,order-index,full,12288,0,5,1000,250.0\n",
+           "the component CSV has its own columns");
+    expect(ComponentResult{}.nanosecondsPerOperation() == 0.0, "no operations cost nothing");
+}
+
+std::vector<std::string> operationsOf(const std::vector<ComponentResult>& results) {
+    std::vector<std::string> names;
+    for (const ComponentResult& result : results) {
+        names.push_back(result.operation);
+    }
+    return names;
+}
+
+void testCapacityGroup() {
+    CapacitySettings settings;
+    settings.orderCounts = {12};
+    settings.levelCounts = {40};
+    settings.growthPasses = 2;
+    settings.levelPasses = 3;
+    const std::vector<ComponentResult> results = runCapacityGroup(settings);
+    expect((operationsOf(results) ==
+            std::vector<std::string>{"grow-to", "reserve-orders", "new-level-near", "new-level-far"}),
+           "the capacity group's operations, in order");
+    expect(results[0].orders == 12 && results[0].operations == 2, "one growth per pass");
+    expect(results[2].levels == 40 && results[2].orders == 80, "a ladder holds one order per level on each side");
+    expect(results[2].operations == 6, "a batch is one in twenty of the levels, each pass");
+
+    settings.orderCounts = {13};
+    expectThrows([&] { runCapacityGroup(settings); }, "a count that does not fill the index is refused");
+}
+
+void testControlGroup() {
+    ControlSettings settings;
+    settings.threads = 2;
+    settings.walkBytes = {4096, 16384};
+    settings.cpuIterations = 1000;
+    settings.walkSteps = 1000;
+    std::atomic<std::size_t> threadsSetUp{0};
+    settings.setUpThread = [&](std::size_t) { ++threadsSetUp; };
+    const std::vector<ComponentResult> results = runControlGroup(settings);
+    expect((operationsOf(results) == std::vector<std::string>{"cpu-loop", "cpu-loop", "memory-walk", "memory-walk",
+                                                              "memory-walk", "memory-walk"}),
+           "each thread gives one result per operation and size");
+    expect(results[1].state == "thread-1-of-2", "a result names its thread");
+    expect(results[2].workload == "4KiB" && results[4].workload == "16KiB", "a walk names its size");
+    expect(threadsSetUp == 6, "every thread is set up for every operation");
+
+    settings.setUpThread = [](std::size_t) { throw std::runtime_error("refused"); };
+    expectThrows([&] { runControlGroup(settings); }, "a refused pin fails the group");
+    settings.setUpThread = nullptr;
+    settings.threads = 0;
+    expectThrows([&] { runControlGroup(settings); }, "controls need a thread");
+}
+
 int main() {
     testSizes();
     testQuantityRanges();
@@ -697,6 +759,9 @@ int main() {
     testBehaviorReplayCsv();
     testFormatting();
     testBuildInfo();
+    testComponentCsv();
+    testCapacityGroup();
+    testControlGroup();
 
     std::cout << "benchmark harness tests passed" << std::endl;
     return EXIT_SUCCESS;

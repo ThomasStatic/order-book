@@ -1,0 +1,77 @@
+name: Nightly
+
+# Long exploration that would be too slow for every push. It runs on a schedule and by hand,
+# never on a push or pull request, so it can't block one. A failure saves its stream, and the
+# run's log prints the seed that reproduces it.
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+    inputs:
+      seeds:
+        description: Fresh seeds to explore per profile
+        default: "2000"
+
+permissions:
+  contents: read
+
+jobs:
+  explore:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "Explore Linux Clang ASan+UBSan", os: ubuntu-24.04, cxx: clang++, config: RelWithDebInfo, sanitizers: true }
+          - { name: "Explore Linux GCC Release",      os: ubuntu-24.04, cxx: g++,     config: Release }
+          - { name: "Explore Windows MSVC Release",   os: windows-2022,               config: Release }
+
+    env:
+      ASAN_OPTIONS: ${{ startsWith(matrix.os, 'ubuntu') && 'detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1' || '' }}
+      UBSAN_OPTIONS: print_stacktrace=1
+      SEEDS: ${{ inputs.seeds || '2000' }}
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Ninja
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      # Invariant checks stay on in every configuration: exploring is for finding what breaks.
+      - name: Configure
+        run: |
+          args=(-DORDER_BOOK_WARNINGS_AS_ERRORS=ON -DORDER_BOOK_INVARIANT_CHECKS=ON)
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            args+=(-G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx }})
+          fi
+          if [ "${{ matrix.sanitizers }}" = "true" ]; then
+            args+=(-DORDER_BOOK_ENABLE_ASAN=ON -DORDER_BOOK_ENABLE_UBSAN=ON)
+          fi
+          cmake -S . -B build "${args[@]}"
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.config }} --target randomized_tests --parallel
+
+      - name: Explore
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            program=./build/${{ matrix.config }}/randomized_tests.exe
+          else
+            program=./build/randomized_tests
+          fi
+          "$program" --explore "$SEEDS" --profile all --out-dir explore-failures
+
+      - name: Keep any failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: explore-failures-${{ matrix.name }}
+          path: explore-failures/
+          if-no-files-found: ignore

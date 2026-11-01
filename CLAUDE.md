@@ -14,6 +14,7 @@ Read the matching note in `docs/internals/` before changing that area, and updat
 - `randomized-tests.md`: the command generator, profiles, `ReferenceBook`, `CommandReplayer`, saved regressions, `generatorVersion`.
 - `replay.md`: the CSV parser, replay engine, samples, and expected CLI output.
 - `benchmarks.md`: workloads, `workloadGeneratorVersion`, recorded baselines, what results may claim, profiling.
+- `latency.md`: the latency harness: clock, histogram, drivers, run record, report.
 
 ## Build and test
 

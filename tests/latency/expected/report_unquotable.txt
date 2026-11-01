@@ -1,0 +1,39 @@
+== command, service time, matching-heavy, closed-loop ==
+quotable: no (missing capacity-growths; missing machine; 3 runs, at least 9 needed; unoptimized build; clock is steady_clock; no noise floor on both sides)
+runs: 3, merged samples: 6000
+run record:
+  interval=x
+  time=x
+  load=x
+  target-rate=x
+  achieved-rate=x
+  workload=x
+  workload-fingerprint=x
+  generator-version=x
+  seed=x
+  shards=x
+  gateway-threads=x
+  active-connections=x
+  idle-connections=x
+  spin-window=x
+  core-map=x
+  pinned=x
+  priority=x
+  durability=x
+  logs-share-drive=x
+  book-capacity=x
+  capacity-growths=MISSING
+  clock=x
+  clock-step-ns=x
+  empty-pair-ns=x
+  commands-per-run=x
+  build=x
+  machine=MISSING
+noise floor before: 10.0 s; gaps/s over 1 us 120.0, over 10 us 35.0, over 100 us 1.0; max 540000 ns; lost 0.20%
+noise floor after: not measured
+stat     merged ns      beyond  run median     run min     run max
+p50            102        3000         101         100         102
+p90   not printed: 600 beyond, 1000 needed
+p99   not printed: 60 beyond, 1000 needed
+p99.9 not printed: 6 beyond, 1000 needed
+max            202           -         201         200         202

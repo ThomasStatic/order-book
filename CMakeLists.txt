@@ -538,11 +538,13 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         benchmarks/behavior_workload.cpp
         benchmarks/benchmark_runner.cpp
         benchmarks/benchmark_report.cpp
+        benchmarks/component_benchmark.cpp
     )
 
+    find_package(Threads REQUIRED)
     target_compile_features(order_book_benchmarking PUBLIC cxx_std_20)
     target_include_directories(order_book_benchmarking PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks)
-    target_link_libraries(order_book_benchmarking PUBLIC order_book_replay order_book_reference)
+    target_link_libraries(order_book_benchmarking PUBLIC order_book_replay order_book_reference Threads::Threads)
     # Recorded with every result, so a report says which configuration produced it.
     target_compile_definitions(order_book_benchmarking PRIVATE ORDER_BOOK_BUILD_CONFIG="$<CONFIG>")
     # GCC defines no macro under UBSan, so say whether order_book_enable_sanitizers applies it.
@@ -561,7 +563,70 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
     order_book_enable_warnings(order_book_benchmarks)
     order_book_enable_sanitizers(order_book_benchmarks)
 
+    # The latency harness (benchmarks/latency/README.md): clock, histogram, timetable driver,
+    # and report. A library so latency_harness_tests can drive it with a fake clock and target.
+    add_library(order_book_latency STATIC
+        benchmarks/latency/clock.cpp
+        benchmarks/latency/command_target.cpp
+        benchmarks/latency/histogram.cpp
+        benchmarks/latency/latency_report.cpp
+        benchmarks/latency/thread_setup.cpp
+        benchmarks/latency/timetable.cpp
+    )
+
+    target_compile_features(order_book_latency PUBLIC cxx_std_20)
+    target_include_directories(order_book_latency PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/latency)
+    target_link_libraries(order_book_latency PUBLIC order_book_benchmarking)
+    order_book_enable_warnings(order_book_latency)
+    order_book_enable_sanitizers(order_book_latency)
+
+    add_executable(order_book_latency_benchmarks
+        benchmarks/latency/latency_main.cpp
+    )
+
+    target_compile_features(order_book_latency_benchmarks PRIVATE cxx_std_20)
+    target_link_libraries(order_book_latency_benchmarks PRIVATE order_book_latency)
+    order_book_enable_warnings(order_book_latency_benchmarks)
+    order_book_enable_sanitizers(order_book_latency_benchmarks)
+
+    # One operation in bulk (benchmarks/README.md, "Component costs"). It takes thread_setup
+    # from order_book_latency, so its pins mean what the latency harness's do.
+    add_executable(order_book_component_benchmarks
+        benchmarks/component_benchmark_main.cpp
+    )
+
+    target_compile_features(order_book_component_benchmarks PRIVATE cxx_std_20)
+    target_link_libraries(order_book_component_benchmarks PRIVATE order_book_latency)
+    order_book_enable_warnings(order_book_component_benchmarks)
+    order_book_enable_sanitizers(order_book_component_benchmarks)
+
     if(BUILD_TESTING)
+        add_executable(latency_harness_tests
+            tests/latency_harness_test.cpp
+        )
+
+        target_compile_features(latency_harness_tests PRIVATE cxx_std_20)
+        target_link_libraries(latency_harness_tests PRIVATE order_book_latency)
+        order_book_enable_warnings(latency_harness_tests)
+        order_book_enable_sanitizers(latency_harness_tests)
+        add_test(NAME latency_harness_tests
+            COMMAND latency_harness_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/latency)
+
+        # The program end to end on tiny runs, closed-loop then on a timetable, writing its
+        # files. --allow-unoptimized, since CTest runs in every configuration.
+        add_test(NAME latency_cli_smoke
+            COMMAND order_book_latency_benchmarks --workload small-book --commands 500 --runs 2 --warmup 1
+                    --noise-seconds 0 --allow-unoptimized --out-dir ${CMAKE_CURRENT_BINARY_DIR}/latency-smoke)
+        add_test(NAME latency_cli_smoke_response
+            COMMAND order_book_latency_benchmarks --workload small-book --commands 500 --runs 2 --warmup 1
+                    --time response --noise-seconds 0 --allow-unoptimized
+                    --out-dir ${CMAKE_CURRENT_BINARY_DIR}/latency-smoke-response)
+
+        # Both groups on tiny structures, with two threads through the controls.
+        add_test(NAME component_cli_smoke
+            COMMAND order_book_component_benchmarks --size smoke --threads 2 --allow-unoptimized
+                    --csv ${CMAKE_CURRENT_BINARY_DIR}/component-smoke.csv)
+
         add_executable(benchmark_harness_tests
             tests/benchmark_harness_test.cpp
         )

@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "order_book/order_book.hpp"
 #include "workload.hpp"
 
 // Runs generated workloads against the book and times them. Only the timed commands are
@@ -56,6 +57,14 @@ struct RunSettings {
 // its bucket count up to a power of two, so a rough estimate gives the same table. It is
 // recorded with every result (JSON "reserved_orders").
 std::size_t expectedBookSize(const Workload& workload);
+
+// Reserves the book and applies the workload's preload. Throws std::runtime_error if the book
+// refuses or trades any of it.
+void preloadBook(OrderBook& book, const Workload& workload);
+// Adds the book's final shape to an outcome, for comparing with the workload's prediction.
+void recordFinalBook(const OrderBook& book, WorkloadOutcome& outcome);
+// One line of every counter, for a failure message.
+std::string describeOutcome(const WorkloadOutcome& outcome);
 
 // Times the workload's commands once on a fresh book, preloaded outside the timed region.
 // Throws std::runtime_error, describing both, if the book's outcome differs from the one the

@@ -73,41 +73,10 @@ void execute(OrderBook& book, const BehaviorCommand& command, WorkloadOutcome& o
     }
 }
 
-void preload(OrderBook& book, const Workload& workload) {
-    book.reserve(expectedBookSize(workload));
-    WorkloadOutcome preloadOutcome;
-    for (const BenchmarkCommand& command : workload.preload) {
-        execute(book, command, preloadOutcome);
-    }
-    for (const BehaviorCommand& command : workload.behaviorPreload) {
-        execute(book, command, preloadOutcome);
-    }
-    if (preloadOutcome.rejections != 0 || preloadOutcome.trades != 0) {
-        throw std::runtime_error("workload " + workload.config.name + ": the book refused or traded its preload");
-    }
-}
-
-void recordFinalBook(const OrderBook& book, WorkloadOutcome& outcome) {
-    const BookSnapshot snapshot = book.snapshot(std::numeric_limits<unsigned int>::max());
-    outcome.finalActiveOrders = book.activeOrderCount();
-    outcome.finalPriceLevels = snapshot.bids.size() + snapshot.asks.size();
-    outcome.finalPendingStops = book.pendingStopCount();
-}
-
-std::string describeOutcome(const WorkloadOutcome& outcome) {
-    return "submits=" + std::to_string(outcome.submits) + " cancels=" + std::to_string(outcome.cancels) +
-           " replaces=" + std::to_string(outcome.replaces) + " rejections=" + std::to_string(outcome.rejections) +
-           " trades=" + std::to_string(outcome.trades) + " volume=" + std::to_string(outcome.volume) +
-           " expirations=" + std::to_string(outcome.expirations) + " preventions=" + std::to_string(outcome.preventions) +
-           " stops-triggered=" + std::to_string(outcome.stopsTriggered) + " active=" +
-           std::to_string(outcome.finalActiveOrders) + " levels=" + std::to_string(outcome.finalPriceLevels) +
-           " pending=" + std::to_string(outcome.finalPendingStops);
-}
-
 Measurement runCore(const Workload& workload) {
     Measurement measurement;
     OrderBook book;
-    preload(book, workload);
+    preloadBook(book, workload);
 
     const Clock::time_point start = Clock::now();
     for (const BenchmarkCommand& command : workload.timed) {
@@ -128,7 +97,7 @@ Measurement runReplay(const Workload& workload) {
 
     Measurement measurement;
     OrderBook book;
-    preload(book, workload);
+    preloadBook(book, workload);
     // Built outside the timed region: the text stands in for a file already read into memory.
     std::istringstream csv(workload.config.family == WorkloadFamily::V1 ? renderReplayCsv(workload.timed)
                                                                          : renderReplayCsv(workload.behaviorTimed));
@@ -166,6 +135,37 @@ Measurement runReplay(const Workload& workload) {
 
 std::size_t expectedBookSize(const Workload& workload) {
     return std::max(workload.preloadResting, workload.expected.finalActiveOrders);
+}
+
+void preloadBook(OrderBook& book, const Workload& workload) {
+    book.reserve(expectedBookSize(workload));
+    WorkloadOutcome preloadOutcome;
+    for (const BenchmarkCommand& command : workload.preload) {
+        execute(book, command, preloadOutcome);
+    }
+    for (const BehaviorCommand& command : workload.behaviorPreload) {
+        execute(book, command, preloadOutcome);
+    }
+    if (preloadOutcome.rejections != 0 || preloadOutcome.trades != 0) {
+        throw std::runtime_error("workload " + workload.config.name + ": the book refused or traded its preload");
+    }
+}
+
+void recordFinalBook(const OrderBook& book, WorkloadOutcome& outcome) {
+    const BookSnapshot snapshot = book.snapshot(std::numeric_limits<unsigned int>::max());
+    outcome.finalActiveOrders = book.activeOrderCount();
+    outcome.finalPriceLevels = snapshot.bids.size() + snapshot.asks.size();
+    outcome.finalPendingStops = book.pendingStopCount();
+}
+
+std::string describeOutcome(const WorkloadOutcome& outcome) {
+    return "submits=" + std::to_string(outcome.submits) + " cancels=" + std::to_string(outcome.cancels) +
+           " replaces=" + std::to_string(outcome.replaces) + " rejections=" + std::to_string(outcome.rejections) +
+           " trades=" + std::to_string(outcome.trades) + " volume=" + std::to_string(outcome.volume) +
+           " expirations=" + std::to_string(outcome.expirations) + " preventions=" + std::to_string(outcome.preventions) +
+           " stops-triggered=" + std::to_string(outcome.stopsTriggered) + " active=" +
+           std::to_string(outcome.finalActiveOrders) + " levels=" + std::to_string(outcome.finalPriceLevels) +
+           " pending=" + std::to_string(outcome.finalPendingStops);
 }
 
 const char* benchmarkKindName(BenchmarkKind kind) {

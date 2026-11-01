@@ -1,0 +1,35 @@
+== command, response time, matching-heavy, fixed at 90% ==
+quotable: no (unpinned; not sustained)
+runs: 9, merged samples: 18000
+run record:
+  interval=command
+  time=service
+  load=closed-loop
+  target-rate=x
+  achieved-rate=x
+  workload=matching-heavy
+  workload-fingerprint=x
+  generator-version=x
+  seed=x
+  shards=x
+  gateway-threads=x
+  active-connections=x
+  idle-connections=x
+  spin-window=x
+  core-map=x
+  pinned=x
+  priority=x
+  durability=x
+  logs-share-drive=x
+  book-capacity=x
+  capacity-growths=x
+  clock=x
+  clock-step-ns=x
+  empty-pair-ns=x
+  commands-per-run=x
+  build=x
+  machine=x
+noise floor before: 10.0 s; gaps/s over 1 us 120.0, over 10 us 35.0, over 100 us 1.0; max 540000 ns; lost 0.20%
+noise floor after: 10.0 s; gaps/s over 1 us 120.0, over 10 us 35.0, over 100 us 1.0; max 540000 ns; lost 0.20%
+unpinned
+not sustained
