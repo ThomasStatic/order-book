@@ -577,4 +577,4 @@ Roughly in order of how much of the existing design they reuse:
 | [`docs/OPTIMIZATION-EXPERIMENTS.md`](docs/OPTIMIZATION-EXPERIMENTS.md) | Each optimization experiment's design and outcome. |
 | [`docs/OPTIMIZATION.md`](docs/OPTIMIZATION.md) | The optimization report. |
 | [`docs/images/`](docs/images/) | The figures in this README. `make_figures.py` redraws the benchmark, optimization, and terminal figures from the files they show. |
-| [`CLAUDE.md`](CLAUDE.md) | Detailed contributor notes: every invariant, test convention, and contract, in one place. |
+| [`docs/internals/`](docs/internals/) | Detailed contributor notes: every invariant, test convention, and contract, by topic. [`CLAUDE.md`](CLAUDE.md) indexes them. |
