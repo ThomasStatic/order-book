@@ -21,7 +21,8 @@ enum class FailureType {
     BEHAVIOR_VIOLATION,    // the engine's own result broke a behavior property, model or no model
     OUTCOME_MISMATCH,      // the result or its events differ from what the reference model predicts
     BOOK_STATE_MISMATCH,   // the book's levels, queues, or order count differ from the model's
-    PROPERTY_VIOLATION     // an extra property given to the replayer failed
+    PROPERTY_VIOLATION,    // an extra property given to the replayer failed
+    POOL_VIOLATION         // at the end of a stream, NodePool::check found a corrupted free list
 };
 
 const char* failureTypeName(FailureType type);

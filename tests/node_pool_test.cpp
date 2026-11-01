@@ -134,13 +134,19 @@ void testOtherRequestsGoToTheHeap() {
     PoolAllocator<char[24]> twentyFours(nodes);
     PoolAllocator<char[40]> forties(nodes);
     PoolAllocator<char[72]> seventyTwos(nodes);
+    PoolAllocator<char[88]> eightyEights(nodes);
+    PoolAllocator<char[104]> oneHundredFours(nodes);
     PoolAllocator<Node> heapOnly;
 
-    // Four sizes claim the pool's four classes; each is then served from its own blocks.
+    // Six sizes claim the pool's six classes; each is then served from its own blocks.
     Node* const node = nodes.allocate(1);
     double* const single = doubles.allocate(1);
     auto* const twentyFour = twentyFours.allocate(1);
     auto* const forty = forties.allocate(1);
+    auto* const seventyTwo = seventyTwos.allocate(1);
+    auto* const eightyEight = eightyEights.allocate(1);
+    escaped = seventyTwo;
+    escaped = eightyEight;
     escaped = node;
     escaped = single;
     escaped = twentyFour;
@@ -153,9 +159,9 @@ void testOtherRequestsGoToTheHeap() {
 
     // All readings first, then the checks (see above).
     const long before = allocations;
-    auto* const seventyTwo = seventyTwos.allocate(1);  // a fifth size: the heap
-    escaped = seventyTwo;
-    const long afterFifth = allocations;
+    auto* const oneHundredFour = oneHundredFours.allocate(1);  // a seventh size: the heap
+    escaped = oneHundredFour;
+    const long afterSeventh = allocations;
     double* const array = doubles.allocate(4);  // more than one object: the heap
     escaped = array;
     Node* const nodeArray = nodes.allocate(3);
@@ -166,11 +172,13 @@ void testOtherRequestsGoToTheHeap() {
     const long afterUnpooled = allocations;
 
     expect(reusedSingle == single && afterReuse == beforeReuse, "each size class reuses its own freed blocks");
-    expect(afterFifth == before + 1, "a size beyond the pool's classes goes to the heap");
-    expect(afterArrays == afterFifth + 2, "arrays go to the heap");
+    expect(afterSeventh == before + 1, "a size beyond the pool's classes goes to the heap");
+    expect(afterArrays == afterSeventh + 2, "arrays go to the heap");
     expect(afterUnpooled == afterArrays + 1, "an allocator without a pool uses the heap");
     expect(!(heapOnly == nodes) && nodes == doubles, "allocators are equal exactly when they share a pool");
 
+    oneHundredFours.deallocate(oneHundredFour, 1);
+    eightyEights.deallocate(eightyEight, 1);
     seventyTwos.deallocate(seventyTwo, 1);
     doubles.deallocate(array, 4);
     nodes.deallocate(nodeArray, 3);
@@ -317,9 +325,72 @@ void testMoveAssignmentReleasesIntoTheRightPool() {
            "self-move-assignment leaves the book as it was");
 }
 
+void testCheckCountsLiveBlocksPerClass() {
+    NodePool pool;
+    expect(pool.check().sound && pool.check().totalLiveBlocks() == 0, "a new pool has nothing live");
+
+    std::vector<void*> small;
+    std::vector<void*> large;
+    for (int i = 0; i < 300; ++i) {  // past one chunk of 256
+        small.push_back(pool.allocate(sizeof(Node), alignof(Node)));
+    }
+    for (int i = 0; i < 5; ++i) {
+        large.push_back(pool.allocate(sizeof(Node) * 2, alignof(Node)));
+    }
+    NodePool::Usage usage = pool.check();
+    expect(usage.sound, "a healthy pool is sound");
+    expect(usage.liveBlocks[0] == 300, "the first class counts across chunks");
+    expect(usage.liveBlocks[1] == 5, "each class is counted on its own");
+
+    for (int i = 0; i < 100; ++i) {
+        pool.deallocate(small[static_cast<std::size_t>(i)], sizeof(Node), alignof(Node));
+    }
+    usage = pool.check();
+    expect(usage.liveBlocks[0] == 200 && usage.totalLiveBlocks() == 205, "freed blocks stop being live");
+
+    long before = allocations;
+    const NodePool::Usage repeated = pool.check();
+    const long made = allocations - before;
+    expect(made == 0, "check never allocates");
+    expect(repeated.liveBlocks == usage.liveBlocks, "check changes nothing");
+
+    void* const again = pool.allocate(sizeof(Node), alignof(Node));
+    expect(again == small[99], "a block read by check is still usable, last freed first");
+    expect(pool.check().liveBlocks[0] == 201, "taking a block makes it live again");
+    pool.deallocate(again, sizeof(Node), alignof(Node));
+    for (int i = 100; i < 300; ++i) {
+        pool.deallocate(small[static_cast<std::size_t>(i)], sizeof(Node), alignof(Node));
+    }
+    for (void* block : large) {
+        pool.deallocate(block, sizeof(Node) * 2, alignof(Node));
+    }
+    expect(pool.check().totalLiveBlocks() == 0, "everything returned leaves nothing live");
+}
+
+// Six sizes all get a class; a seventh goes to the heap.
+void testSixClasses() {
+    NodePool pool;
+    std::vector<std::pair<void*, std::size_t>> blocks;
+    for (std::size_t size = 1; size <= NodePool::maxClasses; ++size) {
+        blocks.emplace_back(pool.allocate(size * 16, 8), size * 16);
+    }
+    const long before = allocations;
+    void* const extra = pool.allocate(NodePool::maxClasses * 16 + 16, 8);
+    escaped = extra;
+    const long heap = allocations - before;
+    expect(heap == 1, "a seventh size goes to the heap");
+    pool.deallocate(extra, NodePool::maxClasses * 16 + 16, 8);
+    expect(pool.check().totalLiveBlocks() == NodePool::maxClasses, "a block per class");
+    for (const auto& [block, size] : blocks) {
+        pool.deallocate(block, size, 8);
+    }
+}
+
 }  // namespace
 
 int main() {
+    testCheckCountsLiveBlocksPerClass();
+    testSixClasses();
     testBlocksAreReused();
     testOtherRequestsGoToTheHeap();
     testFailedChunkChangesNothing();

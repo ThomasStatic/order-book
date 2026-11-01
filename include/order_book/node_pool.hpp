@@ -1,11 +1,23 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <limits>
 #include <memory>
 #include <new>
 #include <type_traits>
 #include <vector>
+
+#if defined(__SANITIZE_ADDRESS__)
+#define ORDER_BOOK_POISON_POOL 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define ORDER_BOOK_POISON_POOL 1
+#endif
+#endif
+#if defined(ORDER_BOOK_POISON_POOL)
+#include <sanitizer/asan_interface.h>
+#endif
 
 namespace order_book {
 
@@ -18,14 +30,35 @@ namespace order_book {
     // of blocks when a free list is empty.
     //
     // Blocks are grouped into a few size classes, one per distinct (size, alignment) a
-    // container asks for: the list nodes and, in builds with checked iterators, a container's
-    // small bookkeeping object, which no single first request can then crowd out. A request of
-    // a further size, or for more than one object, goes to the heap directly.
+    // container asks for: the two list nodes, the two level objects, and, in builds with checked
+    // iterators, a container's small bookkeeping object, with one to spare, so no single first
+    // request can crowd another out. A request of a further size, or for more than one object,
+    // goes to the heap directly.
     //
     // Blocks are returned to the pool, not to the heap, so a book keeps the node memory of its
-    // largest size until it is destroyed. Not thread-safe, like the book that owns it.
+    // largest size until it is destroyed. In ASan builds each freed block is poisoned whole, so
+    // a stale pointer into one, a PriceLevel* above all, is still caught although the pool
+    // never gives the memory back. Not thread-safe, like the book that owns it.
     class NodePool {
     public:
+        static constexpr std::size_t maxClasses = 6;
+
+        // What check found: blocks handed out and not yet returned, per size class. A free list
+        // longer than the blocks ever carved can only be a corrupted one (a block freed twice
+        // links it into a cycle), and that is what sound says.
+        struct Usage {
+            std::array<std::size_t, maxClasses> liveBlocks{};
+            bool sound = true;
+
+            std::size_t totalLiveBlocks() const noexcept {
+                std::size_t total = 0;
+                for(const std::size_t live : liveBlocks) {
+                    total += live;
+                }
+                return total;
+            }
+        };
+
         NodePool() = default;
         NodePool(const NodePool&) = delete;
         NodePool& operator=(const NodePool&) = delete;
@@ -33,6 +66,7 @@ namespace order_book {
         ~NodePool() {
             for(const SizeClass& sizeClass : classes) {
                 for(std::byte* chunk : sizeClass.chunks) {
+                    markUsable(chunk, sizeClass.size * blocksPerChunk);
                     release(chunk, sizeClass.align);
                 }
             }
@@ -47,6 +81,7 @@ namespace order_book {
             }
             if(sizeClass->freeBlocks != nullptr) {
                 FreeBlock* const block = sizeClass->freeBlocks;
+                markUsable(block, sizeClass->size);
                 sizeClass->freeBlocks = block->next;
                 return block;
             }
@@ -69,11 +104,50 @@ namespace order_book {
                 return;
             }
             sizeClass->freeBlocks = ::new(block) FreeBlock{sizeClass->freeBlocks};
+            markUnusable(block, sizeClass->size);
+        }
+
+        // Walks every free list and counts carved blocks minus free ones, per class. Never
+        // allocates or throws, and leaves each block as it was.
+        Usage check() const noexcept {
+            Usage usage;
+            for(std::size_t index = 0; index < maxClasses; ++index) {
+                const SizeClass& sizeClass = classes[index];
+                if(sizeClass.chunks.empty()) {
+                    continue;
+                }
+                const std::size_t carved = (sizeClass.chunks.size() - 1) * blocksPerChunk + sizeClass.carvedBlocks;
+                std::size_t free = 0;
+                for(FreeBlock* block = sizeClass.freeBlocks; block != nullptr; ++free) {
+                    if(free == carved) {
+                        usage.sound = false;
+                        break;
+                    }
+                    markUsable(block, sizeClass.size);
+                    FreeBlock* const next = block->next;
+                    markUnusable(block, sizeClass.size);
+                    block = next;
+                }
+                usage.liveBlocks[index] = carved - free;
+            }
+            return usage;
         }
 
     private:
         template <typename T>
         friend class PoolAllocator;
+
+        static void markUsable([[maybe_unused]] void* block, [[maybe_unused]] std::size_t bytes) noexcept {
+#if defined(ORDER_BOOK_POISON_POOL)
+            ASAN_UNPOISON_MEMORY_REGION(block, bytes);
+#endif
+        }
+
+        static void markUnusable([[maybe_unused]] void* block, [[maybe_unused]] std::size_t bytes) noexcept {
+#if defined(ORDER_BOOK_POISON_POOL)
+            ASAN_POISON_MEMORY_REGION(block, bytes);
+#endif
+        }
 
         struct FreeBlock {
             FreeBlock* next;
@@ -88,7 +162,6 @@ namespace order_book {
         };
 
         static constexpr std::size_t blocksPerChunk = 256;
-        static constexpr std::size_t maxClasses = 4;
 
         static std::size_t blockSizeFor(std::size_t bytes, std::size_t alignment) noexcept {
             const std::size_t size = bytes < sizeof(FreeBlock) ? sizeof(FreeBlock) : bytes;

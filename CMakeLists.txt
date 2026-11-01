@@ -243,6 +243,22 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(node_pool_tests)
     add_test(NAME node_pool_tests COMMAND node_pool_tests)
 
+    # Under ASan this dies on a read of a freed block, so it passes on the report; elsewhere
+    # it has nothing to test and reports Skipped.
+    add_executable(node_pool_poison_tests
+        tests/node_pool_poison_test.cpp
+    )
+
+    target_compile_features(node_pool_poison_tests PRIVATE cxx_std_20)
+    target_link_libraries(node_pool_poison_tests PRIVATE order_book)
+    order_book_enable_warnings(node_pool_poison_tests)
+    order_book_enable_sanitizers(node_pool_poison_tests)
+    add_test(NAME node_pool_poison_tests COMMAND node_pool_poison_tests)
+    set_tests_properties(node_pool_poison_tests PROPERTIES
+        PASS_REGULAR_EXPRESSION "use-after-poison"
+        FAIL_REGULAR_EXPRESSION "FAILED"
+        SKIP_REGULAR_EXPRESSION "SKIPPED")
+
     add_executable(order_index_tests
         tests/order_index_test.cpp
     )

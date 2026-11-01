@@ -33,6 +33,7 @@ struct OrderBookTestAccess {
 
     static const auto& bids(const OrderBook& book) { return book.bids; }
     static const auto& asks(const OrderBook& book) { return book.asks; }
+    static const NodePool& pool(const OrderBook& book) { return *book.nodePool; }
     static const auto& buyStops(const OrderBook& book) { return book.buyStops; }
     static const auto& sellStops(const OrderBook& book) { return book.sellStops; }
     static const order_book::OrderQueue& orders(const PriceLevel& level) { return level.orders; }
@@ -363,6 +364,21 @@ std::size_t countLevels(const OrderBook& book) {
     return Access::bids(book).size() + Access::asks(book).size();
 }
 
+// Run once a stream ends: each free list must walk cleanly, and every resting order and pending
+// stop must hold a block. It says why not, or nothing.
+std::optional<std::string> checkPool(const OrderBook& book) {
+    const NodePool::Usage usage = Access::pool(book).check();
+    if (!usage.sound) {
+        return "a free list is longer than the blocks ever carved";
+    }
+    const std::size_t held = book.activeOrderCount() + book.pendingStopCount();
+    if (usage.totalLiveBlocks() < held) {
+        return "the pool has " + std::to_string(usage.totalLiveBlocks()) + " live blocks for " + std::to_string(held) +
+               " resting orders and pending stops";
+    }
+    return std::nullopt;
+}
+
 }  // namespace
 
 const char* failureTypeName(FailureType type) {
@@ -373,6 +389,7 @@ const char* failureTypeName(FailureType type) {
         case FailureType::OUTCOME_MISMATCH: return "OUTCOME_MISMATCH";
         case FailureType::BOOK_STATE_MISMATCH: return "BOOK_STATE_MISMATCH";
         case FailureType::PROPERTY_VIOLATION: return "PROPERTY_VIOLATION";
+        case FailureType::POOL_VIOLATION: return "POOL_VIOLATION";
     }
     return "UNKNOWN";
 }
@@ -427,8 +444,12 @@ RunResult CommandReplayer::replay(OrderBook& book, const std::vector<Command>& c
     for (std::size_t i = 0; i < commands.size(); ++i) {
         if (std::optional<Failure> failure = execute(book, model, owners, commands[i], i, result.stats)) {
             result.failure = std::move(failure);
-            break;
+            return result;
         }
+    }
+    if (std::optional<std::string> broken = checkPool(book); broken && !commands.empty()) {
+        result.failure = Failure{FailureType::POOL_VIOLATION, commands.size() - 1, commands.back(), std::nullopt,
+                                 std::move(*broken), describeBookState(book, model, commands.back())};
     }
     return result;
 }
@@ -441,13 +462,19 @@ RunResult CommandReplayer::run(OrderBook& book, RandomCommandGenerator& generato
     ReferenceBook model;
     RequestLedger owners;
     RunResult result;
+    std::optional<Command> last;
     for (std::size_t i = 0; i < count; ++i) {
         const Command command = generator.next(model);
         recorder.record(command);
         if (std::optional<Failure> failure = execute(book, model, owners, command, i, result.stats)) {
             result.failure = std::move(failure);
-            break;
+            return result;
         }
+        last = command;
+    }
+    if (std::optional<std::string> broken = checkPool(book); broken && last) {
+        result.failure = Failure{FailureType::POOL_VIOLATION, count - 1, *last, std::nullopt, std::move(*broken),
+                                 describeBookState(book, model, *last)};
     }
     return result;
 }
