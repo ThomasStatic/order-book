@@ -7,8 +7,26 @@
 #include "order_book/submission_result.hpp"
 
 namespace order_book {
+    namespace {
+        // Emptied first, so that moving the vector copies no inline elements.
+        template <typename Vector>
+        Vector&& cleared(Vector& vector) noexcept {
+            vector.clear();
+            return std::move(vector);
+        }
+    }  // namespace
+
     ResultRecorder::ResultRecorder(const OrderAccepted& acceptance)
-        : submissionId(acceptance.orderId),
+        : ResultRecorder(acceptance, SubmissionTrades{}, SubmissionEvents{}) {}
+
+    ResultRecorder::ResultRecorder(const OrderAccepted& acceptance, SubmissionResult& out)
+        : ResultRecorder(acceptance, cleared(out.generatedTrades), cleared(out.events)) {}
+
+    ResultRecorder::ResultRecorder(const OrderAccepted& acceptance, SubmissionTrades&& storedTrades,
+                                   SubmissionEvents&& storedEvents)
+        : trades(std::move(storedTrades)),
+          events(std::move(storedEvents)),
+          submissionId(acceptance.orderId),
           submittedQuantity(acceptance.quantity),
           current{acceptance.orderId, acceptance.side, acceptance.price, acceptance.quantity, false} {
         if (acceptance.orderId == 0) {
@@ -21,7 +39,16 @@ namespace order_book {
     }
 
     ResultRecorder::ResultRecorder(const OrderReplaced& replacement, Quantity executed)
-        : submissionId(replacement.orderId),
+        : ResultRecorder(replacement, executed, SubmissionTrades{}, SubmissionEvents{}) {}
+
+    ResultRecorder::ResultRecorder(const OrderReplaced& replacement, Quantity executed, ReplaceResult& out)
+        : ResultRecorder(replacement, executed, cleared(out.generatedTrades), cleared(out.events)) {}
+
+    ResultRecorder::ResultRecorder(const OrderReplaced& replacement, Quantity executed, SubmissionTrades&& storedTrades,
+                                   SubmissionEvents&& storedEvents)
+        : trades(std::move(storedTrades)),
+          events(std::move(storedEvents)),
+          submissionId(replacement.orderId),
           submittedQuantity(replacement.openQuantity),
           replacing(true),
           executedBefore(executed),
@@ -90,7 +117,7 @@ namespace order_book {
         trades = std::move(adopted);
     }
 
-    ReplaceResult ResultRecorder::finishReplace() {
+    FillStatus ResultRecorder::replaceFillStatus() {
         checkOpen();
         if (!replacing) {
             throw std::invalid_argument("finishing a submission's recorder as a replace error");
@@ -98,22 +125,76 @@ namespace order_book {
         closeSubmitted();
         finished = true;
         const bool executed = executedBefore > 0 || submittedRemaining < submittedQuantity;
-        const FillStatus fillStatus = !executed               ? FillStatus::NONE
-                                    : submittedRemaining == 0 ? FillStatus::FILLED
-                                                              : FillStatus::PARTIAL;
-        return ReplaceResult(true, std::nullopt, std::move(trades), std::move(events), submittedRemaining, fillStatus);
+        return !executed               ? FillStatus::NONE
+             : submittedRemaining == 0 ? FillStatus::FILLED
+                                       : FillStatus::PARTIAL;
     }
 
-    SubmissionResult ResultRecorder::finish() {
+    FillStatus ResultRecorder::submissionFillStatus() {
         checkOpen();
         if (replacing) {
             throw std::invalid_argument("finishing a replace's recorder as a submission error");
         }
         closeSubmitted();
         finished = true;
-        const FillStatus fillStatus = submittedRemaining == submittedQuantity ? FillStatus::NONE
-                                    : submittedRemaining == 0                ? FillStatus::FILLED
-                                                                             : FillStatus::PARTIAL;
+        return submittedRemaining == submittedQuantity ? FillStatus::NONE
+             : submittedRemaining == 0                 ? FillStatus::FILLED
+                                                       : FillStatus::PARTIAL;
+    }
+
+    ReplaceResult ResultRecorder::finishReplace() {
+        const FillStatus fillStatus = replaceFillStatus();
+        return ReplaceResult(true, std::nullopt, std::move(trades), std::move(events), submittedRemaining, fillStatus);
+    }
+
+    SubmissionResult ResultRecorder::finish() {
+        const FillStatus fillStatus = submissionFillStatus();
         return SubmissionResult(submissionId, std::move(trades), std::move(events), submittedRemaining, fillStatus);
+    }
+
+    void ResultRecorder::finish(SubmissionResult& out) {
+        out.fillStatus = submissionFillStatus();
+        out.submissionId = submissionId;
+        out.generatedTrades = std::move(trades);
+        out.remainingQuantity = submittedRemaining;
+        out.status = SubmissionStatus::ACCEPTED;
+        out.rejectionReason = RejectionReason::NONE;
+        out.events = std::move(events);
+    }
+
+    void ResultRecorder::finishReplace(ReplaceResult& out) {
+        out.fillStatus = replaceFillStatus();
+        out.success = true;
+        out.rejectionReason = std::nullopt;
+        out.generatedTrades = std::move(trades);
+        out.events = std::move(events);
+        out.remainingQuantity = submittedRemaining;
+    }
+
+    void ResultRecorder::reject(SubmissionResult& out, OrderId orderId, Quantity remaining, RejectionReason reason) {
+        if (reason == RejectionReason::NONE) {
+            throw std::invalid_argument("rejected submission without a rejection reason error");
+        }
+        out.submissionId = orderId;
+        out.generatedTrades.clear();
+        out.remainingQuantity = remaining;
+        out.fillStatus = FillStatus::NONE;
+        out.status = SubmissionStatus::REJECTED;
+        out.rejectionReason = reason;
+        out.events.clear();
+        out.events.push_back(OrderRejected{orderId, reason});
+    }
+
+    void ResultRecorder::reject(ReplaceResult& out, OrderId orderId, RejectionReason reason) {
+        if (reason == RejectionReason::NONE) {
+            throw std::invalid_argument("rejected replace without a rejection reason error");
+        }
+        out.success = false;
+        out.rejectionReason = reason;
+        out.generatedTrades.clear();
+        out.events.clear();
+        out.events.push_back(ReplaceRejected{orderId, reason});
+        out.remainingQuantity = 0;
+        out.fillStatus = FillStatus::NONE;
     }
 }  // namespace order_book

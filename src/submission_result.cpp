@@ -43,6 +43,11 @@ namespace order_book {
         return SubmissionResult(orderId, remaining, reason);
     }
 
+    void SubmissionResult::reserve(std::size_t trades, std::size_t recordedEvents) {
+        generatedTrades.reserve(trades);
+        events.reserve(recordedEvents);
+    }
+
     OrderId SubmissionResult::getSubmissionId() const {
         return submissionId;
     }

@@ -20,6 +20,11 @@ namespace order_book {
         return ReplaceResult(false, reason, {}, SubmissionEvents{ReplaceRejected{orderId, reason}}, 0, FillStatus::NONE);
     }
 
+    void ReplaceResult::reserve(std::size_t trades, std::size_t recordedEvents) {
+        generatedTrades.reserve(trades);
+        events.reserve(recordedEvents);
+    }
+
     bool ReplaceResult::isSuccess() const {
         return success;
     }

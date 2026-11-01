@@ -345,9 +345,26 @@ namespace order_book {
         // Its price is 0 for an order with none (a market or STOP order).
         ResultRecorder recorder(OrderAccepted{request.id, request.side, request.price, request.quantity});
         const TriggeredStopsGuard discardOnThrow(*this);
+        runRequest(request, recorder);
+        return recorder.finish();
+    }
+
+    void OrderBook::submitOrder(OrderRequest request, SubmissionResult& out) {
+        const InvariantBoundary boundary(*this, "submitOrder");
+        if(const std::optional<RejectionReason> reason = validateNewRequest(request)) {
+            ResultRecorder::reject(out, request.id, request.quantity, *reason);
+            return;
+        }
+        ResultRecorder recorder(OrderAccepted{request.id, request.side, request.price, request.quantity}, out);
+        const TriggeredStopsGuard discardOnThrow(*this);
+        runRequest(request, recorder);
+        recorder.finish(out);
+    }
+
+    void OrderBook::runRequest(const OrderRequest& request, ResultRecorder& recorder) {
         if(isStopType(request.type)) {
             submitStop(request, recorder);  // makes no trades, so triggers nothing
-            return recorder.finish();
+            return;
         }
         Order incoming = incomingOrder(request);
         if(request.postOnly) {
@@ -357,7 +374,6 @@ namespace order_book {
             runIncoming(incoming, Instructions{request.timeInForce, request.owner, request.selfTradePrevention}, recorder);
         }
         runCascade(recorder);
-        return recorder.finish();
     }
 
     Order OrderBook::incomingOrder(const OrderRequest& request) const {
@@ -435,6 +451,31 @@ namespace order_book {
 
     ReplaceResult OrderBook::replaceOrder(const ReplaceRequest& request) {
         const InvariantBoundary boundary(*this, "replaceOrder");
+        ReplacePlan plan;
+        if(const std::optional<RejectionReason> reason = planReplace(request, plan)) {
+            return ReplaceResult::rejected(request.id, *reason);
+        }
+        // Its OrderReplaced fits inline, so opening the result cannot throw.
+        ResultRecorder recorder(plan.replacement, plan.executed);
+        const TriggeredStopsGuard discardOnThrow(*this);
+        runReplace(request, plan, recorder);
+        return recorder.finishReplace();
+    }
+
+    void OrderBook::replaceOrder(const ReplaceRequest& request, ReplaceResult& out) {
+        const InvariantBoundary boundary(*this, "replaceOrder");
+        ReplacePlan plan;
+        if(const std::optional<RejectionReason> reason = planReplace(request, plan)) {
+            ResultRecorder::reject(out, request.id, *reason);
+            return;
+        }
+        ResultRecorder recorder(plan.replacement, plan.executed, out);
+        const TriggeredStopsGuard discardOnThrow(*this);
+        runReplace(request, plan, recorder);
+        recorder.finishReplace(out);
+    }
+
+    std::optional<RejectionReason> OrderBook::planReplace(const ReplaceRequest& request, ReplacePlan& plan) {
         // The malformed checks first, then the state checks; nothing has changed yet.
         std::optional<RejectionReason> reason = checks::amountReason(request.id, request.price, true, request.quantity);
         if(!reason && !isValidSelfTradePrevention(request.selfTradePrevention)) {
@@ -448,23 +489,27 @@ namespace order_book {
             reason = RejectionReason::ORDER_NOT_FOUND;
         }
         if(reason) {
-            return ReplaceResult::rejected(request.id, *reason);
+            return reason;
         }
-        Order& resting = *entry->second.itr;
+        const Order& resting = *entry->second.itr;
         const Quantity executed = resting.getInitialQuantity() - resting.getRemainingQuantity();
         if(request.quantity <= executed) {
-            return ReplaceResult::rejected(request.id, RejectionReason::REPLACE_QUANTITY_TOO_LOW);
+            return RejectionReason::REPLACE_QUANTITY_TOO_LOW;
         }
 
         const Quantity open = request.quantity - executed;
         const bool keepsPriority = request.price == resting.getPriceTick() && request.quantity <= resting.getInitialQuantity();
-        // Its OrderReplaced fits inline, so opening the result cannot throw.
-        ResultRecorder recorder(OrderReplaced{request.id, resting.getSide(), request.price, request.quantity, open,
-                                              keepsPriority},
-                                executed);
-        const TriggeredStopsGuard discardOnThrow(*this);
+        plan = ReplacePlan{entry, executed, OrderReplaced{request.id, resting.getSide(), request.price, request.quantity,
+                                                          open, keepsPriority}};
+        return std::nullopt;
+    }
 
-        if(keepsPriority) {
+    void OrderBook::runReplace(const ReplaceRequest& request, const ReplacePlan& plan, ResultRecorder& recorder) {
+        const OrderIndex::iterator entry = plan.entry;
+        const Quantity open = plan.replacement.openQuantity;
+        Order& resting = *entry->second.itr;
+
+        if(plan.replacement.priorityKept) {
             // In place, as cancelOrder reaches the level: through the entry's own handle, checked
             // before anything changes. Nothing below allocates or throws.
             PriceLevel* const level = &checkedLevel(entry->second);
@@ -472,7 +517,7 @@ namespace order_book {
             resting.initialQuantity = request.quantity;
             resting.remainingQuantity = open;
             entry->second.itr->owner = request.owner;
-            return recorder.finishReplace();
+            return;
         }
 
         // Losing priority, it re-enters as if it had just arrived, at its new price.
@@ -486,19 +531,18 @@ namespace order_book {
             removeResting(entry);
             recorder.expire(open);
             advanceSequenceNum();
-            return recorder.finishReplace();
+            return;
         }
         if(!crosses) {
             moveToBack(entry, request.price, request.quantity, open, request.owner);
             advanceSequenceNum();
-            return recorder.finishReplace();
+            return;
         }
         // Crossing: it leaves its level, then matches like a new GTC limit order, with
         // submitOrder's contract, and runs the cascade its trades trigger.
         removeResting(entry);
         runIncoming(incoming, Instructions{TimeInForce::GTC, request.owner, request.selfTradePrevention}, recorder);
         runCascade(recorder);
-        return recorder.finishReplace();
     }
 
     void OrderBook::moveToBack(OrderIndex::iterator entry, Price newPrice, Quantity total, Quantity open, OwnerId owner) {

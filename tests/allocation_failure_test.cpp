@@ -833,6 +833,34 @@ void testConsumeLevelFailsBeforeFilling() {
     expect(failures > 0, "consumeLevel: at least one allocation failure should have been injected");
 }
 
+// An out overload that throws leaves out valid, whatever it held, and a later command fills it.
+void testThrowingOutOverloadLeavesOutValid() {
+    OrderBook book;
+    for (unsigned int id = 1; id <= 8; ++id) {
+        book.addOrder(Order(id, 100 + id, 1, 1, Side::SELL));
+    }
+    order_book::SubmissionResult out = order_book::SubmissionResult::rejected(99, 1, order_book::RejectionReason::ORDER_NOT_ACTIVE);
+    order_book::OrderRequest sweep{50, Side::BUY, 200, 8};  // eight trades, past four inline
+
+    allocationsBeforeFailure = 0;
+    bool threw = false;
+    try {
+        book.submitOrder(sweep, out);
+    } catch (const std::bad_alloc&) {
+        threw = true;
+    }
+    allocationsBeforeFailure = -1;
+    expect(threw, "out overload: the failed growth should reach the caller");
+    expect(out.getEvents().size() <= out.getEvents().capacity(), "out overload: a thrown-through result is still readable");
+    expectIndexConsistent(book, "out overload: after the throw");
+
+    order_book::OrderRequest next{51, Side::BUY, 90, 1};
+    book.submitOrder(next, out);
+    expect(out.getStatus() == order_book::SubmissionStatus::ACCEPTED && out.getSubmissionId() == 51 &&
+               out.getEvents().size() == 1,
+           "out overload: a thrown-through result works as an out again");
+}
+
 void testCancelOrderDoesNotAllocate() {
     // A cancellation's result holds its one event inline, and removing an order only frees,
     // so cancelOrder allocates nothing: with the very first allocation armed to fail, both a
@@ -934,6 +962,7 @@ int main() {
         testReplaceToNewLevelRollsBack();
         testCrossingReplaceStaysConsistent();
         testConsumeLevelFailsBeforeFilling();
+        testThrowingOutOverloadLeavesOutValid();
         testCancelOrderDoesNotAllocate();
         testRequestAllocatesLikeOrder();
         testRequestRejectionsDoNotAllocate();

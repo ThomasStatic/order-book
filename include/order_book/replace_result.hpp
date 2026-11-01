@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <optional>
 
 #include "book_event.hpp"
@@ -32,6 +33,9 @@ namespace order_book {
         // Unchecked ID, so it can echo whatever was asked for, including zero. Throws
         // std::invalid_argument if the reason is NONE.
         static ReplaceResult rejected(OrderId orderId, RejectionReason reason);
+
+        // Room for this many trades and events in all, as SubmissionResult::reserve.
+        void reserve(std::size_t trades, std::size_t events);
 
         bool isSuccess() const;
         std::optional<RejectionReason> getRejectionReason() const;

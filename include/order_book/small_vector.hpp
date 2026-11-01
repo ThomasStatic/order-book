@@ -18,8 +18,8 @@ namespace order_book {
     // command) allocates nothing to report what it did.
     //
     // Not a drop-in std::vector: only what the results need, which is appending, reserving,
-    // reading, copying, moving, and comparing, including with a std::vector of the same
-    // elements; no insert, erase, clear, resize, or allocator. It is a contiguous range, so a
+    // reading, copying, moving, clearing, and comparing, including with a std::vector of the same
+    // elements; no insert, erase, resize, or allocator. It is a contiguous range, so a
     // std::span<const T> binds to it directly, and a caller that wants a std::vector of its own
     // asks for one with toVector(), so no copy happens without being visible. reserve and
     // push_back give the strong guarantee: if growing throws std::bad_alloc, nothing changes.
@@ -107,6 +107,9 @@ namespace order_book {
 
         // A copy of the elements, for code that keeps them in a std::vector of its own.
         std::vector<T> toVector() const { return std::vector<T>(begin(), end()); }
+
+        // Removes every element and keeps the storage, heap block included, for reuse.
+        void clear() noexcept { count = 0; }
 
         // Makes room for at least `wanted` elements, so that many push_backs cannot throw.
         void reserve(size_type wanted) {

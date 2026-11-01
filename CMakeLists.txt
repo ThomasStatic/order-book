@@ -319,6 +319,16 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(submission_tests)
     add_test(NAME submission_tests COMMAND submission_tests)
 
+    add_executable(result_reuse_tests
+        tests/result_reuse_test.cpp
+    )
+
+    target_compile_features(result_reuse_tests PRIVATE cxx_std_20)
+    target_link_libraries(result_reuse_tests PRIVATE order_book)
+    order_book_enable_warnings(result_reuse_tests)
+    order_book_enable_sanitizers(result_reuse_tests)
+    add_test(NAME result_reuse_tests COMMAND result_reuse_tests)
+
     add_executable(event_tests
         tests/event_test.cpp
     )

@@ -192,6 +192,20 @@ void testReserve() {
     expect(values.data() == before && holds(values, 10), "pushing within a reservation does not reallocate");
 }
 
+void testClearKeepsTheStorage() {
+    SmallVector<int, 2> numbers{1, 2};
+    numbers.clear();
+    expect(numbers.empty() && !numbers.usesHeap(), "clearing an inline vector empties it");
+
+    numbers.reserve(8);
+    const int* const block = numbers.data();
+    numbers.push_back(3);
+    numbers.clear();
+    expect(numbers.empty() && numbers.data() == block && numbers.capacity() == 8, "clearing keeps the heap block");
+    numbers.push_back(4);
+    expect(numbers.size() == 1 && numbers[0] == 4 && numbers.data() == block, "a cleared vector is used again");
+}
+
 void testCopy() {
     for (unsigned int count : {0u, 2u, 3u, 7u}) {
         const Small original = filled(count);
@@ -265,6 +279,7 @@ int main() {
     testCopyOfSmallHeapVectorIsInline();
     testInlineCapacityOfOne();
     testReserve();
+    testClearKeepsTheStorage();
     testCopy();
     testMove();
     testComparisonsAndConversions();

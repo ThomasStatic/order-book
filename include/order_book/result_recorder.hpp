@@ -5,6 +5,8 @@
 #include <stdexcept>
 
 #include "book_event.hpp"
+#include "fill_status.hpp"
+#include "rejection_reason.hpp"
 #include "side.hpp"
 #include "small_vector.hpp"
 #include "trade.hpp"
@@ -44,11 +46,15 @@ namespace order_book {
         // Opens the submitted order's part of the result with its acceptance. price 0 means
         // the order has no limit price. Throws std::invalid_argument on a zero ID or quantity.
         explicit ResultRecorder(const OrderAccepted& acceptance);
+        // The same, taking out's storage for the recording, so its heap blocks are reused.
+        ResultRecorder(const OrderAccepted& acceptance, SubmissionResult& out);
         // Opens a replace's result with its OrderReplaced: the replaced order is the current one,
         // with its open quantity to trade; executedBefore is what it had traded before the
         // replace. Throws std::invalid_argument on a zero ID, price, or open quantity, or unless
         // the new total is the open quantity plus executedBefore.
         ResultRecorder(const OrderReplaced& replacement, Quantity executedBefore);
+        // The same, taking out's storage for the recording.
+        ResultRecorder(const OrderReplaced& replacement, Quantity executedBefore, ReplaceResult& out);
 
         // Appends a trade and its TradeExecuted. Refused unless the trade's incoming order is
         // the current order, on its side (so the resting order is on the other), at a price
@@ -87,9 +93,26 @@ namespace order_book {
         // finishReplace() for one opened by a replacement; the other throws.
         SubmissionResult finish();
         ReplaceResult finishReplace();
+        // The result, overwriting out and handing its storage back, for a recorder given that
+        // storage. If this is never reached, because something threw, out keeps its other fields
+        // and has no trades or events: valid, with unspecified contents.
+        void finish(SubmissionResult& out);
+        void finishReplace(ReplaceResult& out);
+
+        // The rejections, as SubmissionResult::rejected and ReplaceResult::rejected, overwriting
+        // out and keeping its storage. Throws std::invalid_argument if the reason is NONE.
+        static void reject(SubmissionResult& out, OrderId orderId, Quantity remaining, RejectionReason reason);
+        static void reject(ReplaceResult& out, OrderId orderId, RejectionReason reason);
 
     private:
         friend class SubmissionResult;
+
+        ResultRecorder(const OrderAccepted& acceptance, SubmissionTrades&& storedTrades, SubmissionEvents&& storedEvents);
+        ResultRecorder(const OrderReplaced& replacement, Quantity executedBefore, SubmissionTrades&& storedTrades,
+                       SubmissionEvents&& storedEvents);
+
+        FillStatus submissionFillStatus();
+        FillStatus replaceFillStatus();
 
         // The order the next trade, prevention, or expiry belongs to.
         struct CurrentOrder {

@@ -154,6 +154,8 @@ namespace order_book {
         // The Order a request runs as: an order with no price (market, or a triggered STOP) as a
         // limit at the furthest price on its side.
         Order incomingOrder(const OrderRequest& request) const;
+        // A valid request's whole run, shared by both overloads of submitOrder.
+        void runRequest(const OrderRequest& request, ResultRecorder& recorder);
         // runIncoming numbers the order, matches it, then rests its remainder (GTC) or expires
         // it (IOC, or stopped by self-trade prevention); a FOK goes to runFillOrKill, which
         // decides first whether it fills, makes room for all it records, and only then is
@@ -163,6 +165,16 @@ namespace order_book {
         // Rests the order, or expires it whole if it would take. Strongly atomic and numbered
         // last, like addOrder, so a throw changes nothing.
         void runPostOnly(Order& incoming, OwnerId owner, ResultRecorder& recorder);
+
+        // What a replace found, for the steps both overloads of replaceOrder share.
+        struct ReplacePlan {
+            OrderIndex::iterator entry;
+            Quantity executed = 0;  // what the order had traded before the replace
+            OrderReplaced replacement{};
+        };
+        // Why this replace must be refused, or nothing with plan filled in. Changes nothing.
+        std::optional<RejectionReason> planReplace(const ReplaceRequest& request, ReplacePlan& plan);
+        void runReplace(const ReplaceRequest& request, const ReplacePlan& plan, ResultRecorder& recorder);
 
         // A STOP or STOP_LIMIT request: accepted and wholly expired if it is already past its
         // trigger, else stored pending. Strongly atomic and numbered last.
@@ -349,6 +361,12 @@ namespace order_book {
         // quantity, and allocates no more.
         SubmissionResult submitOrder(OrderRequest request);
 
+        // The same, overwriting out and keeping its heap blocks, so a caller reusing one result
+        // across commands reaches the heap only when a command makes more trades or events than
+        // any before it, or than SubmissionResult::reserve made room for. If it throws, out stays
+        // a valid result with unspecified contents.
+        void submitOrder(OrderRequest request, SubmissionResult& out);
+
         // Replaces a resting order under the same ID with a new price, total quantity (including
         // what has traded), and instructions, which are all declared again. Refused, changing
         // nothing and allocating nothing, as one ReplaceRejected, by the first failing check: a
@@ -370,6 +388,9 @@ namespace order_book {
         // The order's initial quantity becomes the new total, so a partly filled order stays
         // PARTIAL. Side, type, time in force, and stop price never change.
         ReplaceResult replaceOrder(const ReplaceRequest& request);
+
+        // The same, overwriting out and keeping its heap blocks, as submitOrder's out overload.
+        void replaceOrder(const ReplaceRequest& request, ReplaceResult& out);
 
         // Number of orders resting on the book (both sides), not of price levels. Pending stops
         // are not resting orders.

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 #include "book_event.hpp"
 #include "fill_status.hpp"
 #include "rejection_reason.hpp"
@@ -54,6 +56,11 @@ namespace order_book {
         // unexecuted, and a single OrderRejected event. Throws std::invalid_argument if the
         // reason is NONE.
         static SubmissionResult rejected(OrderId orderId, Quantity remaining, RejectionReason reason);
+
+        // Room for this many trades and events in all, so a caller reusing one result through
+        // OrderBook::submitOrder's out overload can size it up front. Capacity only grows.
+        // Throws std::bad_alloc, leaving the result unchanged.
+        void reserve(std::size_t trades, std::size_t events);
 
         OrderId getSubmissionId() const;
 
