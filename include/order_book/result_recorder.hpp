@@ -107,9 +107,8 @@ namespace order_book {
     private:
         friend class SubmissionResult;
 
-        ResultRecorder(const OrderAccepted& acceptance, SubmissionTrades&& storedTrades, SubmissionEvents&& storedEvents);
-        ResultRecorder(const OrderReplaced& replacement, Quantity executedBefore, SubmissionTrades&& storedTrades,
-                       SubmissionEvents&& storedEvents);
+        static void checkAcceptance(const OrderAccepted& acceptance);
+        static void checkReplacement(const OrderReplaced& replacement, Quantity executed);
 
         FillStatus submissionFillStatus();
         FillStatus replaceFillStatus();

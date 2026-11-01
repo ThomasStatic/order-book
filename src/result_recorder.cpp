@@ -16,49 +16,61 @@ namespace order_book {
         }
     }  // namespace
 
-    ResultRecorder::ResultRecorder(const OrderAccepted& acceptance)
-        : ResultRecorder(acceptance, SubmissionTrades{}, SubmissionEvents{}) {}
-
-    ResultRecorder::ResultRecorder(const OrderAccepted& acceptance, SubmissionResult& out)
-        : ResultRecorder(acceptance, cleared(out.generatedTrades), cleared(out.events)) {}
-
-    ResultRecorder::ResultRecorder(const OrderAccepted& acceptance, SubmissionTrades&& storedTrades,
-                                   SubmissionEvents&& storedEvents)
-        : trades(std::move(storedTrades)),
-          events(std::move(storedEvents)),
-          submissionId(acceptance.orderId),
-          submittedQuantity(acceptance.quantity),
-          current{acceptance.orderId, acceptance.side, acceptance.price, acceptance.quantity, false} {
+    void ResultRecorder::checkAcceptance(const OrderAccepted& acceptance) {
         if (acceptance.orderId == 0) {
             throw std::invalid_argument("recorded result for the reserved order id 0 error");
         }
         if (acceptance.quantity == 0) {
             throw std::invalid_argument("recorded result for an order with no quantity error");
         }
+    }
+
+    ResultRecorder::ResultRecorder(const OrderAccepted& acceptance)
+        : submissionId(acceptance.orderId),
+          submittedQuantity(acceptance.quantity),
+          current{acceptance.orderId, acceptance.side, acceptance.price, acceptance.quantity, false} {
+        checkAcceptance(acceptance);
         events.push_back(acceptance);
     }
 
-    ResultRecorder::ResultRecorder(const OrderReplaced& replacement, Quantity executed)
-        : ResultRecorder(replacement, executed, SubmissionTrades{}, SubmissionEvents{}) {}
+    ResultRecorder::ResultRecorder(const OrderAccepted& acceptance, SubmissionResult& out)
+        : trades(cleared(out.generatedTrades)),
+          events(cleared(out.events)),
+          submissionId(acceptance.orderId),
+          submittedQuantity(acceptance.quantity),
+          current{acceptance.orderId, acceptance.side, acceptance.price, acceptance.quantity, false} {
+        checkAcceptance(acceptance);
+        events.push_back(acceptance);
+    }
 
-    ResultRecorder::ResultRecorder(const OrderReplaced& replacement, Quantity executed, ReplaceResult& out)
-        : ResultRecorder(replacement, executed, cleared(out.generatedTrades), cleared(out.events)) {}
-
-    ResultRecorder::ResultRecorder(const OrderReplaced& replacement, Quantity executed, SubmissionTrades&& storedTrades,
-                                   SubmissionEvents&& storedEvents)
-        : trades(std::move(storedTrades)),
-          events(std::move(storedEvents)),
-          submissionId(replacement.orderId),
-          submittedQuantity(replacement.openQuantity),
-          replacing(true),
-          executedBefore(executed),
-          current{replacement.orderId, replacement.side, replacement.price, replacement.openQuantity, false} {
+    void ResultRecorder::checkReplacement(const OrderReplaced& replacement, Quantity executed) {
         if (replacement.orderId == 0 || replacement.price == 0 || replacement.openQuantity == 0) {
             throw std::invalid_argument("recorded replace with the reserved id 0, no price, or nothing open error");
         }
         if (static_cast<unsigned long long>(replacement.openQuantity) + executed != replacement.quantity) {
             throw std::invalid_argument("recorded replace whose open and executed quantities do not sum to its total error");
         }
+    }
+
+    ResultRecorder::ResultRecorder(const OrderReplaced& replacement, Quantity executed)
+        : submissionId(replacement.orderId),
+          submittedQuantity(replacement.openQuantity),
+          replacing(true),
+          executedBefore(executed),
+          current{replacement.orderId, replacement.side, replacement.price, replacement.openQuantity, false} {
+        checkReplacement(replacement, executed);
+        events.push_back(replacement);
+    }
+
+    ResultRecorder::ResultRecorder(const OrderReplaced& replacement, Quantity executed, ReplaceResult& out)
+        : trades(cleared(out.generatedTrades)),
+          events(cleared(out.events)),
+          submissionId(replacement.orderId),
+          submittedQuantity(replacement.openQuantity),
+          replacing(true),
+          executedBefore(executed),
+          current{replacement.orderId, replacement.side, replacement.price, replacement.openQuantity, false} {
+        checkReplacement(replacement, executed);
         events.push_back(replacement);
     }
 
