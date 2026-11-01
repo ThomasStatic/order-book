@@ -137,6 +137,14 @@ _Avoid_: outbox, result queue
 Said of a connection that is no longer being read because the command queue its next command needs is full. It resumes when that queue has room; being parked refuses and loses nothing.
 _Avoid_: blocked, throttled, suspended
 
+**Capacity**:
+How much a book is prepared to hold without allocating memory: resting orders, pending stops, and price levels. It changes no outcome, so a book past its capacity grows and never refuses a command.
+_Avoid_: limit (a limit refuses something), size (what a book holds now)
+
+**Warm**:
+Said of a book prepared up to its capacity, and of a shard whose books all are. A shard reports ready only once it is warm.
+_Avoid_: hot, primed, preloaded
+
 **Snapshot**:
 A summary of a book's depth at one moment: its best levels on each side, with their aggregate quantities. It describes a book; it cannot rebuild one.
 _Avoid_: checkpoint, dump
@@ -180,6 +188,10 @@ _Avoid_: segment, journal file
 **Clean stop**:
 A stop that answers everything queued, ends the log, and leaves every book's checkpoint at its log's end, so recovery has nothing to replay. It is the only stop after which placement may change.
 _Avoid_: graceful shutdown, drain
+
+**Forced stop**:
+A stop that ends the engine at once, without any of a clean stop's steps, so recovery does the rest. Nothing a client was told is lost, but what was still queued gets no answer.
+_Avoid_: hard stop, kill
 
 **Poison command**:
 A command that breaks a book the same way on every replay, so recovery cannot finish until the log is cut before it.
@@ -238,3 +250,17 @@ _Avoid_: rejected (a rejection is the book's answer to a command in its command 
 **Protocol error**:
 A fault in a connection's frames rather than in a command: nothing can answer it as a command, so the gateway answers what is in flight, reports the error, and closes the connection.
 _Avoid_: reject, parse error (a parse error belongs to a file)
+
+## Measurement
+
+**Service time**:
+How long a piece of work takes from the moment it actually started. It says nothing about any wait before that.
+_Avoid_: latency (which could mean this or response time)
+
+**Response time**:
+How long a command takes from the moment it was scheduled to be sent, so it includes any wait behind earlier commands or a stall.
+_Avoid_: latency (which could mean this or service time)
+
+**Noise floor**:
+What the machine itself costs a thread that does nothing but watch the clock. A result at or beyond it describes the machine, not the engine.
+_Avoid_: jitter, hiccups
