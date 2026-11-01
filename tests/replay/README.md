@@ -21,6 +21,9 @@ Every file here should replay to the end with exit status 0. The events are the 
 | `crlf_line_endings.csv` | CRLF record terminators |
 | `no_final_newline.csv` | last record without a line ending |
 | `v2_header_only.csv` | v2: the v2 header and no commands: replays nothing |
+| `v3_header_only.csv` | v3: the v3 header and no commands: prints nothing |
+| `v3_one_instrument.csv` | v3: one instrument, which still gets a heading; a replace after a trade, whose total counts what traded |
+| `v3_two_instruments.csv` | v3: four instruments, reusing an ID across them, each in a book of its own, in sections sorted by symbol bytes |
 | `market_orders.csv` | v2: a market sweep with an expiring remainder, a market order facing an empty side, a market FOK that cannot fill (the book untouched) and one that does |
 | `ioc_fok.csv` | v2: an IOC that trades what it can and expires the rest, a FOK that fills, a FOK that cannot fill (accepted, then expired, the book untouched) |
 | `post_only.csv` | v2: post-only orders: one rests, ones at and through the touch on either side expire whole |

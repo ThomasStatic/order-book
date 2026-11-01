@@ -1,4 +1,5 @@
 order_book_cli: unknown option '--trade'
 usage: order_book_cli replay <file.csv> [--trades] [--events] [--book] [--validate none|final|per-command]
+                                        [--symbol SYM] [--no-statistics]
        order_book_cli demo
        order_book_cli --help

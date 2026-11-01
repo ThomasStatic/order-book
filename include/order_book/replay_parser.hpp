@@ -10,10 +10,8 @@
 #include <variant>
 #include <vector>
 
-#include "order_type.hpp"
-#include "self_trade_prevention.hpp"
-#include "side.hpp"
-#include "time_in_force.hpp"
+#include "command.hpp"
+#include "symbol.hpp"
 #include "types.hpp"
 
 // Parser for the CSV replay format (docs/replay-format.md). It turns text into typed
@@ -35,14 +33,20 @@ namespace order_book::replay {
     inline constexpr std::array<std::string_view, columnCount> columnNames = {
         "sequence", "command", "order_id", "side", "price", "quantity"};
 
-    // Which layout a file uses, named by its header: v1's six columns, or v2's twelve, which
-    // append the order behaviors' instructions (docs/adr/0005-replay-format-v2-is-a-second-exact-header.md).
-    enum class ReplayFormat { V1, V2 };
+    // Which layout a file uses, named by its header: v1's six columns, v2's twelve, which append
+    // the order behaviors' instructions (docs/adr/0005-replay-format-v2-is-a-second-exact-header.md),
+    // or v3's thirteen, which add the instrument (docs/adr/0007).
+    enum class ReplayFormat { V1, V2, V3 };
 
     inline constexpr std::string_view expectedHeaderV2 =
         "sequence,command,order_id,side,price,quantity,order_type,time_in_force,stop_price,post_only,owner,"
         "self_trade_prevention";
     inline constexpr std::size_t columnCountV2 = 12;
+
+    inline constexpr std::string_view expectedHeaderV3 =
+        "sequence,command,order_id,side,price,quantity,order_type,time_in_force,stop_price,post_only,owner,"
+        "self_trade_prevention,symbol";
+    inline constexpr std::size_t columnCountV3 = 13;
 
     inline constexpr std::size_t orderTypeColumn = 6;
     inline constexpr std::size_t timeInForceColumn = 7;
@@ -50,6 +54,10 @@ namespace order_book::replay {
     inline constexpr std::size_t postOnlyColumn = 9;
     inline constexpr std::size_t ownerColumn = 10;
     inline constexpr std::size_t selfTradePreventionColumn = 11;
+    inline constexpr std::size_t symbolColumn = 12;
+    inline constexpr std::array<std::string_view, columnCountV3> columnNamesV3 = {
+        "sequence", "command", "order_id", "side", "price", "quantity",
+        "order_type", "time_in_force", "stop_price", "post_only", "owner", "self_trade_prevention", "symbol"};
     inline constexpr std::array<std::string_view, columnCountV2> columnNamesV2 = {
         "sequence", "command", "order_id", "side", "price", "quantity",
         "order_type", "time_in_force", "stop_price", "post_only", "owner", "self_trade_prevention"};
@@ -63,50 +71,11 @@ namespace order_book::replay {
         bool operator==(const CsvRow&) const = default;
     };
 
-    // A parsed command satisfies the Order constructor's preconditions: nonzero ID, price,
-    // and quantity, and a valid side.
-    struct AddCommand {
-        OrderId orderId;
-        Side side;
-        Price price;  // 0 on a MARKET or STOP order (v2 only)
-        Quantity quantity;
-        // v2's columns; a v1 record has these defaults, a GTC limit order with no owner.
-        OrderType orderType = OrderType::LIMIT;
-        TimeInForce timeInForce = TimeInForce::GTC;
-        Price stopPrice = 0;
-        bool postOnly = false;
-        OwnerId owner = 0;
-        SelfTradePrevention selfTradePrevention = SelfTradePrevention::CANCEL_RESTING;
-
-        bool operator==(const AddCommand&) const = default;
-    };
-
-    struct CancelCommand {
-        OrderId orderId;
-
-        bool operator==(const CancelCommand&) const = default;
-    };
-
-    // A replace of a resting order (v2 only), which keeps its ID and takes a new total.
-    struct ReplaceCommand {
-        OrderId orderId;
-        Price price;
-        Quantity quantity;  // the new total
-        bool postOnly = false;
-        OwnerId owner = 0;
-        SelfTradePrevention selfTradePrevention = SelfTradePrevention::CANCEL_RESTING;
-
-        bool operator==(const ReplaceCommand&) const = default;
-    };
-
-    // Open: later releases may append alternatives, never reorder one, so code that visits it
-    // should handle a command it does not know.
-    using Command = std::variant<AddCommand, CancelCommand, ReplaceCommand>;
-
     struct ReplayRecord {
         std::size_t lineNumber;
         std::uint64_t sequence;  // the file's own number, never passed to the engine
         Command command;
+        Symbol symbol{};  // v3 only: a v1 or v2 record names none
 
         bool operator==(const ReplayRecord&) const = default;
     };
@@ -133,7 +102,14 @@ namespace order_book::replay {
         INVALID_TIME_IN_FORCE,          // neither GTC, IOC, nor FOK
         INVALID_POST_ONLY,              // neither empty nor Y
         INVALID_SELF_TRADE_PREVENTION,  // neither CANCEL_RESTING, CANCEL_INCOMING, nor CANCEL_BOTH
-        INVALID_COMBINATION             // MARKET or STOP with GTC, or post-only on an ADD not a GTC LIMIT
+        INVALID_COMBINATION,            // MARKET or STOP with GTC, or post-only on an ADD not a GTC LIMIT
+        // The command log, which is read here too, and v3's symbol.
+        TORN_TAIL,            // a log's last record is cut short, or the file ends in its zero tail
+        CORRUPT_RECORD,       // a record whose checksum does not chain
+        CORRUPT_HEADER,       // a log header that is not one
+        UNSUPPORTED_VERSION,  // a log needing a newer reader
+        UNKNOWN_FIELD,        // bytes this reader does not know, that are not zero
+        INVALID_SYMBOL        // not 1 to 8 of A-Z, 0-9, '.', '-'
     };
 
     // The enumerator's name, for printing codes as identifiers.
@@ -157,6 +133,12 @@ namespace order_book::replay {
             case ParseErrorCode::INVALID_POST_ONLY: return "INVALID_POST_ONLY";
             case ParseErrorCode::INVALID_SELF_TRADE_PREVENTION: return "INVALID_SELF_TRADE_PREVENTION";
             case ParseErrorCode::INVALID_COMBINATION: return "INVALID_COMBINATION";
+            case ParseErrorCode::TORN_TAIL: return "TORN_TAIL";
+            case ParseErrorCode::CORRUPT_RECORD: return "CORRUPT_RECORD";
+            case ParseErrorCode::CORRUPT_HEADER: return "CORRUPT_HEADER";
+            case ParseErrorCode::UNSUPPORTED_VERSION: return "UNSUPPORTED_VERSION";
+            case ParseErrorCode::UNKNOWN_FIELD: return "UNKNOWN_FIELD";
+            case ParseErrorCode::INVALID_SYMBOL: return "INVALID_SYMBOL";
         }
         return "UNKNOWN";
     }
@@ -208,7 +190,7 @@ namespace order_book::replay {
     // STOP with GTC), side, price, quantity, stop_price, post_only (keyword, then the
     // combination), owner, and self_trade_prevention; within a column, present or empty as
     // the command and type require, then syntax, then zero. So a parsed ADD is always a
-    // well-formed OrderRequest.
+    // well-formed OrderRequest. A v3 row has thirteen fields, checked as v2's, then symbol.
     ParseResult parseRow(const CsvRow& row, ReplayFormat format, std::optional<std::uint64_t> previousSequence);
 
     struct EndOfInput {

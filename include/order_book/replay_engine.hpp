@@ -132,6 +132,8 @@ namespace order_book::replay {
     struct ReplayInput {
         std::vector<ReplayRecord> records;
         std::optional<ReplayError> error;  // always INPUT_READ_FAILURE
+        // The layout the header named; V1 if it named none.
+        ReplayFormat format = ReplayFormat::V1;
     };
 
     // Reads through a ReplayReader; a stream that fails to read is an INPUT_READ_FAILURE

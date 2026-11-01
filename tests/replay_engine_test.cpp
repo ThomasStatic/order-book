@@ -602,6 +602,9 @@ void testValidSampleFiles(const std::filesystem::path& root) {
     std::size_t validSeen = 0;
     for (const auto& entry : std::filesystem::directory_iterator(root / "valid")) {
         const std::string name = entry.path().filename().string();
+        if (name.starts_with("v3_")) {
+            continue;  // a book per instrument: replay_instruments_tests runs these
+        }
         const auto found = valid.find(name);
         expect(found != valid.end(), "valid/" + name + " has no expected replay here");
         const ExpectedReplay& expected = found->second;

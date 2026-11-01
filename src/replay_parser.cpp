@@ -11,7 +11,13 @@
 namespace order_book::replay {
     namespace {
         std::string columnName(std::size_t column) {
-            return std::string(columnNamesV2[column]);
+            return std::string(columnNamesV3[column]);
+        }
+
+        // What every header message says the first line must be.
+        std::string expectedHeaders() {
+            return "'" + std::string(expectedHeader) + "' (v1), '" + std::string(expectedHeaderV2) + "' (v2), or '" +
+                   std::string(expectedHeaderV3) + "' (v3)";
         }
 
         // Exact, since splitRecord splits on every comma.
@@ -39,7 +45,7 @@ namespace order_book::replay {
             if (command.empty()) {
                 return fieldError(row, column, ParseErrorCode::MISSING_REQUIRED_FIELD, columnName(column) + " is required");
             }
-            const char first = columnNamesV2[column].front();
+            const char first = columnNamesV3[column].front();
             const char* article = first == 'o' || first == 'a' || first == 'e' || first == 'i' || first == 'u' ? "an " : "a ";
             return fieldError(row, column, ParseErrorCode::MISSING_REQUIRED_FIELD,
                               command + " requires " + article + columnName(column));
@@ -127,8 +133,11 @@ namespace order_book::replay {
         if (text == expectedHeaderV2) {
             return ReplayFormat::V2;
         }
-        const std::string expected = "'" + std::string(expectedHeader) + "' (v1) or '" + std::string(expectedHeaderV2) + "' (v2)";
-        for (const ReplayFormat format : {ReplayFormat::V1, ReplayFormat::V2}) {
+        if (text == expectedHeaderV3) {
+            return ReplayFormat::V3;
+        }
+        const std::string expected = expectedHeaders();
+        for (const ReplayFormat format : {ReplayFormat::V1, ReplayFormat::V2, ReplayFormat::V3}) {
             if (std::holds_alternative<ReplayRecord>(parseRow(splitRecord(text, 1), format, std::nullopt))) {
                 return ParseError{1, ParseErrorCode::MISSING_HEADER, "", std::string(text),
                                   "missing header: line 1 is a data record; the first line must be " + expected};
@@ -403,7 +412,9 @@ namespace order_book::replay {
                 return recordError(row, ParseErrorCode::QUOTE_CHARACTER, "quote characters are not allowed (fields are never quoted)");
             }
         }
-        const std::size_t fields = format == ReplayFormat::V1 ? columnCount : columnCountV2;
+        const std::size_t fields = format == ReplayFormat::V1 ? columnCount
+                                 : format == ReplayFormat::V2 ? columnCountV2
+                                                              : columnCountV3;
         if (row.fields.size() != fields) {
             return recordError(row, ParseErrorCode::WRONG_COLUMN_COUNT,
                                "expected " + std::to_string(fields) + " fields, found " + std::to_string(row.fields.size()));
@@ -424,7 +435,7 @@ namespace order_book::replay {
             return missingField(row, commandColumn, "");
         }
         const bool known = commandText == "ADD" || commandText == "CANCEL" ||
-                           (format == ReplayFormat::V2 && commandText == "REPLACE");
+                           (format != ReplayFormat::V1 && commandText == "REPLACE");
         if (!known) {
             return fieldError(row, commandColumn, ParseErrorCode::UNKNOWN_COMMAND,
                               "'" + commandText + "' is not a command (expected "
@@ -436,8 +447,25 @@ namespace order_book::replay {
             return *orderId.error;
         }
         const auto id = static_cast<OrderId>(orderId.value);
-        return format == ReplayFormat::V1 ? parseV1Tail(row, sequence.value, commandText, id)
-                                          : parseV2Tail(row, sequence.value, commandText, id);
+        if (format == ReplayFormat::V1) {
+            return parseV1Tail(row, sequence.value, commandText, id);
+        }
+        ParseResult parsed = parseV2Tail(row, sequence.value, commandText, id);
+        if (format == ReplayFormat::V3) {
+            if (ReplayRecord* record = std::get_if<ReplayRecord>(&parsed)) {
+                const std::string& symbolText = row.fields[symbolColumn];
+                if (symbolText.empty()) {
+                    return missingField(row, symbolColumn, commandText);
+                }
+                const std::optional<Symbol> symbol = Symbol::parse(symbolText);
+                if (!symbol) {
+                    return fieldError(row, symbolColumn, ParseErrorCode::INVALID_SYMBOL,
+                                      "'" + symbolText + "' is not a symbol (1 to 8 of A-Z, 0-9, '.', '-')");
+                }
+                record->symbol = *symbol;
+            }
+        }
+        return parsed;
     }
 
     ReadResult ReplayReader::next() {
@@ -449,8 +477,7 @@ namespace order_book::replay {
             headerChecked = true;
             if (!readLine()) {
                 finalResult = ReadResult{ParseError{1, ParseErrorCode::MISSING_HEADER, "", "",
-                    "missing header: the input is empty; the first line must be '" + std::string(expectedHeader)
-                        + "' (v1) or '" + std::string(expectedHeaderV2) + "' (v2)"}};
+                    "missing header: the input is empty; the first line must be " + expectedHeaders()}};
                 return *finalResult;
             }
             std::variant<ReplayFormat, ParseError> format = headerFormat(line);

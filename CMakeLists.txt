@@ -148,8 +148,10 @@ endif()
 # The CSV replay parser and replay engine (docs/replay-format.md). A library of its own, so
 # order_book itself knows nothing about CSV or replays.
 add_library(order_book_replay STATIC
+    src/command.cpp
     src/replay_parser.cpp
     src/replay_engine.cpp
+    src/replay_instruments.cpp
     src/replay_summary.cpp
 )
 
@@ -401,6 +403,26 @@ if(BUILD_TESTING)
     # Also reads every sample file in tests/replay/.
     add_test(NAME replay_parser_tests COMMAND replay_parser_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay)
 
+    add_executable(symbol_tests
+        tests/symbol_test.cpp
+    )
+
+    target_compile_features(symbol_tests PRIVATE cxx_std_20)
+    target_link_libraries(symbol_tests PRIVATE order_book_replay)
+    order_book_enable_warnings(symbol_tests)
+    order_book_enable_sanitizers(symbol_tests)
+    add_test(NAME symbol_tests COMMAND symbol_tests)
+
+    add_executable(replay_instruments_tests
+        tests/replay_instruments_test.cpp
+    )
+
+    target_compile_features(replay_instruments_tests PRIVATE cxx_std_20)
+    target_link_libraries(replay_instruments_tests PRIVATE order_book_replay)
+    order_book_enable_warnings(replay_instruments_tests)
+    order_book_enable_sanitizers(replay_instruments_tests)
+    add_test(NAME replay_instruments_tests COMMAND replay_instruments_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay)
+
     add_executable(replay_engine_tests
         tests/replay_engine_test.cpp
     )
@@ -482,6 +504,26 @@ if(BUILD_TESTING)
     order_book_add_replay_cli_test(help_after_end_of_options
         ARGS replay -- --help EXIT 1 STDOUT empty_statistics.stdout STDERR help_as_file.stderr)
     order_book_add_replay_cli_test(demo ARGS demo EXIT 0 STDOUT demo.stdout)
+    # v3 and --symbol: one section per symbol, sorted by symbol bytes. v1 and v2 stay unchanged.
+    order_book_add_replay_cli_test(v3_two_instruments
+        ARGS replay valid/v3_two_instruments.csv --events --book EXIT 0 STDOUT v3_two_instruments.stdout)
+    order_book_add_replay_cli_test(v3_one_instrument
+        ARGS replay valid/v3_one_instrument.csv --events --book EXIT 0 STDOUT v3_one_instrument.stdout)
+    order_book_add_replay_cli_test(v3_no_statistics
+        ARGS replay valid/v3_two_instruments.csv --events --no-statistics EXIT 0 STDOUT v3_two_instruments_no_statistics.stdout)
+    order_book_add_replay_cli_test(v3_header_only ARGS replay valid/v3_header_only.csv EXIT 0)
+    order_book_add_replay_cli_test(symbol_stands_in
+        ARGS replay valid/basic.csv --symbol AAPL --events --book EXIT 0 STDOUT basic_symbol.stdout)
+    order_book_add_replay_cli_test(symbol_lower_case
+        ARGS replay malformed/symbol_lower_case.csv EXIT 1 STDOUT symbol_lower_case.stdout STDERR symbol_lower_case.stderr)
+    order_book_add_replay_cli_test(symbol_missing
+        ARGS replay malformed/symbol_missing.csv EXIT 1 STDOUT symbol_missing.stdout STDERR symbol_missing.stderr)
+    order_book_add_replay_cli_test(usage_symbol_on_v3
+        ARGS replay valid/v3_one_instrument.csv --symbol AAPL EXIT 2 STDERR usage_symbol_on_v3.stderr)
+    order_book_add_replay_cli_test(usage_bad_symbol
+        ARGS replay valid/basic.csv --symbol aapl EXIT 2 STDERR usage_bad_symbol.stderr)
+    order_book_add_replay_cli_test(usage_missing_symbol
+        ARGS replay valid/basic.csv --symbol EXIT 2 STDERR usage_missing_symbol.stderr)
     # Usage errors name the problem, then print the usage, on stderr only.
     order_book_add_replay_cli_test(usage_no_arguments EXIT 2 STDERR usage_no_arguments.stderr)
     order_book_add_replay_cli_test(usage_unknown_command

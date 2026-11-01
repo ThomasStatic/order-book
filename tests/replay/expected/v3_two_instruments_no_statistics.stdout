@@ -1,0 +1,14 @@
+symbol AAPL
+line 3: OrderAccepted id=1 side=BUY price=99 qty=4
+line 5: OrderCancelled id=1 qty=4
+
+symbol BRK.B
+line 6: OrderAccepted id=3 side=BUY price=98 qty=1
+
+symbol MSFT
+line 2: OrderAccepted id=1 side=SELL price=101 qty=5
+line 4: OrderAccepted id=2 side=BUY price=101 qty=2
+line 4: TradeExecuted incoming=2 resting=1 price=101 qty=2
+
+symbol ZZZ
+line 7: CancelRejected id=9 reason=ORDER_NOT_FOUND

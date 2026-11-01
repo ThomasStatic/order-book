@@ -1,0 +1,29 @@
+symbol AAPL
+line 2: OrderAccepted id=1001 side=BUY price=100 qty=50
+line 3: OrderAccepted id=1002 side=SELL price=105 qty=30
+line 4: OrderAccepted id=1003 side=BUY price=105 qty=20
+line 4: TradeExecuted incoming=1003 resting=1002 price=105 qty=20
+line 5: OrderReplaced id=1002 side=SELL price=106 qty=30 open=10 priority=LOST
+
+commands processed: 4
+add commands: 3
+adds accepted: 3
+adds rejected: 0
+cancel commands: 0
+cancels accepted: 0
+cancels rejected: 0
+replace commands: 1
+replaces accepted: 1
+replaces rejected: 0
+trades executed: 1
+volume traded: 20
+self-trades prevented: 0
+orders expired: 0
+stops triggered: 0
+resting orders: 2
+pending stops: 0
+bids:
+  price=100 qty=50 orders=1
+asks:
+  price=106 qty=10 orders=1
+last trade price: 105

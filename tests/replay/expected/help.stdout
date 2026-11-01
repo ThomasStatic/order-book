@@ -1,4 +1,5 @@
 usage: order_book_cli replay <file.csv> [--trades] [--events] [--book] [--validate none|final|per-command]
+                                        [--symbol SYM] [--no-statistics]
        order_book_cli demo
        order_book_cli --help
 
@@ -18,6 +19,9 @@ replay options, in any order before or after the file:
                      the last trade price
   --validate MODE    check the book's invariants: none, final (the default), or
                      per-command (after every command; slower)
+  --symbol SYM       let a v1 or v2 file stand in for this one instrument; a file that
+                     names its own symbols refuses it
+  --no-statistics    leave out the statistics
   --                 treat the next argument as the file, even if it starts with '-'
   -h, --help         print this help and exit
 
@@ -27,6 +31,9 @@ exit status:
      the error is still printed)
   2  usage error
   3  engine failure: the book threw, or failed an invariant check
+
+A file that names instruments prints one section per symbol, sorted by symbol bytes,
+each holding one book's output.
 
 examples:
   order_book_cli replay orders.csv

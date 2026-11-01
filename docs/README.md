@@ -2,7 +2,7 @@
 
 Design notes and reports. The matching rules and invariants themselves are documented where they are enforced, in `include/order_book/order_book.hpp` and `include/order_book/invariants.hpp`.
 
-- [`replay-format.md`](replay-format.md): the CSV command format for replaying a session through the book: columns, field syntax, sequence ordering, which layer rejects what, and the fail-fast error policy; then the replay engine, its statistics and summary, and `order_book_cli replay`. Sample files and expected output are in `tests/replay/`.
+- [`replay-format.md`](replay-format.md): the CSV command format for replaying a session through the book, through three exact headers (v3 names each command's instrument): columns, field syntax, sequence ordering, which layer rejects what, and the fail-fast error policy; then the replay engine, its statistics and summary, and `order_book_cli replay`. Sample files and expected output are in `tests/replay/`.
 - [`BENCHMARKS.md`](BENCHMARKS.md): the recorded benchmark baseline: results for every workload at the standard and extended sizes, which percentiles are and are not reported and why, methodology, and limitations. Raw results are in `benchmarks/results/`.
 - [`LATENCY.md`](LATENCY.md): the latency report and the claims rule every latency statement follows: what a report may say and what it must refuse. No baseline is recorded yet.
 - [`PROFILING.md`](PROFILING.md): where the baseline spends its time, from a sampling profile and exact allocation counts, and the three strongest bottleneck hypotheses.

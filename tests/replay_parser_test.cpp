@@ -55,6 +55,10 @@ constexpr std::uint64_t maxSequence = std::numeric_limits<std::uint64_t>::max();
 constexpr unsigned int maxField = std::numeric_limits<unsigned int>::max();
 
 // A valid ADD to vary one field of.
+order_book::replay::Symbol symbolOf(std::string_view text) {
+    return *order_book::replay::Symbol::parse(text);
+}
+
 const std::vector<std::string> validAdd = {"7", "ADD", "1001", "BUY", "100", "50"};
 
 void expect(bool condition, const std::string& message) {
@@ -495,9 +499,11 @@ void testFormatting() {
            "the field count diagnostic: " + formatParseError(count, "orders.csv"));
     const ParseError header = *checkHeader("sequence,command");
     expect(formatParseError(header, "orders.csv")
-               == "orders.csv:1: header must be 'sequence,command,order_id,side,price,quantity' (v1) or "
+               == "orders.csv:1: header must be 'sequence,command,order_id,side,price,quantity' (v1), "
                   "'sequence,command,order_id,side,price,quantity,order_type,time_in_force,stop_price,post_only,owner,"
-                  "self_trade_prevention' (v2)",
+                  "self_trade_prevention' (v2), or "
+                  "'sequence,command,order_id,side,price,quantity,order_type,time_in_force,stop_price,post_only,owner,"
+                  "self_trade_prevention,symbol' (v3)",
            "the header diagnostic: " + formatParseError(header, "orders.csv"));
 }
 
@@ -592,6 +598,19 @@ void testSampleFiles(const std::filesystem::path& root) {
                                ReplayRecord{4, 35, CancelCommand{4001}},
                                ReplayRecord{5, 36, AddCommand{4003, Side::BUY, 200, 5}}}},
         {"v2_header_only.csv", {}},
+        {"v3_header_only.csv", {}},
+        {"v3_one_instrument.csv",
+         {ReplayRecord{2, 1, AddCommand{1001, Side::BUY, 100, 50}, symbolOf("AAPL")},
+          ReplayRecord{3, 2, AddCommand{1002, Side::SELL, 105, 30}, symbolOf("AAPL")},
+          ReplayRecord{4, 3, AddCommand{1003, Side::BUY, 105, 20}, symbolOf("AAPL")},
+          ReplayRecord{5, 4, ReplaceCommand{1002, 106, 30}, symbolOf("AAPL")}}},
+        {"v3_two_instruments.csv",
+         {ReplayRecord{2, 1, AddCommand{1, Side::SELL, 101, 5}, symbolOf("MSFT")},
+          ReplayRecord{3, 2, AddCommand{1, Side::BUY, 99, 4}, symbolOf("AAPL")},
+          ReplayRecord{4, 3, AddCommand{2, Side::BUY, 101, 2}, symbolOf("MSFT")},
+          ReplayRecord{5, 4, CancelCommand{1}, symbolOf("AAPL")},
+          ReplayRecord{6, 5, AddCommand{3, Side::BUY, 98, 1}, symbolOf("BRK.B")},
+          ReplayRecord{7, 6, CancelCommand{9}, symbolOf("ZZZ")}}},
         {"market_orders.csv", {ReplayRecord{2, 1, AddCommand{1, Side::SELL, 100, 5, OrderType::LIMIT, TimeInForce::GTC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
                 ReplayRecord{3, 2, AddCommand{2, Side::SELL, 101, 5, OrderType::LIMIT, TimeInForce::GTC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
                 ReplayRecord{4, 3, AddCommand{3, Side::BUY, 0, 12, OrderType::MARKET, TimeInForce::IOC, 0, false, 0, SelfTradePrevention::CANCEL_RESTING}},
@@ -707,6 +726,8 @@ void testSampleFiles(const std::filesystem::path& root) {
         {"time_in_force_unknown.csv", {4, "time_in_force", Code::INVALID_TIME_IN_FORCE, 2}},
         {"add_missing_time_in_force.csv", {4, "time_in_force", Code::MISSING_REQUIRED_FIELD, 2}},
         {"market_gtc.csv", {4, "time_in_force", Code::INVALID_COMBINATION, 2}},
+        {"symbol_lower_case.csv", {4, "symbol", Code::INVALID_SYMBOL, 2}},
+        {"symbol_missing.csv", {4, "symbol", Code::MISSING_REQUIRED_FIELD, 2}},
         {"stop_gtc.csv", {4, "time_in_force", Code::INVALID_COMBINATION, 2}},
         {"market_with_price.csv", {4, "price", Code::UNEXPECTED_FIELD, 2}},
         {"stop_limit_missing_price.csv", {4, "price", Code::MISSING_REQUIRED_FIELD, 2}},

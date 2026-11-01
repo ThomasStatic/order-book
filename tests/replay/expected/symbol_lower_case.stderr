@@ -1,0 +1,1 @@
+malformed/symbol_lower_case.csv:4: symbol: 'msft' is not a symbol (1 to 8 of A-Z, 0-9, '.', '-')

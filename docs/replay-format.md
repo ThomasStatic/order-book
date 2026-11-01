@@ -290,9 +290,28 @@ A command's events include its cascade (`StopTriggered`, then that stop's trades
 
 The statistics always print every line, in this order: commands processed; the `ADD`, `CANCEL`, and then `REPLACE` counts; trades executed and volume traded; self-trades prevented, orders expired, and stops triggered; resting orders; pending stops. `--book` adds `last trade price: <ticks>` (or `none`) after the asks (`formatFinalBook(result)`; the snapshot-only `formatFinalBook(book)` prints the two sides alone). Pending stops are not listed: the book offers no query for them beyond `pendingStopCount` and `findPendingStop`. `--trades` prints every `TradeExecuted`, the cascade's included, and never a `SelfTradePrevented`; `--events` prints everything.
 
+## Version 3
+
+Version 3 names each command's instrument ([ADR 0007](adr/0007-the-symbol-is-an-instruments-only-identity-in-any-format.md)). It is a third exact header: v2's twelve columns plus a required trailing `symbol`, thirteen fields on every row. v1 and v2 files stay single-book and unchanged.
+
+```csv
+sequence,command,order_id,side,price,quantity,order_type,time_in_force,stop_price,post_only,owner,self_trade_prevention,symbol
+1,ADD,1,SELL,101,5,LIMIT,GTC,,,,,MSFT
+2,ADD,1,BUY,99,4,LIMIT,GTC,,,,,AAPL
+3,CANCEL,1,,,,,,,,,,AAPL
+```
+
+**`symbol`** is 1 to 8 characters of `A-Z`, `0-9`, `.`, or `-`, on every command. Empty is `MISSING_REQUIRED_FIELD`, and anything else is `INVALID_SYMBOL`. It is checked last, after v2's columns, so a v3 row fails as its v2 twelve would.
+
+**Each instrument has a book of its own.** Order IDs, sequence numbers in the book, and trade IDs are per book, so `1` on `AAPL` and `1` on `MSFT` are two orders, and a cancel reaches only its own instrument's order. A book exists for each symbol in a record, so `replay` needs no instrument list. Nothing orders one instrument against another: the file's `sequence` must still increase across the whole file, but it is never passed to a book.
+
+**Output.** One section per symbol, sorted by symbol bytes, each `symbol <text>` then exactly what one book prints, with a blank line between sections. A one-symbol file gets its heading too, and a file with no commands prints nothing. `--symbol SYM` lets a v1 or v2 file stand in for one instrument, with the same output, and on a v3 file it is a usage error. `--no-statistics` leaves out the statistics.
+
+If a file stops part-way, every record before the error runs, all sections print, then the diagnostic, and it exits 1. If a book fails, only its diagnostic prints, prefixed with its symbol, and it exits 3: books run in symbol order, so later ones do not run. `--validate` applies per book, and a failed `final` check reruns that book alone with per-command checks.
+
 ## Versioning and scope
 
-The format has no version field. The exact header acts as its version marker: v1 and v2 are two exact headers. A later layout would be a third, and a reader that doesn't know it fails at line 1 instead of misreading rows.
+The format has no version field. The exact header acts as its version marker: v1, v2, and v3 are three exact headers. A later layout would be a fourth, and a reader that doesn't know it fails at line 1 instead of misreading rows.
 
 These are out of scope: quoting, comments, timestamps, lifecycle events as input, and a listing of pending stops in the output.
 

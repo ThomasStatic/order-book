@@ -35,10 +35,7 @@ namespace order_book::replay {
         }
 
         void runAdd(const AddCommand& add, std::size_t lineNumber, OrderBook& book, ReplayResult& result) {
-            // Always the request: for v1's fields it is exactly submitOrder(Order).
-            const SubmissionResult submission =
-                book.submitOrder(OrderRequest{add.orderId, add.side, add.price, add.quantity, add.orderType, add.timeInForce,
-                                              add.stopPrice, add.postOnly, add.owner, add.selfTradePrevention});
+            const SubmissionResult submission = executeCommand(book, add);
 
             ReplayStatistics& statistics = result.statistics;
             ++statistics.addCommands;
@@ -51,8 +48,7 @@ namespace order_book::replay {
         }
 
         void runReplace(const ReplaceCommand& replace, std::size_t lineNumber, OrderBook& book, ReplayResult& result) {
-            const ReplaceResult replacement = book.replaceOrder(ReplaceRequest{
-                replace.orderId, replace.price, replace.quantity, replace.postOnly, replace.owner, replace.selfTradePrevention});
+            const ReplaceResult replacement = executeCommand(book, replace);
 
             ReplayStatistics& statistics = result.statistics;
             ++statistics.replaceCommands;
@@ -65,7 +61,7 @@ namespace order_book::replay {
         }
 
         void runCancel(const CancelCommand& cancel, std::size_t lineNumber, OrderBook& book, ReplayResult& result) {
-            const CancellationResult cancellation = book.cancelOrder(cancel.orderId);
+            const CancellationResult cancellation = executeCommand(book, cancel);
 
             ReplayStatistics& statistics = result.statistics;
             ++statistics.cancelCommands;
@@ -143,6 +139,7 @@ namespace order_book::replay {
         try {
             while (true) {
                 ReadResult result = reader.next();
+                replayInput.format = reader.format();
                 if (ReplayRecord* record = std::get_if<ReplayRecord>(&result)) {
                     replayInput.records.push_back(std::move(*record));
                 } else if (ParseError* error = std::get_if<ParseError>(&result)) {
