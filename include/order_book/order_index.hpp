@@ -255,13 +255,44 @@ namespace order_book {
         static constexpr OrderId emptyId = 0;
         static constexpr std::size_t minimumCapacity = 16;
 
+        // One slot's value, repeated: the input a new table is built from.
+        struct RepeatedSlot {
+            using iterator_category = std::forward_iterator_tag;
+            using value_type = BasicOrderIndex::value_type;
+            using difference_type = std::ptrdiff_t;
+            using pointer = const value_type*;
+            using reference = const value_type&;
+
+            pointer slot = nullptr;
+            std::size_t position = 0;
+
+            reference operator*() const noexcept { return *slot; }
+            pointer operator->() const noexcept { return slot; }
+            RepeatedSlot& operator++() noexcept {
+                ++position;
+                return *this;
+            }
+            RepeatedSlot operator++(int) noexcept {
+                RepeatedSlot before = *this;
+                ++position;
+                return before;
+            }
+            bool operator==(const RepeatedSlot& other) const noexcept { return position == other.position; }
+        };
+
         std::size_t home(OrderId id) const noexcept {
             return static_cast<std::size_t>((static_cast<std::uint64_t>(id) * 0x9E3779B97F4A7C15ULL) >> shift);
         }
 
         // capacity is a power of two, at least minimumCapacity and more than size() / 0.75.
         void growTo(std::size_t capacity) {
-            std::vector<value_type> grown(capacity, value_type{emptyId, Location(0, Side::BUY, {}, nullptr)});
+            // Built by the range constructor, a plain copy loop, not the fill constructor: MSVC's
+            // takes 30 times as long above about 4 MiB, which was most of what a growth cost. Not
+            // reserve and push_back either: the default constructor they need is noexcept, and
+            // with checked iterators it allocates, so a failure there terminates. All that can
+            // fail here is the allocation, before anything has changed.
+            const value_type empty{emptyId, Location(0, Side::BUY, {}, nullptr)};
+            std::vector<value_type> grown(RepeatedSlot{&empty, 0}, RepeatedSlot{&empty, capacity});
             unsigned int grownShift = 64;
             for(std::size_t remaining = capacity; remaining > 1; remaining >>= 1) {
                 --grownShift;

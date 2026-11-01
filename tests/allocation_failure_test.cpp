@@ -211,6 +211,28 @@ void testIndexGrowthOnExistingLevelRollsBack() {
     expect(failures == 1, "addOrder (existing level, index grows): only the index's growth should allocate");
 }
 
+// reserve grows the table in one allocation, so a failure leaves every entry where it was.
+void testFailedReserveLeavesTheIndexUnchanged() {
+    OrderBook book;
+    for (unsigned int id = 1; id <= 5; ++id) {
+        book.addOrder(Order(id, 100, 5, 1, Side::SELL));
+    }
+    const std::size_t slots = Access::index(book).capacity();
+    allocationsBeforeFailure = 0;
+    bool threw = false;
+    try {
+        book.reserve(100000);
+    } catch (const std::bad_alloc&) {
+        threw = true;
+    }
+    allocationsBeforeFailure = -1;
+    expect(threw, "reserve: a failed allocation should reach the caller");
+    expect(Access::index(book).capacity() == slots, "reserve: a failed growth should leave the table's size");
+    expect(Access::index(book).size() == 5 && Access::index(book).count(3) == 1,
+           "reserve: a failed growth should keep every entry");
+    expect(book.cancelOrder(3).isSuccess(), "reserve: the index should still work after a failed growth");
+}
+
 void testAddOrderToExistingLevelRollsBack() {
     const long failures = failEachAllocationInTurn(
         [](OrderBook& book) { book.addOrder(Order(1, 100, 5, 1, Side::SELL)); },
@@ -860,6 +882,7 @@ int main() {
         testAddOrderToExistingLevelRollsBack();
         testFirstOrderOnEmptyBookRollsBack();
         testIndexGrowthOnExistingLevelRollsBack();
+        testFailedReserveLeavesTheIndexUnchanged();
         testSubmitOrderStaysConsistent();
         testLongSweepStaysConsistent();
         testRestingSubmitRollsBack();
