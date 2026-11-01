@@ -720,11 +720,11 @@ void testCapacityGroup() {
     settings.levelPasses = 3;
     const std::vector<ComponentResult> results = runCapacityGroup(settings);
     expect((operationsOf(results) ==
-            std::vector<std::string>{"grow-to", "reserve-orders", "new-level-near", "new-level-far"}),
+            std::vector<std::string>{"grow-to", "reserve-orders", "reserve-capacity", "new-level-near", "new-level-far"}),
            "the capacity group's operations, in order");
     expect(results[0].orders == 12 && results[0].operations == 2, "one growth per pass");
-    expect(results[2].levels == 40 && results[2].orders == 80, "a ladder holds one order per level on each side");
-    expect(results[2].operations == 6, "a batch is one in twenty of the levels, each pass");
+    expect(results[3].levels == 40 && results[3].orders == 80, "a ladder holds one order per level on each side");
+    expect(results[3].operations == 6, "a batch is one in twenty of the levels, each pass");
 
     settings.orderCounts = {13};
     expectThrows([&] { runCapacityGroup(settings); }, "a count that does not fill the index is refused");

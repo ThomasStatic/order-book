@@ -22,7 +22,7 @@ enum class FailureType {
     OUTCOME_MISMATCH,      // the result or its events differ from what the reference model predicts
     BOOK_STATE_MISMATCH,   // the book's levels, queues, or order count differ from the model's
     PROPERTY_VIOLATION,    // an extra property given to the replayer failed
-    POOL_VIOLATION         // at the end of a stream, NodePool::check found a corrupted free list
+    POOL_VIOLATION         // at the end of a stream, the pool's free lists or live blocks were wrong
 };
 
 const char* failureTypeName(FailureType type);

@@ -31,7 +31,7 @@ Exit statuses: `0` every run completed; `1` a run did not do what its workload p
 
 ## What is timed
 
-**Command**: one `submitOrder`, `cancelOrder`, or `replaceOrder`, from just before the call to just after it returns, on a freshly preloaded book. Counting the result and destroying it come after the closing reading. Every run's outcome is still checked against the workload's prediction, so a run never stands for work the book did not do.
+**Command**: one `submitOrder`, `cancelOrder`, or `replaceOrder`, from just before the call to just after it returns, on a freshly preloaded book. Loading the command and building its `Order` come before the opening reading, and counting the result and destroying it after the closing one. Every run's outcome is still checked against the workload's prediction, so a run never stands for work the book did not do.
 
 **Service time** runs from when the command actually started. **Response time** runs from when it was scheduled, so it includes any wait behind earlier commands or a stall.
 
@@ -39,7 +39,7 @@ The engine has no timing code, and there are no stage timestamps inside it. Perc
 
 ## The clock
 
-One module everywhere: `rdtscp;lfence` where the CPU reports an invariant TSC, calibrated against `steady_clock`, and `steady_clock` otherwise, which includes Arm. Each session records the clock's name, its measured step (the greatest common divisor of successive differences, since Zen 3's TSC advances 39 ticks at a time), and the empty pair's p50 and p99.
+One module everywhere: `rdtscp;lfence` where the CPU reports an invariant TSC, calibrated against `steady_clock`, and `steady_clock` otherwise, which includes Arm. Each session records the clock's name, its measured step (the greatest common divisor of successive differences, since Zen 3's TSC advances 39 ticks at a time), the cost of one reading, and the empty pair's p50 and p99.
 
 Every command is timed and nothing is subtracted, since a percentile minus a constant is not the percentile of the difference. Instead each row prints the clock's step and empty pair, and a value within three steps of the empty pair's p50 is marked `unresolved`. Timing every command slows a run, so a per-command timed run never reports throughput.
 

@@ -9,6 +9,21 @@
 #include "order_checks.hpp"
 
 namespace order_book {
+    OrderBook::OrderBook(OrderBook&& other) noexcept
+        : nodePool(std::move(other.nodePool)),
+          orderIndex(std::move(other.orderIndex)),
+          pendingIndex(std::move(other.pendingIndex)),
+          bids(std::move(other.bids)),
+          asks(std::move(other.asks)),
+          buyStops(std::move(other.buyStops)),
+          sellStops(std::move(other.sellStops)),
+          triggeredStops(std::move(other.triggeredStops)),
+          lastTradePrice(other.lastTradePrice),
+          reservedCapacity(std::exchange(other.reservedCapacity, BookCapacity{})),
+          reservedChunks(std::exchange(other.reservedChunks, 0)),
+          nextTradeId(other.nextTradeId),
+          nextSequenceNum(other.nextSequenceNum) {}
+
     OrderBook& OrderBook::operator=(OrderBook&& other) noexcept {
         if(this != &other) {
             // Free this book's nodes while their pool still exists, then take the other's.
@@ -29,8 +44,8 @@ namespace order_book {
             lastTradePrice = other.lastTradePrice;
             nextTradeId = other.nextTradeId;
             nextSequenceNum = other.nextSequenceNum;
-            reservedCapacity = other.reservedCapacity;
-            reservedChunks = other.reservedChunks;
+            reservedCapacity = std::exchange(other.reservedCapacity, BookCapacity{});
+            reservedChunks = std::exchange(other.reservedChunks, 0);
             nodePool = std::move(other.nodePool);
         }
         return *this;
@@ -742,6 +757,9 @@ namespace order_book {
                                   std::max(capacity.levels, reservedCapacity.levels)};
         // Whatever the pool takes in here is not a growth, even if a later step throws.
         const std::uint64_t chunksBefore = nodePool ? nodePool->chunksTaken() : 0;
+        const auto countChunks = [this, chunksBefore] {
+            reservedChunks += nodePool ? nodePool->chunksTaken() - chunksBefore : 0;
+        };
         try {
             orderIndex.reserve(wanted.orders);
             pendingIndex.reserve(wanted.stops);
@@ -755,10 +773,10 @@ namespace order_book {
             warmPool(wanted);
         }
         catch(...) {
-            reservedChunks += nodePool ? nodePool->chunksTaken() - chunksBefore : 0;
+            countChunks();
             throw;
         }
-        reservedChunks += nodePool ? nodePool->chunksTaken() - chunksBefore : 0;
+        countChunks();
         reservedCapacity = wanted;
     }
 
@@ -836,7 +854,7 @@ namespace order_book {
     void OrderBook::removeResting(OrderIndex::iterator entry) {
         const OrderLocation location = entry->second;
         auto remove = [this, entry, &location](auto& levels) {
-            // The entry's own level handle, not a search of the map. An indexed order always
+            // The entry's own level handle, not a search of the side. An indexed order always
             // has its level; if the handle does not name a level at the entry's price and side,
             // fail before mutating anything.
             PriceLevel* const level = &checkedLevel(location);

@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 #if defined(_M_X64) || defined(__x86_64__)
 #define ORDER_BOOK_LATENCY_HAS_TSC 1
@@ -22,6 +23,9 @@
 namespace order_book::latency {
 
 using Ticks = std::uint64_t;
+
+// The clock's name in a result: only a result from this one can be quoted.
+inline constexpr std::string_view tscClockName = "rdtscp;lfence";
 
 class Clock {
 public:

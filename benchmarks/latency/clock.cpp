@@ -83,7 +83,7 @@ Clock detectClock() {
 
 ClockRecord measureClock(const Clock& clock) {
     ClockRecord record;
-    record.name = clock.usesTsc() ? "rdtscp;lfence" : "steady_clock";
+    record.name = clock.usesTsc() ? std::string(tscClockName) : std::string("steady_clock");
     record.ticksPerNanosecond = calibrate(clock);
     record.stepNanoseconds = static_cast<double>(measureStep(clock)) / record.ticksPerNanosecond;
     record.readCostNanoseconds = measureReadCost(clock, record.ticksPerNanosecond);

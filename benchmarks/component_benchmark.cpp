@@ -62,6 +62,19 @@ ComponentResult reserveResult(std::size_t orders, std::size_t passes) {
     return result;
 }
 
+ComponentResult reserveCapacityResult(std::size_t orders, std::size_t passes) {
+    const BookCapacity capacity{orders, orders / 4, orders / 10};
+    ComponentResult result{"reserve-capacity", "empty-book", "fresh", orders, capacity.levels, passes, 0, passes};
+    for (std::size_t pass = 0; pass < passes; ++pass) {
+        OrderBook book;
+        const Clock::time_point start = Clock::now();
+        book.reserve(capacity);
+        const Clock::time_point stop = Clock::now();
+        result.elapsedNanoseconds += nanosecondsBetween(start, stop);
+    }
+    return result;
+}
+
 void restOne(OrderBook& book, OrderId id, Price price, Side side) {
     if (book.submitOrder(Order(id, price, 1, 1, side)).getStatus() == SubmissionStatus::REJECTED) {
         throw std::runtime_error("new-level: the book refused a resting order");
@@ -218,6 +231,9 @@ std::vector<ComponentResult> runCapacityGroup(const CapacitySettings& settings) 
     }
     for (const std::size_t orders : settings.orderCounts) {
         results.push_back(reserveResult(orders, settings.growthPasses));
+    }
+    for (const std::size_t orders : settings.orderCounts) {
+        results.push_back(reserveCapacityResult(orders, settings.growthPasses));
     }
     for (const bool far : {false, true}) {
         for (const std::size_t levels : settings.levelCounts) {

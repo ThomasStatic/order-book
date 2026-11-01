@@ -261,6 +261,24 @@ void testEachNodeTypeHasASizeClass() {
     // one allocation, or two in MSVC Debug builds, whose checked vector allocates a proxy too.
     expect(made <= 10, "pending stops should take their nodes from the pool, made " + std::to_string(made)
                            + " allocations for 199 stops");
+
+    // New levels and stop levels, up to the array's first capacity of 16: each takes a level
+    // object from the pool, and any overflow to the heap would show here.
+    before = allocations;
+    for (unsigned int i = 0; i < 15; ++i) {
+        book.submitOrder(Order(2000 + i, 99 - i, 1, 1, Side::BUY));
+    }
+    made = allocations - before;
+    expect(made == 0, "new price levels should take their objects from the pool, made " + std::to_string(made));
+    before = allocations;
+    for (unsigned int i = 0; i < 14; ++i) {
+        order_book::OrderRequest request = stop(3000 + i);
+        request.stopPrice = 121 + i;
+        book.submitOrder(request);
+    }
+    made = allocations - before;
+    expect(book.pendingStopCount() == 214, "every new stop pends");
+    expect(made <= 2, "new stop levels should take their objects from the pool, made " + std::to_string(made));
 }
 
 // Fills a book with orders on several levels, some partly filled, so moves carry real queues.
@@ -371,6 +389,46 @@ void testCheckCountsLiveBlocksPerClass() {
     expect(pool.check().totalLiveBlocks() == 0, "everything returned leaves nothing live");
 }
 
+// A freed block is poisoned under ASan, so a test that plays at corrupting one opens it first.
+void overwriteFreeLink(void* block, void* link) {
+#if defined(ORDER_BOOK_POISON_POOL)
+    ASAN_UNPOISON_MEMORY_REGION(block, sizeof(void*));
+#endif
+    *static_cast<void**>(block) = link;
+#if defined(ORDER_BOOK_POISON_POOL)
+    ASAN_POISON_MEMORY_REGION(block, sizeof(void*));
+#endif
+}
+
+// A free list is only sound if every link is a block of its class. check must find a bad one
+// before it follows it. The pool never frees a block twice itself, so each case is put right
+// before the pool is destroyed.
+void testCheckFindsACorruptFreeList() {
+    NodePool pool;
+    void* const first = pool.allocate(sizeof(Node), alignof(Node));
+    void* const second = pool.allocate(sizeof(Node), alignof(Node));
+    pool.deallocate(first, sizeof(Node), alignof(Node));
+    pool.deallocate(second, sizeof(Node), alignof(Node));  // the list: second, then first
+    expect(pool.check().sound, "a healthy free list is sound");
+
+    overwriteFreeLink(first, second);
+    expect(!pool.check().sound, "a cycle in a free list is found");
+
+    overwriteFreeLink(first, static_cast<std::byte*>(second) + 1);
+    expect(!pool.check().sound, "a link off a block boundary is found");
+
+    Node outside{};
+    overwriteFreeLink(first, &outside);
+    expect(!pool.check().sound, "a link outside every chunk is found");
+
+    void* const uncarved = static_cast<std::byte*>(first) + sizeof(Node) * 10;
+    overwriteFreeLink(first, uncarved);
+    expect(!pool.check().sound, "a link to a block never carved is found");
+
+    overwriteFreeLink(first, nullptr);
+    expect(pool.check().sound, "and put right, the list is sound again");
+}
+
 // Six sizes all get a class; a seventh goes to the heap.
 void testSixClasses() {
     NodePool pool;
@@ -394,6 +452,7 @@ void testSixClasses() {
 
 int main() {
     testCheckCountsLiveBlocksPerClass();
+    testCheckFindsACorruptFreeList();
     testSixClasses();
     testBlocksAreReused();
     testOtherRequestsGoToTheHeap();

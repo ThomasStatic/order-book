@@ -14,7 +14,7 @@ struct Node {
     unsigned int payload[8];
 };
 
-volatile unsigned int observed = 0;
+[[maybe_unused]] volatile unsigned int observed = 0;
 
 }  // namespace
 

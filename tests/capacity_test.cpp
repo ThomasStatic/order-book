@@ -110,7 +110,7 @@ void testAReservedBookNeverGrows() {
     fill(book, capacity);
     const long made = allocations - before;
     expect(book.capacityGrowths() == 0, "filling a book to its capacity does not grow it");
-    if (heapCountsAreExact) {
+    if constexpr (heapCountsAreExact) {
         expect(made == 0, "filling a book to its capacity reaches the heap " + std::to_string(made) + " times");
     }
     expect(book.activeOrderCount() == 2000 && book.pendingStopCount() == 2000, "every order rests and every stop pends");
@@ -218,6 +218,26 @@ void testMovingABookKeepsItsCapacity() {
     expect(target.activeOrderCount() == 2000, "and the orders");
 }
 
+// What was reserved went with the book, so a moved-from book has nothing reserved, and it can
+// reserve again. It has no pool, so only its index and arrays can show that.
+void testAMovedFromBookReservesAgain() {
+    const BookCapacity capacity{1000, 100, 100};
+    OrderBook book;
+    book.reserve(capacity);
+    const OrderBook moved(std::move(book));
+    book.reserve(capacity);
+    fill(book, capacity);
+    expect(book.capacityGrowths() == 0, "a move construction leaves the source able to reserve");
+
+    OrderBook source;
+    source.reserve(capacity);
+    OrderBook target;
+    target = std::move(source);
+    source.reserve(capacity);
+    fill(source, capacity);
+    expect(source.capacityGrowths() == 0, "a move assignment leaves the source able to reserve");
+}
+
 // A book that grew counts those growths after a move too.
 void testGrowthsSurviveAMove() {
     OrderBook book;
@@ -261,6 +281,7 @@ int main() {
     testReserveTopsUpOnlyWhatIsMissing();
     testZeroCapacityIsANoOp();
     testMovingABookKeepsItsCapacity();
+    testAMovedFromBookReservesAgain();
     testGrowthsSurviveAMove();
     testCommandsInsideCapacityDoNotGrow();
     std::cout << "capacity tests passed\n";

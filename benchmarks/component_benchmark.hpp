@@ -38,9 +38,10 @@ struct CapacitySettings {
 };
 
 // grow-to: the one emplace that grows a full index. reserve-orders: OrderBook::reserve on a new
-// book. new-level-near: a resting order on a new level just behind the touch. new-level-far: one
-// behind every other level. Only those operations are timed: building a structure and cancelling
-// what a pass added are not.
+// book. reserve-capacity: reserve(BookCapacity) on a new book, with a quarter as many stops and
+// a tenth as many levels per side. new-level-near: a resting order on a new level just behind
+// the touch. new-level-far: one behind every other level. Only those operations are timed:
+// building a structure and cancelling what a pass added are not.
 std::vector<ComponentResult> runCapacityGroup(const CapacitySettings& settings);
 
 // The controls that find the cause of a fall in scaling, each on the same threads as the run it

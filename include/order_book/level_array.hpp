@@ -144,11 +144,11 @@ namespace order_book {
 
         iterator find(Price price) noexcept {
             const std::size_t index = locate(price);
-            return holds(index, price) ? at_index(index) : end();
+            return holds(index, price) ? atIndex(index) : end();
         }
         const_iterator find(Price price) const noexcept {
             const std::size_t index = locate(price);
-            return holds(index, price) ? const_iterator(at_index(index)) : end();
+            return holds(index, price) ? const_iterator(atIndex(index)) : end();
         }
 
         bool contains(Price price) const noexcept { return holds(locate(price), price); }
@@ -169,7 +169,7 @@ namespace order_book {
         std::pair<iterator, bool> try_emplace(Price price, Arguments&&... arguments) {
             const std::size_t index = locate(price);
             if(holds(index, price)) {
-                return {at_index(index), false};
+                return {atIndex(index), false};
             }
             if(entries.size() == entries.capacity()) {
                 entries.reserve(entries.empty() ? minimumCapacity : entries.size() * 2);
@@ -186,7 +186,7 @@ namespace order_book {
             }
             // There is room, and an Entry copies without throwing.
             entries.insert(entries.begin() + static_cast<std::ptrdiff_t>(index), Entry{price, level});
-            return {at_index(index), true};
+            return {atIndex(index), true};
         }
 
         // Releases the level; any iterator past it is invalidated with it.
@@ -213,8 +213,8 @@ namespace order_book {
     private:
         static constexpr std::size_t minimumCapacity = 16;
 
-        iterator at_index(std::size_t index) noexcept { return iterator(entries.data() + index + 1); }
-        const_iterator at_index(std::size_t index) const noexcept { return const_iterator(entries.data() + index + 1); }
+        iterator atIndex(std::size_t index) noexcept { return iterator(entries.data() + index + 1); }
+        const_iterator atIndex(std::size_t index) const noexcept { return const_iterator(entries.data() + index + 1); }
 
         bool holds(std::size_t index, Price price) const noexcept {
             return index < entries.size() && entries[index].price == price;

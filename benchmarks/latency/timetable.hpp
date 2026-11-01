@@ -16,12 +16,19 @@
 // straight out with nothing skipped.
 //
 // Clock needs now() and spinUntil(deadline). A target is called as target(index, clock), runs
-// one command, and returns the reading taken just after it, so whatever it does to tidy up
-// (counting a result, destroying it) is outside the interval.
+// one command, and returns the readings taken just before and just after it, so whatever it does
+// to get ready (loading a command, building an order) and to tidy up (counting a result,
+// destroying it) is outside the interval.
 namespace order_book::latency {
 
+// The readings either side of one command.
+struct Stamps {
+    Ticks started;
+    Ticks done;
+};
+
 struct TimetableRun {
-    Histogram service;   // from the real send to the return
+    Histogram service;   // from just before the command to the return
     Histogram response;  // from the scheduled send to the return
     Histogram lateness;  // from the scheduled send to the real send, so a stalled driver shows
     Ticks elapsed = 0;   // from the start to the last return
@@ -50,11 +57,12 @@ TimetableRun runTimetable(const std::vector<Ticks>& schedule, DriverClock& clock
     for (std::size_t index = 0; index < commands; ++index) {
         const Ticks scheduled = start + schedule[index];
         const Ticks sent = clock.spinUntil(scheduled);
-        done = target(index, clock);
+        const Stamps stamps = target(index, clock);
+        done = stamps.done;
         const Ticks lateness = sent - scheduled;
         run.lateness.record(lateness);
-        run.service.record(done - sent);
-        run.response.record(done - scheduled);
+        run.service.record(stamps.done - stamps.started);
+        run.response.record(stamps.done - scheduled);
         if (index >= previousTenthStart) {
             Ticks& least = leastLateness[index >= finalTenthStart ? 1 : 0];
             least = std::min(least, lateness);
@@ -73,9 +81,8 @@ template <typename DriverClock, typename Target>
 Histogram runClosedLoop(std::size_t commands, DriverClock& clock, Target& target) {
     Histogram service;
     for (std::size_t index = 0; index < commands; ++index) {
-        const Ticks sent = clock.now();
-        const Ticks done = target(index, clock);
-        service.record(done - sent);
+        const Stamps stamps = target(index, clock);
+        service.record(stamps.done - stamps.started);
     }
     return service;
 }

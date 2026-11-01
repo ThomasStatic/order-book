@@ -171,7 +171,7 @@ namespace order_book {
         // limit at the furthest price on its side.
         Order incomingOrder(const OrderRequest& request) const;
         // A valid request's whole run, shared by both overloads of submitOrder.
-        void runRequest(const OrderRequest& request, ResultRecorder& recorder);
+        inline void runRequest(const OrderRequest& request, ResultRecorder& recorder);
         // runIncoming numbers the order, matches it, then rests its remainder (GTC) or expires
         // it (IOC, or stopped by self-trade prevention); a FOK goes to runFillOrKill, which
         // decides first whether it fills, makes room for all it records, and only then is
@@ -189,8 +189,8 @@ namespace order_book {
             OrderReplaced replacement{};
         };
         // Why this replace must be refused, or nothing with plan filled in. Changes nothing.
-        std::optional<RejectionReason> planReplace(const ReplaceRequest& request, ReplacePlan& plan);
-        void runReplace(const ReplaceRequest& request, const ReplacePlan& plan, ResultRecorder& recorder);
+        inline std::optional<RejectionReason> planReplace(const ReplaceRequest& request, ReplacePlan& plan);
+        inline void runReplace(const ReplaceRequest& request, const ReplacePlan& plan, ResultRecorder& recorder);
 
         // A STOP or STOP_LIMIT request: accepted and wholly expired if it is already past its
         // trigger, else stored pending. Strongly atomic and numbered last.
@@ -305,7 +305,8 @@ namespace order_book {
         // its pool; a moved-from book has none, and any order it rests later comes from the heap.
         OrderBook(const OrderBook&) = delete;
         OrderBook& operator=(const OrderBook&) = delete;
-        OrderBook(OrderBook&&) = default;
+        // Not defaulted: what was reserved goes with the book, so the source may reserve again.
+        OrderBook(OrderBook&& other) noexcept;
         // Not defaulted: this book's levels must release their nodes into its own pool before
         // that pool is replaced by the other book's. Assigns every member by hand, so a new
         // member must be added here too.

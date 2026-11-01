@@ -60,7 +60,8 @@ void testPercentilesAgainstSortedSamples() {
     std::vector<std::uint64_t> samples;
     Histogram histogram;
     for (int i = 0; i < 200000; ++i) {
-        const std::uint64_t value = (random() >> (random() % 40)) % 100000000 + 1;
+        const std::uint64_t shift = random() % 40;
+        const std::uint64_t value = (random() >> shift) % 100000000 + 1;
         samples.push_back(value);
         histogram.record(value);
     }
@@ -136,17 +137,20 @@ private:
 template <typename Cost>
 class FakeTarget {
 public:
-    FakeTarget(FakeClock& clock, Cost cost) : clock_(clock), cost_(cost) {}
-    Ticks operator()(std::size_t index, FakeClock&) {
+    FakeTarget(FakeClock& clock, Cost cost, Ticks preparation = 0) : clock_(clock), cost_(cost), preparation_(preparation) {}
+    Stamps operator()(std::size_t index, FakeClock&) {
         sends.push_back(clock_.now());
+        clock_.advance(preparation_);
+        const Ticks started = clock_.now();
         clock_.advance(cost_(index));
-        return clock_.now();
+        return {started, clock_.now()};
     }
     std::vector<Ticks> sends;
 
 private:
     FakeClock& clock_;
     Cost cost_;
+    Ticks preparation_;
 };
 
 constexpr Percentile p50{50000, "p50"};
@@ -170,6 +174,20 @@ void testSendsWaitForTheirTimeAndLateOnesGoStraightOut() {
     expect(run.response.maximum() == 250, "response time runs from the scheduled send to the return");
     expect(run.service.maximum() == 250, "service time runs from the real send to the return");
     expect(run.elapsed == 410, "elapsed runs from the start to the last return");
+}
+
+// What a target does before its opening reading is not the command, though a late send still
+// answers for it: response time runs from the schedule whatever happened in between.
+void testGettingReadyIsOutsideTheInterval() {
+    FakeClock clock;
+    FakeTarget target(clock, [](std::size_t) { return Ticks{10}; }, 3);
+    const TimetableRun run = runTimetable(std::vector<Ticks>{0, 100}, clock, target);
+    expect(run.service.maximum() == 10, "service time starts at the target's own opening reading");
+    expect(run.response.maximum() == 13, "response time still runs from the scheduled send");
+
+    FakeClock closedClock;
+    FakeTarget closedTarget(closedClock, [](std::size_t) { return Ticks{10}; }, 3);
+    expect(runClosedLoop(2, closedClock, closedTarget).maximum() == 10, "so does closed-loop service time");
 }
 
 void testScheduleIsRelativeToTheStart() {
@@ -454,6 +472,7 @@ int main(int argc, char** argv) {
     testThousandBeyondRule();
     testCountsListOccupiedBucketsOnly();
     testSendsWaitForTheirTimeAndLateOnesGoStraightOut();
+    testGettingReadyIsOutsideTheInterval();
     testScheduleIsRelativeToTheStart();
     testBacklogStillGrowingIsNotSustained();
     testCoordinatedOmissionWorkedExample();

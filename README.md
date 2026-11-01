@@ -167,7 +167,7 @@ The same structures seen as a trader would, as a price ladder:
 
 ![A price ladder of twelve resting orders: three ask levels and three bid levels, each bar a level's aggregate quantity split into its orders in queue order, with the best bid, best ask, and two-tick spread marked.](docs/images/book-ladder.svg)
 
-`price_level.hpp`, `order_location.hpp`, `order_index.hpp`, `node_pool.hpp`, `small_vector.hpp`, and `result_recorder.hpp` are implementation detail. The book never hands one of them out (a result's trades and events come back as `SmallVector`s, which the API names only through `SubmissionTrades`, `SubmissionEvents`, and `CancellationEvents`), and they may change in any release.
+`price_level.hpp`, `level_array.hpp`, `order_location.hpp`, `order_index.hpp`, `node_pool.hpp`, `small_vector.hpp`, and `result_recorder.hpp` are implementation detail. The book never hands one of them out (a result's trades and events come back as `SmallVector`s, which the API names only through `SubmissionTrades`, `SubmissionEvents`, and `CancellationEvents`), and they may change in any release.
 
 ## Price-time priority
 
@@ -227,7 +227,7 @@ N is the number of resting orders, L the number of price levels on the side conc
 | Operation | Time | Notes |
 |---|---|---|
 | `submitOrder` that rests without trading | O(log d) to an existing level; a new level also shifts d entries | d is how many levels are better than its price: finding one gallops from the best price, and a new level moves every level better than it in the array. The index check and insert are O(1) expected, and appending to the level is O(1). |
-| `submitOrder` that makes T trades | O(T + log L) | Each trade is O(1) at the front of the best level. Each emptied level is the array's last element, so erasing it is O(1). Resting a remainder adds O(log L); an IOC remainder expires in O(1) instead. The result's storage is inline for up to 4 trades and 6 events. |
+| `submitOrder` that makes T trades | O(T), plus resting a remainder | Each trade is O(1) at the front of the best level. Each emptied level is the array's last element, so erasing it is O(1). Resting a remainder costs what a resting submission does; an IOC remainder expires in O(1) instead. The result's storage is inline for up to 4 trades and 6 events. |
 | FOK `submitOrder` | O(C + k + T) | A read-only walk over the C levels it crosses, plus the k orders it takes at the last, decides whether it fills, before the match. One that cannot fill is O(C + k) and allocates nothing. With an owner, the walk is O(orders crossed). |
 | Submit a pending stop | As a resting submission, over stop levels | One array lookup or insert, then an O(1) index insert. A stop past its trigger is O(1) and allocates nothing. |
 | `cancelOrder` of a pending stop | O(1) expected | Index lookup, list erase, and erasing an emptied stop level. It never allocates. |

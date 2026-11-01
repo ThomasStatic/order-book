@@ -1,8 +1,10 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <new>
@@ -44,9 +46,8 @@ namespace order_book {
     public:
         static constexpr std::size_t maxClasses = 6;
 
-        // What check found: blocks handed out and not yet returned, per size class. A free list
-        // longer than the blocks ever carved can only be a corrupted one (a block freed twice
-        // links it into a cycle), and that is what sound says.
+        // What check found: blocks handed out and not yet returned, per size class, and whether
+        // every free list was sound. If one was not, its class's count is not meaningful.
         struct Usage {
             std::array<std::size_t, maxClasses> liveBlocks{};
             bool sound = true;
@@ -91,12 +92,15 @@ namespace order_book {
                 if(sizeClass->chunks.size() == sizeClass->chunks.capacity()) {
                     sizeClass->chunks.reserve(sizeClass->chunks.empty() ? 8 : sizeClass->chunks.size() * 2);
                 }
-                sizeClass->chunks.push_back(
-                    static_cast<std::byte*>(obtain(sizeClass->size * blocksPerChunk, sizeClass->align)));
+                auto* const chunk = static_cast<std::byte*>(obtain(sizeClass->size * blocksPerChunk, sizeClass->align));
+                sizeClass->chunks.insert(
+                    std::upper_bound(sizeClass->chunks.begin(), sizeClass->chunks.end(), chunk, std::less<std::byte*>{}),
+                    chunk);
+                sizeClass->newestChunk = chunk;
                 sizeClass->carvedBlocks = 0;
                 ++chunkCount;
             }
-            return sizeClass->chunks.back() + sizeClass->size * sizeClass->carvedBlocks++;
+            return sizeClass->newestChunk + sizeClass->size * sizeClass->carvedBlocks++;
         }
 
         void deallocate(void* block, std::size_t bytes, std::size_t alignment) noexcept {
@@ -112,8 +116,9 @@ namespace order_book {
         // How many chunks it has taken from the heap, ever.
         std::uint64_t chunksTaken() const noexcept { return chunkCount; }
 
-        // Walks every free list and counts carved blocks minus free ones, per class. Never
-        // allocates or throws, and leaves each block as it was.
+        // Walks every free list and counts carved blocks minus free ones, per class, checking
+        // each link before following it: no cycle, and every block inside a chunk of its class
+        // and on a block boundary. Never allocates or throws, and leaves each block as it was.
         Usage check() const noexcept {
             Usage usage;
             for(std::size_t index = 0; index < maxClasses; ++index) {
@@ -124,7 +129,7 @@ namespace order_book {
                 const std::size_t carved = (sizeClass.chunks.size() - 1) * blocksPerChunk + sizeClass.carvedBlocks;
                 std::size_t free = 0;
                 for(FreeBlock* block = sizeClass.freeBlocks; block != nullptr; ++free) {
-                    if(free == carved) {
+                    if(free == carved || !holdsCarvedBlock(sizeClass, block)) {
                         usage.sound = false;
                         break;
                     }
@@ -162,11 +167,29 @@ namespace order_book {
             std::size_t size = 0;  // zero while unused
             std::size_t align = 0;
             FreeBlock* freeBlocks = nullptr;
-            std::vector<std::byte*> chunks;
+            std::vector<std::byte*> chunks;  // sorted by address, so check can search them
+            std::byte* newestChunk = nullptr;
             std::size_t carvedBlocks = blocksPerChunk;  // blocks handed out from the newest chunk
         };
 
         static constexpr std::size_t blocksPerChunk = 256;
+
+        // Whether this address is a block of this class that has been carved from a chunk.
+        static bool holdsCarvedBlock(const SizeClass& sizeClass, const void* address) noexcept {
+            const auto* const block = static_cast<const std::byte*>(address);
+            const std::less<const std::byte*> before;
+            const auto next = std::upper_bound(sizeClass.chunks.begin(), sizeClass.chunks.end(), block, before);
+            if(next == sizeClass.chunks.begin()) {
+                return false;
+            }
+            const std::byte* const chunk = *(next - 1);
+            if(!before(block, chunk + sizeClass.size * blocksPerChunk)) {
+                return false;
+            }
+            const auto offset = static_cast<std::size_t>(block - chunk);
+            const std::size_t carved = chunk == sizeClass.newestChunk ? sizeClass.carvedBlocks : blocksPerChunk;
+            return offset % sizeClass.size == 0 && offset / sizeClass.size < carved;
+        }
 
         static std::size_t blockSizeFor(std::size_t bytes, std::size_t alignment) noexcept {
             const std::size_t size = bytes < sizeof(FreeBlock) ? sizeof(FreeBlock) : bytes;

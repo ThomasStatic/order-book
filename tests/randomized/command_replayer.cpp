@@ -34,6 +34,10 @@ struct OrderBookTestAccess {
     static const auto& bids(const OrderBook& book) { return book.bids; }
     static const auto& asks(const OrderBook& book) { return book.asks; }
     static const NodePool& pool(const OrderBook& book) { return *book.nodePool; }
+    static std::size_t allLevels(const OrderBook& book) {
+        return book.bids.size() + book.asks.size() + book.buyStops.size() + book.sellStops.size();
+    }
+    static bool hasTriggeredQueue(const OrderBook& book) { return book.triggeredStops != nullptr; }
     static const auto& buyStops(const OrderBook& book) { return book.buyStops; }
     static const auto& sellStops(const OrderBook& book) { return book.sellStops; }
     static const order_book::OrderQueue& orders(const PriceLevel& level) { return level.orders; }
@@ -364,17 +368,27 @@ std::size_t countLevels(const OrderBook& book) {
     return Access::bids(book).size() + Access::asks(book).size();
 }
 
-// Run once a stream ends: each free list must walk cleanly, and every resting order and pending
-// stop must hold a block. It says why not, or nothing.
+// The blocks an empty list takes from its pool: its sentinel on MSVC, its proxy too in Debug, and
+// none on libstdc++ or libc++.
+std::size_t blocksPerEmptyList() {
+    NodePool pool;
+    const OrderQueue queue{PoolAllocator<RestingOrder>(&pool)};
+    return pool.check().totalLiveBlocks();
+}
+
+// Run once a stream ends: each free list must walk cleanly, and the blocks live must be exactly
+// what the book holds, so a block leaked or freed twice is found. It says why not, or nothing.
 std::optional<std::string> checkPool(const OrderBook& book) {
     const NodePool::Usage usage = Access::pool(book).check();
     if (!usage.sound) {
-        return "a free list is longer than the blocks ever carved";
+        return "a free list is corrupted";
     }
-    const std::size_t held = book.activeOrderCount() + book.pendingStopCount();
-    if (usage.totalLiveBlocks() < held) {
-        return "the pool has " + std::to_string(usage.totalLiveBlocks()) + " live blocks for " + std::to_string(held) +
-               " resting orders and pending stops";
+    static const std::size_t listBlocks = blocksPerEmptyList();
+    const std::size_t expected = book.activeOrderCount() + book.pendingStopCount() + Access::allLevels(book) * (1 + listBlocks) +
+                                 (Access::hasTriggeredQueue(book) ? listBlocks : 0);
+    if (usage.totalLiveBlocks() != expected) {
+        return "the pool has " + std::to_string(usage.totalLiveBlocks()) + " live blocks where the book holds " +
+               std::to_string(expected);
     }
     return std::nullopt;
 }
@@ -434,6 +448,19 @@ std::string describeBookState(const OrderBook& book, const ReferenceBook& model,
     return out.str();
 }
 
+namespace {
+
+std::optional<Failure> poolFailure(const OrderBook& book, const ReferenceBook& model, const Command& last, std::size_t index) {
+    std::optional<std::string> broken = checkPool(book);
+    if (!broken) {
+        return std::nullopt;
+    }
+    return Failure{FailureType::POOL_VIOLATION, index, last, std::nullopt, std::move(*broken),
+                   describeBookState(book, model, last)};
+}
+
+}  // namespace
+
 RunResult CommandReplayer::replay(OrderBook& book, const std::vector<Command>& commands) const {
     if (book.activeOrderCount() != 0) {
         throw std::invalid_argument("CommandReplayer::replay needs an empty book: the reference model starts empty");
@@ -447,9 +474,8 @@ RunResult CommandReplayer::replay(OrderBook& book, const std::vector<Command>& c
             return result;
         }
     }
-    if (std::optional<std::string> broken = checkPool(book); broken && !commands.empty()) {
-        result.failure = Failure{FailureType::POOL_VIOLATION, commands.size() - 1, commands.back(), std::nullopt,
-                                 std::move(*broken), describeBookState(book, model, commands.back())};
+    if (!commands.empty()) {
+        result.failure = poolFailure(book, model, commands.back(), commands.size() - 1);
     }
     return result;
 }
@@ -472,9 +498,8 @@ RunResult CommandReplayer::run(OrderBook& book, RandomCommandGenerator& generato
         }
         last = command;
     }
-    if (std::optional<std::string> broken = checkPool(book); broken && last) {
-        result.failure = Failure{FailureType::POOL_VIOLATION, count - 1, *last, std::nullopt, std::move(*broken),
-                                 describeBookState(book, model, *last)};
+    if (last) {
+        result.failure = poolFailure(book, model, *last, count - 1);
     }
     return result;
 }

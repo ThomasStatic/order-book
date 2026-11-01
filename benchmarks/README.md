@@ -163,6 +163,7 @@ Recorded results live in `results/`, one directory per session set, kept byte fo
 |---|---|---|
 | `capacity` | `grow-to` | The one index insert that grows a full table, at 12,288, 98,304, and 786,432 orders |
 | | `reserve-orders` | `OrderBook::reserve` on a new book, at the same sizes |
+| | `reserve-capacity` | `reserve(BookCapacity)` on a new book, at the same sizes, with a quarter as many stops and a tenth as many levels per side |
 | | `new-level-near` | A resting order on a new level just behind the touch, at 2,000, 20,000, and 200,000 levels per side |
 | | `new-level-far` | The same, behind every other level |
 | `controls` | `cpu-loop` | A loop touching no memory |

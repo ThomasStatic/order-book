@@ -265,6 +265,7 @@ latency::ReportRow startRow(const Session& session, const bench::Workload& workl
                                     " levels=" + std::to_string(capacity.levels));
     record.set("clock", session.clockRecord.name);
     record.set("clock-step-ns", bench::formatFixed(session.clockRecord.stepNanoseconds, 1));
+    record.set("clock-read-ns", bench::formatFixed(session.clockRecord.readCostNanoseconds, 1));
     record.set("empty-pair-ns", "p50 " + bench::formatFixed(session.clockRecord.emptyPairP50Nanoseconds, 1) + ", p99 " +
                                     bench::formatFixed(session.clockRecord.emptyPairP99Nanoseconds, 1));
     record.set("commands-per-run", std::to_string(session.settings.commands));

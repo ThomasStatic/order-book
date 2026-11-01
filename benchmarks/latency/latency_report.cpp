@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "benchmark_report.hpp"
+#include "clock.hpp"
 
 namespace order_book::latency {
 
@@ -13,7 +14,7 @@ namespace {
 
 using benchmark::formatFixed;
 
-constexpr std::array<std::string_view, 27> recordFieldNames{
+constexpr std::array<std::string_view, 28> recordFieldNames{
     // The interval.
     "interval", "time", "load", "target-rate", "achieved-rate",
     // The workload.
@@ -26,7 +27,7 @@ constexpr std::array<std::string_view, 27> recordFieldNames{
     // The books.
     "book-capacity", "capacity-growths",
     // The measurement.
-    "clock", "clock-step-ns", "empty-pair-ns", "commands-per-run",
+    "clock", "clock-step-ns", "clock-read-ns", "empty-pair-ns", "commands-per-run",
     // The environment.
     "build", "machine"};
 
@@ -197,7 +198,7 @@ std::vector<std::string> unquotableReasons(const ReportRow& row) {
     if (!row.optimizedBuild) {
         reasons.emplace_back("unoptimized build");
     }
-    if (row.clockName != "rdtscp;lfence") {
+    if (row.clockName != tscClockName) {
         reasons.push_back("clock is " + row.clockName);
     }
     if (!row.noiseBefore || !row.noiseAfter) {

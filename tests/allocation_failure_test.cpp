@@ -777,9 +777,9 @@ void testReplacePathsDoNotAllocate() {
     expectIndexConsistent(book, "replaces without allocating");
 }
 
-// A priority-losing replace to a new level is strongly atomic: a failure (the new level's map
-// node) leaves the book, its counters included, as it was.
-// Sixteen levels fill the array's first capacity, so the replace's new level grows it.
+// A priority-losing replace to a new level is strongly atomic: a failure leaves the book, its
+// counters included, as it was. Sixteen levels fill the array's first capacity, so the replace's
+// new level grows it.
 void testReplaceToNewLevelRollsBack() {
     const long failures = failEachAllocationInTurn(
         [](OrderBook& book) {

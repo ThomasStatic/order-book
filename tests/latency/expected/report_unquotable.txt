@@ -25,6 +25,7 @@ run record:
   capacity-growths=MISSING
   clock=x
   clock-step-ns=x
+  clock-read-ns=x
   empty-pair-ns=x
   commands-per-run=x
   build=x
