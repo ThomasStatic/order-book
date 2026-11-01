@@ -3,13 +3,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <map>
 #include <memory>
 #include <optional>
 #include <vector>
 
 #include "cancellation_result.hpp"
 #include "invariants.hpp"
+#include "level_array.hpp"
 #include "node_pool.hpp"
 #include "order.hpp"
 #include "order_index.hpp"
@@ -46,24 +46,24 @@ namespace order_book {
         // Test-only access to internals; defined in tests, never in the library.
         friend struct OrderBookTestAccess;
 
-        // The blocks of every resting order's queue node. Declared first, so it is destroyed
-        // after the levels whose nodes it holds; held by pointer, so its address, which every
-        // queue's allocator records, survives moving the book. A moved-from book has none,
-        // and any level it creates afterwards takes its nodes from the heap.
+        // The blocks of every level object and queue node. Declared first, so it is destroyed
+        // after the levels it holds; held by pointer, so its address, which every queue's
+        // allocator and level array records, survives moving the book. A moved-from book has
+        // none, and any level it creates afterwards comes from the heap.
         std::unique_ptr<NodePool> nodePool = std::make_unique<NodePool>();
 
         OrderIndex orderIndex;
         // Every pending stop's ID and place. An ID is live while either index holds it.
         PendingStopIndex pendingIndex;
 
-        std::map<Price, PriceLevel, std::greater<Price>> bids;
-        std::map<Price, PriceLevel, std::less<Price>> asks;
+        LevelArray<PriceLevel, std::greater<Price>> bids{nodePool.get()};
+        LevelArray<PriceLevel, std::less<Price>> asks{nodePool.get()};
 
         // Pending stops by stop price, so that on each side begin() is the stop nearest to
         // triggering: buy stops ascending (a rising trade reaches the lowest first), sell stops
         // descending. Each queue is in acceptance order.
-        std::map<Price, StopLevel, std::less<Price>> buyStops;
-        std::map<Price, StopLevel, std::greater<Price>> sellStops;
+        LevelArray<StopLevel, std::less<Price>> buyStops{nodePool.get()};
+        LevelArray<StopLevel, std::greater<Price>> sellStops{nodePool.get()};
 
         // Stops a trade has triggered, waiting their turn in this command's cascade, oldest
         // first. Empty between commands. Same allocator as the stop levels, so a stop moves
@@ -271,11 +271,10 @@ namespace order_book {
         // copy would point back into the original. Moving keeps those list nodes, and
         // with them the iterators, valid.
         //
-        // Memory: resting orders' queue nodes come from a pool the book owns and reuses, so a
-        // book keeps the node memory of the most orders it has held until it is destroyed;
-        // its index likewise keeps the table it grew to. Only levels use the heap and are
-        // freed as they go. Moving a book moves its pool; a moved-from book has none, and any
-        // order it rests later takes its node from the heap.
+        // Memory: levels and resting orders' queue nodes come from a pool the book owns and
+        // reuses, so a book keeps the node memory of the most it has held until it is destroyed;
+        // its index and level arrays likewise keep the size they grew to. Moving a book moves
+        // its pool; a moved-from book has none, and any order it rests later comes from the heap.
         OrderBook(const OrderBook&) = delete;
         OrderBook& operator=(const OrderBook&) = delete;
         OrderBook(OrderBook&&) = default;

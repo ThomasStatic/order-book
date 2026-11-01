@@ -47,6 +47,17 @@ struct OrderBookTestAccess {
     }
     static auto& stops(OrderBook& book, Side side, Price stopPrice) { return stopLevel(book, side, stopPrice).stops; }
     static void setLastTradePrice(OrderBook& book, Price price) { book.lastTradePrice = price; }
+    static auto& buyStops(OrderBook& book) { return book.buyStops; }
+    static auto& sellStops(OrderBook& book) { return book.sellStops; }
+    // The array holds a side's levels worst first, so its first two are that side's two worst.
+    template <typename Levels>
+    static void swapFirstTwo(Levels& levels) {
+        std::swap(levels.entries[0], levels.entries[1]);
+    }
+    template <typename Levels>
+    static void setFirstPrice(Levels& levels, Price price) {
+        levels.entries[0].price = price;
+    }
 };
 
 }  // namespace order_book
@@ -177,6 +188,31 @@ void testLevelChecks() {
         Access::asks(book).try_emplace(103, 103, Side::BUY);
         expectViolation(book, {.violation = InvariantViolation::MISPLACED_LEVEL, .side = Side::SELL, .price = 103},
                         "bid level stored among the asks");
+    }
+}
+
+// A level array is sorted only by how it is built, so these are reachable now, as they never
+// were through std::map. Iteration runs best first, so after a swap it meets the worse price
+// first and reports the better one that follows it.
+void testLevelOrdering() {
+    using enum InvariantViolation;
+    {
+        OrderBook book = restingBook();
+        Access::swapFirstTwo(Access::bids(book));
+        expectViolation(book, {.violation = INVALID_BID_ORDERING, .side = Side::BUY, .price = 99, .expected = 98, .actual = 99},
+                        "bids out of order");
+    }
+    {
+        OrderBook book = restingBook();
+        Access::swapFirstTwo(Access::asks(book));
+        expectViolation(book, {.violation = INVALID_ASK_ORDERING, .side = Side::SELL, .price = 101, .expected = 102, .actual = 101},
+                        "asks out of order");
+    }
+    {
+        OrderBook book = restingBook();
+        Access::setFirstPrice(Access::bids(book), 99);
+        expectViolation(book, {.violation = INVALID_BID_ORDERING, .side = Side::BUY, .price = 99, .expected = 99, .actual = 99},
+                        "one price held twice");
     }
 }
 
@@ -389,9 +425,21 @@ OrderBook bookWithStops() {
 }
 
 // Each pending-stop structure broken in turn: the stop levels, the stops in them, and their
-// index entries. As for price levels, the orderings cannot be broken through std::map.
+// index entries.
 void testPendingStopChecks() {
     using enum InvariantViolation;
+    {
+        OrderBook book = bookWithStops();
+        Access::swapFirstTwo(Access::buyStops(book));
+        expectViolation(book, {.violation = INVALID_STOP_ORDERING, .side = Side::BUY, .price = 110, .expected = 115, .actual = 110},
+                        "buy stops out of order");
+    }
+    {
+        OrderBook book = bookWithStops();
+        Access::swapFirstTwo(Access::sellStops(book));
+        expectViolation(book, {.violation = INVALID_STOP_ORDERING, .side = Side::SELL, .price = 90, .expected = 85, .actual = 90},
+                        "sell stops out of order");
+    }
     {
         OrderBook book = bookWithStops();
         Access::stopLevel(book, Side::BUY, 115).stopPrice = 116;
@@ -570,6 +618,7 @@ int main() {
     testSoundBooksPass();
     testSequenceWrapPasses();
     testLevelChecks();
+    testLevelOrdering();
     testOrderChecks();
     testIndexChecks();
     testPendingStopChecks();

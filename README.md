@@ -141,15 +141,15 @@ The code is split into libraries that depend in one direction only. The book kno
 
 ```text
 OrderBook
-├── bids : std::map<Price, PriceLevel, std::greater>   begin() is the best (highest) bid
+├── bids : LevelArray<PriceLevel, std::greater>   begin() is the best (highest) bid
 │     101 → PriceLevel { quantity = 25, orders: [#4 qty 10] ⇄ [#7 qty 15] }   oldest first; each node an Order and its owner
 │     100 → PriceLevel { quantity = 40, orders: [#2 qty 40] }
-├── asks : std::map<Price, PriceLevel, std::less>      begin() is the best (lowest) ask
+├── asks : LevelArray<PriceLevel, std::less>      begin() is the best (lowest) ask
 │     103 → PriceLevel { ... }
 ├── orderIndex : OrderIndex   OrderId → OrderLocation { price, side, list iterator, PriceLevel* }
-├── buyStops, sellStops : std::map<Price, StopLevel>   pending stops, nearest trigger first
+├── buyStops, sellStops : LevelArray<StopLevel>   pending stops, nearest trigger first
 ├── pendingIndex : PendingStopIndex  OrderId → StopLocation { stop price, side, list iterator, StopLevel* }
-└── nodePool   : NodePool     the memory for every level's and stop level's list nodes, reused
+└── nodePool   : NodePool     the memory for every level object and list node, reused
 ```
 
 | Structure | Implementation | Why |
@@ -157,10 +157,10 @@ OrderBook
 | Price | `unsigned int` ticks, assuming a $0.01 tick | Exact comparison and no floating point. Zero is invalid for every price, quantity, ID, and sequence number. |
 | `Order` | ID, price, side, type, initial and remaining quantity, sequence number, `FillStatus` | The sequence number is assigned by the book on acceptance and kept for life, so a partially filled order keeps its place. |
 | `PriceLevel` | `std::list` of resting orders in FIFO order (each node the `Order` plus its self-trade-prevention owner), plus a cached aggregate `std::uint64_t` quantity | List iterators stay valid while other orders come and go, so the index can point straight at an order, and erasing from the middle is O(1). The aggregate is 64-bit so a level of many maximal orders cannot overflow it. |
-| Sides | `std::map<Price, PriceLevel>`, descending for bids and ascending for asks | `begin()` is the best price on both sides. Map elements never move, so a pointer to a level stays valid until the level is erased, and levels are erased only once empty. |
+| Sides | `LevelArray`: a sorted array of `{price, pointer to level}`, best price at the back, with level objects in the pool ([ADR 0015](docs/adr/0015-price-levels-live-in-sorted-arrays-of-pointers.md)) | `begin()` is the best price on both sides, and matching works there at the cost of one load. Levels themselves never move, so a pointer to a level stays valid until the level is erased, and levels are erased only once empty. |
 | `OrderIndex` | Open-addressed hash table: linear probing, Fibonacci hashing, at most three quarters full, backward-shift deletion | O(1) expected lookup for duplicate checks and cancels. It replaced `std::unordered_map` after profiling showed per-entry heap nodes and cache misses ([experiment 8](docs/OPTIMIZATION-EXPERIMENTS.md#experiment-8-replace-the-order-indexs-container-kept)). |
-| `OrderLocation` | Price, side, list iterator, and `PriceLevel*` | A cancel reaches the order and its level without searching the map. The owner sits in the queue node, not the index slot, so the self-trade check before each match reads the node it is already at instead of looking the order up ([`docs/OPTIMIZATION.md`](docs/OPTIMIZATION.md#the-owner-probe-v200)). |
-| `NodePool` | Per-book free lists by size class, filled in chunks of 256 nodes, used by the level lists through `PoolAllocator` | A resting order costs no heap allocation in the steady state. A book keeps its peak node memory until it is destroyed. |
+| `OrderLocation` | Price, side, list iterator, and `PriceLevel*` | A cancel reaches the order and its level without searching the side. The owner sits in the queue node, not the index slot, so the self-trade check before each match reads the node it is already at instead of looking the order up ([`docs/OPTIMIZATION.md`](docs/OPTIMIZATION.md#the-owner-probe-v200)). |
+| `NodePool` | Per-book free lists by size class, filled in chunks of 256 blocks, holding level objects and list nodes through `PoolAllocator` | A resting order costs no heap allocation in the steady state. A book keeps its peak node memory until it is destroyed. |
 | `SmallVector<T, N>` | Inline storage for `N` elements, falling back to the heap beyond that | A command's result allocates nothing unless a submission makes more than four trades. |
 
 The same structures seen as a trader would, as a price ladder:
@@ -226,19 +226,19 @@ N is the number of resting orders, L the number of price levels on the side conc
 
 | Operation | Time | Notes |
 |---|---|---|
-| `submitOrder` that rests without trading | O(log L) | One map lookup or insert for the level. The index check and insert are O(1) expected, and appending to the level is O(1). |
-| `submitOrder` that makes T trades | O(T + log L) | Each trade is O(1) at the front of the best level. Each emptied level is erased from the front of the map, O(1) amortized. Resting a remainder adds O(log L); an IOC remainder expires in O(1) instead. The result's storage is inline for up to 4 trades and 6 events. |
+| `submitOrder` that rests without trading | O(log d) to an existing level; a new level also shifts d entries | d is how many levels are better than its price: finding one gallops from the best price, and a new level moves every level better than it in the array. The index check and insert are O(1) expected, and appending to the level is O(1). |
+| `submitOrder` that makes T trades | O(T + log L) | Each trade is O(1) at the front of the best level. Each emptied level is the array's last element, so erasing it is O(1). Resting a remainder adds O(log L); an IOC remainder expires in O(1) instead. The result's storage is inline for up to 4 trades and 6 events. |
 | FOK `submitOrder` | O(C + k + T) | A read-only walk over the C levels it crosses, plus the k orders it takes at the last, decides whether it fills, before the match. One that cannot fill is O(C + k) and allocates nothing. With an owner, the walk is O(orders crossed). |
-| Submit a pending stop | O(log S) | S stop levels on its side: one map lookup or insert, then an O(1) index insert. A stop past its trigger is O(1) and allocates nothing. |
+| Submit a pending stop | As a resting submission, over stop levels | One array lookup or insert, then an O(1) index insert. A stop past its trigger is O(1) and allocates nothing. |
 | `cancelOrder` of a pending stop | O(1) expected | Index lookup, list erase, and erasing an emptied stop level. It never allocates. |
 | `pendingStopCount`, `getLastTradePrice` | O(1) | |
 | Trigger check per trade | O(1), plus O(1) amortized per stop triggered | Compares each side's nearest stop with the trade price; a triggered stop moves to the cascade by splicing its node, allocating nothing. Each triggered stop then costs what its own market or limit order does. |
 | Self-trade prevention | O(1) per match | Paid only by an incoming order with an owner: one index probe of the order it would trade with next. A removal costs what a cancel does. |
-| `addOrder` | O(log L) | The same as a resting submission, plus an O(1) crossing check. |
+| `addOrder` | As a resting submission | The same, plus an O(1) crossing check. |
 | `replaceOrder` keeping priority, or refused | O(1) expected | An index lookup, then the order's quantities and its level's aggregate in place. It never allocates. |
-| `replaceOrder` losing priority | O(log L), or a submission's cost if it crosses | Not crossing, it splices its own list node to the back of its new level; the one possible allocation is a new level. Crossing, it matches like a submission. |
-| `cancelOrder` | O(1) expected | Index lookup, then erasure through the stored iterator and level pointer. If the level empties, erasing it by key costs O(log L). It never allocates. |
-| `getBestBid`, `getBestAsk`, `hasBids`, `hasAsks` | O(1) | `begin()` of each map. |
+| `replaceOrder` losing priority | As a resting submission, or a submission's cost if it crosses | Not crossing, it splices its own list node to the back of its new level; the one possible allocation is a new level. Crossing, it matches like a submission. |
+| `cancelOrder` | O(1) expected | Index lookup, then erasure through the stored iterator and level pointer. If the level empties, erasing it costs what a new level at that price does. It never allocates. |
+| `getBestBid`, `getBestAsk`, `hasBids`, `hasAsks` | O(1) | The last element of each array. |
 | `findActiveOrder` | O(1) expected | Index lookup. Returns a copy. |
 | `activeOrderCount` | O(1) | The index's size. |
 | `snapshot(d)` | O(d) | The first d levels of each side. |
@@ -247,7 +247,7 @@ N is the number of resting orders, L the number of price levels on the side conc
 
 "Expected" refers to the hash index. Its hash is not hardened: a caller who chooses IDs in a particular arithmetic progression can make probes long and slow the book down, though not make it wrong.
 
-Memory is O(N + L). Each resting order costs one list node, taken from the book's pool, and one index slot, 32 bytes on x64 (the table is at most three quarters full). Each level costs one map node and its list header. The pool keeps its peak size until the book is destroyed.
+Memory is O(N + L). Each resting order costs one list node, taken from the book's pool, and one index slot, 32 bytes on x64 (the table is at most three quarters full). Each level costs one pool block, its list header, and 16 bytes in its side's array. The pool keeps its peak size until the book is destroyed.
 
 With automatic invariant checks on, which is the default in Debug, every mutating command also pays O(N + L) for the check. Benchmark and production-like builds turn them off (see [Invariant checks](#invariant-checks)).
 

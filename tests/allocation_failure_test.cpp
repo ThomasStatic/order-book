@@ -150,17 +150,37 @@ long failEachAllocationInTurn(Setup setup, Operation operation, AfterFailure aft
     return 0;
 }
 
-void testAddOrderToNewLevelRollsBack() {
+// A new level normally finds room in its array and pool, so it allocates nothing. These 256
+// levels exhaust both on purpose: the array's capacity, and the 256 blocks of the level
+// objects' first chunk. So the next level grows the array, then takes a new chunk, and a
+// failure at either one must leave no level behind.
+void testNewLevelRollsBackWithArrayAndPoolExhausted() {
+    constexpr unsigned int levels = 256;
     const long failures = failEachAllocationInTurn(
-        [](OrderBook& book) { book.addOrder(Order(1, 100, 5, 1, Side::SELL)); },
-        [](OrderBook& book) { book.addOrder(Order(2, 101, 5, 2, Side::SELL)); },
+        [](OrderBook& book) {
+            for (unsigned int i = 0; i < levels; ++i) {
+                book.addOrder(Order(i + 1, 100 + i, 5, 1, Side::SELL));
+            }
+        },
+        [](OrderBook& book) { book.addOrder(Order(levels + 1, 100 + levels, 5, 1, Side::SELL)); },
         [](const OrderBook& book, const std::string& context) {
-            expect(Access::asks(book).size() == 1, context + ": a failed add should not leave a new level behind");
-            expect(Access::index(book).size() == 1, context + ": a failed add should not leave an index entry");
-            expect(Access::nextSequenceNum(book) == 2, context + ": a failed add should not consume a sequence number");
+            expect(Access::asks(book).size() == levels, context + ": a failed add should not leave a new level behind");
+            expect(Access::index(book).size() == levels, context + ": a failed add should not leave an index entry");
+            expect(Access::nextSequenceNum(book) == levels + 1,
+                   context + ": a failed add should not consume a sequence number");
         },
         "addOrder (new level)");
-    expect(failures > 0, "addOrder (new level): at least one allocation failure should have been injected");
+    expect(failures >= 2, "addOrder (new level): the array's growth and the pool's chunk should both have failed");
+}
+
+// With room in the array and the pool, a new level allocates nothing at all.
+void testNewLevelWithRoomDoesNotAllocate() {
+    OrderBook book;
+    book.addOrder(Order(1, 100, 5, 1, Side::SELL));
+    const long before = allocationCount;
+    book.addOrder(Order(2, 101, 5, 2, Side::SELL));
+    const long made = allocationCount - before;
+    expect(made == 0, "a second level should fit the array and pool the first one made");
 }
 
 // On an empty book the first order also needs its queue's first block: the book's node pool
@@ -437,15 +457,18 @@ void testMarketSweepStaysConsistent() {
 
 // A post-only order that rests is strongly atomic and numbered last: whatever allocation fails
 // (its level, its queue node, the index), the book and its counters are as they were. Only a
-// new level, or the first order of a book, allocates.
+// new level on a full level array, or the first order of a book, allocates.
 void expectPostOnlyRestRollsBack(bool seeded, const std::string& context) {
+    constexpr unsigned int bidLevels = 16;  // an array's first capacity
     const auto setup = [seeded](OrderBook& book) {
         if (seeded) {
-            book.addOrder(Order(1, 100, 5, 1, Side::BUY));
+            for (unsigned int i = 0; i < bidLevels; ++i) {
+                book.addOrder(Order(100 + i, 100 - i, 5, 1, Side::BUY));
+            }
             book.addOrder(Order(3, 102, 5, 1, Side::SELL));
         }
     };
-    const std::size_t resting = seeded ? 2 : 0;
+    const std::size_t resting = seeded ? bidLevels + 1 : 0;
     const long failures = failEachAllocationInTurn(
         setup,
         [](OrderBook& book) {
@@ -454,7 +477,7 @@ void expectPostOnlyRestRollsBack(bool seeded, const std::string& context) {
             book.submitOrder(request);
         },
         [resting](const OrderBook& book, const std::string& attempt) {
-            expect(Access::index(book).size() == resting && Access::bids(book).size() == resting / 2,
+            expect(Access::index(book).size() == resting && Access::bids(book).size() == (resting == 0 ? 0 : bidLevels),
                    attempt + ": a failed post-only order should not rest");
             expect(Access::nextSequenceNum(book) == resting + 1 && Access::nextTradeId(book) == 1,
                    attempt + ": a failed post-only order should consume no sequence number");
@@ -541,7 +564,7 @@ order_book::OrderRequest stopRequest(order_book::OrderId id, Side side, order_bo
 }
 
 // Storing a pending stop is strongly atomic and numbered last: whatever allocation fails (the
-// stop queue's node, the stop level's map node, the index), the book, the next sequence number,
+// stop queue's node, the stop level, its array's growth, the index), the book, the next sequence number,
 // and the pending count are as they were.
 template <typename Setup>
 void expectStopStorageRollsBack(Setup setup, const order_book::OrderRequest& request, const std::string& context) {
@@ -563,8 +586,14 @@ void expectStopStorageRollsBack(Setup setup, const order_book::OrderRequest& req
 
 void testStopStorageRollsBack() {
     expectStopStorageRollsBack([](OrderBook&) {}, stopRequest(50, Side::BUY, 110), "first stop on an empty book");
-    expectStopStorageRollsBack([](OrderBook& book) { book.submitOrder(stopRequest(40, Side::BUY, 110)); },
-                               stopRequest(50, Side::BUY, 111), "stop at a new stop price");
+    // 16 stop levels fill the array's first capacity.
+    expectStopStorageRollsBack(
+        [](OrderBook& book) {
+            for (unsigned int i = 0; i < 16; ++i) {
+                book.submitOrder(stopRequest(60 + i, Side::BUY, 110 + i));
+            }
+        },
+        stopRequest(50, Side::BUY, 126), "stop at a new stop price");
     // The index holds 12 entries before it grows from 16 slots.
     expectStopStorageRollsBack(
         [](OrderBook& book) {
@@ -749,16 +778,19 @@ void testReplacePathsDoNotAllocate() {
 
 // A priority-losing replace to a new level is strongly atomic: a failure (the new level's map
 // node) leaves the book, its counters included, as it was.
+// Sixteen levels fill the array's first capacity, so the replace's new level grows it.
 void testReplaceToNewLevelRollsBack() {
     const long failures = failEachAllocationInTurn(
         [](OrderBook& book) {
             book.addOrder(Order(1, 100, 5, 1, Side::SELL));
-            book.addOrder(Order(2, 100, 5, 1, Side::SELL));
+            for (unsigned int i = 0; i < 16; ++i) {
+                book.addOrder(Order(2 + i, 100 + i, 5, 1, Side::SELL));
+            }
         },
-        [](OrderBook& book) { book.replaceOrder(order_book::ReplaceRequest{1, 105, 5}); },
+        [](OrderBook& book) { book.replaceOrder(order_book::ReplaceRequest{1, 150, 5}); },
         [](const OrderBook& book, const std::string& context) {
-            expect(Access::asks(book).size() == 1 && Access::asks(book).at(100).getOrderCount() == 2 &&
-                       Access::nextSequenceNum(book) == 3,
+            expect(Access::asks(book).size() == 16 && Access::asks(book).at(100).getOrderCount() == 2 &&
+                       Access::nextSequenceNum(book) == 18,
                    context + ": a failed replace should leave the order where it was");
         },
         "replace to a new level");
@@ -878,7 +910,8 @@ int main() {
         std::cout << "allocation failure tests skipped: MSVC iterator debugging is on" << std::endl;
         return kSkippedExitCode;
     } else {
-        testAddOrderToNewLevelRollsBack();
+        testNewLevelRollsBackWithArrayAndPoolExhausted();
+        testNewLevelWithRoomDoesNotAllocate();
         testAddOrderToExistingLevelRollsBack();
         testFirstOrderOnEmptyBookRollsBack();
         testIndexGrowthOnExistingLevelRollsBack();

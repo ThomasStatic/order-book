@@ -72,8 +72,8 @@ int main() {
 
     Order bidOrder(1, 100, 10, 3, Side::BUY);
     Order askOrder(2, 101, 5, 4, Side::SELL);
-    Access::bids(bookWithLevels).emplace(100, PriceLevel(100, Side::BUY, bidOrder));
-    Access::asks(bookWithLevels).emplace(101, PriceLevel(101, Side::SELL, askOrder));
+    Access::bids(bookWithLevels).try_emplace(100, 100, Side::BUY, bidOrder);
+    Access::asks(bookWithLevels).try_emplace(101, 101, Side::SELL, askOrder);
 
     expect(bookWithLevels.hasBids(), "book should report the presence of bids");
     expect(bookWithLevels.hasAsks(), "book should report the presence of asks");

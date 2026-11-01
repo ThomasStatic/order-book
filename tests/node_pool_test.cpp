@@ -60,6 +60,9 @@ namespace order_book {
 // Befriended by OrderBook; reads the pool and the queues' allocators' targets.
 struct OrderBookTestAccess {
     static const NodePool* pool(const OrderBook& book) { return book.nodePool.get(); }
+    static std::size_t levels(const OrderBook& book) {
+        return book.bids.size() + book.asks.size() + book.buyStops.size() + book.sellStops.size();
+    }
     static const auto& index(const OrderBook& book) { return book.orderIndex; }
 };
 
@@ -283,6 +286,7 @@ void testMovedBookKeepsItsPool() {
     moved.submitOrder(Order(900, 99, 5, 1, Side::BUY));
     expect(moved.checkInvariants().isValid(), "the moved book keeps working");
 
+    expect(Access::levels(original) == 0, "a moved-from book's level arrays are empty");
     // A moved-from book has no pool; anything it rests afterwards takes its nodes from the heap.
     original.submitOrder(Order(7, 50, 1, 1, Side::BUY));
     expect(original.activeOrderCount() == 1 && original.cancelOrder(7).isSuccess()

@@ -70,8 +70,8 @@ namespace order_book {
 
         std::optional<Price> previousPrice;
         for(const auto& [price, level] : levels) {
-            // std::map keeps its keys in comparator order, so this guards against a change of
-            // container or comparator rather than against anything a command can do.
+            // A level array keeps itself sorted only by how it is built, so this is a real
+            // check: a bad insertion position, or an image restored out of order, lands here.
             if(previousPrice && !levels.key_comp()(*previousPrice, price)) {
                 return {.violation = misordered, .side = side, .price = price, .expected = *previousPrice,
                         .actual = price, .detail = "levels should run from the best price outward, one per price"};
@@ -190,7 +190,7 @@ namespace order_book {
         using enum InvariantViolation;
         std::optional<Price> previousPrice;
         for(const auto& [stopPrice, level] : levels) {
-            // As for price levels, std::map keeps this order; this guards a change of comparator.
+            // As for price levels, nothing but how the array is built keeps this order.
             if(previousPrice && !levels.key_comp()(*previousPrice, stopPrice)) {
                 return {.violation = INVALID_STOP_ORDERING, .side = side, .price = stopPrice, .expected = *previousPrice,
                         .actual = stopPrice, .detail = "stop levels should run from the nearest trigger outward"};
