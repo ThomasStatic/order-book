@@ -15,4 +15,5 @@ Each book checkpoints alone. A checkpoint is one file holding one instrument's b
 - An engine has one checkpoint file per instrument, not per shard, and a clean stop writes them all at one position.
 - A checkpoint records its shard and shard count, because a position means something only in that shard's log. It is self-contained, so after a clean stop with a new placement any shard can restore it.
 - The library gains `imageSize`, `writeImage`, and `restore` over spans of bytes. It still knows nothing of files, symbols, or positions, which the runtime's wrapper adds.
+- ADR 0014 changes where the image comes from: a worker rolls each book forward from the log, and the matching thread writes one only at a clean stop. The format, per-book files, and `restore` stand.
 - The same state gives the same image bytes on every platform, so an image holds no clock or random value, and restore refuses one that is not in canonical order. That makes `writeImage(restore(x)) == x` the round-trip test, covering fields `BookState` does not hold.

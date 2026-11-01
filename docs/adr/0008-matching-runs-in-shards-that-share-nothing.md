@@ -19,3 +19,4 @@ The engine runs a fixed number of shards, set explicitly at start. Each shard is
 - No single file holds a whole session. Converting several logs to one CSV keeps each instrument's order, and that is what lossless means here.
 - `std::abort` is process-wide, so a broken book on one shard stops every shard.
 - ADR 0009 narrows the checkpoint further: each book on a shard checkpoints alone, at its own log position, so there is no shard-wide cut either.
+- ADR 0014 narrows it again: a checkpoint is rolled forward from the log on another thread, so the off-thread rebuild proves the log, not a live book's image.

@@ -130,7 +130,7 @@ Where a command waits on its way to a shard's matching thread. It is bounded. A 
 _Avoid_: inbox, mailbox, buffer
 
 **Response queue**:
-Where a command's events wait on their way back from a matching thread. It is bounded, and a matching thread with no room waits rather than lose an event.
+Where a command's events wait on their way back from a matching thread, and where they stay until the command is durable. It is bounded, and a matching thread with no room waits rather than lose an event.
 _Avoid_: outbox, result queue
 
 **Parked**:
@@ -157,9 +157,37 @@ _Avoid_: journal, event log, audit log
 A place in a command log, counted in commands from the log's start. A checkpoint at a log position reflects every command for its instrument before that place, and none at or after it.
 _Avoid_: offset, sequence
 
+**Log writer**:
+The one thread allowed to write a shard's command log. It never touches a book, and the matching thread never touches the log.
+_Avoid_: journaler, log thread
+
+**Durability level**:
+What a response promises about its command: that it survives the engine crashing, or that it survives the machine crashing too.
+_Avoid_: sync mode, fsync policy
+
+**Durable position**:
+How far a shard's command log is safe at its durability level. A command may already have matched past this point, but its response is not released until the durable position has passed it, so a crash can lose only commands nobody was told about.
+_Avoid_: commit position, safe position, synced position
+
 **Torn tail**:
 The incomplete end a crash can leave on a command log: a record cut short, or anything else with no valid record after it. It is expected after a crash, unlike damage with valid records following.
 _Avoid_: truncated log, corrupt tail
+
+**Log file**:
+One piece of a shard's command log, of a fixed size. Once closed it is complete and safe on disk, and it is what a checkpoint is rolled forward from.
+_Avoid_: segment, journal file
+
+**Clean stop**:
+A stop that answers everything queued, ends the log, and leaves every book's checkpoint at its log's end, so recovery has nothing to replay. It is the only stop after which placement may change.
+_Avoid_: graceful shutdown, drain
+
+**Poison command**:
+A command that breaks a book the same way on every replay, so recovery cannot finish until the log is cut before it.
+_Avoid_: bad command, toxic command
+
+**Roll forward**:
+Making a book's next checkpoint from its last one by replaying the command log after it, away from the matching thread, so the live book is never read or paused.
+_Avoid_: compaction, shadow book
 
 **Replay**:
 Feeding a recorded sequence of commands to fresh books, which produces the same books and events as the original run.
