@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <new>
@@ -93,6 +94,7 @@ namespace order_book {
                 sizeClass->chunks.push_back(
                     static_cast<std::byte*>(obtain(sizeClass->size * blocksPerChunk, sizeClass->align)));
                 sizeClass->carvedBlocks = 0;
+                ++chunkCount;
             }
             return sizeClass->chunks.back() + sizeClass->size * sizeClass->carvedBlocks++;
         }
@@ -106,6 +108,9 @@ namespace order_book {
             sizeClass->freeBlocks = ::new(block) FreeBlock{sizeClass->freeBlocks};
             markUnusable(block, sizeClass->size);
         }
+
+        // How many chunks it has taken from the heap, ever.
+        std::uint64_t chunksTaken() const noexcept { return chunkCount; }
 
         // Walks every free list and counts carved blocks minus free ones, per class. Never
         // allocates or throws, and leaves each block as it was.
@@ -215,6 +220,7 @@ namespace order_book {
         }
 
         SizeClass classes[maxClasses];
+        std::uint64_t chunkCount = 0;
     };
 
     // An allocator that takes single objects from a NodePool, and anything else, or

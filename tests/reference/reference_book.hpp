@@ -152,6 +152,12 @@ public:
     std::size_t restingCount() const { return orders.size(); }
     std::size_t pendingCount() const { return stops.size(); }
     std::size_t levelCount() const { return bids.size() + asks.size(); }
+
+    // The most it has held at any moment, inside a command too, which is what a book's capacity
+    // has to cover: resting orders, pending stops, and levels on any one side, stops or not.
+    std::size_t peakRestingCount() const { return peakResting; }
+    std::size_t peakPendingCount() const { return peakPending; }
+    std::size_t peakLevelCount() const { return peakLevels; }
     // Best price first.
     std::vector<ModelLevel> levels(Side side) const;
     // The same, without copying: each level's queue of IDs, read with find.
@@ -206,6 +212,9 @@ private:
     IdPool removed;
     std::optional<Price> lastTrade;
     ModelCounters seen;
+    std::size_t peakResting = 0;
+    std::size_t peakPending = 0;
+    std::size_t peakLevels = 0;
 };
 
 }  // namespace order_book::reference

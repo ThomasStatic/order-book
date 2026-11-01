@@ -243,6 +243,7 @@ N is the number of resting orders, L the number of price levels on the side conc
 | `activeOrderCount` | O(1) | The index's size. |
 | `snapshot(d)` | O(d) | The first d levels of each side. |
 | `reserve(n)` | O(n) | Sizes the index once, so it does not rehash as the book grows. |
+| `reserve(BookCapacity)` | O(what it adds) | Sizes both indexes and the level arrays, and fills the pool by building and releasing real nodes. A second call asking for no more costs nothing. |
 | `checkInvariants` | O(N + L) | One pass. Never allocates or throws. |
 
 "Expected" refers to the hash index. Its hash is not hardened: a caller who chooses IDs in a particular arithmetic progression can make probes long and slow the book down, though not make it wrong.
@@ -258,7 +259,7 @@ Everything is in namespace `order_book`, with headers in `include/order_book/`. 
 - **`order_book.hpp`**: `OrderBook`.
   - Commands: `submitOrder` (match, then rest any remainder), `addOrder` (rest without matching), `cancelOrder`, `replaceOrder` (a resting order's price, total, and instructions, under the same ID). `submitOrder` takes either an `Order` or an `OrderRequest`; the two give identical results for the same ID, side, price, and quantity. `submitOrder(OrderRequest, SubmissionResult& out)` and `replaceOrder(const ReplaceRequest&, ReplaceResult& out)` overwrite one reused result and keep its heap blocks, and give results equal to the other overloads. If one throws, `out` stays valid with unspecified contents.
   - Queries: `findActiveOrder`, `getBestBid`/`getBestAsk`, `hasBids`/`hasAsks`, `snapshot`, `activeOrderCount`, `pendingStopCount`, `findPendingStop`, `getLastTradePrice`, `checkInvariants`.
-  - `reserve`, a capacity hint.
+  - `reserve(orders)`, a capacity hint for the order index, and `reserve(BookCapacity)`, which prepares a book to hold that many orders, stops, and levels per side without reaching the heap. `capacityGrowths` says how many times a book has allocated outside `reserve`. A book past its capacity grows and never refuses, so capacity changes no outcome.
   - Move-only, and not thread-safe.
 - **`order.hpp`, `order_request.hpp`, `side.hpp`, `order_type.hpp`, `time_in_force.hpp`, `self_trade_prevention.hpp`, `fill_status.hpp`, `types.hpp`**: what a caller submits, and the types it is built from.
   - `Order` is the resting record: its constructor checks its fields and throws, and it accepts only `LIMIT`, the one type that can rest (`isSupportedOrderType`; `isValidOrderType` says whether a request's type is an enumerator).

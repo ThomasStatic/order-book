@@ -357,6 +357,7 @@ void finish(Workload& workload, const ReferenceBook& model) {
     workload.expected.finalActiveOrders = model.restingCount();
     workload.expected.finalPriceLevels = model.levelCount();
     workload.expected.finalPendingStops = model.pendingCount();
+    workload.peak = BookCapacity{model.peakRestingCount(), model.peakPendingCount(), model.peakLevelCount()};
 }
 
 // A v1 workload's exact stream, through the request path: owner 0, or a distinct nonzero owner

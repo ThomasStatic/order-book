@@ -260,8 +260,9 @@ latency::ReportRow startRow(const Session& session, const bench::Workload& workl
     record.set("core-map", session.settings.pinCore ? std::to_string(*session.settings.pinCore) : "none");
     record.set("pinned", session.settings.pinCore ? "yes" : "no");
     record.set("priority", session.settings.highPriority ? "high" : "normal");
-    record.set("book-capacity", "orders=" + std::to_string(bench::expectedBookSize(workload)));
-    // capacity-growths stays unfilled: this library can't count them until capacityGrowths().
+    const order_book::BookCapacity capacity = bench::expectedBookSize(workload);
+    record.set("book-capacity", "orders=" + std::to_string(capacity.orders) + " stops=" + std::to_string(capacity.stops) +
+                                    " levels=" + std::to_string(capacity.levels));
     record.set("clock", session.clockRecord.name);
     record.set("clock-step-ns", bench::formatFixed(session.clockRecord.stepNanoseconds, 1));
     record.set("empty-pair-ns", "p50 " + bench::formatFixed(session.clockRecord.emptyPairP50Nanoseconds, 1) + ", p99 " +
@@ -272,6 +273,11 @@ latency::ReportRow startRow(const Session& session, const bench::Workload& workl
         record.set("machine", session.machine);
     }
     return row;
+}
+
+// Each growth is a tail event, so a nonzero count stands out in the record.
+std::string formatGrowths(std::uint64_t growths) {
+    return growths == 0 ? "0" : std::to_string(growths) + ", each one a tail event in these runs";
 }
 
 double secondsOf(Ticks ticks, const latency::ClockRecord& clock) {
@@ -287,6 +293,7 @@ latency::ReportRow runClosedLoopRow(const Session& session, const bench::Workloa
     row.record.set("achieved-rate", "not reported: a per-command timed run never reports throughput");
 
     Ticks elapsed = 0;
+    std::uint64_t growths = 0;
     for (std::size_t run = 0; run < session.settings.warmups + session.settings.runs; ++run) {
         latency::CommandTarget target(workload);
         const Ticks start = session.clock.now();
@@ -295,9 +302,11 @@ latency::ReportRow runClosedLoopRow(const Session& session, const bench::Workloa
         target.checkOutcome();
         if (run >= session.settings.warmups) {
             elapsed += stop - start;
+            growths += target.capacityGrowths();
             row.runs.push_back(std::move(service));
         }
     }
+    row.record.set("capacity-growths", formatGrowths(growths));
     row.commandsPerSecond = static_cast<double>(session.settings.runs * workload.timedCount()) /
                             secondsOf(elapsed, session.clockRecord);
     return row;
@@ -331,12 +340,14 @@ void runTimetableRows(const Session& session, const bench::Workload& workload, c
         load.poisson ? latency::poissonSchedule(workload.timedCount(), gapTicks, session.settings.seed)
                      : latency::fixedRateSchedule(workload.timedCount(), gapTicks);
     Ticks elapsed = 0;
+    std::uint64_t growths = 0;
     for (std::size_t run = 0; run < session.settings.warmups + session.settings.runs; ++run) {
         latency::CommandTarget target(workload);
         latency::TimetableRun result = latency::runTimetable(schedule, session.clock, target);
         target.checkOutcome();
         if (run >= session.settings.warmups) {
             elapsed += result.elapsed;
+            growths += target.capacityGrowths();
             row.sustained = row.sustained && result.sustained;
             row.runs.push_back(std::move(result.response));
             lateness.runs.push_back(std::move(result.lateness));
@@ -346,6 +357,8 @@ void runTimetableRows(const Session& session, const bench::Workload& workload, c
                             secondsOf(elapsed, session.clockRecord);
     const std::string achieved = bench::formatFixed(row.commandsPerSecond, 0) + "/s";
     row.record.set("achieved-rate", achieved);
+    row.record.set("capacity-growths", formatGrowths(growths));
+    lateness.record.set("capacity-growths", formatGrowths(growths));
     lateness.commandsPerSecond = row.commandsPerSecond;
     lateness.sustained = row.sustained;
     lateness.record.set("target-rate", bench::formatFixed(rate, 0) + "/s");

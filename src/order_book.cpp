@@ -29,6 +29,8 @@ namespace order_book {
             lastTradePrice = other.lastTradePrice;
             nextTradeId = other.nextTradeId;
             nextSequenceNum = other.nextSequenceNum;
+            reservedCapacity = other.reservedCapacity;
+            reservedChunks = other.reservedChunks;
             nodePool = std::move(other.nodePool);
         }
         return *this;
@@ -718,6 +720,78 @@ namespace order_book {
         // No InvariantBoundary: the book's contents do not change. A rehash that throws
         // (other than from the hash, which cannot) leaves the index as it was.
         orderIndex.reserve(orders);
+    }
+
+    void OrderBook::reserve(const BookCapacity& capacity) {
+        // No InvariantBoundary: the book's contents do not change.
+        if(capacity.orders <= reservedCapacity.orders && capacity.stops <= reservedCapacity.stops &&
+           capacity.levels <= reservedCapacity.levels) {
+            return;
+        }
+        const BookCapacity wanted{std::max(capacity.orders, reservedCapacity.orders),
+                                  std::max(capacity.stops, reservedCapacity.stops),
+                                  std::max(capacity.levels, reservedCapacity.levels)};
+        // Whatever the pool takes in here is not a growth, even if a later step throws.
+        const std::uint64_t chunksBefore = nodePool ? nodePool->chunksTaken() : 0;
+        try {
+            orderIndex.reserve(wanted.orders);
+            pendingIndex.reserve(wanted.stops);
+            bids.reserve(wanted.levels);
+            asks.reserve(wanted.levels);
+            buyStops.reserve(wanted.levels);
+            sellStops.reserve(wanted.levels);
+            if(wanted.stops > 0 && !triggeredStops) {
+                triggeredStops = std::make_unique<StopQueue>(PoolAllocator<PendingStop>(nodePool.get()));
+            }
+            warmPool(wanted);
+        }
+        catch(...) {
+            reservedChunks += nodePool ? nodePool->chunksTaken() - chunksBefore : 0;
+            throw;
+        }
+        reservedChunks += nodePool ? nodePool->chunksTaken() - chunksBefore : 0;
+        reservedCapacity = wanted;
+    }
+
+    void OrderBook::warmPool(const BookCapacity& wanted) {
+        NodePool* const pool = nodePool.get();
+        if(pool == nullptr) {
+            return;  // a moved-from book: everything it makes comes from the heap
+        }
+        // Everything the book may hold at once, built together, so the pool ends with room for
+        // all of it (a list's sentinel can share a size class with its nodes). What rests already
+        // holds its blocks, so only the rest is built. Prices fall, so each level goes at the
+        // back of its array and the build stays linear.
+        LevelArray<PriceLevel, std::less<Price>> levels(pool);
+        LevelArray<StopLevel, std::less<Price>> stopLevels(pool);
+        const std::size_t allLevels = wanted.levels * 2;
+        const std::size_t heldLevels = std::min(allLevels, bids.size() + asks.size());
+        const std::size_t heldStopLevels = std::min(allLevels, buyStops.size() + sellStops.size());
+        levels.reserve(allLevels - heldLevels);
+        stopLevels.reserve(allLevels - heldStopLevels);
+        for(std::size_t level = allLevels - heldLevels; level > 0; --level) {
+            const auto price = static_cast<Price>(level);
+            levels.try_emplace(price, price, Side::BUY, pool);
+        }
+        for(std::size_t level = allLevels - heldStopLevels; level > 0; --level) {
+            const auto price = static_cast<Price>(level);
+            stopLevels.try_emplace(price, price, Side::BUY, pool);
+        }
+        OrderQueue orders{PoolAllocator<RestingOrder>(pool)};
+        const RestingOrder restingNode(Order(1, 1, 1, 1, Side::BUY));
+        for(std::size_t order = activeOrderCount(); order < wanted.orders; ++order) {
+            orders.push_back(restingNode);
+        }
+        StopQueue stops{PoolAllocator<PendingStop>(pool)};
+        for(std::size_t stop = pendingStopCount(); stop < wanted.stops; ++stop) {
+            stops.push_back(PendingStop{OrderRequest{}, 0});
+        }
+    }
+
+    std::uint64_t OrderBook::capacityGrowths() const noexcept {
+        const std::uint64_t poolGrowths = nodePool ? nodePool->chunksTaken() - reservedChunks : 0;
+        return orderIndex.growths() + pendingIndex.growths() + bids.growths() + asks.growths() + buyStops.growths() +
+               sellStops.growths() + poolGrowths;
     }
 
     Order OrderBook::findActiveOrder(OrderId orderId) const {

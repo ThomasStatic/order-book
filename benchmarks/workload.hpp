@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "order_book/book_event.hpp"
+#include "order_book/order_book.hpp"
 #include "order_book/order_request.hpp"
 #include "order_book/replace_request.hpp"
 #include "order_book/side.hpp"
@@ -235,8 +236,11 @@ struct Workload {
     std::vector<BehaviorCommand> behaviorPreload;
     std::vector<BehaviorCommand> behaviorTimed;
     WorkloadOutcome expected;
-    // How many of the preload's orders rest, for reserving the book.
+    // How many of the preload's orders rest.
     std::size_t preloadResting = 0;
+    // The most the book holds at any moment, by the model: not part of the fingerprint, since it
+    // changes no command.
+    BookCapacity peak;
 
     std::size_t timedCount() const { return config.family == WorkloadFamily::V1 ? timed.size() : behaviorTimed.size(); }
 };

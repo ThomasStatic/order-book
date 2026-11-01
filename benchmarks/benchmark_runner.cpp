@@ -89,6 +89,7 @@ Measurement runCore(const Workload& workload) {
 
     measurement.elapsedNanoseconds = nanosecondsBetween(start, stop);
     recordFinalBook(book, measurement.outcome);
+    requireNoGrowth(book, workload);
     return measurement;
 }
 
@@ -128,13 +129,21 @@ Measurement runReplay(const Workload& workload) {
     measurement.outcome.finalActiveOrders = result->finalBook.totalActiveVisibleOrders;
     measurement.outcome.finalPriceLevels = result->finalBook.bids.size() + result->finalBook.asks.size();
     measurement.outcome.finalPendingStops = result->pendingStops;
+    requireNoGrowth(book, workload);
     return measurement;
 }
 
 }  // namespace
 
-std::size_t expectedBookSize(const Workload& workload) {
-    return std::max(workload.preloadResting, workload.expected.finalActiveOrders);
+BookCapacity expectedBookSize(const Workload& workload) {
+    return BookCapacity{workload.peak.orders, workload.peak.stops, workload.peak.levels + 1};
+}
+
+void requireNoGrowth(const OrderBook& book, const Workload& workload) {
+    if (book.capacityGrowths() != 0) {
+        throw std::runtime_error("workload " + workload.config.name + ": the book grew past its capacity " +
+                                 std::to_string(book.capacityGrowths()) + " times");
+    }
 }
 
 void preloadBook(OrderBook& book, const Workload& workload) {

@@ -51,16 +51,18 @@ struct RunSettings {
     std::size_t repetitions = 5;
 };
 
-// The capacity hint each run passes to OrderBook::reserve before its preload, untimed: the
-// larger of the preload and the predicted final number of resting orders. The predicted
-// final count stands in for a caller that knows how large its book gets; the index rounds
-// its bucket count up to a power of two, so a rough estimate gives the same table. It is
-// recorded with every result (JSON "reserved_orders").
-std::size_t expectedBookSize(const Workload& workload);
+// The capacity each run reserves before its preload, untimed: the most the book holds at any
+// moment by the workload's model, so a run reaches the heap only if the prediction is wrong,
+// and any capacityGrowths fails it. levels has one to spare for a replace, which makes its new
+// level before it leaves its old one. It is recorded with every result (JSON "reserved_orders",
+// "reserved_stops", "reserved_levels").
+BookCapacity expectedBookSize(const Workload& workload);
 
 // Reserves the book and applies the workload's preload. Throws std::runtime_error if the book
 // refuses or trades any of it.
 void preloadBook(OrderBook& book, const Workload& workload);
+// Throws std::runtime_error if the book grew past its capacity: the run's capacity was wrong.
+void requireNoGrowth(const OrderBook& book, const Workload& workload);
 // Adds the book's final shape to an outcome, for comparing with the workload's prediction.
 void recordFinalBook(const OrderBook& book, WorkloadOutcome& outcome);
 // One line of every counter, for a failure message.
@@ -68,7 +70,8 @@ std::string describeOutcome(const WorkloadOutcome& outcome);
 
 // Times the workload's commands once on a fresh book, preloaded outside the timed region.
 // Throws std::runtime_error, describing both, if the book's outcome differs from the one the
-// workload's model predicted, so a measurement never stands for work the book did not do.
+// workload's model predicted, so a measurement never stands for work the book did not do, or if
+// the book grew past its capacity.
 Measurement runOnce(const Workload& workload, BenchmarkKind kind);
 
 // settings.warmups runs, then settings.repetitions measured runs, each on its own fresh book,

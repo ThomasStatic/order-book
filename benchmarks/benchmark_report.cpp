@@ -190,6 +190,8 @@ std::string workloadJson(const WorkloadRecord& record) {
            ", \"preload_orders\": " + std::to_string(record.preloadOrders) +
            ", \"timed_commands\": " + std::to_string(record.timedCommands) +
            ", \"reserved_orders\": " + std::to_string(record.reservedOrders) +
+           ", \"reserved_stops\": " + std::to_string(record.reservedStops) +
+           ", \"reserved_levels\": " + std::to_string(record.reservedLevels) +
            ", \"generation_ns\": " + std::to_string(record.generationNanoseconds) + behaviorJson(config) +
            ", \"expected\": " + outcomeJson(record.expected) + "}";
 }

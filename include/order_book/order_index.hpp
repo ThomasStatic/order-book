@@ -117,7 +117,8 @@ namespace order_book {
             : slots(std::move(other.slots)),
               entries(std::exchange(other.entries, 0)),
               mask(std::exchange(other.mask, 0)),
-              shift(std::exchange(other.shift, 64)) {
+              shift(std::exchange(other.shift, 64)),
+              growthCount(std::exchange(other.growthCount, 0)) {
             other.slots.clear();
         }
 
@@ -128,6 +129,7 @@ namespace order_book {
                 entries = std::exchange(other.entries, 0);
                 mask = std::exchange(other.mask, 0);
                 shift = std::exchange(other.shift, 64);
+                growthCount = std::exchange(other.growthCount, 0);
             }
             return *this;
         }
@@ -145,6 +147,8 @@ namespace order_book {
         bool empty() const noexcept { return entries == 0; }
         // Slots in the table; it grows once size() would pass three quarters of this.
         std::size_t capacity() const noexcept { return slots.size(); }
+        // How many times an emplace has grown the table; reserve is not counted.
+        std::uint64_t growths() const noexcept { return growthCount; }
 
         iterator find(OrderId id) noexcept {
             if(id == emptyId || slots.empty()) {
@@ -190,6 +194,7 @@ namespace order_book {
             }
             if((entries + 1) * 4 > slots.size() * 3) {
                 growTo(slots.empty() ? minimumCapacity : slots.size() * 2);
+                ++growthCount;
             }
             std::size_t slot = home(id);
             while(slots[slot].first != emptyId) {
@@ -316,6 +321,7 @@ namespace order_book {
         std::size_t entries = 0;
         std::size_t mask = 0;
         unsigned int shift = 64;
+        std::uint64_t growthCount = 0;
     };
 
     using OrderIndexEntry = IndexEntry<OrderLocation>;

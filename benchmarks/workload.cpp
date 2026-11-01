@@ -242,6 +242,8 @@ public:
     std::size_t restingCount() const { return restingIds.size(); }
     OrderId restingIdAt(std::size_t position) const { return restingIds.at(position); }
     std::size_t levelCount() const { return bids.size() + asks.size(); }
+    std::size_t peakOrders() const { return mostOrders; }
+    std::size_t peakLevels() const { return mostLevels; }
 
     // Matches the order against the opposing side, oldest order at the best price first,
     // then rests what is left at its own price.
@@ -318,6 +320,8 @@ private:
         ++level.live;
         resting.emplace(command.orderId, Resting{restingIds.size(), left, command.side, command.price});
         restingIds.push_back(command.orderId);
+        mostOrders = std::max(mostOrders, restingIds.size());
+        mostLevels = std::max(mostLevels, levels.size());
     }
 
     template <typename Levels>
@@ -350,6 +354,8 @@ private:
     // commands, never on hashing.
     std::unordered_map<OrderId, Resting> resting;
     std::vector<OrderId> restingIds;
+    std::size_t mostOrders = 0;  // the most resting at once
+    std::size_t mostLevels = 0;  // the most on one side at once
 };
 
 class WorkloadGenerator {
@@ -677,6 +683,7 @@ Workload generateWorkload(const WorkloadConfig& config, std::size_t timedCommand
     workload.expected.finalActiveOrders = model.restingCount();
     workload.expected.finalPriceLevels = model.levelCount();
     workload.preloadResting = workload.preload.size();
+    workload.peak = BookCapacity{model.peakOrders(), 0, model.peakLevels()};
     return workload;
 }
 

@@ -71,7 +71,7 @@ A percentile is marked `noise` when the machine could explain it. A gap over T c
 
 Mandatory, with no default for any field: the interval, service or response time, target and achieved rate; the workload, fingerprint, generator version, and seed; shards, gateway threads, connections, spin window, core map, pinning, and priority; durability and whether logs share a drive; each book's capacity and growths; the clock, its step, and the empty pair; the commands per run, the build, and the hand-written machine record. Where a field does not apply to an interval, the program fills it in saying so.
 
-A row is unquotable, and says why, if a field is unfilled, it has fewer than 9 runs, the build is not optimized, the clock was `steady_clock`, a noise floor is missing, it was not sustained, or it was open-loop and not pinned at high priority (printed `unpinned`). Closed-loop service time may be reported unpinned. Until the library has `capacityGrowths()`, `capacity-growths` stays unfilled, so no run can be quoted yet.
+A row is unquotable, and says why, if a field is unfilled, it has fewer than 9 runs, the build is not optimized, the clock was `steady_clock`, a noise floor is missing, it was not sustained, or it was open-loop and not pinned at high priority (printed `unpinned`). Closed-loop service time may be reported unpinned. A nonzero `capacity-growths` is printed as such, and each growth counts as a tail event.
 
 ## Results
 

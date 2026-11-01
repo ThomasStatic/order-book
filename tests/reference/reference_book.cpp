@@ -444,6 +444,8 @@ void ReferenceBook::rest(const ModelOrder& order) {
     Queue& queue = order.side == Side::BUY ? bids[order.price] : asks[order.price];
     queue.push_back(order.id);
     orders.emplace(order.id, Entry{order, std::prev(queue.end())});
+    peakResting = std::max(peakResting, orders.size());
+    peakLevels = std::max({peakLevels, bids.size(), asks.size()});
     resting.insert(order.id);
 }
 
@@ -451,6 +453,8 @@ void ReferenceBook::pend(const OrderRequest& stop) {
     Queue& queue = stop.side == Side::BUY ? buyStops[stop.stopPrice] : sellStops[stop.stopPrice];
     queue.push_back(stop.id);
     stops.emplace(stop.id, StopEntry{stop, std::prev(queue.end())});
+    peakPending = std::max(peakPending, stops.size());
+    peakLevels = std::max({peakLevels, buyStops.size(), sellStops.size()});
     pending.insert(stop.id);
 }
 

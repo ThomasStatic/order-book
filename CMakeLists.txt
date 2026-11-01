@@ -329,6 +329,16 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(result_reuse_tests)
     add_test(NAME result_reuse_tests COMMAND result_reuse_tests)
 
+    add_executable(capacity_tests
+        tests/capacity_test.cpp
+    )
+
+    target_compile_features(capacity_tests PRIVATE cxx_std_20)
+    target_link_libraries(capacity_tests PRIVATE order_book)
+    order_book_enable_warnings(capacity_tests)
+    order_book_enable_sanitizers(capacity_tests)
+    add_test(NAME capacity_tests COMMAND capacity_tests)
+
     add_executable(event_tests
         tests/event_test.cpp
     )

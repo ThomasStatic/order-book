@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 #include "benchmark_runner.hpp"
@@ -60,6 +61,8 @@ public:
     // Throws std::runtime_error, describing both, if the book's outcome differs from the
     // workload's prediction, so a run never stands for work the book did not do.
     void checkOutcome() const;
+
+    std::uint64_t capacityGrowths() const { return book_.capacityGrowths(); }
 
 private:
     void count(const SubmissionResult& result);

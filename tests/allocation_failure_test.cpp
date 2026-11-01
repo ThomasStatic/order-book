@@ -1,4 +1,5 @@
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <list>
@@ -861,6 +862,57 @@ void testThrowingOutOverloadLeavesOutValid() {
            "out overload: a thrown-through result works as an out again");
 }
 
+// reserve(BookCapacity) on a book that already holds orders and stops, with each allocation
+// failing in turn: whatever fails, the book reports what it did, and a later call succeeds.
+void testFailedCapacityReserveChangesNothing() {
+    const order_book::BookCapacity capacity{600, 300, 300};
+    const auto setup = [](OrderBook& book) {
+        book.addOrder(Order(1, 100, 5, 1, Side::BUY));
+        book.addOrder(Order(2, 101, 5, 1, Side::SELL));
+        book.submitOrder(stopRequest(3, Side::BUY, 110));
+    };
+    OrderBook pristine;
+    setup(pristine);
+    const std::uint64_t growths = pristine.capacityGrowths();  // its first level, say
+    const long failures = failEachAllocationInTurn(
+        setup,
+        [capacity](OrderBook& book) { book.reserve(capacity); },
+        [growths](const OrderBook& book, const std::string& context) {
+            expect(Access::index(book).size() == 2 && book.pendingStopCount() == 1,
+                   context + ": a failed reserve keeps every order and stop");
+            expect(Access::bids(book).size() == 1 && Access::asks(book).size() == 1,
+                   context + ": a failed reserve leaves no level behind");
+            expect(Access::nextSequenceNum(book) == 4 && Access::nextTradeId(book) == 1,
+                   context + ": a failed reserve consumes no number");
+            expect(book.capacityGrowths() == growths, context + ": a failed reserve is not a growth");
+        },
+        "reserve(BookCapacity)");
+    expect(failures > 0, "reserve(BookCapacity): at least one allocation failure should have been injected");
+}
+
+// A failure leaves the book able to reserve again, and the retry covers everything.
+void testRetriedCapacityReserveCovers() {
+    OrderBook book;
+    allocationsBeforeFailure = 3;
+    bool threw = false;
+    try {
+        book.reserve(order_book::BookCapacity{600, 300, 300});
+    } catch (const std::bad_alloc&) {
+        threw = true;
+    }
+    allocationsBeforeFailure = -1;
+    expect(threw, "reserve(BookCapacity): the armed failure should fire");
+    book.reserve(order_book::BookCapacity{600, 300, 300});
+    const long before = allocationCount;
+    for (unsigned int i = 0; i < 300; ++i) {
+        book.addOrder(Order(1000 + i, 500 - i, 1, 1, Side::BUY));
+        book.addOrder(Order(2000 + i, 501 + i, 1, 1, Side::SELL));
+    }
+    const long made = allocationCount - before;
+    expect(made == 0, "reserve(BookCapacity): a retry should cover everything the failed call did not");
+    expect(book.capacityGrowths() == 0, "reserve(BookCapacity): a retried book has not grown");
+}
+
 void testCancelOrderDoesNotAllocate() {
     // A cancellation's result holds its one event inline, and removing an order only frees,
     // so cancelOrder allocates nothing: with the very first allocation armed to fail, both a
@@ -963,6 +1015,8 @@ int main() {
         testCrossingReplaceStaysConsistent();
         testConsumeLevelFailsBeforeFilling();
         testThrowingOutOverloadLeavesOutValid();
+        testFailedCapacityReserveChangesNothing();
+        testRetriedCapacityReserveCovers();
         testCancelOrderDoesNotAllocate();
         testRequestAllocatesLikeOrder();
         testRequestRejectionsDoNotAllocate();

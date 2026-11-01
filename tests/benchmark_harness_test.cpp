@@ -663,15 +663,35 @@ void testBuildInfo() {
 
 }  // namespace
 
-// The capacity hint is the preload for a steady book and the predicted final size for a
-// growing one.
+// A book's capacity is what its model saw at its largest, which a steady book's preload and a
+// growing book's final size each bound from below, and one level for a replace in flight.
 void testExpectedBookSize() {
     const Workload steady = generateWorkload(findWorkload("cancellation-heavy"), 2000, 42);
-    expect(expectedBookSize(steady) == std::max(steady.preload.size(), steady.expected.finalActiveOrders),
-           "the hint is the larger of the preload and the final size");
+    expect(expectedBookSize(steady).orders >= std::max(steady.preload.size(), steady.expected.finalActiveOrders),
+           "the capacity covers the preload and the final size");
     const Workload growing = generateWorkload(findWorkload("mostly-resting"), 2000, 42);
     expect(growing.expected.finalActiveOrders > growing.preload.size(), "mostly-resting grows its book");
-    expect(expectedBookSize(growing) == growing.expected.finalActiveOrders, "a growing book is sized for its final size");
+    expect(expectedBookSize(growing).orders >= growing.expected.finalActiveOrders, "a growing book is sized for its peak");
+    expect(expectedBookSize(growing).stops == 0, "a v1 workload has no stops");
+    expect(expectedBookSize(growing).levels == growing.peak.levels + 1, "levels keep one to spare");
+    const Workload stops = generateWorkload(findWorkload("pending-stops"), 2000, 42);
+    expect(expectedBookSize(stops).stops >= stops.expected.finalPendingStops, "a stop workload reserves its stops");
+}
+
+// Every workload stays inside its model's peaks on both paths, which runOnce would throw on, and
+// a capacity the model did not predict fails the run.
+void testRunsStayInsideTheirCapacity() {
+    for (const auto* family : {&builtInWorkloads(), &behaviorWorkloads()}) {
+        for (const WorkloadConfig& config : *family) {
+            const Workload workload = generateWorkload(scaledDown(config), 300, 7);
+            runOnce(workload, BenchmarkKind::CORE);
+            runOnce(workload, BenchmarkKind::REPLAY);
+        }
+    }
+
+    Workload tampered = generateWorkload(scaledDown(findWorkload("small-book")), 300, 7);
+    tampered.peak = order_book::BookCapacity{1, 0, 1};
+    expectThrows([&] { runOnce(tampered, BenchmarkKind::CORE); }, "a run that grows past its capacity fails");
 }
 
 void testComponentCsv() {
@@ -755,6 +775,7 @@ int main() {
     testCsvExport();
     testJsonExport();
     testExpectedBookSize();
+    testRunsStayInsideTheirCapacity();
     testReplayCsv();
     testBehaviorReplayCsv();
     testFormatting();

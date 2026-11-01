@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <iterator>
 #include <memory>
 #include <stdexcept>
@@ -106,7 +107,10 @@ namespace order_book {
         LevelArray(const LevelArray&) = delete;
         LevelArray& operator=(const LevelArray&) = delete;
 
-        LevelArray(LevelArray&& other) noexcept : entries(std::move(other.entries)), pool(std::exchange(other.pool, nullptr)) {
+        LevelArray(LevelArray&& other) noexcept
+            : entries(std::move(other.entries)),
+              pool(std::exchange(other.pool, nullptr)),
+              growthCount(std::exchange(other.growthCount, 0)) {
             other.entries.clear();
         }
 
@@ -117,6 +121,7 @@ namespace order_book {
                 entries = std::move(other.entries);
                 other.entries.clear();
                 pool = std::exchange(other.pool, nullptr);
+                growthCount = std::exchange(other.growthCount, 0);
             }
             return *this;
         }
@@ -131,6 +136,11 @@ namespace order_book {
         std::size_t size() const noexcept { return entries.size(); }
         bool empty() const noexcept { return entries.empty(); }
         Better key_comp() const noexcept { return Better{}; }
+
+        // Room for this many levels in the array; the level objects themselves are the pool's.
+        void reserve(std::size_t levels) { entries.reserve(levels); }
+        // How many times a new level has grown the array; reserve is not counted.
+        std::uint64_t growths() const noexcept { return growthCount; }
 
         iterator find(Price price) noexcept {
             const std::size_t index = locate(price);
@@ -163,6 +173,7 @@ namespace order_book {
             }
             if(entries.size() == entries.capacity()) {
                 entries.reserve(entries.empty() ? minimumCapacity : entries.size() * 2);
+                ++growthCount;
             }
             PoolAllocator<Level> allocator(pool);
             Level* const level = allocator.allocate(1);
@@ -248,6 +259,7 @@ namespace order_book {
 
         std::vector<Entry> entries;
         NodePool* pool;
+        std::uint64_t growthCount = 0;
     };
 
 }  // namespace order_book

@@ -35,6 +35,14 @@ namespace order_book {
         unsigned int orderCount;      // resting orders at this price
     };
 
+    // What a book should hold without growing, for OrderBook::reserve. levels is per side, and
+    // applies to resting levels and to stop levels alike.
+    struct BookCapacity {
+        std::size_t orders = 0;
+        std::size_t stops = 0;
+        std::size_t levels = 0;
+    };
+
     struct BookSnapshot {
         std::vector<PriceLevelSummary> bids;
         std::vector<PriceLevelSummary> asks;
@@ -75,6 +83,11 @@ namespace order_book {
         // The price of the book's most recent trade: what stops trigger on.
         std::optional<Price> lastTradePrice;
 
+        // What reserve has prepared, so asking for no more costs nothing, and the pool chunks
+        // reserve took, which are not growths. Neither is book state.
+        BookCapacity reservedCapacity;
+        std::uint64_t reservedChunks = 0;
+
         TradeId nextTradeId = 1;
         // Assigned to each order as the book accepts it, so it records acceptance order
         // and fixes time priority within a level.
@@ -90,6 +103,9 @@ namespace order_book {
         std::optional<RejectionReason> validateNewRequest(const OrderRequest& request) const;
         // Whether an order rests or a stop pends under this ID.
         bool isLive(OrderId orderId) const;
+
+        // Fills the pool for what the book does not hold yet; reserve's last step.
+        void warmPool(const BookCapacity& wanted);
 
         // Move to the next number, wrapping from the maximum back to 1 (zero is invalid),
         // so numbers are silently reused once a counter overflows.
@@ -417,6 +433,22 @@ namespace order_book {
         // An oversized hint costs memory and, once the book is larger than the cache, some
         // lookup speed, so pass the size the book is expected to reach, not a loose bound.
         void reserve(std::size_t orders);
+
+        // Prepares the book to hold this much without reaching the heap: sizes both indexes and
+        // the level arrays, and fills the pool by building and releasing real nodes, for what the
+        // book does not already hold. So a warm book's commands allocate nothing while it stays
+        // inside the capacity. A book past its capacity grows and never refuses, since a refusal
+        // would make outcomes depend on a setting: capacity changes no outcome. A second call
+        // asking for no more costs nothing. Changes nothing the book reports, and consumes no
+        // sequence number or trade ID. Strong guarantee: if it throws std::bad_alloc, or
+        // std::length_error for a capacity beyond what an index can address, the book holds and
+        // reports what it did, and a later call tops up as if it had never run.
+        void reserve(const BookCapacity& capacity);
+
+        // How many times the index, the pool, or a level array has allocated outside reserve:
+        // whether the book was sized right, zero if it was. Not book state: two books with the
+        // same orders can differ here.
+        std::uint64_t capacityGrowths() const noexcept;
 
         // Copy of a resting order as it is now (later fills are not reflected); throws
         // std::invalid_argument if no order with that ID is resting (a pending stop's included).

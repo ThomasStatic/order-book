@@ -35,9 +35,9 @@ The program refuses to run unless `NDEBUG` is defined, automatic invariant check
 
 Generation and execution are separate. The generator decides what happens. The book decides how fast that runs. Mixing their costs would make a measurement hard to interpret, so every workload is generated in full before anything is timed. Each run then:
 
-1. builds a fresh `OrderBook`, sizes its order index with `OrderBook::reserve` for the larger of the preload and the predicted final number of resting orders (`expectedBookSize`, recorded in the JSON as `reserved_orders`), and applies the workload's preload (untimed);
+1. builds a fresh `OrderBook`, reserves the most it will hold at once, by the workload's model (`expectedBookSize`, recorded in the JSON as `reserved_orders`, `reserved_stops`, and `reserved_levels`), and applies the workload's preload (untimed);
 2. reads the clock (`std::chrono::steady_clock`), runs every timed command, and reads the clock again;
-3. checks the book's outcome (trades, volume, final resting orders and levels, no rejections) against the outcome the generator predicted, and fails the session if they differ (untimed);
+3. checks the book's outcome (trades, volume, final resting orders and levels, no rejections) against the outcome the generator predicted, and fails the session if they differ or if the book grew past its capacity (untimed);
 4. destroys the book (untimed).
 
 A measurement is one run: commands, elapsed nanoseconds, operations per second (commands / elapsed seconds), and nanoseconds per command. Warm-up runs come first. They are recorded, but the summaries leave them out. A first run can be slower for reasons unrelated to the engine, such as cold caches, page faults on fresh memory, and CPU frequency ramping up. Every repetition starts from a fresh book, so no run inherits another's state.
