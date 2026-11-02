@@ -395,6 +395,10 @@ std::optional<std::string> checkPool(const OrderBook& book) {
 
 }  // namespace
 
+std::optional<std::string> compareBookWithModel(const OrderBook& book, const ReferenceBook& model) {
+    return compareState(book, model);
+}
+
 const char* failureTypeName(FailureType type) {
     switch (type) {
         case FailureType::UNEXPECTED_EXCEPTION: return "UNEXPECTED_EXCEPTION";

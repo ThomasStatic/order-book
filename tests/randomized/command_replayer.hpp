@@ -112,6 +112,9 @@ private:
     PropertyCheck property;
 };
 
+// How the book differs from the model, level by level and queue by queue, or nothing.
+std::optional<std::string> compareBookWithModel(const OrderBook& book, const ReferenceBook& model);
+
 // The book's and the model's best levels per side, and where the command's order is in each.
 // Reads the book's levels directly, never through its index, so it is safe on a corrupted book.
 std::string describeBookState(const OrderBook& book, const ReferenceBook& model, const Command& command);

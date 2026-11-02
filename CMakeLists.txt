@@ -167,6 +167,7 @@ find_package(Threads REQUIRED)
 add_library(order_book_runtime STATIC
     src/runtime/book_set.cpp
     src/runtime/instruments.cpp
+    src/runtime/shard.cpp
 )
 
 target_compile_features(order_book_runtime PUBLIC cxx_std_20)
@@ -479,6 +480,16 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(book_set_tests)
     add_test(NAME book_set_tests COMMAND book_set_tests)
 
+    add_executable(shard_tests
+        tests/shard_test.cpp
+    )
+
+    target_compile_features(shard_tests PRIVATE cxx_std_20)
+    target_link_libraries(shard_tests PRIVATE order_book_runtime)
+    order_book_enable_warnings(shard_tests)
+    order_book_enable_sanitizers(shard_tests)
+    add_test(NAME shard_tests COMMAND shard_tests)
+
     add_executable(book_set_thread_tests
         tests/book_set_thread_test.cpp
     )
@@ -733,6 +744,38 @@ if(BUILD_TESTING)
     add_test(NAME randomized_regressions
         COMMAND randomized_tests --regressions ${CMAKE_CURRENT_SOURCE_DIR}/tests/randomized/regressions
                 --out-dir ${CMAKE_CURRENT_BINARY_DIR}/randomized-failures)
+
+    # The engine's harness: the real entry check and Shard beside a model and a witness per
+    # instrument, in one thread (docs/internals/testing.md).
+    add_library(order_book_engine_testing STATIC
+        tests/engine/engine_harness.cpp
+    )
+
+    target_compile_features(order_book_engine_testing PUBLIC cxx_std_20)
+    target_include_directories(order_book_engine_testing PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/engine)
+    target_link_libraries(order_book_engine_testing PUBLIC order_book_randomized order_book_network)
+    order_book_enable_warnings(order_book_engine_testing)
+    order_book_enable_sanitizers(order_book_engine_testing)
+
+    add_executable(engine_randomized_tests
+        tests/engine/engine_main.cpp
+    )
+
+    target_compile_features(engine_randomized_tests PRIVATE cxx_std_20)
+    target_link_libraries(engine_randomized_tests PRIVATE order_book_engine_testing)
+    order_book_enable_warnings(engine_randomized_tests)
+    order_book_enable_sanitizers(engine_randomized_tests)
+    add_test(NAME engine_randomized_seeds COMMAND engine_randomized_tests)
+
+    add_executable(engine_harness_tests
+        tests/engine/harness_test.cpp
+    )
+
+    target_compile_features(engine_harness_tests PRIVATE cxx_std_20)
+    target_link_libraries(engine_harness_tests PRIVATE order_book_engine_testing)
+    order_book_enable_warnings(engine_harness_tests)
+    order_book_enable_sanitizers(engine_harness_tests)
+    add_test(NAME engine_harness_tests COMMAND engine_harness_tests)
 
     add_executable(randomized_harness_tests
         tests/randomized/harness_test.cpp

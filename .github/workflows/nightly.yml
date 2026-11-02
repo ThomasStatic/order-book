@@ -57,16 +57,19 @@ jobs:
           cmake -S . -B build "${args[@]}"
 
       - name: Build
-        run: cmake --build build --config ${{ matrix.config }} --target randomized_tests --parallel
+        run: cmake --build build --config ${{ matrix.config }} --target randomized_tests engine_randomized_tests --parallel
 
       - name: Explore
         run: |
           if [ "${{ runner.os }}" = "Windows" ]; then
-            program=./build/${{ matrix.config }}/randomized_tests.exe
+            programs=./build/${{ matrix.config }}
+            suffix=.exe
           else
-            program=./build/randomized_tests
+            programs=./build
+            suffix=
           fi
-          "$program" --explore "$SEEDS" --profile all --out-dir explore-failures
+          "$programs/randomized_tests$suffix" --explore "$SEEDS" --profile all --out-dir explore-failures
+          "$programs/engine_randomized_tests$suffix" --explore "$SEEDS"
 
       - name: Keep any failure
         if: failure()
