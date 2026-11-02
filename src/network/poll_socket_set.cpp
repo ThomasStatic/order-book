@@ -7,7 +7,7 @@
 
 namespace order_book::network {
 
-    PollSocketSet::PollSocketSet(std::uint16_t port) : listener(TcpSocket::listenLoopback(port)) {
+    PollSocketSet::PollSocketSet(std::uint16_t port, Clock lingerClock) : listener(TcpSocket::listenLoopback(port)), clock(std::move(lingerClock)) {
         listeningPort = listener.localPort();
 
         // The wake pair: a connection to a listener of its own, made before anything can race it.
@@ -29,7 +29,7 @@ namespace order_book::network {
     }
 
     void PollSocketSet::wake() noexcept {
-        if (!wakePending.exchange(true, std::memory_order_acq_rel)) {
+        if (!wakePending.exchange(true, std::memory_order_seq_cst)) {
             const std::array<std::byte, 1> ring{std::byte{1}};
             static_cast<void>(wakeSender.send(ring));
         }
@@ -57,18 +57,20 @@ namespace order_book::network {
             const auto soonest = std::min_element(lingering.begin(), lingering.end(), [this](SocketId left, SocketId right) {
                 return slots[left]->lingerEnds < slots[right]->lingerEnds;
             });
-            const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(slots[*soonest]->lingerEnds - std::chrono::steady_clock::now());
+            const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(slots[*soonest]->lingerEnds - clock());
             timeout = static_cast<int>(std::clamp<std::chrono::milliseconds::rep>(left.count() + 1, 0, 60'000));
         }
         poller.wait(timeout);
 
         if (poller.readable(0)) {
-            // Drained before the flag clears, so a wake after this sends a byte of its own, and
-            // the thread looks at what it was woken for after this wait returns.
+            // Drained before the flag clears. A wake whose exchange comes after this one's sends a
+            // byte of its own. One whose exchange came before it saw true and sent none, but its
+            // thread changed what it woke this for first, and in the single order of these
+            // exchanges and that thread's change, this thread's next look comes after both.
             std::array<std::byte, 64> sink;
             while (wakeReceiver.receive(sink).bytes != 0) {
             }
-            wakePending.store(false, std::memory_order_release);
+            wakePending.exchange(false, std::memory_order_seq_cst);
         }
         listenerReadable = listening && poller.readable(1);
         for (std::size_t i = 0; i < interest.size(); ++i) {
@@ -85,7 +87,7 @@ namespace order_book::network {
     }
 
     void PollSocketSet::linger() {
-        const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+        const std::chrono::steady_clock::time_point now = clock();
         std::size_t kept = 0;
         for (const SocketId socket : lingering) {
             Slot& slot = *slots[socket];
@@ -167,7 +169,7 @@ namespace order_book::network {
             return;
         }
         slot.readable = true;  // whatever is already waiting goes at the next wait
-        slot.lingerEnds = std::chrono::steady_clock::now() + lingerTime;
+        slot.lingerEnds = clock() + lingerTime;
         lingering.push_back(socket);
     }
 

@@ -12,8 +12,12 @@ namespace order_book::network {
         constexpr std::size_t readBufferBytes = 64 * 1024;
         constexpr std::size_t largestFrameBytes = 64;
 
-        void appendFrame(std::vector<std::byte>& unsent, std::span<const std::byte> frame) {
-            unsent.insert(unsent.end(), frame.begin(), frame.end());
+        // Encodes one frame, through encode(out) returning its size, onto the end of unsent.
+        template <typename Encode>
+        void appendFrame(std::vector<std::byte>& unsent, Encode encode) {
+            std::array<std::byte, largestFrameBytes> frame{};
+            const std::size_t size = encode(std::span<std::byte>(frame));
+            unsent.insert(unsent.end(), frame.begin(), frame.begin() + static_cast<std::ptrdiff_t>(size));
         }
     }  // namespace
 
@@ -24,20 +28,19 @@ namespace order_book::network {
           sockets(socketSet),
           settings(std::move(gatewaySettings)),
           connections(connectionsPerThread),
-          parkedOnShard(shards.size(), 0),
-          shardBlocked(shards.size(), 0),
-          shardRung(shards.size(), 0),
-          markerOwed(shards.size(), 0),
+          shardStates(shards.size()),
           readBuffer(readBufferBytes) {
         parkedOldestFirst.reserve(connectionsPerThread);
         interest.reserve(connectionsPerThread);
     }
 
+    bool GatewayThread::readable(const Connection& connection) const noexcept {
+        return connection.open && connection.reading && !connection.parked && connection.unsent.size() <= settings.highWaterMark;
+    }
+
     bool GatewayThread::framesInAReader() const noexcept {
-        return std::any_of(connections.begin(), connections.end(), [this](const Connection& connection) {
-            return connection.open && connection.reading && connection.framesWaiting && !connection.parked &&
-                   connection.unsent.size() <= settings.highWaterMark;
-        });
+        return std::any_of(connections.begin(), connections.end(),
+                           [this](const Connection& connection) { return readable(connection) && connection.framesWaiting; });
     }
 
     bool GatewayThread::mayWait() const noexcept {
@@ -69,7 +72,7 @@ namespace order_book::network {
             if (!connection.open) {
                 continue;
             }
-            const bool read = connection.reading && !connection.parked && connection.unsent.size() <= settings.highWaterMark;
+            const bool read = readable(connection);
             const bool write = !connection.unsent.empty();
             if (read || write) {
                 interest.push_back(SocketInterest{connection.socket, read, write});
@@ -80,8 +83,11 @@ namespace order_book::network {
     bool GatewayThread::pass() {
         moved = false;
         // A pass skips the wait while a reader holds frames, so a lone streaming client doesn't
-        // pay one per framesPerPass of them.
-        if (!framesInAReader()) {
+        // pay one per framesPerPass of them, but not for ever, or nothing else would be looked at.
+        if (framesInAReader() && waitsSkipped < mostWaitsSkipped) {
+            ++waitsSkipped;
+        } else {
+            waitsSkipped = 0;
             const WaitMode mode = waitMode();
             listInterest();
             sockets.wait(interest, mode);
@@ -96,8 +102,7 @@ namespace order_book::network {
         }
         retryParked();
         for (std::uint32_t index = 0; index < connections.size(); ++index) {
-            const Connection& connection = connections[index];
-            if (connection.open && connection.reading && !connection.parked && connection.unsent.size() <= settings.highWaterMark) {
+            if (readable(connections[index])) {
                 readConnection(index);
             }
         }
@@ -116,7 +121,7 @@ namespace order_book::network {
 
     void runGateway(GatewayThread& gateway, const std::atomic<bool>& stopRequested) {
         while (!gateway.finished()) {
-            if (stopRequested.load(std::memory_order_acquire)) {
+            if (stopRequested.load(std::memory_order_seq_cst)) {
                 gateway.beginStop();
             }
             if (!gateway.pass()) {
@@ -132,7 +137,9 @@ namespace order_book::network {
         stopBegun = true;
         sockets.closeListener();
         refuseParked();
-        std::fill(markerOwed.begin(), markerOwed.end(), char{1});
+        for (ShardState& state : shardStates) {
+            state.markerOwed = true;
+        }
     }
 
     bool GatewayThread::finished() const noexcept {
@@ -166,9 +173,9 @@ namespace order_book::network {
 
     // Only a client that was never taken on hears this, so nothing is owed but this one frame.
     void GatewayThread::refuseConnection(SocketId socket) {
-        std::array<std::byte, largestFrameBytes> frame{};
-        const std::size_t size = encodeProtocolError(0, ProtocolError::TOO_MANY_CONNECTIONS, frame);
-        static_cast<void>(sockets.write(socket, std::span<const std::byte>(frame).first(size)));
+        std::vector<std::byte> frame;
+        appendFrame(frame, [](std::span<std::byte> out) { return encodeProtocolError(0, ProtocolError::TOO_MANY_CONNECTIONS, out); });
+        static_cast<void>(sockets.write(socket, frame));
         sockets.shutdownSend(socket);
         sockets.close(socket);
     }
@@ -176,7 +183,7 @@ namespace order_book::network {
     void GatewayThread::closeConnection(std::uint32_t index) {
         Connection& connection = connections[index];
         if (connection.parked) {
-            --parkedOnShard[connection.parked->shard];
+            --shardStates[connection.parked->shard].parkedOn;
             connection.parked.reset();
             parkedOldestFirst.erase(std::find(parkedOldestFirst.begin(), parkedOldestFirst.end(), index));
         }
@@ -208,24 +215,25 @@ namespace order_book::network {
                     --connection.inFlight;
                 }
                 const Symbol symbol = directory.onShard(shard)[record.slot].symbol;
-                std::array<std::byte, largestFrameBytes> frame{};
-                const std::size_t size = encodeEvent(record.correlation, symbol, record.event, last, frame);
-                appendFrame(connection.unsent, std::span<const std::byte>(frame).first(size));
+                appendFrame(connection.unsent,
+                            [&](std::span<std::byte> out) { return encodeEvent(record.correlation, symbol, record.event, last, out); });
             });
         }
     }
 
     void GatewayThread::retryParked() {
-        std::fill(shardBlocked.begin(), shardBlocked.end(), char{0});
+        for (ShardState& state : shardStates) {
+            state.retryFailed = false;
+        }
         std::size_t stillParked = 0;
         for (const std::uint32_t index : parkedOldestFirst) {
             Connection& connection = connections[index];
             const std::uint32_t shard = connection.parked->shard;
-            if (shardBlocked[shard] != 0 || !tryQueue(index, shard, connection.parked->element)) {
-                shardBlocked[shard] = 1;  // so nobody younger on this shard passes it
+            if (shardStates[shard].retryFailed || !tryQueue(index, shard, connection.parked->element)) {
+                shardStates[shard].retryFailed = true;  // so nobody younger on this shard passes it
                 parkedOldestFirst[stillParked++] = index;
             } else {
-                --parkedOnShard[shard];
+                --shardStates[shard].parkedOn;
                 connection.parked.reset();
             }
         }
@@ -238,21 +246,23 @@ namespace order_book::network {
             const Parked& parked = *connection.parked;
             const Symbol symbol = directory.onShard(parked.shard)[parked.element.slot].symbol;
             const OrderId orderId = std::visit([](const auto& command) { return command.orderId; }, parked.element.command);
-            std::array<std::byte, largestFrameBytes> refused{};
-            const std::size_t size =
-                encodeRefused(parked.element.correlation, symbol.bytes(), orderId, RefusedCode::ENGINE_STOPPING, refused);
-            appendFrame(connection.unsent, std::span<const std::byte>(refused).first(size));
+            appendFrame(connection.unsent, [&](std::span<std::byte> out) {
+                return encodeRefused(parked.element.correlation, symbol.bytes(), orderId, RefusedCode::ENGINE_STOPPING, out);
+            });
             connection.parked.reset();
         }
         parkedOldestFirst.clear();
-        std::fill(parkedOnShard.begin(), parkedOnShard.end(), std::uint32_t{0});
+        for (ShardState& state : shardStates) {
+            state.parkedOn = 0;
+        }
     }
 
     void GatewayThread::sendStopMarkers() {
         for (std::uint32_t shard = 0; shard < shards.size(); ++shard) {
-            if (markerOwed[shard] != 0 && shards[shard].commands->tryPush(runtime::CommandElement::stopMarker())) {
-                markerOwed[shard] = 0;
-                shardRung[shard] = 1;
+            ShardState& state = shardStates[shard];
+            if (state.markerOwed && shards[shard].commands->tryPush(runtime::CommandElement::stopMarker())) {
+                state.markerOwed = false;
+                state.pushedTo = true;
                 moved = true;
             }
         }
@@ -312,9 +322,8 @@ namespace order_book::network {
 
     void GatewayThread::takeFrame(std::uint32_t index, const Frame& frame) {
         if (frame.type == FrameType::HELLO) {
-            std::array<std::byte, largestFrameBytes> welcome{};
-            const std::size_t size = encodeWelcome(frame.correlation, decodeVersion(frame), welcome);
-            appendFrame(connections[index].unsent, std::span<const std::byte>(welcome).first(size));
+            appendFrame(connections[index].unsent,
+                        [&](std::span<std::byte> out) { return encodeWelcome(frame.correlation, decodeVersion(frame), out); });
         } else {
             takeCommand(index, frame);
         }
@@ -323,30 +332,30 @@ namespace order_book::network {
     void GatewayThread::takeCommand(std::uint32_t index, const Frame& frame) {
         const CommandFrame command = decodeCommandFrame(frame);
         const EntryDecision decision = checkEntry(command, directory, stopBegun);
-        std::array<std::byte, largestFrameBytes> answer{};
-        std::size_t size = 0;
+        std::vector<std::byte>& unsent = connections[index].unsent;
         if (const EntryAccepted* accepted = std::get_if<EntryAccepted>(&decision)) {
             queue(index, *accepted, frame.correlation);
         } else if (const EntryRefused* refused = std::get_if<EntryRefused>(&decision)) {
-            size = encodeRefused(frame.correlation, command.command.symbol, command.command.orderId, refused->code, answer);
+            appendFrame(unsent, [&](std::span<std::byte> out) {
+                return encodeRefused(frame.correlation, command.command.symbol, command.command.orderId, refused->code, out);
+            });
         } else {
             const EntryMalformed& malformed = std::get<EntryMalformed>(decision);
-            size = encodeEvent(frame.correlation, malformed.symbol, malformed.event, true, answer);
+            appendFrame(unsent, [&](std::span<std::byte> out) { return encodeEvent(frame.correlation, malformed.symbol, malformed.event, true, out); });
         }
-        appendFrame(connections[index].unsent, std::span<const std::byte>(answer).first(size));
     }
 
     void GatewayThread::queue(std::uint32_t index, const EntryAccepted& accepted, Correlation correlation) {
         const std::uint32_t shard = accepted.location.shard;
         const runtime::CommandElement element{correlation, accepted.command, accepted.location.slot, handleOf(index),
                                               runtime::ControlKind::COMMAND};
-        if (parkedOnShard[shard] == 0 && tryQueue(index, shard, element)) {
+        if (shardStates[shard].parkedOn == 0 && tryQueue(index, shard, element)) {
             return;
         }
         // TCP carries the backpressure: nothing is refused, and this connection isn't read until
         // the command goes, since a later command of its stream may not pass this one.
         connections[index].parked = Parked{shard, element};
-        ++parkedOnShard[shard];
+        ++shardStates[shard].parkedOn;
         parkedOldestFirst.push_back(index);
     }
 
@@ -357,14 +366,14 @@ namespace order_book::network {
         ++inFlight;
         ++connections[index].inFlight;
         moved = true;
-        shardRung[shard] = 1;
+        shardStates[shard].pushedTo = true;
         return true;
     }
 
     void GatewayThread::ringDoorbells() {
         for (std::uint32_t shard = 0; shard < shards.size(); ++shard) {
-            if (shardRung[shard] != 0) {
-                shardRung[shard] = 0;
+            if (shardStates[shard].pushedTo) {
+                shardStates[shard].pushedTo = false;
                 shards[shard].doorbell->ring();
             }
         }
@@ -382,9 +391,8 @@ namespace order_book::network {
         Connection& connection = connections[index];
         const bool answeredEverything = connection.finishing && connection.inFlight == 0;
         if (answeredEverything && connection.error) {
-            std::array<std::byte, largestFrameBytes> frame{};
-            const std::size_t size = encodeProtocolError(connection.error->correlation, connection.error->code, frame);
-            appendFrame(connection.unsent, std::span<const std::byte>(frame).first(size));
+            const FrameError error = *connection.error;
+            appendFrame(connection.unsent, [&error](std::span<std::byte> out) { return encodeProtocolError(error.correlation, error.code, out); });
             connection.error.reset();
         }
         if (!connection.unsent.empty()) {

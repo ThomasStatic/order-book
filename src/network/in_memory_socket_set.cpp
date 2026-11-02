@@ -83,8 +83,12 @@ namespace order_book::network {
         sockets.at(socket).closed = true;
     }
 
+    // As over TCP, where closing a listener resets what was waiting to be accepted.
     void InMemorySocketSet::closeListener() {
         listenerGone = true;
+        for (std::size_t waiting = nextToAccept; waiting < sockets.size(); ++waiting) {
+            sockets[waiting].closed = true;
+        }
     }
 
 }  // namespace order_book::network

@@ -305,7 +305,7 @@ namespace {
                       << milliseconds(record.generationNanoseconds) << ", untimed\n";
             for (const bench::BenchmarkKind kind : settings.kinds) {
                 std::vector<bench::Measurement> measurements;
-                if (kind == bench::BenchmarkKind::SHARD || kind == bench::BenchmarkKind::QUEUE || kind == bench::BenchmarkKind::GATEWAY) {
+                if (bench::sharesInstruments(kind)) {
                     std::vector<bench::Workload> workloads =
                         bench::instrumentWorkloads(config, settings.timedCommands, settings.seed, settings.instruments);
                     if (settings.tamperPrediction) {

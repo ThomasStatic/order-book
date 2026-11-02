@@ -841,6 +841,8 @@ if(BUILD_TESTING)
     # instrument, in one thread (docs/internals/randomized-tests.md).
     add_library(order_book_engine_testing STATIC
         tests/engine/engine_harness.cpp
+        tests/engine/gateway_rig.cpp
+        tests/engine/gateway_stepper.cpp
     )
 
     target_compile_features(order_book_engine_testing PUBLIC cxx_std_20)
@@ -858,6 +860,7 @@ if(BUILD_TESTING)
     order_book_enable_warnings(engine_randomized_tests)
     order_book_enable_sanitizers(engine_randomized_tests)
     add_test(NAME engine_randomized_seeds COMMAND engine_randomized_tests)
+    add_test(NAME engine_stepper_cli COMMAND engine_randomized_tests --stepper stop --seed 7 --commands 200)
 
     add_executable(engine_harness_tests
         tests/engine/harness_test.cpp
@@ -1048,6 +1051,7 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         order_book_enable_warnings(benchmark_queue_tests)
         order_book_enable_sanitizers(benchmark_queue_tests)
         add_test(NAME benchmark_queue_tests COMMAND benchmark_queue_tests)
+        set_tests_properties(benchmark_queue_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
 
         add_executable(benchmark_gateway_tests
             tests/benchmark_gateway_test.cpp
@@ -1059,7 +1063,6 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         order_book_enable_sanitizers(benchmark_gateway_tests)
         add_test(NAME benchmark_gateway_tests COMMAND benchmark_gateway_tests)
         set_tests_properties(benchmark_gateway_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
-        set_tests_properties(benchmark_queue_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
 
         # Exactly zero heap calls on every workload, where only a checked build's own checks
         # could allocate.

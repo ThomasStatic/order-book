@@ -42,7 +42,7 @@ enum class BenchmarkKind { CORE, REPLAY, REPLAY_LOG, SHARD, QUEUE, GATEWAY };
 inline constexpr std::size_t defaultGatewayWindow = 256;
 
 const char* benchmarkKindName(BenchmarkKind kind);
-// Throws std::invalid_argument on a name other than core, replay, replay-log, shard, or queue.
+// Throws std::invalid_argument on a name other than core, replay, replay-log, shard, queue, or gateway.
 BenchmarkKind parseBenchmarkKind(std::string_view name);
 
 // One timed run of a workload's timed commands on a freshly preloaded book.
@@ -151,6 +151,34 @@ private:
 // A real matching thread, which builds and preloads a ShardRun's books and so owns them, with this
 // thread as its one producer. Events are counted here, and final shapes are read on the matching
 // thread once it has stopped. The workloads must outlive this.
+// The matching thread the queue and gateway kinds share. It builds and preloads a ShardRun, so it
+// owns the books, and destroys them, then runs a MatchingLoop on the given rings until every
+// producer has sent a stop marker, and checks no book grew. setUp, if given, runs first, for
+// pinning it. The doorbell and rings must outlive it, and it must be stopped before it is
+// destroyed.
+class MatchingThread {
+public:
+    // Returns once the books are built, or rethrows what stopped them.
+    MatchingThread(const std::vector<Workload>& workloads, runtime::Doorbell& doorbell, std::vector<runtime::RingPair> rings,
+                   std::function<void()> setUp = {});
+    ~MatchingThread();
+
+    // Built before the constructor returns and left alone until the thread stops.
+    const ShardRun& books() const noexcept { return *run; }
+    bool joinable() const noexcept { return thread.joinable(); }
+    // Waits for the thread to stop, and rethrows anything it threw.
+    void join();
+    // counted, with the books' final shapes in place of its own. After join.
+    std::vector<WorkloadOutcome> withFinalShapes(std::vector<WorkloadOutcome> counted) const;
+
+private:
+    const std::vector<Workload>* workloads;
+    const ShardRun* run = nullptr;
+    std::vector<WorkloadOutcome> finalShapes;
+    std::exception_ptr failure;
+    std::thread thread;
+};
+
 class QueueRun {
 public:
     // setUpMatchingThread, if given, runs first on the matching thread, for pinning it.
@@ -182,16 +210,13 @@ private:
     runtime::Doorbell doorbell;
     runtime::Ring<runtime::CommandElement> commands;
     runtime::Ring<runtime::ResponseRecord> responses;
-    const ShardRun* books = nullptr;  // on the matching thread, until it stops
     std::vector<std::size_t> nextCommand;
     std::vector<WorkloadOutcome> counted;
-    std::vector<WorkloadOutcome> finalShapes;
     std::optional<runtime::CommandElement> held;
     std::size_t sent = 0;
     std::size_t answered = 0;
     bool stopReceived = false;
-    std::exception_ptr failure;
-    std::thread matching;
+    MatchingThread matching;
 };
 
 // Every command over real loopback sockets, one connection per workload, through a
@@ -216,7 +241,11 @@ public:
 private:
     struct Connection;
 
+    void connect(std::uint32_t book);
     void receive(std::size_t index);
+    // Stops the gateway thread, then the matching thread, sending its stop marker if the gateway
+    // thread failed before it could, and rethrows what either threw, the gateway's first.
+    void stopThreads();
 
     const std::vector<Workload>* workloads;
     std::size_t window;
@@ -224,20 +253,22 @@ private:
     runtime::Ring<runtime::CommandElement> commands;
     runtime::Ring<runtime::ResponseRecord> responses;
     std::unique_ptr<network::PollSocketSet> sockets;
-    const ShardRun* books = nullptr;  // on the matching thread, until it stops
     std::vector<Connection> connections;
     std::vector<WorkloadOutcome> counted;
-    std::vector<WorkloadOutcome> finalShapes;
     std::size_t answered = 0;
     std::size_t total = 0;
     std::atomic<bool> stopRequested{false};
     std::atomic<bool> gatewayFailed{false};
-    std::exception_ptr matchingFailure;
     std::exception_ptr gatewayFailure;
-    std::thread matching;
+    MatchingThread matching;
     std::thread gateway;
     bool finished = false;
 };
+
+// Whether a kind runs several instruments, through runInstrumentsOnce.
+constexpr bool sharesInstruments(BenchmarkKind kind) noexcept {
+    return kind == BenchmarkKind::SHARD || kind == BenchmarkKind::QUEUE || kind == BenchmarkKind::GATEWAY;
+}
 
 // runOnce for a SHARD, QUEUE, or GATEWAY run of several instruments, whose outcome is the run's
 // total. window is used only by GATEWAY.

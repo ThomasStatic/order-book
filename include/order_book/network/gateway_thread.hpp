@@ -22,6 +22,9 @@ namespace order_book::network {
     inline constexpr std::uint32_t connectionsPerThread = 64;
     // A pass takes at most this many frames from a connection, which is the matching thread's batch.
     inline constexpr std::size_t framesPerPass = runtime::takeBatch;
+    // A pass skips the wait while a reader holds frames, but never more than this many in a row,
+    // so one client streaming can't keep every other socket's readiness from being looked at.
+    inline constexpr std::size_t mostWaitsSkipped = 16;
 
     // A command element's 32-bit connection: an index, and a generation that moves on when the
     // index is closed, so a reused index can't receive a dead connection's responses.
@@ -40,7 +43,7 @@ namespace order_book::network {
         std::size_t hardLimit = 16 * 1024 * 1024;
         // How long, once every shard has stopped, connections have to take what they're owed.
         std::chrono::nanoseconds stopGrace = std::chrono::seconds(5);
-        // How long a thread with nothing outstanding looks before it sleeps, the matching
+        // How long a thread with nothing in flight or parked looks before it sleeps, the matching
         // thread's setting, so 0 sleeps at once and runtime::unlimitedSpin never does.
         std::chrono::nanoseconds spinWindow = runtime::defaultSpinWindow;
         // The gateway's only clock, read only while idle or stopping.
@@ -63,8 +66,9 @@ namespace order_book::network {
         GatewayThread(const runtime::InstrumentDirectory& directory, std::vector<ShardLink> shards, SocketSet& sockets,
                       GatewaySettings settings = {});
 
-        // One pass: waits, unless a connection's reader still holds frames, sleeping only if
-        // mayWait has held for the spin window; accepts, drains every response ring into
+        // One pass: waits, unless a connection's reader still holds frames and the last
+        // mostWaitsSkipped passes didn't wait either, sleeping only if mayWait has held for the
+        // spin window; accepts, drains every response ring into
         // per-connection buffers, retries parked connections oldest first, reads and answers up
         // to framesPerPass frames from each connection that is neither parked nor backlogged,
         // rings the doorbells, then makes one write per connection with bytes to send, closing
@@ -106,6 +110,8 @@ namespace order_book::network {
             bool finishing = false;      // closes once it has answered everything it read
         };
 
+        // What a pass reads: open, reading, neither parked nor backlogged.
+        bool readable(const Connection& connection) const noexcept;
         bool framesInAReader() const noexcept;
         WaitMode waitMode();
         void listInterest();
@@ -134,15 +140,21 @@ namespace order_book::network {
         SocketSet& sockets;
         GatewaySettings settings;
         std::vector<Connection> connections;
+        // What this thread knows of each shard.
+        struct ShardState {
+            std::uint32_t parkedOn = 0;    // connections parked on it
+            bool retryFailed = false;      // in this pass's retry, so nobody younger passes it
+            bool pushedTo = false;         // since its doorbell last rang
+            bool markerOwed = false;       // after a stop begins, until its marker is in
+        };
+
         std::vector<std::uint32_t> parkedOldestFirst;  // connection indices
-        std::vector<std::uint32_t> parkedOnShard;
-        std::vector<char> shardBlocked;  // in this pass's retry, per shard
-        std::vector<char> shardRung;     // pushed to since the last doorbell, per shard
-        std::vector<char> markerOwed;    // per shard
+        std::vector<ShardState> shardStates;
         std::vector<std::byte> readBuffer;
         std::vector<SocketInterest> interest;
         std::uint64_t inFlight = 0;  // commands pushed whose last event hasn't come back
         bool moved = false;          // in this pass
+        std::size_t waitsSkipped = 0;  // passes in a row
         bool idle = false;
         std::chrono::steady_clock::time_point idleSince;
         std::size_t shardsStopped = 0;
@@ -153,7 +165,9 @@ namespace order_book::network {
 
     // The real thread: passes until a stop has run its course, beginning one once stopRequested
     // is set, and yielding after a pass that moved nothing, so a small machine still progresses
-    // while this spins. Whoever sets stopRequested must also wake the thread's SocketSet.
+    // while this spins. Whoever sets stopRequested must then wake the thread's SocketSet, and
+    // both that store and this load are sequentially consistent, as the wake's own flag is, so a
+    // stop can't be missed between a thread's last look at the flag and its sleep.
     void runGateway(GatewayThread& gateway, const std::atomic<bool>& stopRequested);
 
 }  // namespace order_book::network

@@ -16,7 +16,7 @@
 #include <variant>
 #include <vector>
 
-#include "gateway_frames.hpp"
+#include "engine/gateway_frames.hpp"
 #include "order_book/network/entry_check.hpp"
 #include "order_book/network/gateway_thread.hpp"
 #include "order_book/network/poll_socket_set.hpp"
@@ -53,7 +53,9 @@ std::vector<Instrument> instruments() {
             Instrument{symbolOf("MSFT"), 0, std::nullopt, std::nullopt, std::nullopt}};
 }
 
-// One shard's matching thread and one gateway thread, each building what it owns on itself.
+// One shard's matching thread and one gateway thread, each building what it owns on itself. The
+// gateway has no spin window, so it is asleep almost as soon as nothing is in flight, and a lost
+// wake for a connection or a stop hangs a test here; removing the wake's byte does.
 class LiveEngine {
 public:
     LiveEngine() : directory(instruments(), 1), commands(defaultCommandRingSlots), responses(defaultResponseRingSlots) {
@@ -67,8 +69,10 @@ public:
         });
         started.get();
         gateway = std::thread([this] {
-            GatewayThread thread(directory, {ShardLink{&commands, &responses, &doorbell}}, sockets);
-            runGateway(thread, stopRequested);
+            GatewaySettings settings;
+            settings.spinWindow = std::chrono::nanoseconds::zero();  // so it sleeps the moment it may
+            GatewayThread gatewayThread(directory, {ShardLink{&commands, &responses, &doorbell}}, sockets, settings);
+            runGateway(gatewayThread, stopRequested);
         });
     }
 
@@ -78,7 +82,7 @@ public:
 
     void stop() {
         if (gateway.joinable()) {
-            stopRequested.store(true, std::memory_order_release);
+            stopRequested.store(true, std::memory_order_seq_cst);
             sockets.wake();
             gateway.join();
             matching.join();
@@ -242,7 +246,6 @@ void testTheEngineOverLoopback() {
     }
 
     LiveEngine engine;
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));  // so the gateway has gone to sleep
     std::array<std::optional<Conversation>, 2> conversations;
     std::thread second([&] { conversations[1] = talk(engine.port(), streams[1], true); });
     conversations[0] = talk(engine.port(), streams[0], true);
@@ -334,7 +337,6 @@ void testAStopWakesASleepingGateway() {
     expect(idle.send(hello) == hello.size(), "the client says Hello");
     std::array<std::byte, 64> buffer{};
     expect(idle.receive(buffer).bytes == 24, "and is welcomed");
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));  // past the spin window
 
     engine->stop();  // hangs if the wake doesn't reach the sleeping thread
     expect(idle.receive(buffer).status == ReadStatus::ENDED, "the stop closes the idle connection cleanly");

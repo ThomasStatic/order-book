@@ -70,6 +70,8 @@ jobs:
           fi
           "$programs/randomized_tests$suffix" --explore "$SEEDS" --profile all --out-dir explore-failures
           "$programs/engine_randomized_tests$suffix" --explore "$SEEDS"
+          "$programs/engine_randomized_tests$suffix" --stepper run --explore "$SEEDS"
+          "$programs/engine_randomized_tests$suffix" --stepper stop --explore "$SEEDS"
 
       - name: Keep any failure
         if: failure()

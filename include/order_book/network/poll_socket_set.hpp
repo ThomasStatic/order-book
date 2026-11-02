@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <vector>
@@ -18,11 +19,15 @@ namespace order_book::network {
     // only for a socket the last wait found ready. It belongs to one gateway thread, except wake.
     class PollSocketSet final : public SocketSet {
     public:
-        // Port 0 lets the system pick.
-        explicit PollSocketSet(std::uint16_t port = 0);
+        using Clock = std::function<std::chrono::steady_clock::time_point()>;
+
+        // Port 0 lets the system pick. clock times lingering sockets and nothing else.
+        explicit PollSocketSet(std::uint16_t port = 0, Clock clock = std::chrono::steady_clock::now);
 
         std::uint16_t port() const noexcept { return listeningPort; }
-        // Ends a sleeping wait, from any thread, through a loopback socket of this set's own.
+        // Ends a sleeping wait, from any thread, through a loopback socket of this set's own. Every
+        // change to its flag is a sequentially consistent exchange, as a doorbell's is, so a wake
+        // after whatever it is for can't be lost between a wait's drain and a later check.
         void wake() noexcept;
         bool noDelay(SocketId socket) const;
 
@@ -57,6 +62,7 @@ namespace order_book::network {
         TcpSocket wakeReceiver;
         TcpSocket wakeSender;
         std::atomic<bool> wakePending{false};
+        Clock clock;
         std::uint16_t listeningPort = 0;
         bool listening = true;
         bool listenerReadable = false;

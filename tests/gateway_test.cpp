@@ -20,6 +20,8 @@
 
 #include "engine_harness.hpp"
 #include "gateway_frames.hpp"
+#include "gateway_rig.hpp"
+#include "gateway_stepper.hpp"
 #include "order_book/little_endian.hpp"
 #include "order_book/network/entry_check.hpp"
 #include "order_book/network/gateway_thread.hpp"
@@ -40,7 +42,11 @@ using namespace order_book::runtime;
 using namespace order_book::little_endian;
 using order_book::gateway_testing::Bytes;
 using order_book::gateway_testing::helloFrame;
-using order_book::gateway_testing::rawCommandFrame;
+using order_book::engine_testing::Client;
+using order_book::engine_testing::Received;
+using order_book::engine_testing::Rig;
+using order_book::engine_testing::ShardActor;
+using order_book::engine_testing::refusedForStopping;
 
 void expect(bool condition, const std::string& message) {
     if (!condition) {
@@ -56,132 +62,6 @@ Symbol symbolOf(const char* text) {
 Instrument on(const char* symbol, std::uint32_t shard) {
     return Instrument{symbolOf(symbol), shard, std::nullopt, std::nullopt, std::nullopt};
 }
-
-struct ShardActor {
-    ShardActor(const InstrumentDirectory& directory, std::uint32_t number, std::size_t ringSlots)
-        : shard(directory, number), commands(ringSlots), responses(ringSlots) {}
-
-    Shard shard;
-    Doorbell doorbell;
-    Ring<CommandElement> commands;
-    Ring<ResponseRecord> responses;
-    std::optional<MatchingLoop> loop;
-    bool reportedStop = false;
-};
-
-// One gateway thread and every shard, all stepped here. A matching thread that finds its response
-// ring full waits in place, and the only thing that can make room is the gateway, so that wait
-// runs one gateway pass.
-class Rig {
-public:
-    // Its gateway sleeps as soon as it may, on a clock only the test moves.
-    Rig(std::vector<Instrument> instruments, std::uint32_t shardCount, std::size_t ringSlots, GatewaySettings settings = {})
-        : directory(std::move(instruments), shardCount) {
-        settings.clock = [this] { return now; };
-        settings.spinWindow = std::chrono::nanoseconds::zero();
-        std::vector<ShardLink> links;
-        for (std::uint32_t number = 0; number < shardCount; ++number) {
-            shards.push_back(std::make_unique<ShardActor>(directory, number, ringSlots));
-            ShardActor& actor = *shards.back();
-            links.push_back(ShardLink{&actor.commands, &actor.responses, &actor.doorbell});
-            actor.loop.emplace(actor.shard, actor.doorbell, std::vector<RingPair>{RingPair{&actor.commands, &actor.responses}},
-                               std::chrono::nanoseconds::zero(), [this] {
-                                   ++waitsInPlace;
-                                   gateway->pass();
-                               });
-        }
-        gateway.emplace(directory, std::move(links), sockets, std::move(settings));
-    }
-
-    // One pass, and a shard with every producer's marker reports that it has stopped, which is
-    // all run does then.
-    std::size_t match(std::uint32_t shard = 0) {
-        ShardActor& actor = *shards[shard];
-        const std::size_t taken = actor.loop->pass();
-        if (actor.loop->stopped() && !actor.reportedStop) {
-            actor.reportedStop = true;
-            actor.loop->run();
-        }
-        return taken;
-    }
-
-    // Every actor in turn, far more times than any test here needs.
-    void settle() {
-        for (int round = 0; round < 512; ++round) {
-            gateway->pass();
-            for (std::uint32_t shard = 0; shard < shards.size(); ++shard) {
-                match(shard);
-            }
-        }
-    }
-
-    InstrumentDirectory directory;
-    InMemorySocketSet sockets;
-    std::vector<std::unique_ptr<ShardActor>> shards;
-    std::optional<GatewayThread> gateway;
-    std::size_t waitsInPlace = 0;
-    std::chrono::steady_clock::time_point now;
-};
-
-struct Received {
-    FrameType type;
-    bool last;
-    Correlation correlation;
-    std::uint16_t version = 0;
-    std::optional<EventFrame> event;
-    std::optional<RefusedFrame> refused;
-    std::optional<ProtocolErrorFrame> error;
-};
-
-class Client {
-public:
-    explicit Client(InMemorySocketSet& socketSet) : sockets(socketSet), socket(socketSet.connect()), reader(FrameSource::ENGINE) {}
-
-    void send(std::span<const std::byte> bytes) { sockets.clientSend(socket, bytes); }
-
-    // Everything received so far, in order.
-    const std::vector<Received>& frames() {
-        const Bytes bytes = sockets.clientReceive(socket);
-        reader.feed(bytes);
-        for (;;) {
-            const FrameResult result = reader.next();
-            const Frame* frame = std::get_if<Frame>(&result);
-            if (frame == nullptr) {
-                expect(std::holds_alternative<NeedMore>(result), "the engine sent a frame a client can't read");
-                return received;
-            }
-            Received item{frame->type, frame->last, frame->correlation, 0, std::nullopt, std::nullopt, std::nullopt};
-            if (frame->type == FrameType::WELCOME) {
-                item.version = decodeVersion(*frame);
-            } else if (frame->type == FrameType::REFUSED) {
-                item.refused = decodeRefused(*frame);
-            } else if (frame->type == FrameType::PROTOCOL_ERROR) {
-                item.error = decodeProtocolError(*frame);
-            } else {
-                item.event = decodeEvent(*frame);
-                expect(item.event.has_value(), "an event frame can be decoded");
-            }
-            received.push_back(item);
-        }
-    }
-
-    std::size_t answered() {
-        std::size_t count = 0;
-        for (const Received& frame : frames()) {
-            if (frame.last && frame.type != FrameType::WELCOME && frame.type != FrameType::PROTOCOL_ERROR) {
-                ++count;
-            }
-        }
-        return count;
-    }
-
-    InMemorySocketSet& sockets;
-    SocketId socket;
-
-private:
-    FrameReader reader;
-    std::vector<Received> received;
-};
 
 replay::AddCommand limit(OrderId id, Side side, Price price, Quantity quantity = 10) {
     replay::AddCommand command{};
@@ -217,10 +97,6 @@ std::vector<CommandElement> takeElements(Ring<CommandElement>& ring, std::size_t
     std::vector<CommandElement> taken;
     ring.drain(most, [&taken](const CommandElement& element) { taken.push_back(element); });
     return taken;
-}
-
-bool refusedForStopping(const Received& frame) {
-    return frame.refused && frame.refused->code == static_cast<std::uint16_t>(RefusedCode::ENGINE_STOPPING);
 }
 
 Bytes refusedStream(OrderId count) {
@@ -417,6 +293,29 @@ void testACommandRingsItsShardsDoorbell() {
     actor.doorbell.wait();  // hangs if nothing rang, and the CTest timeout fails it
     actor.doorbell.cancelSleep();
     expect(rig.match() == 1, "the woken thread finds the command");
+}
+
+void testAStreamingClientCantStopTheWaitForEver() {
+    Rig rig({on("AAPL", 0)}, 1, 4096);
+    Client client(rig.sockets);
+    introduce(rig, client);
+    client.send(refusedStream(64 * 40));
+    rig.gateway->pass();  // reads all of it, and answers 64
+
+    std::size_t looks = rig.sockets.looks() + rig.sockets.waits();
+    std::size_t passesSkipping = 0;
+    for (int pass = 0; pass < 30; ++pass) {
+        rig.gateway->pass();
+        const std::size_t now = rig.sockets.looks() + rig.sockets.waits();
+        if (now == looks) {
+            ++passesSkipping;
+        } else {
+            expect(passesSkipping == mostWaitsSkipped, "the wait is skipped exactly mostWaitsSkipped passes in a row");
+            passesSkipping = 0;
+            looks = now;
+        }
+    }
+    expect(passesSkipping < mostWaitsSkipped, "and then it looks, though frames are still waiting");
 }
 
 void testAConnectionsBudgetIsItsOwn() {
@@ -621,7 +520,7 @@ void testABackloggedClientLetsTheGatewaySleep() {
     expect(watchedForWriting, "and the wait watches for room to send");
 }
 
-void testSleepsOnlyWithNothingOutstanding() {
+void testSleepsOnlyWithNothingInFlight() {
     Rig rig({on("AAPL", 0)}, 1, 16);
     expect(rig.gateway->mayWait(), "with nothing connected there is nothing to do");
     Client client(rig.sockets);
@@ -1016,300 +915,28 @@ void testAShardStopsOnceEveryGatewayThreadHasSaidSo() {
     expect(first.finished() && second.finished(), "and both heard, on their own rings");
 }
 
-// The seeded stepper: one thread plays each actor, choosing the next from a seeded source, with
-// rings of capacity 2, reads and writes split anywhere. One connection owns each instrument, so
-// its book's order is one stream's order and the answers must equal a single-threaded run. What
-// the entry check answers itself may overtake what is queued, so those match by correlation.
-struct Line {
-    Correlation correlation;
-    BookEvent event;
-    bool last;
-
-    bool operator==(const Line&) const = default;
-};
-
-struct StreamCommand {
-    Correlation correlation;
-    std::size_t connection;
-    EntryAccepted accepted;
-};
-
-struct SteppedStream {
-    std::vector<Instrument> instruments;
-    std::vector<Bytes> bytes;                            // per connection
-    std::vector<std::size_t> frames;                     // the frames expected back, per connection
-    std::map<std::string, std::vector<Line>> expected;   // from the books, per instrument
-    std::map<Correlation, BookEvent> rejectedAtEntry;
-    std::set<Correlation> refused;
-    std::vector<StreamCommand> commands;                 // those that passed the entry check
-};
-
-constexpr std::uint32_t steppedShards = 2;
-constexpr std::size_t steppedConnections = 3;
-constexpr std::size_t steppedInstruments = 6;
-
-SteppedStream steppedStream(std::uint64_t seed, std::size_t commands) {
-    engine_testing::EngineSeedConfig config;
-    config.seed = seed;
-    config.instruments = steppedInstruments;
-    config.shards = steppedShards;
-    config.commands = commands;
-
-    SteppedStream stream;
-    std::vector<Symbol> symbols;
-    for (std::size_t i = 0; i < steppedInstruments; ++i) {
-        symbols.push_back(symbolOf(("SYM" + std::to_string(i)).c_str()));
-        stream.instruments.push_back(Instrument{symbols.back(), std::nullopt, std::nullopt, std::nullopt, std::nullopt});
-    }
-    const InstrumentDirectory directory(stream.instruments, steppedShards);
-    std::vector<std::unique_ptr<Shard>> witnesses;
-    for (std::uint32_t shard = 0; shard < steppedShards; ++shard) {
-        witnesses.push_back(std::make_unique<Shard>(directory, shard));
-    }
-
-    stream.bytes.resize(steppedConnections);
-    stream.frames.assign(steppedConnections, 1);  // each gets a Welcome
-    for (Bytes& bytes : stream.bytes) {
-        bytes = helloFrame();
-    }
-
-    const std::vector<engine_testing::EngineCommand> lines = engine_testing::generateEngineStream(config);
-    for (std::size_t index = 0; index < lines.size(); ++index) {
-        const engine_testing::EngineCommand& line = lines[index];
-        if (!line.converted) {
-            continue;
-        }
-        const Correlation correlation = index + 1;
-        const std::array<char, Symbol::size> stored =
-            line.fault == engine_testing::SymbolFault::NONE ? symbols[line.instrument].bytes() : symbolOf("ZZZZ").bytes();
-        const replay::RawCommand raw = engine_testing::rawCommandOf(*line.converted, stored);
-        const std::size_t connection = line.instrument % steppedConnections;
-        const Bytes frame = rawCommandFrame(correlation, raw);
-        expect(order_book::gateway_testing::roundTrips(frame, raw), "the test's frame is the command");
-        stream.bytes[connection].insert(stream.bytes[connection].end(), frame.begin(), frame.end());
-
-        const std::string name = symbols[line.instrument].text();
-        const EntryDecision decision = checkEntry(CommandFrame{correlation, raw}, directory, false);
-        if (std::holds_alternative<EntryRefused>(decision)) {
-            stream.refused.insert(correlation);
-            ++stream.frames[connection];
-        } else if (const EntryMalformed* malformed = std::get_if<EntryMalformed>(&decision)) {
-            stream.rejectedAtEntry.insert({correlation, malformed->event});
-            ++stream.frames[connection];
-        } else {
-            const EntryAccepted& accepted = std::get<EntryAccepted>(decision);
-            stream.commands.push_back(StreamCommand{correlation, connection, accepted});
-            Shard& witness = *witnesses[accepted.location.shard];
-            witness.process(accepted.command, accepted.location.slot);
-            const std::span<const BookEvent> events = witness.result().events();
-            for (std::size_t i = 0; i < events.size(); ++i) {
-                stream.expected[name].push_back(Line{correlation, events[i], i + 1 == events.size()});
-                ++stream.frames[connection];
-            }
-        }
-    }
-    return stream;
-}
-
-struct SteppedTotals {
-    std::size_t sleeps = 0;
-    std::size_t waitsInPlace = 0;
-    std::size_t commandsRun = 0;
-    std::size_t commandsRefused = 0;
-};
-
-// Sleeping is only safe with nothing in a ring, and with the wait watching every connection that
-// still has bytes to move: written to, if it is owed answers, counted here from the bytes the
-// gateway took and the frames the client holds, and read from, if it sent bytes not yet taken.
-// None of it comes from what the gateway says about itself.
-void checkNothingOutstanding(Rig& rig, std::vector<Client>& clients, std::span<const SocketInterest> interest) {
-    for (const std::unique_ptr<ShardActor>& shard : rig.shards) {
-        expect(!shard->commands.hasItems() && !shard->responses.hasItems(), "a gateway slept with a command in flight");
-    }
-    const auto watched = [&interest](SocketId socket, bool forWriting) {
-        return std::any_of(interest.begin(), interest.end(), [&](const SocketInterest& wanted) {
-            return wanted.socket == socket && (forWriting ? wanted.write : wanted.read || wanted.write);
-        });
-    };
-    for (Client& client : clients) {
-        if (!rig.sockets.accepted(client.socket) || rig.sockets.closed(client.socket)) {
-            continue;  // a connection not yet accepted wakes a real wait through the listener
-        }
-        const std::size_t taken = rig.sockets.bytesRead(client.socket);
-        const std::size_t commandsRead = taken < helloFrame().size() ? 0 : (taken - helloFrame().size()) / 48;
-        if (client.answered() != commandsRead) {
-            expect(watched(client.socket, true), "a gateway slept owing a connection answers it wasn't watching to send");
-        }
-        if (rig.sockets.bytesSent(client.socket) != taken) {
-            expect(watched(client.socket, false), "a gateway slept on bytes it wasn't watching to read");
-        }
-    }
-}
-
-void runSchedule(const SteppedStream& stream, std::uint64_t seed, SteppedTotals& totals) {
-    Rig rig(stream.instruments, steppedShards, 2);
-    std::mt19937_64 random(seed);
-    std::vector<Client> clients;
-    clients.reserve(steppedConnections);
-    for (std::size_t i = 0; i < steppedConnections; ++i) {
-        clients.emplace_back(rig.sockets);
-    }
-    rig.sockets.onWait([&](std::span<const SocketInterest> interest) {
-        checkNothingOutstanding(rig, clients, interest);
-        ++totals.sleeps;
-    });
-
-    std::vector<std::size_t> sent(steppedConnections, 0);
-    const auto finished = [&] {
-        for (std::size_t i = 0; i < steppedConnections; ++i) {
-            if (clients[i].frames().size() != stream.frames[i]) {
-                return false;
-            }
-        }
-        return true;
-    };
-
-    std::size_t steps = 0;
-    while (!finished()) {
-        expect(++steps < 40'000'000, "the stepped run stopped making progress");
-        for (int actor = 0; actor < 64; ++actor) {
-            const std::uint64_t choice = random();
-            switch (choice % 3) {
-                case 0: {
-                    const std::size_t connection = (choice >> 8) % steppedConnections;
-                    const Bytes& bytes = stream.bytes[connection];
-                    const std::size_t left = bytes.size() - sent[connection];
-                    const std::size_t chunk = std::min<std::size_t>(left, 1 + (choice >> 16) % 150);
-                    clients[connection].send(std::span<const std::byte>(bytes).subspan(sent[connection], chunk));
-                    sent[connection] += chunk;
-                    break;
-                }
-                case 1:
-                    rig.sockets.limitRead(1 + (choice >> 8) % 200);
-                    rig.sockets.limitWrite(1 + (choice >> 16) % 200);
-                    rig.gateway->pass();
-                    break;
-                default:
-                    rig.match(static_cast<std::uint32_t>((choice >> 8) % steppedShards));
-                    break;
-            }
-        }
-    }
-
-    std::map<std::string, std::vector<Line>> answered;
-    std::map<Correlation, BookEvent> rejected;
-    std::set<Correlation> refused;
-    for (Client& client : clients) {
-        for (const Received& frame : client.frames()) {
-            if (frame.type == FrameType::REFUSED) {
-                refused.insert(frame.correlation);
-            } else if (frame.event && stream.rejectedAtEntry.contains(frame.correlation)) {
-                expect(frame.last, "an entry rejection is one whole answer");
-                rejected.insert({frame.correlation, frame.event->event});
-            } else if (frame.event) {
-                answered[frame.event->symbol.text()].push_back(Line{frame.correlation, frame.event->event, frame.last});
-            }
-        }
-    }
-    expect(answered == stream.expected, "every instrument's answers equal the single-threaded run's, seed " + std::to_string(seed));
-    expect(rejected == stream.rejectedAtEntry, "and so do the rejections at entry, seed " + std::to_string(seed));
-    expect(refused == stream.refused, "and the refusals, seed " + std::to_string(seed));
-    totals.waitsInPlace += rig.waitsInPlace;
-}
-
-// A stop lands at a chosen step. What it must leave: every command is answered in full, refused
-// with the retry code, or was never read, and for one connection they fall in that order, so what
-// ran is what a single-threaded run of those same commands does.
-void runStoppedSchedule(const SteppedStream& stream, std::uint64_t seed, SteppedTotals& totals) {
-    Rig rig(stream.instruments, steppedShards, 2);
-    std::mt19937_64 random(seed);
-    std::vector<Client> clients;
-    clients.reserve(steppedConnections);
-    for (std::size_t i = 0; i < steppedConnections; ++i) {
-        clients.emplace_back(rig.sockets);
-    }
-
-    std::vector<std::size_t> sent(steppedConnections, 0);
-    const std::uint64_t stopAt = random() % 3000;
-    std::size_t steps = 0;
-    while (!rig.gateway->finished()) {
-        expect(++steps < 40'000'000, "the stopped run stopped making progress");
-        if (steps == stopAt) {
-            rig.gateway->beginStop();
-        }
-        const std::uint64_t choice = random();
-        if (choice % 3 == 0) {
-            const std::size_t connection = (choice >> 8) % steppedConnections;
-            const Bytes& bytes = stream.bytes[connection];
-            const std::size_t chunk = std::min<std::size_t>(bytes.size() - sent[connection], 1 + (choice >> 16) % 150);
-            clients[connection].send(std::span<const std::byte>(bytes).subspan(sent[connection], chunk));
-            sent[connection] += chunk;
-        } else if (choice % 3 == 1) {
-            rig.sockets.limitRead(1 + (choice >> 8) % 200);
-            rig.sockets.limitWrite(1 + (choice >> 16) % 200);
-            rig.gateway->pass();
-        } else {
-            rig.match(static_cast<std::uint32_t>((choice >> 8) % steppedShards));
-        }
-    }
-
-    std::map<std::string, std::vector<Line>> answered;
-    std::set<Correlation> ran;
-    std::set<Correlation> refusedByStop;
-    for (Client& client : clients) {
-        for (const Received& frame : client.frames()) {
-            if (refusedForStopping(frame)) {
-                refusedByStop.insert(frame.correlation);
-            } else if (frame.event && !stream.rejectedAtEntry.contains(frame.correlation)) {
-                ran.insert(frame.correlation);
-                answered[frame.event->symbol.text()].push_back(Line{frame.correlation, frame.event->event, frame.last});
-            }
-        }
-        expect(rig.sockets.closed(client.socket), "a finished gateway has closed every connection");
-    }
-
-    const InstrumentDirectory directory(stream.instruments, steppedShards);
-    std::vector<std::unique_ptr<Shard>> witnesses;
-    for (std::uint32_t shard = 0; shard < steppedShards; ++shard) {
-        witnesses.push_back(std::make_unique<Shard>(directory, shard));
-    }
-    std::map<std::string, std::vector<Line>> expected;
-    std::vector<bool> connectionCut(steppedConnections, false);
-    for (const StreamCommand& command : stream.commands) {
-        const bool didRun = ran.contains(command.correlation);
-        expect(!(didRun && refusedByStop.contains(command.correlation)), "no command both ran and was refused");
-        expect(!(didRun && connectionCut[command.connection]), "nothing ran after a connection's first command that didn't");
-        if (!didRun) {
-            connectionCut[command.connection] = true;
-            continue;
-        }
-        Shard& witness = *witnesses[command.accepted.location.shard];
-        witness.process(command.accepted.command, command.accepted.location.slot);
-        const std::span<const BookEvent> events = witness.result().events();
-        for (std::size_t i = 0; i < events.size(); ++i) {
-            expected[command.accepted.symbol.text()].push_back(Line{command.correlation, events[i], i + 1 == events.size()});
-        }
-    }
-    expect(answered == expected, "what ran equals a single-threaded run of those commands, seed " + std::to_string(seed));
-    totals.commandsRun += ran.size();
-    totals.commandsRefused += refusedByStop.size();
-}
-
+// 100 seeded schedules each way, through the harness's stepper, which engine_randomized_tests
+// --stepper also runs, so a failing seed here reproduces there.
 void testSteppedSchedules() {
-    SteppedTotals totals;
-    for (std::uint64_t seed = 1; seed <= 100; ++seed) {
-        runSchedule(steppedStream(seed, 1000), seed, totals);
+    order_book::engine_testing::StepperResult totals;
+    for (const bool stop : {false, true}) {
+        for (std::uint64_t seed = 1; seed <= 100; ++seed) {
+            order_book::engine_testing::StepperConfig config;
+            config.seed = seed;
+            config.stop = stop;
+            const order_book::engine_testing::StepperResult result = order_book::engine_testing::runStepperSchedule(config);
+            expect(result.passed(), (stop ? "stopped" : "unstopped") + std::string(" schedule, seed ") + std::to_string(seed) + ": " +
+                                        result.failure.value_or("") + "\nreproduce with: engine_randomized_tests --stepper " +
+                                        (stop ? "stop" : "run") + " --seed " + std::to_string(seed));
+            totals.sleeps += result.sleeps;
+            totals.waitsInPlace += result.waitsInPlace;
+            totals.commandsRun += result.commandsRun;
+            totals.commandsRefused += result.commandsRefused;
+        }
     }
-    expect(totals.sleeps > 0, "the gateway slept, or the check above checked nothing");
+    expect(totals.sleeps > 0, "the gateway slept, or the check of each sleep checked nothing");
     expect(totals.waitsInPlace > 0, "matching threads did wait on a full response ring");
-}
-
-void testSteppedStops() {
-    SteppedTotals totals;
-    for (std::uint64_t seed = 1; seed <= 100; ++seed) {
-        runStoppedSchedule(steppedStream(seed, 1000), seed, totals);
-    }
-    expect(totals.commandsRun > 0 && totals.commandsRefused > 0, "stops landed mid-stream, or the check above checked little");
+    expect(totals.commandsRun > 0 && totals.commandsRefused > 0, "stops landed mid-stream, or the stopped checks checked little");
 }
 
 }  // namespace
@@ -1325,13 +952,14 @@ int main() {
     testAPassTakesAtMost64Frames();
     testFramesInTheReaderKeepItAwake();
     testACommandRingsItsShardsDoorbell();
+    testAStreamingClientCantStopTheWaitForEver();
     testAConnectionsBudgetIsItsOwn();
     testAFullRingParksAndLosesNothing();
     testParkedConnectionsRetryOldestFirst();
     testANewCommandCantPassAParkedOne();
     testAParkedConnectionHoldsItsOtherShardToo();
     testAReusedIndexHearsNothingOfTheDead();
-    testSleepsOnlyWithNothingOutstanding();
+    testSleepsOnlyWithNothingInFlight();
     testTheSpinWindowComesBeforeSleep();
     testABackloggedClientLetsTheGatewaySleep();
     testEveryProtocolErrorIsAnsweredThenCloses();
@@ -1351,7 +979,6 @@ int main() {
     testTheStopGraceBoundsTheFlush();
     testAShardStopsOnceEveryGatewayThreadHasSaidSo();
     testSteppedSchedules();
-    testSteppedStops();
     std::cout << "gateway tests passed" << std::endl;
     return EXIT_SUCCESS;
 }
