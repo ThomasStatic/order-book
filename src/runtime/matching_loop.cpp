@@ -11,14 +11,6 @@
 
 namespace order_book::runtime {
     namespace {
-        void push(Ring<ResponseRecord>& responses, const ResponseRecord& record) {
-            // Mid-command, so this waits in place. It can't deadlock: a gateway thread facing a
-            // full command ring parks that connection and keeps draining.
-            while (!responses.tryPush(record)) {
-                std::this_thread::yield();
-            }
-        }
-
         // Writes with fixed buffers only, since the failure may be that nothing can be allocated.
         [[noreturn]] void abortOnEscaped(const Shard& shard, const CommandElement& element, const char* what) {
             const std::array<char, Symbol::size> symbol = shard.books().symbol(element.slot).bytes();
@@ -34,8 +26,21 @@ namespace order_book::runtime {
         }
     }  // namespace
 
-    MatchingLoop::MatchingLoop(Shard& matchingShard, Doorbell& bell, std::vector<RingPair> pairs, std::chrono::nanoseconds spin)
-        : shard(matchingShard), doorbell(bell), rings(std::move(pairs)), spinWindow(spin) {}
+    MatchingLoop::MatchingLoop(Shard& matchingShard, Doorbell& bell, std::vector<RingPair> pairs, std::chrono::nanoseconds spin,
+                               std::function<void()> whileFull)
+        : shard(matchingShard), doorbell(bell), rings(std::move(pairs)), spinWindow(spin), waitInPlace(std::move(whileFull)) {}
+
+    void MatchingLoop::push(Ring<ResponseRecord>& responses, const ResponseRecord& record) {
+        // Mid-command, so this waits in place. It can't deadlock: a gateway thread facing a full
+        // command ring parks that connection and keeps draining.
+        while (!responses.tryPush(record)) {
+            if (waitInPlace) {
+                waitInPlace();
+            } else {
+                std::this_thread::yield();
+            }
+        }
+    }
 
     void MatchingLoop::take(const CommandElement& element, Ring<ResponseRecord>& responses) {
         if (element.control == ControlKind::STOP) {

@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -67,8 +68,10 @@ namespace order_book::runtime {
     // thread, and the rings and doorbell must outlive it.
     class MatchingLoop {
     public:
+        // waitInPlace runs each time a full response ring holds this thread up, in place of a
+        // yield, so a test stepping every actor on one thread can play the others there.
         MatchingLoop(Shard& shard, Doorbell& doorbell, std::vector<RingPair> rings,
-                     std::chrono::nanoseconds spinWindow = defaultSpinWindow);
+                     std::chrono::nanoseconds spinWindow = defaultSpinWindow, std::function<void()> waitInPlace = {});
 
         // One pass: up to takeBatch commands from each ring in turn, each run on the shard, with
         // its events sent back on its own ring's responses. A full response ring makes this wait
@@ -89,12 +92,14 @@ namespace order_book::runtime {
 
     private:
         void take(const CommandElement& element, Ring<ResponseRecord>& responses);
+        void push(Ring<ResponseRecord>& responses, const ResponseRecord& record);
         bool commandsWaiting() const noexcept;
 
         Shard& shard;
         Doorbell& doorbell;
         std::vector<RingPair> rings;
         std::chrono::nanoseconds spinWindow;
+        std::function<void()> waitInPlace;
         std::size_t stopMarkers = 0;
     };
 

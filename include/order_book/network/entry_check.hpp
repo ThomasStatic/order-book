@@ -25,6 +25,7 @@ namespace order_book::network {
 
     // Answered with this event, flagged last: what the book would have said.
     struct EntryMalformed {
+        Symbol symbol;
         BookEvent event;
 
         bool operator==(const EntryMalformed&) const = default;

@@ -97,20 +97,20 @@ namespace order_book::network {
 
         if (raw.command == replay::rawCommandCancel) {
             if (raw.orderId == 0) {
-                return EntryMalformed{CancelRejected{raw.orderId, RejectionReason::ORDER_NOT_FOUND}};
+                return EntryMalformed{*symbol, CancelRejected{raw.orderId, RejectionReason::ORDER_NOT_FOUND}};
             }
             return admit(*symbol, *location, replay::CancelCommand{raw.orderId}, stopping);
         }
         if (raw.command == replay::rawCommandReplace) {
             const replay::ReplaceCommand command = replaceCommandOf(raw);
             if (const std::optional<RejectionReason> reason = malformedReason(replay::toRequest(command))) {
-                return EntryMalformed{ReplaceRejected{raw.orderId, *reason}};
+                return EntryMalformed{*symbol, ReplaceRejected{raw.orderId, *reason}};
             }
             return admit(*symbol, *location, command, stopping);
         }
         const replay::AddCommand command = addCommandOf(raw);
         if (const std::optional<RejectionReason> reason = malformedReason(replay::toRequest(command))) {
-            return EntryMalformed{OrderRejected{raw.orderId, *reason}};
+            return EntryMalformed{*symbol, OrderRejected{raw.orderId, *reason}};
         }
         return admit(*symbol, *location, command, stopping);
     }

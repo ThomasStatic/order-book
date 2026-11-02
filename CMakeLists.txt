@@ -198,6 +198,8 @@ order_book_enable_sanitizers(order_book_runtime)
 # The wire protocol's pure half (docs/wire-protocol.md). Not public API.
 add_library(order_book_network STATIC
     src/network/entry_check.cpp
+    src/network/gateway_thread.cpp
+    src/network/in_memory_socket_set.cpp
     src/network/wire_codec.cpp
 )
 
@@ -861,6 +863,17 @@ if(BUILD_TESTING)
     order_book_enable_warnings(engine_harness_tests)
     order_book_enable_sanitizers(engine_harness_tests)
     add_test(NAME engine_harness_tests COMMAND engine_harness_tests)
+
+    add_executable(gateway_tests
+        tests/gateway_test.cpp
+    )
+
+    target_compile_features(gateway_tests PRIVATE cxx_std_20)
+    target_link_libraries(gateway_tests PRIVATE order_book_engine_testing)
+    order_book_enable_warnings(gateway_tests)
+    order_book_enable_sanitizers(gateway_tests)
+    add_test(NAME gateway_tests COMMAND gateway_tests)
+    set_tests_properties(gateway_tests PROPERTIES TIMEOUT 240)
 
     add_executable(randomized_harness_tests
         tests/randomized/harness_test.cpp
