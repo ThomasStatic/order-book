@@ -57,6 +57,7 @@ struct WorkloadComponentSettings {
 };
 std::vector<ComponentResult> runLogGroup(const WorkloadComponentSettings& settings);
 std::vector<ComponentResult> runEntryGroup(const WorkloadComponentSettings& settings);
+std::vector<ComponentResult> runWireGroup(const WorkloadComponentSettings& settings);
 
 // The controls that find the cause of a fall in scaling, each on the same threads as the run it
 // explains. If the CPU loop falls too, the cause is frequency. If only the walks fall, it is

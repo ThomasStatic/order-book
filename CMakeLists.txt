@@ -174,6 +174,17 @@ target_link_libraries(order_book_runtime PUBLIC order_book_replay Threads::Threa
 order_book_enable_warnings(order_book_runtime)
 order_book_enable_sanitizers(order_book_runtime)
 
+# The wire protocol's pure half (docs/wire-protocol.md). Not public API.
+add_library(order_book_network STATIC
+    src/network/entry_check.cpp
+    src/network/wire_codec.cpp
+)
+
+target_compile_features(order_book_network PUBLIC cxx_std_20)
+target_link_libraries(order_book_network PUBLIC order_book_runtime)
+order_book_enable_warnings(order_book_network)
+order_book_enable_sanitizers(order_book_network)
+
 add_executable(order_book_cli
     apps/order_book_cli.cpp
 )
@@ -484,6 +495,26 @@ if(BUILD_TESTING)
             SKIP_REGULAR_EXPRESSION "SKIPPED")
     endforeach()
 
+    add_executable(wire_codec_tests
+        tests/wire_codec_test.cpp
+    )
+
+    target_compile_features(wire_codec_tests PRIVATE cxx_std_20)
+    target_link_libraries(wire_codec_tests PRIVATE order_book_network)
+    order_book_enable_warnings(wire_codec_tests)
+    order_book_enable_sanitizers(wire_codec_tests)
+    add_test(NAME wire_codec_tests COMMAND wire_codec_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/wire)
+
+    add_executable(entry_check_tests
+        tests/entry_check_test.cpp
+    )
+
+    target_compile_features(entry_check_tests PRIVATE cxx_std_20)
+    target_link_libraries(entry_check_tests PRIVATE order_book_network)
+    order_book_enable_warnings(entry_check_tests)
+    order_book_enable_sanitizers(entry_check_tests)
+    add_test(NAME entry_check_tests COMMAND entry_check_tests)
+
     add_executable(interleaver_tests
         tests/interleaver_test.cpp
     )
@@ -753,7 +784,7 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
     find_package(Threads REQUIRED)
     target_compile_features(order_book_benchmarking PUBLIC cxx_std_20)
     target_include_directories(order_book_benchmarking PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks)
-    target_link_libraries(order_book_benchmarking PUBLIC order_book_runtime order_book_reference Threads::Threads)
+    target_link_libraries(order_book_benchmarking PUBLIC order_book_network order_book_reference Threads::Threads)
     # Recorded with every result, so a report says which configuration produced it.
     target_compile_definitions(order_book_benchmarking PRIVATE ORDER_BOOK_BUILD_CONFIG="$<CONFIG>")
     # GCC defines no macro under UBSan, so say whether order_book_enable_sanitizers applies it.

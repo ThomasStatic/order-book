@@ -174,6 +174,9 @@ Recorded results live in `results/`, one directory per session set, kept byte fo
 | `entry` | `symbol-compare` | One comparison of two symbols |
 | `entry` | `symbol-lookup` | One hit in an `InstrumentDirectory`, at 8, 64, and 512 instruments |
 | | `execute-command` | One command through `executeCommand`, overwriting a reused result |
+| | `check-entry` | One `checkEntry`, on a workload's real commands, already decoded |
+| `wire` | `frame-decode` | One `FrameReader::next` on a `Command` frame, in memory |
+| | `event-encode` | One `encodeEvent`, on the events those commands make |
 | `controls` | `cpu-loop` | A loop touching no memory |
 | | `memory-walk` | A random cycle through memory, one cache line at a time, at 256 KiB, 8 MiB, and 256 MiB |
 

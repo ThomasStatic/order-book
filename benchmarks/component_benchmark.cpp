@@ -7,6 +7,7 @@
 #include <latch>
 #include <limits>
 #include <random>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -18,6 +19,8 @@
 #include "benchmark_runner.hpp"
 #include "order_book/command.hpp"
 #include "order_book/command_log.hpp"
+#include "order_book/network/entry_check.hpp"
+#include "order_book/network/wire_codec.hpp"
 #include "order_book/order.hpp"
 #include "order_book/order_book.hpp"
 #include "order_book/order_index.hpp"
@@ -217,6 +220,96 @@ ComponentResult symbolCompareResult(std::size_t passes) {
     return result;
 }
 
+// A Hello, then each record as a Command frame.
+std::vector<std::byte> commandFrames(const std::vector<replay::ReplayRecord>& records) {
+    std::vector<std::byte> bytes(network::helloFrameBytes + records.size() * network::commandFrameBytes);
+    std::span<std::byte> out(bytes);
+    out = out.subspan(network::encodeHello(1, network::wireVersion, out));
+    for (const replay::ReplayRecord& record : records) {
+        out = out.subspan(network::encodeCommand(record.lineNumber, record.symbol, record.command, out));
+    }
+    return bytes;
+}
+
+ComponentResult frameDecodeResult(const Workload& workload, const std::vector<replay::ReplayRecord>& records, std::size_t passes) {
+    const std::vector<std::byte> bytes = commandFrames(records);
+    ComponentResult result{"frame-decode", workload.config.name, "in-memory", 0, 0, passes, 0, passes * records.size()};
+    for (std::size_t pass = 0; pass < passes; ++pass) {
+        network::FrameReader reader(network::FrameSource::CLIENT);
+        reader.feed(bytes);
+        std::size_t read = 0;
+        const Clock::time_point start = Clock::now();
+        while (std::holds_alternative<network::Frame>(reader.next())) {
+            ++read;
+        }
+        result.elapsedNanoseconds += nanosecondsBetween(start, Clock::now());
+        if (read != records.size() + 1) {
+            throw std::runtime_error("frame-decode read " + std::to_string(read) + " frames");
+        }
+    }
+    return result;
+}
+
+// Every event the workload's commands make on a book that starts empty.
+std::vector<BookEvent> eventsOf(const std::vector<replay::ReplayRecord>& records) {
+    OrderBook book;
+    replay::CommandResult result;
+    std::vector<BookEvent> events;
+    for (const replay::ReplayRecord& record : records) {
+        replay::executeCommand(book, record.command, result);
+        events.insert(events.end(), result.events().begin(), result.events().end());
+    }
+    return events;
+}
+
+ComponentResult eventEncodeResult(const Workload& workload, const std::vector<replay::ReplayRecord>& records, std::size_t passes) {
+    const std::vector<BookEvent> events = eventsOf(records);
+    const replay::Symbol symbol = componentSymbol();
+    std::array<std::byte, network::maxEventFrameBytes> out{};
+    ComponentResult result{"event-encode", workload.config.name, "in-memory", 0, 0, passes, 0, passes * events.size()};
+    std::size_t written = 0;
+    for (std::size_t pass = 0; pass < passes; ++pass) {
+        const Clock::time_point start = Clock::now();
+        for (const BookEvent& event : events) {
+            written += network::encodeEvent(1, symbol, event, true, out);
+        }
+        result.elapsedNanoseconds += nanosecondsBetween(start, Clock::now());
+    }
+    controlSink = written;
+    return result;
+}
+
+ComponentResult checkEntryResult(const Workload& workload, const std::vector<replay::ReplayRecord>& records, std::size_t passes) {
+    const runtime::InstrumentDirectory directory(
+        {runtime::Instrument{componentSymbol(), std::nullopt, std::nullopt, std::nullopt, std::nullopt}}, 1);
+    const std::vector<std::byte> bytes = commandFrames(records);
+    std::vector<network::CommandFrame> frames;
+    frames.reserve(records.size());
+    network::FrameReader reader(network::FrameSource::CLIENT);
+    reader.feed(bytes);
+    while (true) {
+        const network::FrameResult read = reader.next();
+        const network::Frame* frame = std::get_if<network::Frame>(&read);
+        if (frame == nullptr) {
+            break;
+        }
+        if (frame->type == network::FrameType::COMMAND) {
+            frames.push_back(network::decodeCommandFrame(*frame));
+        }
+    }
+    ComponentResult result{"check-entry", workload.config.name, "in-memory", 0, 0, passes, 0, passes * frames.size()};
+    std::uint64_t accepted = 0;
+    for (std::size_t pass = 0; pass < passes; ++pass) {
+        const Clock::time_point start = Clock::now();
+        for (const network::CommandFrame& frame : frames) {
+            accepted += std::holds_alternative<network::EntryAccepted>(network::checkEntry(frame, directory, false)) ? 1U : 0U;
+        }
+        result.elapsedNanoseconds += nanosecondsBetween(start, Clock::now());
+    }
+    controlSink = accepted;
+    return result;
+}
+
 // Hits only, cycling through the list, on one thread.
 ComponentResult symbolLookupResult(std::size_t instruments, std::size_t passes) {
     std::vector<runtime::Instrument> list;
@@ -382,7 +475,20 @@ std::vector<ComponentResult> runEntryGroup(const WorkloadComponentSettings& sett
     }
     for (const std::string& name : settings.workloads) {
         const Workload workload = generateWorkload(findWorkload(name), settings.commands, settings.seed);
-        results.push_back(executeCommandResult(workload, workloadRecords(workload, componentSymbol()), settings.passes));
+        const std::vector<replay::ReplayRecord> records = workloadRecords(workload, componentSymbol());
+        results.push_back(executeCommandResult(workload, records, settings.passes));
+        results.push_back(checkEntryResult(workload, records, settings.passes));
+    }
+    return results;
+}
+
+std::vector<ComponentResult> runWireGroup(const WorkloadComponentSettings& settings) {
+    std::vector<ComponentResult> results;
+    for (const std::string& name : settings.workloads) {
+        const Workload workload = generateWorkload(findWorkload(name), settings.commands, settings.seed);
+        const std::vector<replay::ReplayRecord> records = workloadRecords(workload, componentSymbol());
+        results.push_back(frameDecodeResult(workload, records, settings.passes));
+        results.push_back(eventEncodeResult(workload, records, settings.passes));
     }
     return results;
 }

@@ -11,15 +11,14 @@
 #include <utility>
 #include <variant>
 
+#include "order_book/little_endian.hpp"
 #include "order_book/xxh64.hpp"
 
 namespace order_book::replay {
+    using namespace little_endian;
+
     namespace {
         // Byte values are the format's own, never the C++ enumerators, and 0 is always absent.
-        constexpr std::uint8_t commandAdd = 1;
-        constexpr std::uint8_t commandCancel = 2;
-        constexpr std::uint8_t commandReplace = 3;
-
         constexpr std::uint8_t orderTypeLimit = 1;
         constexpr std::uint8_t orderTypeMarket = 2;
         constexpr std::uint8_t orderTypeStop = 3;
@@ -27,22 +26,21 @@ namespace order_book::replay {
 
         constexpr std::uint8_t timeInForceGtc = 1;
 
-        constexpr std::uint8_t flagPostOnly = 1;
-
-        // Field offsets within a record.
-        constexpr std::size_t commandOffset = 4;
-        constexpr std::size_t sideOffset = 5;
-        constexpr std::size_t orderTypeOffset = 6;
-        constexpr std::size_t timeInForceOffset = 7;
-        constexpr std::size_t symbolOffset = 8;
-        constexpr std::size_t orderIdOffset = 16;
-        constexpr std::size_t priceOffset = 20;
-        constexpr std::size_t quantityOffset = 24;
-        constexpr std::size_t stopPriceOffset = 28;
-        constexpr std::size_t ownerOffset = 32;
-        constexpr std::size_t flagsOffset = 36;
-        constexpr std::size_t selfTradePreventionOffset = 37;
-        constexpr std::size_t reservedOffset = 38;
+        // Where the body starts in a record, and its fields from there.
+        constexpr std::size_t bodyOffset = 4;
+        constexpr std::size_t commandOffset = 0;
+        constexpr std::size_t sideOffset = 1;
+        constexpr std::size_t orderTypeOffset = 2;
+        constexpr std::size_t timeInForceOffset = 3;
+        constexpr std::size_t symbolOffset = 4;
+        constexpr std::size_t orderIdOffset = 12;
+        constexpr std::size_t priceOffset = 16;
+        constexpr std::size_t quantityOffset = 20;
+        constexpr std::size_t stopPriceOffset = 24;
+        constexpr std::size_t ownerOffset = 28;
+        constexpr std::size_t flagsOffset = 32;
+        constexpr std::size_t selfTradePreventionOffset = 33;
+        constexpr std::size_t reservedOffset = 34;
 
         constexpr std::uint8_t sideByte(Side side) noexcept {
             return side == Side::BUY ? 1 : 2;
@@ -76,93 +74,23 @@ namespace order_book::replay {
             return 0;
         }
 
-        void store8(std::span<std::byte> out, std::size_t offset, std::uint8_t value) noexcept {
-            out[offset] = static_cast<std::byte>(value);
-        }
-
-        void store16(std::span<std::byte> out, std::size_t offset, std::uint16_t value) noexcept {
-            store8(out, offset, static_cast<std::uint8_t>(value & 0xFFU));
-            store8(out, offset + 1, static_cast<std::uint8_t>(value >> 8));
-        }
-
-        // A memcpy where the machine is little-endian: MSVC does not merge a loop of byte stores,
-        // and a record's encode and read run per command.
-        template <typename Word>
-        void storeWord(std::span<std::byte> out, std::size_t offset, Word value) noexcept {
-            if constexpr (std::endian::native == std::endian::little) {
-                std::memcpy(out.data() + offset, &value, sizeof(value));
-            } else {
-                for (std::size_t i = 0; i < sizeof(value); ++i) {
-                    store8(out, offset + i, static_cast<std::uint8_t>((value >> (i * 8)) & 0xFFU));
-                }
-            }
-        }
-
-        void store32(std::span<std::byte> out, std::size_t offset, std::uint32_t value) noexcept {
-            storeWord(out, offset, value);
-        }
-
-        void store64(std::span<std::byte> out, std::size_t offset, std::uint64_t value) noexcept {
-            storeWord(out, offset, value);
-        }
-
-        std::uint8_t load8(std::span<const std::byte> in, std::size_t offset) noexcept {
-            return static_cast<std::uint8_t>(in[offset]);
-        }
-
-        std::uint16_t load16(std::span<const std::byte> in, std::size_t offset) noexcept {
-            return static_cast<std::uint16_t>(load8(in, offset) | (load8(in, offset + 1) << 8));
-        }
-
-        template <typename Word>
-        Word loadWord(std::span<const std::byte> in, std::size_t offset) noexcept {
-            Word value = 0;
-            if constexpr (std::endian::native == std::endian::little) {
-                std::memcpy(&value, in.data() + offset, sizeof(value));
-            } else {
-                for (std::size_t i = 0; i < sizeof(value); ++i) {
-                    value = static_cast<Word>(value | (static_cast<Word>(load8(in, offset + i)) << (i * 8)));
-                }
-            }
-            return value;
-        }
-
-        std::uint32_t load32(std::span<const std::byte> in, std::size_t offset) noexcept {
-            return loadWord<std::uint32_t>(in, offset);
-        }
-
-        std::uint64_t load64(std::span<const std::byte> in, std::size_t offset) noexcept {
-            return loadWord<std::uint64_t>(in, offset);
-        }
-
         std::uint32_t chainChecksum(std::span<const std::byte> record, std::uint32_t previousChecksum) noexcept {
-            return static_cast<std::uint32_t>(xxh64(record.subspan(commandOffset), previousChecksum) & 0xFFFFFFFFULL);
+            return static_cast<std::uint32_t>(xxh64(record.subspan(bodyOffset), previousChecksum) & 0xFFFFFFFFULL);
         }
 
         void encodeInstructions(std::span<std::byte> out, bool postOnly, OwnerId owner, SelfTradePrevention mode) noexcept {
             store32(out, ownerOffset, owner);
-            store8(out, flagsOffset, postOnly ? flagPostOnly : 0);
+            store8(out, flagsOffset, postOnly ? rawFlagPostOnly : 0);
             store8(out, selfTradePreventionOffset, owner == 0 ? 0 : selfTradePreventionByte(mode));
         }
 
-        // Everything a row's checks see, unpacked.
-        struct Fields {
-            std::uint8_t command;
-            std::uint8_t side;
-            std::uint8_t orderType;
-            std::uint8_t timeInForce;
-            OrderId orderId;
-            Price price;
-            Quantity quantity;
-            Price stopPrice;
-            OwnerId owner;
-            bool postOnly;
-            std::uint8_t selfTradePrevention;
-        };
-
         class Decoder {
         public:
-            Decoder(const Fields& unpacked, std::size_t line) : fields(unpacked), lineNumber(line) {}
+            Decoder(const RawCommand& unpacked, std::size_t line) : fields(unpacked), lineNumber(line) {}
+
+            bool postOnly() const noexcept {
+                return (fields.flags & rawFlagPostOnly) != 0;
+            }
 
             ParseError error(ParseErrorCode code, std::size_t column, std::uint64_t value, const std::string& message) const {
                 return ParseError{lineNumber, code, std::string(columnNamesV3[column]), std::to_string(value), message};
@@ -177,7 +105,7 @@ namespace order_book::replay {
                     {priceColumn, fields.price},
                     {quantityColumn, fields.quantity},
                     {stopPriceColumn, fields.stopPrice},
-                    {postOnlyColumn, fields.postOnly ? 1U : 0U},
+                    {postOnlyColumn, postOnly() ? 1U : 0U},
                     {ownerColumn, fields.owner},
                     {selfTradePreventionColumn, fields.selfTradePrevention},
                 }};
@@ -269,7 +197,7 @@ namespace order_book::replay {
             }
 
             std::optional<ParseError> checkInstructions(bool postOnlyAllowed) const {
-                if (fields.postOnly && !postOnlyAllowed) {
+                if (postOnly() && !postOnlyAllowed) {
                     return error(ParseErrorCode::INVALID_COMBINATION, postOnlyColumn, 1, "post_only needs a GTC LIMIT order");
                 }
                 if (fields.owner == 0) {
@@ -297,12 +225,12 @@ namespace order_book::replay {
             }
 
             Command command() const {
-                if (fields.command == commandCancel) {
+                if (fields.command == rawCommandCancel) {
                     return CancelCommand{fields.orderId};
                 }
-                if (fields.command == commandReplace) {
+                if (fields.command == rawCommandReplace) {
                     return ReplaceCommand{fields.orderId, fields.price,  fields.quantity,
-                                          fields.postOnly, fields.owner, mode()};
+                                          postOnly(),     fields.owner, mode()};
                 }
                 constexpr std::array<OrderType, 5> types{OrderType::LIMIT, OrderType::LIMIT, OrderType::MARKET,
                                                          OrderType::STOP, OrderType::STOP_LIMIT};
@@ -310,13 +238,27 @@ namespace order_book::replay {
                                                            TimeInForce::FOK};
                 return AddCommand{fields.orderId, fields.side == 1 ? Side::BUY : Side::SELL, fields.price, fields.quantity,
                                   types[fields.orderType],     times[fields.timeInForce],   fields.stopPrice,
-                                  fields.postOnly,             fields.owner,                mode()};
+                                  postOnly(),                  fields.owner,                mode()};
             }
 
         private:
-            const Fields& fields;
+            const RawCommand& fields;
             std::size_t lineNumber;
         };
+
+        // What encoding a record requires, which only checked builds look at.
+        [[maybe_unused]] bool passedEntryCheck(const Symbol& symbol, const Command& command) noexcept {
+            return !symbol.empty() && std::visit(
+                                          [](const auto& held) {
+                                              using Kind = std::decay_t<decltype(held)>;
+                                              if constexpr (std::is_same_v<Kind, CancelCommand>) {
+                                                  return held.orderId != 0;
+                                              } else {
+                                                  return !malformedReason(toRequest(held));
+                                              }
+                                          },
+                                          command);
+        }
 
         const char* commandName(const Command& command) {
             return std::holds_alternative<AddCommand>(command)      ? "ADD"
@@ -396,10 +338,27 @@ namespace order_book::replay {
         return load32(encodedHeader, encodedHeader.size() - sizeof(std::uint64_t));
     }
 
-    std::uint32_t encodeLogRecord(const Symbol& symbol, const Command& command, std::uint32_t previousChecksum,
-                                  std::span<std::byte, logRecordBytes> out) noexcept {
+    RawCommand unpackCommandBody(std::span<const std::byte, commandBodyBytes> body) noexcept {
+        const std::span<const std::byte> in(body);
+        RawCommand raw{};
+        raw.command = load8(in, commandOffset);
+        raw.side = load8(in, sideOffset);
+        raw.orderType = load8(in, orderTypeOffset);
+        raw.timeInForce = load8(in, timeInForceOffset);
+        std::memcpy(raw.symbol.data(), in.data() + symbolOffset, raw.symbol.size());
+        raw.orderId = load32(in, orderIdOffset);
+        raw.price = load32(in, priceOffset);
+        raw.quantity = load32(in, quantityOffset);
+        raw.stopPrice = load32(in, stopPriceOffset);
+        raw.owner = load32(in, ownerOffset);
+        raw.flags = load8(in, flagsOffset);
+        raw.selfTradePrevention = load8(in, selfTradePreventionOffset);
+        raw.reserved = load16(in, reservedOffset);
+        return raw;
+    }
+
+    void packCommandBody(const Symbol& symbol, const Command& command, std::span<std::byte, commandBodyBytes> out) noexcept {
         std::memset(out.data(), 0, out.size());
-        assert(!symbol.empty());
         const std::span<std::byte> record(out);
         const std::array<char, Symbol::size> stored = symbol.bytes();
         std::memcpy(out.data() + symbolOffset, stored.data(), stored.size());
@@ -408,8 +367,7 @@ namespace order_book::replay {
                 using Kind = std::decay_t<decltype(held)>;
                 store32(record, orderIdOffset, held.orderId);
                 if constexpr (std::is_same_v<Kind, AddCommand>) {
-                    assert(!malformedReason(toRequest(held)));
-                    store8(record, commandOffset, commandAdd);
+                    store8(record, commandOffset, rawCommandAdd);
                     store8(record, sideOffset, sideByte(held.side));
                     store8(record, orderTypeOffset, orderTypeByte(held.orderType));
                     store8(record, timeInForceOffset, timeInForceByte(held.timeInForce));
@@ -418,18 +376,24 @@ namespace order_book::replay {
                     store32(record, stopPriceOffset, held.stopPrice);
                     encodeInstructions(record, held.postOnly, held.owner, held.selfTradePrevention);
                 } else if constexpr (std::is_same_v<Kind, CancelCommand>) {
-                    assert(held.orderId != 0);
-                    store8(record, commandOffset, commandCancel);
+                    store8(record, commandOffset, rawCommandCancel);
                 } else {
                     static_assert(std::is_same_v<Kind, ReplaceCommand>, "every Command alternative needs a record");
-                    assert(!malformedReason(toRequest(held)));
-                    store8(record, commandOffset, commandReplace);
+                    store8(record, commandOffset, rawCommandReplace);
                     store32(record, priceOffset, held.price);
                     store32(record, quantityOffset, held.quantity);
                     encodeInstructions(record, held.postOnly, held.owner, held.selfTradePrevention);
                 }
             },
             command);
+    }
+
+    std::uint32_t encodeLogRecord(const Symbol& symbol, const Command& command, std::uint32_t previousChecksum,
+                                  std::span<std::byte, logRecordBytes> out) noexcept {
+        assert(passedEntryCheck(symbol, command));
+        const std::span<std::byte> record(out);
+        store32(record, 0, 0);
+        packCommandBody(symbol, command, record.subspan(bodyOffset).first<commandBodyBytes>());
         const std::uint32_t checksum = chainChecksum(record, previousChecksum);
         store32(record, 0, checksum);
         return checksum;
@@ -443,41 +407,28 @@ namespace order_book::replay {
         }
         // Bytes this reader does not know: zero means today's behavior, and anything else is a
         // field it would misreplay by skipping.
-        const std::uint8_t flags = load8(record, flagsOffset);
-        if ((flags & ~flagPostOnly) != 0 || load16(record, reservedOffset) != 0 ||
+        const RawCommand fields = unpackCommandBody(record.subspan(bodyOffset).first<commandBodyBytes>());
+        if ((fields.flags & ~rawFlagPostOnly) != 0 || fields.reserved != 0 ||
             std::any_of(record.begin() + logRecordBytes, record.end(), [](std::byte extra) { return extra != std::byte{0}; })) {
             return fileError(lineNumber, ParseErrorCode::UNKNOWN_FIELD, "record uses a field this reader does not know");
         }
 
-        const Fields fields{load8(record, commandOffset),
-                            load8(record, sideOffset),
-                            load8(record, orderTypeOffset),
-                            load8(record, timeInForceOffset),
-                            load32(record, orderIdOffset),
-                            load32(record, priceOffset),
-                            load32(record, quantityOffset),
-                            load32(record, stopPriceOffset),
-                            load32(record, ownerOffset),
-                            (flags & flagPostOnly) != 0,
-                            load8(record, selfTradePreventionOffset)};
         const Decoder decoder(fields, lineNumber);
-        if (fields.command == 0 || fields.command > commandReplace) {
+        if (fields.command == 0 || fields.command > rawCommandReplace) {
             return decoder.error(ParseErrorCode::UNKNOWN_COMMAND, commandColumn, fields.command, "not a command");
         }
         if (fields.orderId == 0) {
             return decoder.error(ParseErrorCode::INVALID_VALUE, orderIdColumn, 0, "order_id must not be zero");
         }
-        const std::optional<ParseError> problem = fields.command == commandAdd      ? decoder.checkAdd()
-                                                  : fields.command == commandCancel ? decoder.checkCancel()
-                                                                                    : decoder.checkReplace();
+        const std::optional<ParseError> problem = fields.command == rawCommandAdd      ? decoder.checkAdd()
+                                                  : fields.command == rawCommandCancel ? decoder.checkCancel()
+                                                                                       : decoder.checkReplace();
         if (problem) {
             return *problem;
         }
-        std::array<char, Symbol::size> stored{};
-        std::memcpy(stored.data(), record.data() + symbolOffset, stored.size());
-        const std::optional<Symbol> symbol = Symbol::fromBytes(std::span<const char, Symbol::size>(stored));
+        const std::optional<Symbol> symbol = Symbol::fromBytes(std::span<const char, Symbol::size>(fields.symbol));
         if (!symbol) {
-            return ParseError{lineNumber, ParseErrorCode::INVALID_SYMBOL, "symbol", std::string(stored.data(), stored.size()),
+            return ParseError{lineNumber, ParseErrorCode::INVALID_SYMBOL, "symbol", std::string(fields.symbol.data(), fields.symbol.size()),
                               "not a symbol (1 to 8 of A-Z, 0-9, '.', '-')"};
         }
         return ReplayRecord{lineNumber, position + 1, decoder.command(), *symbol};

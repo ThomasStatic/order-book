@@ -26,6 +26,40 @@ namespace order_book::replay {
     inline constexpr std::size_t logHeaderBytes = 64;  // the fixed part
     inline constexpr std::size_t logRecordBytes = 40;
 
+    // A record after its checksum, which a wire Command frame carries unchanged.
+    inline constexpr std::size_t commandBodyBytes = 36;
+
+    inline constexpr std::uint8_t rawCommandAdd = 1;
+    inline constexpr std::uint8_t rawCommandCancel = 2;
+    inline constexpr std::uint8_t rawCommandReplace = 3;
+    inline constexpr std::uint8_t rawFlagPostOnly = 1;
+
+    // A command body's fields, unchecked. The log and the wire share this unpack and then check
+    // it their own ways, since they must report the same bad byte differently.
+    struct RawCommand {
+        std::uint8_t command;
+        std::uint8_t side;
+        std::uint8_t orderType;
+        std::uint8_t timeInForce;
+        std::array<char, Symbol::size> symbol;
+        OrderId orderId;
+        Price price;
+        Quantity quantity;
+        Price stopPrice;
+        OwnerId owner;
+        std::uint8_t flags;
+        std::uint8_t selfTradePrevention;
+        std::uint16_t reserved;
+
+        bool operator==(const RawCommand&) const = default;
+    };
+
+    RawCommand unpackCommandBody(std::span<const std::byte, commandBodyBytes> body) noexcept;
+
+    // Fills out with this command's fields, which it does not check. A mode with no owner is
+    // written absent. Never allocates or throws.
+    void packCommandBody(const Symbol& symbol, const Command& command, std::span<std::byte, commandBodyBytes> out) noexcept;
+
     struct LogHeader {
         std::uint32_t formatVersion = logFormatVersion;
         std::uint32_t minimumReaderVersion = logFormatVersion;
