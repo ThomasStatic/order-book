@@ -18,9 +18,10 @@ With the Visual Studio generator, build and run the Release configuration: `cmak
 | `--workload NAME` | run this workload; repeat for several (default: all eleven, the five v1 workloads then the six behavior workloads) |
 | `--size smoke\|standard\|extended` | 10,000, 100,000 (default), or 1,000,000 timed commands per run |
 | `--commands N` | exactly N timed commands, instead of a size (recorded as size `custom`) |
-| `--kind core\|replay\|replay-log\|shard\|queue\|both` | which path to time (default `core`, see below); `both` is `core` and `replay` |
-| `--instruments N` | for `shard` and `queue`: share the commands between N instruments on one shard (default 1) |
-| `--tamper-prediction` | for `shard` and `queue`: predict one trade too many, so the run must fail |
+| `--kind core\|replay\|replay-log\|shard\|queue\|gateway\|both` | which path to time (default `core`, see below); `both` is `core` and `replay` |
+| `--instruments N` | for `shard`, `queue`, and `gateway`: share the commands between N instruments on one shard (default 1) |
+| `--window N` | for `gateway`: commands each connection may have sent and not had answered (default 256) |
+| `--tamper-prediction` | for `shard`, `queue`, and `gateway`: predict one trade too many, so the run must fail |
 | `--repetitions N` | measured runs per workload and kind (default 5) |
 | `--warmup N` | runs before those, recorded but left out of summaries (default 1) |
 | `--seed N` | generator seed (default 42) |
@@ -51,6 +52,7 @@ The two kinds differ only in what sits between the commands and the book:
 
 - **`shard`** runs the same commands through `Shard::process` on one thread, with no rings, so its difference from `core` is `Command` decoding, `BookSet`, and result reuse. `--instruments N` shares the commands between N instruments, each its own unchanged stream.
 - **`queue`** puts real rings and a real matching thread between this thread and that shard, so its difference from `shard` is the hand-off.
+- **`gateway`** sends every command over real loopback sockets, one connection per instrument, to a `GatewayThread` on its own thread in front of the matching thread, so its difference from `queue` is sockets, framing, and the entry check. This thread is the client: it sends while it reads, never more than `--window` commands ahead of its answers, and counts what the books did from the event frames. Connecting and each `Hello` are untimed. The CSV and JSON record the window, and 0 for every other kind.
 
 - **`replay-log`** is `replay` with the same commands as a binary command log in memory instead of CSV text, which is what a `--kind` of its own keeps apart from `replay`'s unchanged path.
 

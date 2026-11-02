@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -39,7 +40,10 @@ namespace order_book::network {
         std::size_t hardLimit = 16 * 1024 * 1024;
         // How long, once every shard has stopped, connections have to take what they're owed.
         std::chrono::nanoseconds stopGrace = std::chrono::seconds(5);
-        // The gateway's only clock, read only during a stop.
+        // How long a thread with nothing outstanding looks before it sleeps, the matching
+        // thread's setting, so 0 sleeps at once and runtime::unlimitedSpin never does.
+        std::chrono::nanoseconds spinWindow = runtime::defaultSpinWindow;
+        // The gateway's only clock, read only while idle or stopping.
         std::function<std::chrono::steady_clock::time_point()> clock = std::chrono::steady_clock::now;
     };
 
@@ -59,11 +63,13 @@ namespace order_book::network {
         GatewayThread(const runtime::InstrumentDirectory& directory, std::vector<ShardLink> shards, SocketSet& sockets,
                       GatewaySettings settings = {});
 
-        // One pass: sleeps if mayWait, accepts, drains every response ring into per-connection
-        // buffers, retries parked connections oldest first, reads and answers up to framesPerPass
-        // frames from each connection that is neither parked nor backlogged, rings the doorbells,
-        // then makes one write per connection with bytes to send, closing those that are done.
-        void pass();
+        // One pass: waits, unless a connection's reader still holds frames, sleeping only if
+        // mayWait has held for the spin window; accepts, drains every response ring into
+        // per-connection buffers, retries parked connections oldest first, reads and answers up
+        // to framesPerPass frames from each connection that is neither parked nor backlogged,
+        // rings the doorbells, then makes one write per connection with bytes to send, closing
+        // those that are done. Returns whether it moved anything.
+        bool pass();
 
         // Closes the listener, refuses parked commands, and from now on reads only to refuse, then
         // sends each shard a stop marker. Once every shard has stopped, connections stop being
@@ -73,8 +79,9 @@ namespace order_book::network {
         // Whether a stop has run its course: every shard stopped, and every connection closed.
         bool finished() const noexcept;
 
-        // Whether nothing is in flight, parked, read and waiting, or unsent, so no response can
-        // arrive during a sleep, and a matching thread never makes a system call on the way back.
+        // Whether nothing is in flight, parked, or read and waiting, and no stop has begun, so no
+        // response can arrive during a sleep, and a matching thread never makes a system call on
+        // the way back. Unsent bytes don't keep it awake, since a wait watches for room.
         bool mayWait() const noexcept;
 
     private:
@@ -99,6 +106,9 @@ namespace order_book::network {
             bool finishing = false;      // closes once it has answered everything it read
         };
 
+        bool framesInAReader() const noexcept;
+        WaitMode waitMode();
+        void listInterest();
         void acceptConnections();
         void refuseConnection(SocketId socket);
         void closeConnection(std::uint32_t index);
@@ -130,11 +140,20 @@ namespace order_book::network {
         std::vector<char> shardRung;     // pushed to since the last doorbell, per shard
         std::vector<char> markerOwed;    // per shard
         std::vector<std::byte> readBuffer;
+        std::vector<SocketInterest> interest;
         std::uint64_t inFlight = 0;  // commands pushed whose last event hasn't come back
+        bool moved = false;          // in this pass
+        bool idle = false;
+        std::chrono::steady_clock::time_point idleSince;
         std::size_t shardsStopped = 0;
         bool stopBegun = false;
         bool flushing = false;  // every shard has stopped
         std::chrono::steady_clock::time_point graceEnds;
     };
+
+    // The real thread: passes until a stop has run its course, beginning one once stopRequested
+    // is set, and yielding after a pass that moved nothing, so a small machine still progresses
+    // while this spins. Whoever sets stopRequested must also wake the thread's SocketSet.
+    void runGateway(GatewayThread& gateway, const std::atomic<bool>& stopRequested);
 
 }  // namespace order_book::network

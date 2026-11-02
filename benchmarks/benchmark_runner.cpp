@@ -15,6 +15,9 @@
 #include "order_book/cancellation_result.hpp"
 #include "order_book/command_log.hpp"
 #include "order_book/order.hpp"
+#include "order_book/network/gateway_thread.hpp"
+#include "order_book/network/tcp.hpp"
+#include "order_book/network/wire_codec.hpp"
 #include "order_book/order_book.hpp"
 #include "order_book/replay_engine.hpp"
 #include <future>
@@ -302,13 +305,14 @@ const char* benchmarkKindName(BenchmarkKind kind) {
         case BenchmarkKind::REPLAY_LOG: return "replay-log";
         case BenchmarkKind::SHARD: return "shard";
         case BenchmarkKind::QUEUE: return "queue";
+        case BenchmarkKind::GATEWAY: return "gateway";
     }
     return "unknown";
 }
 
 BenchmarkKind parseBenchmarkKind(std::string_view name) {
     for (const BenchmarkKind kind : {BenchmarkKind::CORE, BenchmarkKind::REPLAY, BenchmarkKind::REPLAY_LOG, BenchmarkKind::SHARD,
-                                     BenchmarkKind::QUEUE}) {
+                                     BenchmarkKind::QUEUE, BenchmarkKind::GATEWAY}) {
         if (name == benchmarkKindName(kind)) {
             return kind;
         }
@@ -589,10 +593,241 @@ void QueueRun::check() const {
     requireOutcomes(outcomes(), *workloads, BenchmarkKind::QUEUE);
 }
 
-Measurement runInstrumentsOnce(const std::vector<Workload>& workloads, BenchmarkKind kind) {
+struct GatewayRun::Connection {
+    Connection() : reader(network::FrameSource::ENGINE) {}
+
+    network::TcpSocket socket;
+    network::FrameReader reader;
+    std::vector<std::byte> bytes;  // every command frame, built before the timed region
+    std::size_t sentBytes = 0;
+    std::size_t commands = 0;
+    std::size_t answered = 0;
+};
+
+namespace {
+    constexpr std::size_t commandFrameBytes = 12 + replay::commandBodyBytes;
+
+    void sendAll(const network::TcpSocket& socket, std::span<const std::byte> bytes) {
+        while (!bytes.empty()) {
+            const std::optional<std::size_t> taken = socket.send(bytes);
+            if (!taken) {
+                throw std::runtime_error("gateway: a connection closed while it was being sent to");
+            }
+            bytes = bytes.subspan(*taken);
+        }
+    }
+}  // namespace
+
+GatewayRun::GatewayRun(const std::vector<Workload>& runWorkloads, std::size_t commandWindow)
+    : workloads(&runWorkloads),
+      window(commandWindow),
+      commands(runtime::defaultCommandRingSlots),
+      responses(runtime::defaultResponseRingSlots),
+      sockets(std::make_unique<network::PollSocketSet>()),
+      connections(runWorkloads.size()),
+      counted(runWorkloads.size()) {
+    if (window == 0) {
+        throw std::invalid_argument("a gateway run needs a window of at least 1");
+    }
+    std::promise<void> ready;
+    std::future<void> started = ready.get_future();
+    matching = std::thread([this, &ready] {
+        // As for the queue kind, whatever can fail before the loop runs fails while this waits.
+        std::optional<ShardRun> run;
+        std::optional<runtime::MatchingLoop> loop;
+        try {
+            run.emplace(*workloads);
+            loop.emplace(run->onThisThread(), doorbell, std::vector<runtime::RingPair>{runtime::RingPair{&commands, &responses}});
+        } catch (...) {
+            ready.set_exception(std::current_exception());
+            return;
+        }
+        books = &*run;
+        ready.set_value();
+        try {
+            loop->run();
+            finalShapes = run->outcomes();
+            for (std::size_t i = 0; i < workloads->size(); ++i) {
+                requireNoGrowth(run->onThisThread().books().book(run->slotOf(static_cast<std::uint32_t>(i))), (*workloads)[i]);
+            }
+        } catch (...) {
+            matchingFailure = std::current_exception();
+        }
+    });
+    try {
+        started.get();
+    } catch (...) {
+        matching.join();
+        throw;
+    }
+
+    gateway = std::thread([this] {
+        try {
+            network::GatewayThread thread(books->instruments(), {network::ShardLink{&commands, &responses, &doorbell}}, *sockets);
+            network::runGateway(thread, stopRequested);
+        } catch (...) {
+            gatewayFailure = std::current_exception();
+            gatewayFailed.store(true, std::memory_order_release);
+        }
+    });
+
+    try {
+        for (std::uint32_t book = 0; book < connections.size(); ++book) {
+            Connection& connection = connections[book];
+            const replay::Symbol symbol = instrumentSymbol(book);
+            const std::size_t count = (*workloads)[book].timedCount();
+            connection.commands = count;
+            total += count;
+            connection.bytes.resize(count * commandFrameBytes);
+            for (std::size_t i = 0; i < count; ++i) {
+                const std::span<std::byte> frame = std::span<std::byte>(connection.bytes).subspan(i * commandFrameBytes, commandFrameBytes);
+                network::encodeCommand(i, symbol, books->commandOf(book, i), frame);
+                // Every frame built is sent, or run throws, so it is counted here, untimed.
+                countCommand(books->commandOf(book, i), {}, counted[book]);
+            }
+
+            connection.socket = network::TcpSocket::connectLoopback(sockets->port());
+            std::array<std::byte, 64> hello{};
+            sendAll(connection.socket, std::span<const std::byte>(hello).first(network::encodeHello(0, network::wireVersion, hello)));
+            for (;;) {  // the Welcome, so the connection has been taken on before anything is timed
+                std::array<std::byte, 64> into{};
+                const network::ReadResult read = connection.socket.receive(into);
+                if (read.status != network::ReadStatus::OPEN) {
+                    throw std::runtime_error("gateway: a connection closed before its Welcome");
+                }
+                connection.reader.feed(std::span<const std::byte>(into).first(read.bytes));
+                const network::FrameResult result = connection.reader.next();
+                if (const network::Frame* frame = std::get_if<network::Frame>(&result)) {
+                    if (frame->type != network::FrameType::WELCOME) {
+                        throw std::runtime_error("gateway: a Hello was not answered with a Welcome");
+                    }
+                    break;
+                }
+            }
+            connection.socket.setNonBlocking();
+        }
+    } catch (...) {
+        stopRequested.store(true, std::memory_order_release);
+        sockets->wake();
+        gateway.join();
+        matching.join();
+        throw;
+    }
+}
+
+GatewayRun::~GatewayRun() {
+    if (!finished) {
+        try {
+            finish();
+        } catch (const std::exception&) {  // a destructor can't report it; check would have
+        }
+    }
+}
+
+void GatewayRun::receive(std::size_t index) {
+    Connection& connection = connections[index];
+    std::array<std::byte, 64 * 1024> into;
+    const network::ReadResult read = connection.socket.receive(into);
+    if (read.status != network::ReadStatus::OPEN) {
+        throw std::runtime_error("gateway: a connection closed with commands unanswered");
+    }
+    if (read.bytes == 0) {
+        return;
+    }
+    connection.reader.feed(std::span<const std::byte>(into).first(read.bytes));
+    for (network::FrameResult result = connection.reader.next(); std::holds_alternative<network::Frame>(result);
+         result = connection.reader.next()) {
+        const network::Frame& frame = std::get<network::Frame>(result);
+        const std::optional<network::EventFrame> event = network::decodeEvent(frame);
+        if (!event) {
+            throw std::runtime_error("gateway: an answer was not an event");
+        }
+        countResponse(event->event, counted[index]);
+        if (frame.last) {
+            ++connection.answered;
+            ++answered;
+        }
+    }
+}
+
+void GatewayRun::run() {
+    while (answered < total) {
+        if (gatewayFailed.load(std::memory_order_acquire)) {
+            throw std::runtime_error("gateway: the gateway thread failed");
+        }
+        for (std::size_t index = 0; index < connections.size(); ++index) {
+            Connection& connection = connections[index];
+            const std::size_t allowed = std::min(connection.commands, connection.answered + window) * commandFrameBytes;
+            if (connection.sentBytes < allowed) {
+                const std::optional<std::size_t> taken =
+                    connection.socket.send(std::span<const std::byte>(connection.bytes).subspan(connection.sentBytes, allowed - connection.sentBytes));
+                if (!taken) {
+                    throw std::runtime_error("gateway: a connection closed while it was being sent to");
+                }
+                connection.sentBytes += *taken;
+            }
+            receive(index);
+        }
+    }
+}
+
+void GatewayRun::finish() {
+    if (finished) {
+        return;
+    }
+    finished = true;
+    for (Connection& connection : connections) {
+        connection.socket.shutdownSend();
+        std::array<std::byte, 1024> into;
+        for (int spins = 0; connection.socket.receive(into).status == network::ReadStatus::OPEN && spins < 100'000'000; ++spins) {
+        }
+    }
+    stopRequested.store(true, std::memory_order_release);
+    sockets->wake();
+    gateway.join();
+    if (gatewayFailure) {
+        // The gateway thread has gone, so this one may write its ring and stop the shard itself.
+        while (!commands.tryPush(runtime::CommandElement::stopMarker())) {
+            std::this_thread::yield();
+        }
+        doorbell.ring();
+    }
+    matching.join();
+    if (gatewayFailure) {
+        std::rethrow_exception(gatewayFailure);
+    }
+    if (matchingFailure) {
+        std::rethrow_exception(matchingFailure);
+    }
+}
+
+std::vector<WorkloadOutcome> GatewayRun::outcomes() const {
+    std::vector<WorkloadOutcome> row = counted;
+    for (std::size_t i = 0; i < row.size(); ++i) {
+        row[i].finalActiveOrders = finalShapes[i].finalActiveOrders;
+        row[i].finalPriceLevels = finalShapes[i].finalPriceLevels;
+        row[i].finalPendingStops = finalShapes[i].finalPendingStops;
+    }
+    return row;
+}
+
+void GatewayRun::check() const {
+    requireOutcomes(outcomes(), *workloads, BenchmarkKind::GATEWAY);
+}
+
+Measurement runInstrumentsOnce(const std::vector<Workload>& workloads, BenchmarkKind kind, std::size_t window) {
     Measurement measurement;
     std::vector<WorkloadOutcome> outcomes;
-    if (kind == BenchmarkKind::SHARD) {
+    if (kind == BenchmarkKind::GATEWAY) {
+        GatewayRun run(workloads, window);
+        const Clock::time_point start = Clock::now();
+        run.run();
+        measurement.elapsedNanoseconds = nanosecondsBetween(start, Clock::now());
+        run.finish();
+        run.check();
+        outcomes = run.outcomes();
+        measurement.window = window;
+    } else if (kind == BenchmarkKind::SHARD) {
         ShardRun run(workloads);
         const Clock::time_point start = Clock::now();
         run.run();
@@ -622,11 +857,11 @@ Measurement runInstrumentsOnce(const std::vector<Workload>& workloads, Benchmark
 
 std::vector<Measurement> runInstrumentsRepeated(const std::vector<Workload>& workloads, BenchmarkKind kind,
                                                 const RunSettings& settings) {
-    return repeated(settings, [&workloads, kind] { return runInstrumentsOnce(workloads, kind); });
+    return repeated(settings, [&workloads, kind, &settings] { return runInstrumentsOnce(workloads, kind, settings.window); });
 }
 
 Measurement runOnce(const Workload& workload, BenchmarkKind kind) {
-    if (kind == BenchmarkKind::SHARD || kind == BenchmarkKind::QUEUE) {
+    if (kind == BenchmarkKind::SHARD || kind == BenchmarkKind::QUEUE || kind == BenchmarkKind::GATEWAY) {
         return runInstrumentsOnce({workload}, kind);
     }
     Measurement measurement = kind == BenchmarkKind::CORE ? runCore(workload) : runReplay(workload, kind == BenchmarkKind::REPLAY_LOG);

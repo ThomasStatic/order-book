@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "engine_harness.hpp"
+#include "gateway_frames.hpp"
 #include "order_book/little_endian.hpp"
 #include "order_book/network/entry_check.hpp"
 #include "order_book/network/gateway_thread.hpp"
@@ -37,7 +38,9 @@ using namespace order_book;
 using namespace order_book::network;
 using namespace order_book::runtime;
 using namespace order_book::little_endian;
-using Bytes = std::vector<std::byte>;
+using order_book::gateway_testing::Bytes;
+using order_book::gateway_testing::helloFrame;
+using order_book::gateway_testing::rawCommandFrame;
 
 void expect(bool condition, const std::string& message) {
     if (!condition) {
@@ -71,9 +74,11 @@ struct ShardActor {
 // runs one gateway pass.
 class Rig {
 public:
+    // Its gateway sleeps as soon as it may, on a clock only the test moves.
     Rig(std::vector<Instrument> instruments, std::uint32_t shardCount, std::size_t ringSlots, GatewaySettings settings = {})
         : directory(std::move(instruments), shardCount) {
         settings.clock = [this] { return now; };
+        settings.spinWindow = std::chrono::nanoseconds::zero();
         std::vector<ShardLink> links;
         for (std::uint32_t number = 0; number < shardCount; ++number) {
             shards.push_back(std::make_unique<ShardActor>(directory, number, ringSlots));
@@ -177,12 +182,6 @@ private:
     FrameReader reader;
     std::vector<Received> received;
 };
-
-Bytes helloFrame(Correlation correlation = 1) {
-    Bytes frame(64);
-    frame.resize(encodeHello(correlation, wireVersion, frame));
-    return frame;
-}
 
 replay::AddCommand limit(OrderId id, Side side, Price price, Quantity quantity = 10) {
     replay::AddCommand command{};
@@ -377,9 +376,11 @@ void testAPassTakesAtMost64Frames() {
     expect(rig.match() == 64, "the first pass queues 64 of them");
     expect(!rig.gateway->mayWait(), "frames left in the buffer keep the gateway awake");
     const std::size_t waits = rig.sockets.waits();
+    const std::size_t looks = rig.sockets.looks();
     rig.gateway->pass();
     expect(rig.match() == 36, "and the next pass the rest, which were already read");
     expect(rig.sockets.waits() == waits, "with no sleep while frames sat in the buffer");
+    expect(rig.sockets.looks() == looks, "nor even a look, so a streaming client pays no system call for it");
 }
 
 // Every one of these is answered at entry, so nothing is in flight and nothing is unsent, and only
@@ -568,6 +569,56 @@ void testAReusedIndexHearsNothingOfTheDead() {
     rig.gateway->pass();
     expect(reuser.answered() == 1, "and its own still arrives");
     expect(rig.gateway->mayWait(), "and with both answered, nothing is in flight");
+}
+
+// A gateway with nothing outstanding looks for the spin window before it sleeps.
+void testTheSpinWindowComesBeforeSleep() {
+    GatewaySettings settings;
+    Rig rig({on("AAPL", 0)}, 1, 16);
+    settings.clock = [&rig] { return rig.now; };
+    settings.spinWindow = std::chrono::microseconds(10);
+    InMemorySocketSet sockets;
+    GatewayThread gateway(rig.directory, {ShardLink{&rig.shards[0]->commands, &rig.shards[0]->responses, &rig.shards[0]->doorbell}},
+                          sockets, settings);
+
+    gateway.pass();
+    expect(sockets.waits() == 0 && sockets.looks() == 1, "at first it only looks");
+    rig.now += std::chrono::microseconds(10) - std::chrono::nanoseconds(1);
+    gateway.pass();
+    expect(sockets.waits() == 0, "and still does a moment short of the window");
+    rig.now += std::chrono::nanoseconds(1);
+    gateway.pass();
+    expect(sockets.waits() == 1, "then it sleeps");
+    gateway.pass();
+    expect(sockets.waits() == 1, "and after waking spins again before the next sleep");
+
+    GatewaySettings never = settings;
+    never.spinWindow = unlimitedSpin;
+    InMemorySocketSet spinning;
+    GatewayThread spinner(rig.directory, {ShardLink{&rig.shards[0]->commands, &rig.shards[0]->responses, &rig.shards[0]->doorbell}},
+                          spinning, never);
+    spinner.pass();
+    rig.now += std::chrono::hours(1);
+    spinner.pass();
+    expect(spinning.waits() == 0, "an unlimited window never sleeps");
+}
+
+// Unsent bytes are a reason to watch a socket, not to stay awake.
+void testABackloggedClientLetsTheGatewaySleep() {
+    Rig rig({on("AAPL", 0)}, 1, 16);
+    Client client(rig.sockets);
+    introduce(rig, client);
+    rig.sockets.limitWrite(0);
+    client.send(refusedStream(1));
+    rig.gateway->pass();
+    expect(rig.gateway->mayWait(), "with nothing in flight it may sleep");
+
+    bool watchedForWriting = false;
+    rig.sockets.onWait([&](std::span<const SocketInterest> interest) {
+        watchedForWriting = interest.size() == 1 && interest[0].socket == client.socket && interest[0].write;
+    });
+    rig.gateway->pass();
+    expect(watchedForWriting, "and the wait watches for room to send");
 }
 
 void testSleepsOnlyWithNothingOutstanding() {
@@ -997,30 +1048,6 @@ constexpr std::uint32_t steppedShards = 2;
 constexpr std::size_t steppedConnections = 3;
 constexpr std::size_t steppedInstruments = 6;
 
-Bytes rawCommandFrame(Correlation correlation, const replay::RawCommand& raw) {
-    Bytes frame(12 + replay::commandBodyBytes);
-    const std::span<std::byte> out(frame);
-    store16(out, 0, static_cast<std::uint16_t>(frame.size()));
-    store8(out, 2, static_cast<std::uint8_t>(FrameType::COMMAND));
-    store64(out, 4, correlation);
-    const std::span<std::byte> body = out.subspan(12);
-    store8(body, 0, raw.command);
-    store8(body, 1, raw.side);
-    store8(body, 2, raw.orderType);
-    store8(body, 3, raw.timeInForce);
-    std::memcpy(body.data() + 4, raw.symbol.data(), raw.symbol.size());
-    store32(body, 12, raw.orderId);
-    store32(body, 16, raw.price);
-    store32(body, 20, raw.quantity);
-    store32(body, 24, raw.stopPrice);
-    store32(body, 28, raw.owner);
-    store8(body, 32, raw.flags);
-    store8(body, 33, raw.selfTradePrevention);
-    store16(body, 34, raw.reserved);
-    expect(replay::unpackCommandBody(std::span<const std::byte, replay::commandBodyBytes>(body)) == raw, "the test's frame is the command");
-    return frame;
-}
-
 SteppedStream steppedStream(std::uint64_t seed, std::size_t commands) {
     engine_testing::EngineSeedConfig config;
     config.seed = seed;
@@ -1058,6 +1085,7 @@ SteppedStream steppedStream(std::uint64_t seed, std::size_t commands) {
         const replay::RawCommand raw = engine_testing::rawCommandOf(*line.converted, stored);
         const std::size_t connection = line.instrument % steppedConnections;
         const Bytes frame = rawCommandFrame(correlation, raw);
+        expect(order_book::gateway_testing::roundTrips(frame, raw), "the test's frame is the command");
         stream.bytes[connection].insert(stream.bytes[connection].end(), frame.begin(), frame.end());
 
         const std::string name = symbols[line.instrument].text();
@@ -1090,16 +1118,31 @@ struct SteppedTotals {
     std::size_t commandsRefused = 0;
 };
 
-// Sleeping is only safe with every command read so far answered, counted here from the bytes the
-// gateway took and the frames the client holds, and from nothing the gateway says about itself.
-void checkNothingOutstanding(Rig& rig, std::vector<Client>& clients) {
+// Sleeping is only safe with nothing in a ring, and with the wait watching every connection that
+// still has bytes to move: written to, if it is owed answers, counted here from the bytes the
+// gateway took and the frames the client holds, and read from, if it sent bytes not yet taken.
+// None of it comes from what the gateway says about itself.
+void checkNothingOutstanding(Rig& rig, std::vector<Client>& clients, std::span<const SocketInterest> interest) {
     for (const std::unique_ptr<ShardActor>& shard : rig.shards) {
-        expect(!shard->commands.hasItems() && !shard->responses.hasItems(), "a gateway slept with a ring holding work");
+        expect(!shard->commands.hasItems() && !shard->responses.hasItems(), "a gateway slept with a command in flight");
     }
+    const auto watched = [&interest](SocketId socket, bool forWriting) {
+        return std::any_of(interest.begin(), interest.end(), [&](const SocketInterest& wanted) {
+            return wanted.socket == socket && (forWriting ? wanted.write : wanted.read || wanted.write);
+        });
+    };
     for (Client& client : clients) {
+        if (!rig.sockets.accepted(client.socket) || rig.sockets.closed(client.socket)) {
+            continue;  // a connection not yet accepted wakes a real wait through the listener
+        }
         const std::size_t taken = rig.sockets.bytesRead(client.socket);
         const std::size_t commandsRead = taken < helloFrame().size() ? 0 : (taken - helloFrame().size()) / 48;
-        expect(client.answered() == commandsRead, "a gateway slept with a command in flight");
+        if (client.answered() != commandsRead) {
+            expect(watched(client.socket, true), "a gateway slept owing a connection answers it wasn't watching to send");
+        }
+        if (rig.sockets.bytesSent(client.socket) != taken) {
+            expect(watched(client.socket, false), "a gateway slept on bytes it wasn't watching to read");
+        }
     }
 }
 
@@ -1111,8 +1154,8 @@ void runSchedule(const SteppedStream& stream, std::uint64_t seed, SteppedTotals&
     for (std::size_t i = 0; i < steppedConnections; ++i) {
         clients.emplace_back(rig.sockets);
     }
-    rig.sockets.onWait([&] {
-        checkNothingOutstanding(rig, clients);
+    rig.sockets.onWait([&](std::span<const SocketInterest> interest) {
+        checkNothingOutstanding(rig, clients, interest);
         ++totals.sleeps;
     });
 
@@ -1289,6 +1332,8 @@ int main() {
     testAParkedConnectionHoldsItsOtherShardToo();
     testAReusedIndexHearsNothingOfTheDead();
     testSleepsOnlyWithNothingOutstanding();
+    testTheSpinWindowComesBeforeSleep();
+    testABackloggedClientLetsTheGatewaySleep();
     testEveryProtocolErrorIsAnsweredThenCloses();
     testAProtocolErrorWaitsForWhatIsInFlight();
     testAHalfCloseIsAnsweredInFull();

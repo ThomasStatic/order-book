@@ -596,11 +596,11 @@ void testCsvExport() {
         "workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,"
         "elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,"
         "volume,final_active_orders,final_price_levels,replaces,expirations,preventions,stops_triggered,"
-        "final_pending_stops,instruments\n"
+        "final_pending_stops,instruments,window\n"
         "small-book,core,custom,42,3,Release,true,1,true,600,1500000000,400.000,2500000.000,400,200,0.333333,0,50,"
-        "700,90,12,0,0,0,0,0,1\n"
+        "700,90,12,0,0,0,0,0,1,0\n"
         "small-book,core,custom,42,3,Release,true,1,false,600,3000000000,200.000,5000000.000,400,200,0.333333,0,50,"
-        "700,90,12,0,0,0,0,0,1\n";
+        "700,90,12,0,0,0,0,0,1,0\n";
     expect(csv == expected, "CSV export:\n" + csv);
 }
 

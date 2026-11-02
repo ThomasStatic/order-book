@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <thread>
 #include <utility>
 #include <variant>
 
@@ -29,20 +30,64 @@ namespace order_book::network {
           markerOwed(shards.size(), 0),
           readBuffer(readBufferBytes) {
         parkedOldestFirst.reserve(connectionsPerThread);
+        interest.reserve(connectionsPerThread);
     }
 
-    bool GatewayThread::mayWait() const noexcept {
-        if (stopBegun || inFlight != 0 || !parkedOldestFirst.empty()) {
-            return false;
-        }
-        return std::none_of(connections.begin(), connections.end(), [](const Connection& connection) {
-            return connection.open && (connection.framesWaiting || !connection.unsent.empty());
+    bool GatewayThread::framesInAReader() const noexcept {
+        return std::any_of(connections.begin(), connections.end(), [this](const Connection& connection) {
+            return connection.open && connection.reading && connection.framesWaiting && !connection.parked &&
+                   connection.unsent.size() <= settings.highWaterMark;
         });
     }
 
-    void GatewayThread::pass() {
-        if (mayWait()) {
-            sockets.wait();
+    bool GatewayThread::mayWait() const noexcept {
+        return !stopBegun && inFlight == 0 && parkedOldestFirst.empty() && !framesInAReader();
+    }
+
+    WaitMode GatewayThread::waitMode() {
+        if (!mayWait()) {
+            idle = false;
+            return WaitMode::LOOK;
+        }
+        if (settings.spinWindow == std::chrono::nanoseconds::zero()) {
+            return WaitMode::SLEEP;
+        }
+        if (settings.spinWindow == runtime::unlimitedSpin) {
+            return WaitMode::LOOK;
+        }
+        const std::chrono::steady_clock::time_point now = settings.clock();
+        if (!idle) {
+            idle = true;
+            idleSince = now;
+        }
+        return now - idleSince >= settings.spinWindow ? WaitMode::SLEEP : WaitMode::LOOK;
+    }
+
+    void GatewayThread::listInterest() {
+        interest.clear();
+        for (const Connection& connection : connections) {
+            if (!connection.open) {
+                continue;
+            }
+            const bool read = connection.reading && !connection.parked && connection.unsent.size() <= settings.highWaterMark;
+            const bool write = !connection.unsent.empty();
+            if (read || write) {
+                interest.push_back(SocketInterest{connection.socket, read, write});
+            }
+        }
+    }
+
+    bool GatewayThread::pass() {
+        moved = false;
+        // A pass skips the wait while a reader holds frames, so a lone streaming client doesn't
+        // pay one per framesPerPass of them.
+        if (!framesInAReader()) {
+            const WaitMode mode = waitMode();
+            listInterest();
+            sockets.wait(interest, mode);
+            if (mode == WaitMode::SLEEP) {
+                idle = false;
+            }
         }
         acceptConnections();
         drainResponses();
@@ -64,6 +109,18 @@ namespace order_book::network {
                 if (connections[index].open) {
                     closeConnection(index);
                 }
+            }
+        }
+        return moved;
+    }
+
+    void runGateway(GatewayThread& gateway, const std::atomic<bool>& stopRequested) {
+        while (!gateway.finished()) {
+            if (stopRequested.load(std::memory_order_acquire)) {
+                gateway.beginStop();
+            }
+            if (!gateway.pass()) {
+                std::this_thread::yield();
             }
         }
     }
@@ -91,6 +148,7 @@ namespace order_book::network {
             const auto vacant = std::find_if(connections.begin(), connections.end(), [](const Connection& held) { return !held.open; });
             if (vacant == connections.end()) {
                 refuseConnection(*socket);
+                moved = true;
                 continue;
             }
             vacant->reader = FrameReader(FrameSource::CLIENT);
@@ -102,6 +160,7 @@ namespace order_book::network {
             vacant->reading = true;
             vacant->framesWaiting = false;
             vacant->finishing = false;
+            moved = true;
         }
     }
 
@@ -124,12 +183,14 @@ namespace order_book::network {
         sockets.close(connection.socket);
         connection.open = false;
         ++connection.generation;
+        moved = true;
     }
 
     void GatewayThread::drainResponses() {
         for (std::uint32_t shard = 0; shard < shards.size(); ++shard) {
             runtime::Ring<runtime::ResponseRecord>& responses = *shards[shard].responses;
             responses.drain(responses.capacity(), [this, shard](const runtime::ResponseRecord& record) {
+                moved = true;
                 if (record.kind == runtime::ResponseKind::SHARD_STOPPED) {
                     ++shardsStopped;
                     return;
@@ -192,6 +253,7 @@ namespace order_book::network {
             if (markerOwed[shard] != 0 && shards[shard].commands->tryPush(runtime::CommandElement::stopMarker())) {
                 markerOwed[shard] = 0;
                 shardRung[shard] = 1;
+                moved = true;
             }
         }
     }
@@ -214,6 +276,7 @@ namespace order_book::network {
             const FrameResult result = connection.reader.next();
             if (const Frame* frame = std::get_if<Frame>(&result)) {
                 ++frames;
+                moved = true;
                 takeFrame(index, *frame);
                 if (connection.parked) {
                     return;
@@ -293,6 +356,7 @@ namespace order_book::network {
         }
         ++inFlight;
         ++connections[index].inFlight;
+        moved = true;
         shardRung[shard] = 1;
         return true;
     }
@@ -330,6 +394,7 @@ namespace order_book::network {
                 return;
             }
             connection.unsent.erase(connection.unsent.begin(), connection.unsent.begin() + static_cast<std::ptrdiff_t>(*written));
+            moved = moved || *written != 0;
         }
         if (connection.unsent.size() > settings.hardLimit) {
             closeConnection(index);

@@ -28,10 +28,14 @@ namespace order_book::network {
         sockets.at(socket).reset = true;
     }
 
-    void InMemorySocketSet::wait() {
+    void InMemorySocketSet::wait(std::span<const SocketInterest> interest, WaitMode mode) {
+        if (mode == WaitMode::LOOK) {
+            ++lookCount;
+            return;
+        }
         ++waitCount;
         if (waitAction) {
-            waitAction();
+            waitAction(interest);
         }
     }
 

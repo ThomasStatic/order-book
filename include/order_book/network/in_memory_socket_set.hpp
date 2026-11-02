@@ -26,21 +26,24 @@ namespace order_book::network {
         // The most one read or write may move from now on.
         void limitRead(std::size_t bytes) noexcept { readLimit = bytes; }
         void limitWrite(std::size_t bytes) noexcept { writeLimit = bytes; }
-        // Runs inside every wait, which then returns at once, since nothing here can sleep.
-        void onWait(std::function<void()> action) { waitAction = std::move(action); }
+        // Runs inside every sleeping wait, which then returns at once, since nothing here can.
+        void onWait(std::function<void(std::span<const SocketInterest>)> action) { waitAction = std::move(action); }
         // Runs at the start of every read, which is a point in the middle of a pass, so a test can
         // play another thread there.
         void onRead(std::function<void(SocketId)> action) { readAction = std::move(action); }
 
-        std::size_t waits() const noexcept { return waitCount; }
+        std::size_t waits() const noexcept { return waitCount; }  // sleeping ones
+        std::size_t looks() const noexcept { return lookCount; }
         std::size_t reads(SocketId socket) const { return sockets.at(socket).reads; }
         std::size_t writes(SocketId socket) const { return sockets.at(socket).writes; }
         std::size_t bytesRead(SocketId socket) const { return sockets.at(socket).position; }
+        std::size_t bytesSent(SocketId socket) const { return sockets.at(socket).toEngine.size(); }
         bool closed(SocketId socket) const { return sockets.at(socket).closed; }
+        bool accepted(SocketId socket) const noexcept { return socket < nextToAccept; }
         bool sendShutDown(SocketId socket) const { return sockets.at(socket).sendShutDown; }
         bool listenerClosed() const noexcept { return listenerGone; }
 
-        void wait() override;
+        void wait(std::span<const SocketInterest> interest, WaitMode mode) override;
         std::optional<SocketId> accept() override;
         ReadResult read(SocketId socket, std::span<std::byte> into) override;
         std::optional<std::size_t> write(SocketId socket, std::span<const std::byte> bytes) override;
@@ -66,9 +69,10 @@ namespace order_book::network {
         bool listenerGone = false;
         std::size_t readLimit = std::numeric_limits<std::size_t>::max();
         std::size_t writeLimit = std::numeric_limits<std::size_t>::max();
-        std::function<void()> waitAction;
+        std::function<void(std::span<const SocketInterest>)> waitAction;
         std::function<void(SocketId)> readAction;
         std::size_t waitCount = 0;
+        std::size_t lookCount = 0;
     };
 
 }  // namespace order_book::network

@@ -32,7 +32,7 @@ namespace {
 
     constexpr std::string_view usageText =
         "usage: order_book_benchmarks [--workload NAME]... [--size smoke|standard|extended | --commands N]\n"
-        "                             [--kind core|replay|replay-log|shard|queue|both] [--instruments N] [--repetitions N] [--warmup N] [--seed N]\n"
+        "                             [--kind core|replay|replay-log|shard|queue|gateway|both] [--instruments N] [--window N] [--repetitions N] [--warmup N] [--seed N]\n"
         "                             [--csv FILE] [--json FILE] [--allow-unoptimized]\n"
         "       order_book_benchmarks --list\n"
         "       order_book_benchmarks --help\n";
@@ -52,10 +52,14 @@ namespace {
         "  --kind KIND          core (the default) times the engine alone; replay times parsing and\n"
         "                       replaying the same commands as CSV text in memory; replay-log the\n"
         "                       same as a binary command log; shard through Shard::process on one\n"
-        "                       thread; queue with real rings and a matching thread; both runs core\n"
+        "                       thread; queue with real rings and a matching thread; gateway over\n"
+        "                       real loopback sockets, one connection per instrument; both runs core\n"
         "                       and replay\n"
-        "  --instruments N      for shard and queue: share the commands between N instruments (default 1)\n"
-        "  --tamper-prediction  for shard and queue: predict one trade too many, so the run must fail\n"
+        "  --instruments N      for shard, queue, and gateway: share the commands between N instruments\n"
+        "                       (default 1)\n"
+        "  --window N           for gateway: commands each connection may have unanswered (default 256)\n"
+        "  --tamper-prediction  for shard, queue, and gateway: predict one trade too many, so the run\n"
+        "                       must fail\n"
         "  --repetitions N      measured runs per workload and kind (default 5)\n"
         "  --warmup N           runs before those, recorded but left out of summaries (default 1)\n"
         "  --seed N             generator seed (default 42); the same seed, configuration, and\n"
@@ -125,7 +129,8 @@ namespace {
             }
             const bool takesValue = arg == "--workload" || arg == "--size" || arg == "--commands" ||
                                     arg == "--kind" || arg == "--repetitions" || arg == "--warmup" ||
-                                    arg == "--seed" || arg == "--csv" || arg == "--json" || arg == "--instruments";
+                                    arg == "--seed" || arg == "--csv" || arg == "--json" || arg == "--instruments" ||
+                                    arg == "--window";
             if (!takesValue) {
                 return "unknown option '" + std::string(arg) + "'";
             }
@@ -168,6 +173,8 @@ namespace {
                         return std::string(arg) + " must be at least 1";
                     } else if (arg == "--repetitions") {
                         settings.run.repetitions = static_cast<std::size_t>(*number);
+                    } else if (arg == "--window") {
+                        settings.run.window = static_cast<std::size_t>(*number);
                     } else {
                         settings.size = "custom";
                         settings.timedCommands = static_cast<std::size_t>(*number);
@@ -298,7 +305,7 @@ namespace {
                       << milliseconds(record.generationNanoseconds) << ", untimed\n";
             for (const bench::BenchmarkKind kind : settings.kinds) {
                 std::vector<bench::Measurement> measurements;
-                if (kind == bench::BenchmarkKind::SHARD || kind == bench::BenchmarkKind::QUEUE) {
+                if (kind == bench::BenchmarkKind::SHARD || kind == bench::BenchmarkKind::QUEUE || kind == bench::BenchmarkKind::GATEWAY) {
                     std::vector<bench::Workload> workloads =
                         bench::instrumentWorkloads(config, settings.timedCommands, settings.seed, settings.instruments);
                     if (settings.tamperPrediction) {

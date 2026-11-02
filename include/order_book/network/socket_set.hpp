@@ -20,6 +20,18 @@ namespace order_book::network {
         ReadStatus status;
     };
 
+    // What a wait should watch a connection for.
+    struct SocketInterest {
+        SocketId socket;
+        bool read;
+        bool write;
+    };
+
+    enum class WaitMode {
+        LOOK,   // see what is ready, without waiting
+        SLEEP,  // wait until something is, or the set is woken
+    };
+
     // What a gateway thread does to its sockets. Virtual, since each call wraps a system call of
     // 2 µs or more and no per-frame work crosses it. It belongs to one gateway thread, and never
     // blocks except in wait.
@@ -27,8 +39,10 @@ namespace order_book::network {
     public:
         virtual ~SocketSet() = default;
 
-        // Sleeps until a socket may have something to do.
-        virtual void wait() = 0;
+        // Finds what is ready among these, the listener, and the set's own wake, so that a read or
+        // accept afterwards costs a system call only where one can succeed. With SLEEP, waits
+        // until there is something.
+        virtual void wait(std::span<const SocketInterest> interest, WaitMode mode) = 0;
         // A new connection, if one is waiting.
         virtual std::optional<SocketId> accept() = 0;
         // Takes whatever has arrived, up to into's size.

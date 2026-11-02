@@ -200,8 +200,13 @@ add_library(order_book_network STATIC
     src/network/entry_check.cpp
     src/network/gateway_thread.cpp
     src/network/in_memory_socket_set.cpp
+    src/network/poll_socket_set.cpp
+    src/network/tcp.cpp
     src/network/wire_codec.cpp
 )
+if(WIN32)
+    target_link_libraries(order_book_network PRIVATE ws2_32)
+endif()
 
 target_compile_features(order_book_network PUBLIC cxx_std_20)
 target_link_libraries(order_book_network PUBLIC order_book_runtime)
@@ -875,6 +880,17 @@ if(BUILD_TESTING)
     add_test(NAME gateway_tests COMMAND gateway_tests)
     set_tests_properties(gateway_tests PROPERTIES TIMEOUT 240)
 
+    add_executable(gateway_socket_tests
+        tests/gateway_socket_test.cpp
+    )
+
+    target_compile_features(gateway_socket_tests PRIVATE cxx_std_20)
+    target_link_libraries(gateway_socket_tests PRIVATE order_book_network)
+    order_book_enable_warnings(gateway_socket_tests)
+    order_book_enable_sanitizers(gateway_socket_tests)
+    add_test(NAME gateway_socket_tests COMMAND gateway_socket_tests)
+    set_tests_properties(gateway_socket_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
+
     add_executable(randomized_harness_tests
         tests/randomized/harness_test.cpp
     )
@@ -1032,6 +1048,17 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         order_book_enable_warnings(benchmark_queue_tests)
         order_book_enable_sanitizers(benchmark_queue_tests)
         add_test(NAME benchmark_queue_tests COMMAND benchmark_queue_tests)
+
+        add_executable(benchmark_gateway_tests
+            tests/benchmark_gateway_test.cpp
+        )
+
+        target_compile_features(benchmark_gateway_tests PRIVATE cxx_std_20)
+        target_link_libraries(benchmark_gateway_tests PRIVATE order_book_benchmarking)
+        order_book_enable_warnings(benchmark_gateway_tests)
+        order_book_enable_sanitizers(benchmark_gateway_tests)
+        add_test(NAME benchmark_gateway_tests COMMAND benchmark_gateway_tests)
+        set_tests_properties(benchmark_gateway_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
         set_tests_properties(benchmark_queue_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
 
         # Exactly zero heap calls on every workload, where only a checked build's own checks
@@ -1056,6 +1083,16 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
                     "-DARGS=--workload|small-book|--commands|2000|--kind|queue|--tamper-prediction|--repetitions|1|--warmup|0|--allow-unoptimized"
                     "-DOUTPUT_REGEX=but the workload predicted" -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
         set_tests_properties(benchmark_queue_smoke benchmark_queue_tampered PROPERTIES
+            LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
+        # Real loopback sockets on port 0, which ThreadSanitizer and Arm run.
+        add_test(NAME benchmark_gateway_smoke
+            COMMAND order_book_benchmarks --workload small-book --commands 2000 --kind gateway --instruments 4
+                    --repetitions 1 --warmup 0 --allow-unoptimized)
+        add_test(NAME benchmark_gateway_tampered
+            COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:order_book_benchmarks> -DEXPECTED_EXIT=1
+                    "-DARGS=--workload|small-book|--commands|2000|--kind|gateway|--tamper-prediction|--repetitions|1|--warmup|0|--allow-unoptimized"
+                    "-DOUTPUT_REGEX=but the workload predicted" -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
+        set_tests_properties(benchmark_gateway_smoke benchmark_gateway_tampered PROPERTIES
             LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
         add_test(NAME benchmark_shard_smoke
             COMMAND order_book_benchmarks --workload small-book --commands 2000 --kind shard --instruments 4

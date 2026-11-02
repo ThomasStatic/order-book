@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -11,6 +12,7 @@
 #include <thread>
 #include <vector>
 
+#include "order_book/network/poll_socket_set.hpp"
 #include "order_book/order_book.hpp"
 #include "order_book/replay_parser.hpp"
 #include "order_book/runtime/matching_loop.hpp"
@@ -33,7 +35,11 @@ namespace order_book::benchmark {
 // from CORE is Command decoding, BookSet, and result reuse.
 // QUEUE puts real rings and a real matching thread between a producer thread and that shard, so
 // its difference from SHARD is the hand-off.
-enum class BenchmarkKind { CORE, REPLAY, REPLAY_LOG, SHARD, QUEUE };
+enum class BenchmarkKind { CORE, REPLAY, REPLAY_LOG, SHARD, QUEUE, GATEWAY };
+
+// How many commands each gateway connection may have sent and not yet had answered, unless a run
+// says otherwise: what #33's connection sweep runs at.
+inline constexpr std::size_t defaultGatewayWindow = 256;
 
 const char* benchmarkKindName(BenchmarkKind kind);
 // Throws std::invalid_argument on a name other than core, replay, replay-log, shard, or queue.
@@ -49,6 +55,7 @@ struct Measurement {
     bool warmup = false;
     std::size_t commands = 0;
     std::size_t instruments = 1;  // 1 but for a SHARD run of several
+    std::size_t window = 0;       // a GATEWAY run's, and 0 for every other kind
     std::int64_t elapsedNanoseconds = 0;
     // What the book did, counted from its results; it always equals the workload's expected
     // outcome, or the run throws instead of returning a measurement.
@@ -64,6 +71,7 @@ double operationsPerSecond(std::size_t commands, std::int64_t elapsedNanoseconds
 struct RunSettings {
     std::size_t warmups = 1;
     std::size_t repetitions = 5;
+    std::size_t window = defaultGatewayWindow;  // for GATEWAY
 };
 
 // The capacity each run reserves before its preload, untimed: the most the book holds at any
@@ -118,6 +126,8 @@ public:
     void run();
 
     runtime::Shard& onThisThread() noexcept { return *shard; }
+    // Built in the constructor and never changed, so any thread may read it once that has run.
+    const runtime::InstrumentDirectory& instruments() const noexcept { return *directory; }
     // The book that takes each command, in the order they go, and a book's slot and commands.
     const std::vector<std::uint32_t>& sharing() const noexcept { return order; }
     std::uint32_t slotOf(std::uint32_t book) const;
@@ -184,8 +194,55 @@ private:
     std::thread matching;
 };
 
-// runOnce for a SHARD or QUEUE run of several instruments, whose outcome is the run's total.
-Measurement runInstrumentsOnce(const std::vector<Workload>& workloads, BenchmarkKind kind);
+// Every command over real loopback sockets, one connection per workload, through a
+// GatewayThread and a PollSocketSet on a thread of their own and a matching thread, with the
+// client on the calling thread, sending while it reads and never more than window commands ahead
+// of its answers. Connecting and each Hello happen in the constructor, untimed.
+class GatewayRun {
+public:
+    GatewayRun(const std::vector<Workload>& workloads, std::size_t window);
+    // Stops both threads if finish has not.
+    ~GatewayRun();
+
+    // Every command sent and every answer read: what a timed region holds.
+    void run();
+    // Half-closes each connection and reads it to its end, stops the engine, and collects the
+    // books' final shapes. Rethrows anything either thread threw.
+    void finish();
+    // After finish. Throws std::runtime_error if a book did other than its workload predicted.
+    void check() const;
+    std::vector<WorkloadOutcome> outcomes() const;
+
+private:
+    struct Connection;
+
+    void receive(std::size_t index);
+
+    const std::vector<Workload>* workloads;
+    std::size_t window;
+    runtime::Doorbell doorbell;
+    runtime::Ring<runtime::CommandElement> commands;
+    runtime::Ring<runtime::ResponseRecord> responses;
+    std::unique_ptr<network::PollSocketSet> sockets;
+    const ShardRun* books = nullptr;  // on the matching thread, until it stops
+    std::vector<Connection> connections;
+    std::vector<WorkloadOutcome> counted;
+    std::vector<WorkloadOutcome> finalShapes;
+    std::size_t answered = 0;
+    std::size_t total = 0;
+    std::atomic<bool> stopRequested{false};
+    std::atomic<bool> gatewayFailed{false};
+    std::exception_ptr matchingFailure;
+    std::exception_ptr gatewayFailure;
+    std::thread matching;
+    std::thread gateway;
+    bool finished = false;
+};
+
+// runOnce for a SHARD, QUEUE, or GATEWAY run of several instruments, whose outcome is the run's
+// total. window is used only by GATEWAY.
+Measurement runInstrumentsOnce(const std::vector<Workload>& workloads, BenchmarkKind kind,
+                               std::size_t window = defaultGatewayWindow);
 // runRepeated for the same.
 std::vector<Measurement> runInstrumentsRepeated(const std::vector<Workload>& workloads, BenchmarkKind kind,
                                                 const RunSettings& settings);
