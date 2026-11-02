@@ -2,13 +2,17 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "order_book/order_book.hpp"
 #include "order_book/replay_parser.hpp"
+#include "order_book/runtime/matching_loop.hpp"
 #include "order_book/runtime/shard.hpp"
 #include "workload.hpp"
 
@@ -26,10 +30,12 @@ namespace order_book::benchmark {
 // difference between the two is the cost of the text.
 // SHARD runs the commands through Shard::process on one thread, with no rings, so its difference
 // from CORE is Command decoding, BookSet, and result reuse.
-enum class BenchmarkKind { CORE, REPLAY, REPLAY_LOG, SHARD };
+// QUEUE puts real rings and a real matching thread between a producer thread and that shard, so
+// its difference from SHARD is the hand-off.
+enum class BenchmarkKind { CORE, REPLAY, REPLAY_LOG, SHARD, QUEUE };
 
 const char* benchmarkKindName(BenchmarkKind kind);
-// Throws std::invalid_argument on a name other than core, replay, replay-log, or shard.
+// Throws std::invalid_argument on a name other than core, replay, replay-log, shard, or queue.
 BenchmarkKind parseBenchmarkKind(std::string_view name);
 
 // One timed run of a workload's timed commands on a freshly preloaded book.
@@ -107,6 +113,12 @@ public:
 
     void run();
 
+    runtime::Shard& onThisThread() noexcept { return *shard; }
+    // The book that takes each command, in the order they go, and a book's slot and commands.
+    const std::vector<std::uint32_t>& sharing() const noexcept { return order; }
+    std::uint32_t slotOf(std::uint32_t book) const;
+    const replay::Command& commandOf(std::uint32_t book, std::size_t index) const;
+
     // The books' final shapes added to what run counted, per workload.
     std::vector<WorkloadOutcome> outcomes() const;
     // Throws std::runtime_error if a book did other than its workload predicted, or grew.
@@ -122,10 +134,56 @@ private:
     std::vector<std::uint32_t> order;  // which book takes each command
 };
 
-// runOnce for a SHARD run of several instruments, whose outcome is the run's total.
-Measurement runShardOnce(const std::vector<Workload>& workloads);
+// A real matching thread, which builds and preloads a ShardRun's books and so owns them, with this
+// thread as its one producer. Events are counted here, and final shapes are read on the matching
+// thread once it has stopped. The workloads must outlive this.
+class QueueRun {
+public:
+    explicit QueueRun(const std::vector<Workload>& workloads);
+    // Stops the matching thread if finish has not.
+    ~QueueRun();
+
+    // Every command through the rings, sending and draining at once. What a timed region holds.
+    void run();
+
+    // One command at a time, for a latency target. prepare builds the element and is outside
+    // the interval. awaitResponse returns once its last event is back.
+    void prepare(std::size_t index);
+    void sendPrepared();
+    void awaitResponse();
+
+    // Stops the matching thread and collects the books' final shapes. Rethrows anything it threw.
+    void finish();
+    // After finish. Throws std::runtime_error if a book did other than its workload predicted.
+    void check() const;
+    std::vector<WorkloadOutcome> outcomes() const;
+
+private:
+    bool trySend(const runtime::CommandElement& element);
+    std::size_t drainResponses(std::size_t limit);
+    runtime::CommandElement elementFor(std::uint32_t book);
+
+    const std::vector<Workload>* workloads;
+    runtime::Doorbell doorbell;
+    runtime::Ring<runtime::CommandElement> commands;
+    runtime::Ring<runtime::ResponseRecord> responses;
+    const ShardRun* prepared = nullptr;  // on the matching thread, until it stops
+    std::vector<std::size_t> nextCommand;
+    std::vector<WorkloadOutcome> counted;
+    std::vector<WorkloadOutcome> finalShapes;
+    std::optional<runtime::CommandElement> held;
+    std::size_t sent = 0;
+    std::size_t answered = 0;
+    bool stopReceived = false;
+    std::exception_ptr failure;
+    std::thread matching;
+};
+
+// runOnce for a SHARD or QUEUE run of several instruments, whose outcome is the run's total.
+Measurement runInstrumentsOnce(const std::vector<Workload>& workloads, BenchmarkKind kind);
 // runRepeated for the same.
-std::vector<Measurement> runShardRepeated(const std::vector<Workload>& workloads, const RunSettings& settings);
+std::vector<Measurement> runInstrumentsRepeated(const std::vector<Workload>& workloads, BenchmarkKind kind,
+                                                const RunSettings& settings);
 
 // The workload's timed commands as a replay file (header, then one record per command,
 // numbered from 1), for the REPLAY kind and for inspecting a workload by hand.

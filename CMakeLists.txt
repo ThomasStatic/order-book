@@ -186,6 +186,7 @@ find_package(Threads REQUIRED)
 add_library(order_book_runtime STATIC
     src/runtime/book_set.cpp
     src/runtime/instruments.cpp
+    src/runtime/matching_loop.cpp
     src/runtime/shard.cpp
 )
 
@@ -511,6 +512,31 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(ring_tests)
     add_test(NAME ring_tests COMMAND ring_tests)
     set_tests_properties(ring_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads)
+
+    add_executable(matching_loop_tests
+        tests/matching_loop_test.cpp
+    )
+
+    target_compile_features(matching_loop_tests PRIVATE cxx_std_20)
+    target_link_libraries(matching_loop_tests PRIVATE order_book_runtime)
+    order_book_enable_warnings(matching_loop_tests)
+    order_book_enable_sanitizers(matching_loop_tests)
+    add_test(NAME matching_loop_tests COMMAND matching_loop_tests)
+    # The timeout is what fails a lost wake-up, which hangs.
+    set_tests_properties(matching_loop_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
+
+    add_executable(matching_abort_tests
+        tests/matching_abort_test.cpp
+    )
+
+    target_compile_features(matching_abort_tests PRIVATE cxx_std_20)
+    target_link_libraries(matching_abort_tests PRIVATE order_book_runtime)
+    order_book_enable_warnings(matching_abort_tests)
+    order_book_enable_sanitizers(matching_abort_tests)
+    add_test(NAME matching_abort_tests COMMAND matching_abort_tests)
+    set_tests_properties(matching_abort_tests PROPERTIES
+        PASS_REGULAR_EXPRESSION "order book runtime: shard 0 symbol AAPL +position [0-9]+ command ADD id=[0-9]+: |SKIPPED"
+        FAIL_REGULAR_EXPRESSION "FAILED")
 
     # A deliberate race that must be reported, so a passing ThreadSanitizer job means something.
     if(ORDER_BOOK_ENABLE_TSAN)
@@ -907,6 +933,7 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
     # The latency harness (benchmarks/latency/README.md): clock, histogram, timetable driver,
     # and report. A library so latency_harness_tests can drive it with a fake clock and target.
     add_library(order_book_latency STATIC
+        benchmarks/latency/handoff_target.cpp
         benchmarks/latency/clock.cpp
         benchmarks/latency/command_target.cpp
         benchmarks/latency/histogram.cpp
@@ -958,6 +985,10 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         add_test(NAME latency_cli_smoke
             COMMAND order_book_latency_benchmarks --workload small-book --commands 500 --runs 2 --warmup 1
                     --noise-seconds 0 --allow-unoptimized --out-dir ${CMAKE_CURRENT_BINARY_DIR}/latency-smoke)
+        add_test(NAME latency_cli_smoke_handoff
+            COMMAND order_book_latency_benchmarks --interval hand-off --workload small-book --commands 500 --runs 2 --warmup 1
+                    --noise-seconds 0 --allow-unoptimized --out-dir ${CMAKE_CURRENT_BINARY_DIR}/latency-smoke-handoff)
+        set_tests_properties(latency_cli_smoke_handoff PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
         add_test(NAME latency_cli_smoke_response
             COMMAND order_book_latency_benchmarks --workload small-book --commands 500 --runs 2 --warmup 1
                     --time response --noise-seconds 0 --allow-unoptimized
@@ -991,6 +1022,16 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         add_test(NAME matching_path_allocation_tests COMMAND matching_path_allocation_tests)
         set_tests_properties(matching_path_allocation_tests PROPERTIES SKIP_RETURN_CODE 77)
 
+        add_test(NAME benchmark_queue_smoke
+            COMMAND order_book_benchmarks --workload small-book --commands 2000 --kind queue --instruments 4
+                    --repetitions 1 --warmup 0 --allow-unoptimized)
+        add_test(NAME benchmark_queue_tampered
+            COMMAND order_book_benchmarks --workload small-book --commands 2000 --kind queue --tamper-prediction
+                    --repetitions 1 --warmup 0 --allow-unoptimized)
+        set_tests_properties(benchmark_queue_smoke PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
+        # It must exit 1 for the prediction's reason, not for any other.
+        set_tests_properties(benchmark_queue_tampered PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120
+            PASS_REGULAR_EXPRESSION "but the workload predicted")
         add_test(NAME benchmark_shard_smoke
             COMMAND order_book_benchmarks --workload small-book --commands 2000 --kind shard --instruments 4
                     --repetitions 1 --warmup 0 --allow-unoptimized)

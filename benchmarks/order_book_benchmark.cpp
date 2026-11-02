@@ -32,7 +32,7 @@ namespace {
 
     constexpr std::string_view usageText =
         "usage: order_book_benchmarks [--workload NAME]... [--size smoke|standard|extended | --commands N]\n"
-        "                             [--kind core|replay|replay-log|shard|both] [--instruments N] [--repetitions N] [--warmup N] [--seed N]\n"
+        "                             [--kind core|replay|replay-log|shard|queue|both] [--instruments N] [--repetitions N] [--warmup N] [--seed N]\n"
         "                             [--csv FILE] [--json FILE] [--allow-unoptimized]\n"
         "       order_book_benchmarks --list\n"
         "       order_book_benchmarks --help\n";
@@ -52,8 +52,10 @@ namespace {
         "  --kind KIND          core (the default) times the engine alone; replay times parsing and\n"
         "                       replaying the same commands as CSV text in memory; replay-log the\n"
         "                       same as a binary command log; shard through Shard::process on one\n"
-        "                       thread; both runs core and replay\n"
-        "  --instruments N      for shard: share the commands between N instruments (default 1)\n"
+        "                       thread; queue with real rings and a matching thread; both runs core\n"
+        "                       and replay\n"
+        "  --instruments N      for shard and queue: share the commands between N instruments (default 1)\n"
+        "  --tamper-prediction  for shard and queue: predict one trade too many, so the run must fail\n"
         "  --repetitions N      measured runs per workload and kind (default 5)\n"
         "  --warmup N           runs before those, recorded but left out of summaries (default 1)\n"
         "  --seed N             generator seed (default 42); the same seed, configuration, and\n"
@@ -77,6 +79,7 @@ namespace {
         std::size_t timedCommands = bench::timedCommandCount(bench::BenchmarkSize::STANDARD);
         std::vector<bench::BenchmarkKind> kinds{bench::BenchmarkKind::CORE};
         std::size_t instruments = 1;
+        bool tamperPrediction = false;
         bench::RunSettings run;
         std::uint64_t seed = 42;
         std::optional<std::string> csvPath;
@@ -110,6 +113,10 @@ namespace {
             }
             if (arg == "--list") {
                 settings.list = true;
+                continue;
+            }
+            if (arg == "--tamper-prediction") {
+                settings.tamperPrediction = true;
                 continue;
             }
             if (arg == "--allow-unoptimized") {
@@ -290,11 +297,17 @@ namespace {
                       << " orders on " << workload.expected.finalPriceLevels << " levels); generated in "
                       << milliseconds(record.generationNanoseconds) << ", untimed\n";
             for (const bench::BenchmarkKind kind : settings.kinds) {
-                std::vector<bench::Measurement> measurements =
-                    kind == bench::BenchmarkKind::SHARD
-                        ? bench::runShardRepeated(bench::instrumentWorkloads(config, settings.timedCommands, settings.seed, settings.instruments),
-                                                  settings.run)
-                        : bench::runRepeated(workload, kind, settings.run);
+                std::vector<bench::Measurement> measurements;
+                if (kind == bench::BenchmarkKind::SHARD || kind == bench::BenchmarkKind::QUEUE) {
+                    std::vector<bench::Workload> workloads =
+                        bench::instrumentWorkloads(config, settings.timedCommands, settings.seed, settings.instruments);
+                    if (settings.tamperPrediction) {
+                        workloads.front().expected.trades += 1;
+                    }
+                    measurements = bench::runInstrumentsRepeated(workloads, kind, settings.run);
+                } else {
+                    measurements = bench::runRepeated(workload, kind, settings.run);
+                }
                 for (bench::Measurement& measurement : measurements) {
                     printMeasurement(measurement);
                     report.measurements.push_back(std::move(measurement));

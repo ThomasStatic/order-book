@@ -25,6 +25,8 @@
 #include "benchmark_runner.hpp"
 #include "clock.hpp"
 #include "command_target.hpp"
+#include "order_book/runtime/matching_loop.hpp"
+#include "handoff_target.hpp"
 #include "histogram.hpp"
 #include "latency_report.hpp"
 #include "noise_floor.hpp"
@@ -43,7 +45,7 @@ constexpr int usageError = 2;
 constexpr int unoptimizedBuild = 3;
 
 constexpr std::string_view usageText =
-    "usage: order_book_latency_benchmarks [--interval command] [--time service|response]\n"
+    "usage: order_book_latency_benchmarks [--interval command|hand-off] [--time service|response]\n"
     "                                     [--workload NAME]... [--size smoke|standard|extended | --commands N]\n"
     "                                     [--runs N] [--warmup N] [--seed N] [--noise-seconds N]\n"
     "                                     [--pin-core N] [--priority normal|high] [--machine-record FILE]\n"
@@ -57,7 +59,9 @@ constexpr std::string_view helpText =
     "Read docs/LATENCY.md before quoting anything.\n"
     "\n"
     "options:\n"
-    "  --interval NAME      the interval to time: command, one book call (the default)\n"
+    "  --interval NAME      the interval to time: command, one book call (the default), or hand-off,\n"
+    "                       into the command ring and back out of the response ring, on a real\n"
+    "                       matching thread\n"
     "  --time KIND          service, closed-loop (the default), or response, on a timetable: 10, 25,\n"
     "                       50, 75, and 90% of the capacity measured that session, then a seeded\n"
     "                       Poisson row at 50%. Open-loop rows also report the driver's lateness.\n"
@@ -88,6 +92,7 @@ enum class TimeKind { SERVICE, RESPONSE };
 
 struct Settings {
     TimeKind time = TimeKind::SERVICE;
+    bool handOff = false;  // the hand-off interval, in place of the command interval
     std::vector<std::string> workloads;
     std::string size = bench::benchmarkSizeName(bench::BenchmarkSize::EXTENDED);
     std::size_t commands = bench::timedCommandCount(bench::BenchmarkSize::EXTENDED);
@@ -165,9 +170,10 @@ std::optional<std::string> parseArguments(const std::vector<std::string_view>& a
         }
         try {
             if (arg == "--interval") {
-                if (value != "command") {
-                    return "unknown interval '" + std::string(value) + "' (known: command)";
+                if (value != "command" && value != "hand-off") {
+                    return "unknown interval '" + std::string(value) + "' (known: command, hand-off)";
                 }
+                settings.handOff = value == "hand-off";
             } else if (arg == "--time") {
                 if (value != "service" && value != "response") {
                     return "unknown time '" + std::string(value) + "' (known: service, response)";
@@ -245,10 +251,11 @@ latency::ReportRow startRow(const Session& session, const bench::Workload& workl
     row.emptyPairP50Nanoseconds = session.clockRecord.emptyPairP50Nanoseconds;
     row.clockName = session.clockRecord.name;
     row.optimizedBuild = session.build.optimized();
-    row.pinnedAtHighPriority = session.settings.pinCore.has_value() && session.settings.highPriority;
+    // --pin-core covers the sending thread alone, so a hand-off row can't claim it for both.
+    row.pinnedAtHighPriority = session.settings.pinCore.has_value() && session.settings.highPriority && !session.settings.handOff;
 
     latency::RunRecord& record = row.record;
-    record.set("interval", "command");
+    record.set("interval", session.settings.handOff ? "hand-off" : "command");
     record.set("workload", workload.config.name);
     record.set("workload-fingerprint", std::to_string(bench::workloadFingerprint(workload)));
     record.set("generator-version", std::to_string(bench::workloadGeneratorVersion));
@@ -257,8 +264,18 @@ latency::ReportRow startRow(const Session& session, const bench::Workload& workl
                                          "spin-window", "durability", "logs-share-drive"}) {
         record.set(field, "none, one book in process");
     }
-    record.set("core-map", session.settings.pinCore ? std::to_string(*session.settings.pinCore) : "none");
-    record.set("pinned", session.settings.pinCore ? "yes" : "no");
+    if (session.settings.handOff) {
+        record.set("shards", "1");
+        record.set("gateway-threads", "none, one producer thread in process");
+        record.set("active-connections", "none, one producer thread in process");
+        record.set("idle-connections", "none, one producer thread in process");
+        record.set("spin-window", std::to_string(std::chrono::duration_cast<std::chrono::microseconds>(order_book::runtime::defaultSpinWindow).count()) + "us");
+        record.set("durability", "none, no log");
+        record.set("logs-share-drive", "none, no log");
+    }
+    const std::string senderCore = session.settings.pinCore ? std::to_string(*session.settings.pinCore) : "none";
+    record.set("core-map", session.settings.handOff ? "sender " + senderCore + ", matching thread unpinned" : senderCore);
+    record.set("pinned", session.settings.pinCore && !session.settings.handOff ? "yes" : "no");
     record.set("priority", session.settings.highPriority ? "high" : "normal");
     const order_book::BookCapacity capacity = bench::expectedBookSize(workload);
     record.set("book-capacity", "orders=" + std::to_string(capacity.orders) + " stops=" + std::to_string(capacity.stops) +
@@ -285,9 +302,11 @@ double secondsOf(Ticks ticks, const latency::ClockRecord& clock) {
     return static_cast<double>(ticks) / clock.ticksPerNanosecond / 1e9;
 }
 
+template <typename Target>
 latency::ReportRow runClosedLoopRow(const Session& session, const bench::Workload& workload) {
     latency::ReportRow row =
-        startRow(session, workload, "command, service time, " + workload.config.name + ", closed-loop");
+        startRow(session, workload, std::string(session.settings.handOff ? "hand-off" : "command") + ", service time, " +
+                                        workload.config.name + ", closed-loop");
     row.record.set("time", "service");
     row.record.set("load", "closed-loop");
     row.record.set("target-rate", "none");
@@ -296,7 +315,7 @@ latency::ReportRow runClosedLoopRow(const Session& session, const bench::Workloa
     Ticks elapsed = 0;
     std::uint64_t growths = 0;
     for (std::size_t run = 0; run < session.settings.warmups + session.settings.runs; ++run) {
-        latency::CommandTarget target(workload);
+        Target target(workload);
         const Ticks start = session.clock.now();
         latency::Histogram service = latency::runClosedLoop(workload.timedCount(), session.clock, target);
         const Ticks stop = session.clock.now();
@@ -320,13 +339,14 @@ struct Load {
 };
 
 // One row of response times at a rate, then one of the driver's lateness behind it.
+template <typename Target>
 void runTimetableRows(const Session& session, const bench::Workload& workload, const Load& load, double capacity,
                       std::vector<latency::ReportRow>& rows) {
     const double rate = capacity * load.share;
     const double gapTicks = session.clockRecord.ticksPerNanosecond * 1e9 / rate;
     const std::string percent = std::to_string(static_cast<int>(load.share * 100.0 + 0.5)) + "%";
     latency::ReportRow row = startRow(session, workload,
-                                      "command, response time, " + workload.config.name + ", " + load.name + " at " + percent);
+                                      std::string(session.settings.handOff ? "hand-off" : "command") + ", response time, " + workload.config.name + ", " + load.name + " at " + percent);
     row.record.set("time", "response");
     row.record.set("load", load.name);
     row.record.set("target-rate", bench::formatFixed(rate, 0) + "/s, " + percent + " of capacity measured this session");
@@ -343,7 +363,7 @@ void runTimetableRows(const Session& session, const bench::Workload& workload, c
     Ticks elapsed = 0;
     std::uint64_t growths = 0;
     for (std::size_t run = 0; run < session.settings.warmups + session.settings.runs; ++run) {
-        latency::CommandTarget target(workload);
+        Target target(workload);
         latency::TimetableRun result = latency::runTimetable(schedule, session.clock, target);
         target.checkOutcome();
         if (run >= session.settings.warmups) {
@@ -451,13 +471,18 @@ int runSession(const Settings& settings) {
     for (const std::string& name : settings.workloads) {
         const bench::Workload workload = bench::generateWorkload(bench::findWorkload(name), settings.commands, settings.seed);
         if (settings.time == TimeKind::SERVICE) {
-            rows.push_back(runClosedLoopRow(session, workload));
+            rows.push_back(session.settings.handOff ? runClosedLoopRow<latency::HandOffTarget>(session, workload)
+                                                    : runClosedLoopRow<latency::CommandTarget>(session, workload));
             continue;
         }
         const double capacity = measureCapacity(workload);
         for (const Load& load : {Load{"fixed", 0.10, false}, Load{"fixed", 0.25, false}, Load{"fixed", 0.50, false},
                                  Load{"fixed", 0.75, false}, Load{"fixed", 0.90, false}, Load{"poisson", 0.50, true}}) {
-            runTimetableRows(session, workload, load, capacity, rows);
+            if (session.settings.handOff) {
+                runTimetableRows<latency::HandOffTarget>(session, workload, load, capacity, rows);
+            } else {
+                runTimetableRows<latency::CommandTarget>(session, workload, load, capacity, rows);
+            }
         }
     }
     const std::optional<latency::NoiseFloor> noiseAfter = noiseFloor(session);

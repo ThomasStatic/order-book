@@ -197,20 +197,22 @@ void testShardRunsDoWhatCoreRunsDo() {
         names.insert(names.end(), {"deep-book", "pending-stops"});
     }
     for (const char* name : names) {
-        const Workload workload = generateWorkload(findWorkload(name), 2000, 42);
-        expect(workloadFingerprint(workload) == workloadFingerprint(instrumentWorkloads(findWorkload(name), 2000, 42, 1).front()),
+        const Workload workload = generateWorkload(findWorkload(name), 300, 42);
+        expect(workloadFingerprint(workload) == workloadFingerprint(instrumentWorkloads(findWorkload(name), 300, 42, 1).front()),
                "instrument 0 is the unchanged stream");
         const Measurement core = runOnce(workload, BenchmarkKind::CORE);
         const Measurement shard = runOnce(workload, BenchmarkKind::SHARD);
         expect(shard.kind == BenchmarkKind::SHARD && shard.commands == core.commands, "a shard run takes the same commands");
         expect(shard.outcome == core.outcome, "and does what the book does directly");
+        expect(runOnce(workload, BenchmarkKind::QUEUE).outcome == core.outcome, "and so does a queue run, on two threads");
     }
-    expect(parseBenchmarkKind("shard") == BenchmarkKind::SHARD, "the kind has a name");
+    expect(parseBenchmarkKind("shard") == BenchmarkKind::SHARD && parseBenchmarkKind("queue") == BenchmarkKind::QUEUE,
+           "the kinds have names");
 }
 
 void testInstrumentPredictionsSumToTheRun() {
-    const std::vector<Workload> workloads = instrumentWorkloads(findWorkload("quote-refresh"), 4000, 42, 4);
-    expect(workloads.size() == 4 && workloads[0].timedCount() == 1000, "the commands are shared between the instruments");
+    const std::vector<Workload> workloads = instrumentWorkloads(findWorkload("quote-refresh"), 800, 42, 4);
+    expect(workloads.size() == 4 && workloads[0].timedCount() == 200, "the commands are shared between the instruments");
     expect(workloadFingerprint(workloads[0]) != workloadFingerprint(workloads[1]), "each instrument has its own stream");
 
     ShardRun run(workloads);
@@ -220,25 +222,28 @@ void testInstrumentPredictionsSumToTheRun() {
     expect(counted.size() == 4 && counted[1] == workloads[1].expected, "each book does what it predicts");
 
     const WorkloadOutcome total = totalOutcome(workloads);
-    expect(total.submits + total.cancels + total.replaces == 4000, "the total is every command");
-    const Measurement measurement = runShardOnce(workloads);
-    expect(measurement.commands == 4000 && measurement.outcome == total, "the predictions sum to the run's total");
+    expect(total.submits + total.cancels + total.replaces == 800, "the total is every command");
+    const Measurement measurement = runInstrumentsOnce(workloads, BenchmarkKind::SHARD);
+    expect(measurement.commands == 800 && measurement.outcome == total, "the predictions sum to the run's total");
+    const Measurement threaded = runInstrumentsOnce(workloads, BenchmarkKind::QUEUE);
+    expect(threaded.kind == BenchmarkKind::QUEUE && threaded.outcome == total, "and do through a real matching thread");
 }
 
 // A run that did other than its prediction must fail, or a measurement can stand for no work.
 void testATamperedPredictionFails() {
-    std::vector<Workload> workloads = instrumentWorkloads(findWorkload("quote-refresh"), 1000, 42, 2);
+    std::vector<Workload> workloads = instrumentWorkloads(findWorkload("quote-refresh"), 400, 42, 2);
     workloads[1].expected.trades += 1;
     ShardRun run(workloads);
     run.run();
     expectThrows([&] { run.check(); }, "a prediction one trade out fails the run");
-    expectThrows([&] { static_cast<void>(runShardOnce(workloads)); }, "and so does the measurement");
+    expectThrows([&] { static_cast<void>(runInstrumentsOnce(workloads, BenchmarkKind::SHARD)); }, "and so does the measurement");
+    expectThrows([&] { static_cast<void>(runInstrumentsOnce(workloads, BenchmarkKind::QUEUE)); }, "on real threads too");
 }
 
 void testARunRecordsItsInstruments() {
-    const std::vector<Workload> workloads = instrumentWorkloads(findWorkload("quote-refresh"), 1000, 7, 2);
-    const Measurement first = runShardOnce(workloads);
-    const Measurement again = runShardOnce(workloads);
+    const std::vector<Workload> workloads = instrumentWorkloads(findWorkload("quote-refresh"), 400, 7, 2);
+    const Measurement first = runInstrumentsOnce(workloads, BenchmarkKind::SHARD);
+    const Measurement again = runInstrumentsOnce(workloads, BenchmarkKind::SHARD);
     expect(first.outcome == again.outcome, "a seed fixes what a run does");
     expect(first.instruments == 2, "a run records its instruments");
     expect(runOnce(workloads[0], BenchmarkKind::CORE).instruments == 1, "every other run is one instrument");

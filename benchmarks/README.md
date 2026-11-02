@@ -18,8 +18,9 @@ With the Visual Studio generator, build and run the Release configuration: `cmak
 | `--workload NAME` | run this workload; repeat for several (default: all eleven, the five v1 workloads then the six behavior workloads) |
 | `--size smoke\|standard\|extended` | 10,000, 100,000 (default), or 1,000,000 timed commands per run |
 | `--commands N` | exactly N timed commands, instead of a size (recorded as size `custom`) |
-| `--kind core\|replay\|replay-log\|shard\|both` | which path to time (default `core`, see below); `both` is `core` and `replay` |
-| `--instruments N` | for `shard`: share the commands between N instruments on one shard (default 1) |
+| `--kind core\|replay\|replay-log\|shard\|queue\|both` | which path to time (default `core`, see below); `both` is `core` and `replay` |
+| `--instruments N` | for `shard` and `queue`: share the commands between N instruments on one shard (default 1) |
+| `--tamper-prediction` | for `shard` and `queue`: predict one trade too many, so the run must fail |
 | `--repetitions N` | measured runs per workload and kind (default 5) |
 | `--warmup N` | runs before those, recorded but left out of summaries (default 1) |
 | `--seed N` | generator seed (default 42) |
@@ -49,6 +50,7 @@ The two kinds differ only in what sits between the commands and the book:
 - **`replay`** times the end-to-end path of [`docs/replay-format.md`](../docs/replay-format.md): CSV parsing, the replay engine's dispatch and event collection, the final snapshot, and the formatted summary. The same commands are first rendered as CSV text in memory (untimed): six-column v1 rows for the v1 workloads, twelve-column v2 rows for the behavior workloads. Reading a file from disk is left out on purpose, since it would mostly measure the OS file cache. Invariant validation is `none`, so this path does no checking work that `core` skips.
 
 - **`shard`** runs the same commands through `Shard::process` on one thread, with no rings, so its difference from `core` is `Command` decoding, `BookSet`, and result reuse. `--instruments N` shares the commands between N instruments, each its own unchanged stream.
+- **`queue`** puts real rings and a real matching thread between this thread and that shard, so its difference from `shard` is the hand-off.
 
 - **`replay-log`** is `replay` with the same commands as a binary command log in memory instead of CSV text, which is what a `--kind` of its own keeps apart from `replay`'s unchanged path.
 

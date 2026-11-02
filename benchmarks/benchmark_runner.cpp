@@ -17,6 +17,9 @@
 #include "order_book/order.hpp"
 #include "order_book/order_book.hpp"
 #include "order_book/replay_engine.hpp"
+#include <future>
+#include <optional>
+
 #include "interleaver.hpp"
 #include "order_book/replay_summary.hpp"
 #include "order_book/submission_result.hpp"
@@ -68,6 +71,15 @@ std::vector<replay::ReplayRecord> recordsOf(const std::vector<BenchmarkCommand>&
     return records;
 }
 
+// One event's part of a WorkloadOutcome.
+void countResponse(const BookEvent& event, WorkloadOutcome& outcome) {
+    if (std::holds_alternative<OrderRejected>(event) || std::holds_alternative<CancelRejected>(event) ||
+        std::holds_alternative<ReplaceRejected>(event)) {
+        ++outcome.rejections;
+    }
+    countEvents(std::span<const BookEvent>(&event, 1), outcome);
+}
+
 // One command's part of a WorkloadOutcome, from its events alone.
 void countCommand(const replay::Command& command, std::span<const BookEvent> events, WorkloadOutcome& outcome) {
     if (std::holds_alternative<replay::AddCommand>(command)) {
@@ -78,12 +90,8 @@ void countCommand(const replay::Command& command, std::span<const BookEvent> eve
         ++outcome.replaces;
     }
     for (const BookEvent& event : events) {
-        if (std::holds_alternative<OrderRejected>(event) || std::holds_alternative<CancelRejected>(event) ||
-            std::holds_alternative<ReplaceRejected>(event)) {
-            ++outcome.rejections;
-        }
+        countResponse(event, outcome);
     }
-    countEvents(events, outcome);
 }
 
 void addOutcome(WorkloadOutcome& total, const WorkloadOutcome& outcome) {
@@ -293,17 +301,19 @@ const char* benchmarkKindName(BenchmarkKind kind) {
         case BenchmarkKind::REPLAY: return "replay";
         case BenchmarkKind::REPLAY_LOG: return "replay-log";
         case BenchmarkKind::SHARD: return "shard";
+        case BenchmarkKind::QUEUE: return "queue";
     }
     return "unknown";
 }
 
 BenchmarkKind parseBenchmarkKind(std::string_view name) {
-    for (const BenchmarkKind kind : {BenchmarkKind::CORE, BenchmarkKind::REPLAY, BenchmarkKind::REPLAY_LOG, BenchmarkKind::SHARD}) {
+    for (const BenchmarkKind kind : {BenchmarkKind::CORE, BenchmarkKind::REPLAY, BenchmarkKind::REPLAY_LOG, BenchmarkKind::SHARD,
+                                     BenchmarkKind::QUEUE}) {
         if (name == benchmarkKindName(kind)) {
             return kind;
         }
     }
-    throw std::invalid_argument("unknown kind '" + std::string(name) + "' (known: core, replay, replay-log, shard)");
+    throw std::invalid_argument("unknown kind '" + std::string(name) + "' (known: core, replay, replay-log, shard, queue)");
 }
 
 double operationsPerSecond(std::size_t commands, std::int64_t elapsedNanoseconds) {
@@ -402,6 +412,14 @@ void ShardRun::run() {
     }
 }
 
+std::uint32_t ShardRun::slotOf(std::uint32_t book) const {
+    return books[book].location.slot;
+}
+
+const replay::Command& ShardRun::commandOf(std::uint32_t book, std::size_t index) const {
+    return books[book].commands[index].command;
+}
+
 std::vector<WorkloadOutcome> ShardRun::outcomes() const {
     std::vector<WorkloadOutcome> counted;
     counted.reserve(books.size());
@@ -425,34 +443,190 @@ void ShardRun::check() const {
     }
 }
 
-Measurement runShardOnce(const std::vector<Workload>& workloads) {
-    ShardRun run(workloads);
-    const Clock::time_point start = Clock::now();
-    run.run();
-    const Clock::time_point stop = Clock::now();
-    run.check();
+QueueRun::QueueRun(const std::vector<Workload>& runWorkloads)
+    : workloads(&runWorkloads),
+      commands(runtime::defaultCommandRingSlots),
+      responses(runtime::defaultResponseRingSlots),
+      nextCommand(runWorkloads.size(), 0),
+      counted(runWorkloads.size()) {
+    std::promise<void> ready;
+    std::future<void> started = ready.get_future();
+    matching = std::thread([this, &ready] {
+        // Everything a book's owner must do happens here, its build and destruction included.
+        std::optional<ShardRun> run;
+        try {
+            run.emplace(*workloads);
+        } catch (...) {
+            ready.set_exception(std::current_exception());
+            return;
+        }
+        prepared = &*run;
+        ready.set_value();
+        try {
+            runtime::MatchingLoop loop(run->onThisThread(), doorbell, {runtime::RingPair{&commands, &responses}});
+            loop.run();
+            finalShapes = run->outcomes();
+            for (std::size_t i = 0; i < workloads->size(); ++i) {
+                requireNoGrowth(run->onThisThread().books().book(run->slotOf(static_cast<std::uint32_t>(i))), (*workloads)[i]);
+            }
+        } catch (...) {
+            failure = std::current_exception();
+        }
+    });
+    try {
+        started.get();
+    } catch (...) {
+        matching.join();
+        throw;
+    }
+}
 
+QueueRun::~QueueRun() {
+    if (matching.joinable()) {
+        try {
+            finish();
+        } catch (const std::exception&) {  // a failed run has already been reported, or will be
+        }
+    }
+}
+
+runtime::CommandElement QueueRun::elementFor(std::uint32_t book) {
+    return runtime::CommandElement{book, prepared->commandOf(book, nextCommand[book]), prepared->slotOf(book), 0,
+                                   runtime::ControlKind::COMMAND};
+}
+
+bool QueueRun::trySend(const runtime::CommandElement& element) {
+    if (!commands.tryPush(element)) {
+        return false;
+    }
+    const auto book = static_cast<std::uint32_t>(element.correlation);
+    countCommand(element.command, {}, counted[book]);
+    ++nextCommand[book];
+    ++sent;
+    return true;
+}
+
+std::size_t QueueRun::drainResponses(std::size_t limit) {
+    std::size_t lastEvents = 0;
+    responses.drain(limit, [this, &lastEvents](const runtime::ResponseRecord& record) {
+        if (record.kind == runtime::ResponseKind::SHARD_STOPPED) {
+            stopReceived = true;
+            return;
+        }
+        countResponse(record.event, counted[static_cast<std::size_t>(record.correlation)]);
+        if (record.kind == runtime::ResponseKind::LAST_EVENT) {
+            ++lastEvents;
+        }
+    });
+    answered += lastEvents;
+    return lastEvents;
+}
+
+void QueueRun::run() {
+    const std::vector<std::uint32_t>& sharing = prepared->sharing();
+    while (answered < sharing.size()) {
+        std::size_t batch = 0;
+        while (batch < runtime::takeBatch && sent < sharing.size() && trySend(elementFor(sharing[sent]))) {
+            ++batch;
+        }
+        if (batch != 0) {
+            doorbell.ring();
+        }
+        drainResponses(runtime::defaultResponseRingSlots);
+    }
+}
+
+void QueueRun::prepare(std::size_t index) {
+    held = elementFor(prepared->sharing()[index]);
+}
+
+void QueueRun::sendPrepared() {
+    while (!trySend(*held)) {
+    }
+    doorbell.ring();
+}
+
+void QueueRun::awaitResponse() {
+    while (answered < sent) {
+        drainResponses(runtime::defaultResponseRingSlots);
+    }
+}
+
+void QueueRun::finish() {
+    const runtime::CommandElement marker{0, replay::CancelCommand{1}, 0, 0, runtime::ControlKind::STOP};
+    while (!commands.tryPush(marker)) {
+        drainResponses(runtime::defaultResponseRingSlots);
+    }
+    doorbell.ring();
+    while (!stopReceived) {
+        drainResponses(runtime::defaultResponseRingSlots);
+    }
+    matching.join();
+    if (failure) {
+        std::rethrow_exception(failure);
+    }
+}
+
+std::vector<WorkloadOutcome> QueueRun::outcomes() const {
+    std::vector<WorkloadOutcome> merged = counted;
+    for (std::size_t i = 0; i < merged.size(); ++i) {
+        merged[i].finalActiveOrders = finalShapes[i].finalActiveOrders;
+        merged[i].finalPriceLevels = finalShapes[i].finalPriceLevels;
+        merged[i].finalPendingStops = finalShapes[i].finalPendingStops;
+    }
+    return merged;
+}
+
+void QueueRun::check() const {
+    const std::vector<WorkloadOutcome> outcome = outcomes();
+    for (std::size_t i = 0; i < outcome.size(); ++i) {
+        const Workload& workload = (*workloads)[i];
+        if (outcome[i] != workload.expected) {
+            throw std::runtime_error("workload " + workload.config.name + " instrument " + std::to_string(i) + " (queue): the book did " +
+                                     describeOutcome(outcome[i]) + " but the workload predicted " + describeOutcome(workload.expected));
+        }
+    }
+}
+
+Measurement runInstrumentsOnce(const std::vector<Workload>& workloads, BenchmarkKind kind) {
     Measurement measurement;
+    std::vector<WorkloadOutcome> outcomes;
+    if (kind == BenchmarkKind::SHARD) {
+        ShardRun run(workloads);
+        const Clock::time_point start = Clock::now();
+        run.run();
+        measurement.elapsedNanoseconds = nanosecondsBetween(start, Clock::now());
+        run.check();
+        outcomes = run.outcomes();
+    } else {
+        QueueRun run(workloads);
+        const Clock::time_point start = Clock::now();
+        run.run();
+        measurement.elapsedNanoseconds = nanosecondsBetween(start, Clock::now());
+        run.finish();
+        run.check();
+        outcomes = run.outcomes();
+    }
     measurement.workload = workloads.front().config.name;
-    measurement.kind = BenchmarkKind::SHARD;
+    measurement.kind = kind;
     measurement.instruments = workloads.size();
-    measurement.elapsedNanoseconds = nanosecondsBetween(start, stop);
     for (const Workload& workload : workloads) {
         measurement.commands += workload.timedCount();
     }
-    for (const WorkloadOutcome& outcome : run.outcomes()) {
+    for (const WorkloadOutcome& outcome : outcomes) {
         addOutcome(measurement.outcome, outcome);
     }
     return measurement;
 }
 
-std::vector<Measurement> runShardRepeated(const std::vector<Workload>& workloads, const RunSettings& settings) {
-    return repeated(settings, [&workloads] { return runShardOnce(workloads); });
+std::vector<Measurement> runInstrumentsRepeated(const std::vector<Workload>& workloads, BenchmarkKind kind,
+                                                const RunSettings& settings) {
+    return repeated(settings, [&workloads, kind] { return runInstrumentsOnce(workloads, kind); });
 }
 
 Measurement runOnce(const Workload& workload, BenchmarkKind kind) {
-    if (kind == BenchmarkKind::SHARD) {
-        return runShardOnce({workload});
+    if (kind == BenchmarkKind::SHARD || kind == BenchmarkKind::QUEUE) {
+        return runInstrumentsOnce({workload}, kind);
     }
     Measurement measurement = kind == BenchmarkKind::CORE ? runCore(workload) : runReplay(workload, kind == BenchmarkKind::REPLAY_LOG);
     measurement.workload = workload.config.name;

@@ -29,7 +29,7 @@ Every statement drawn from these results follows this rule, and so does anything
 | **Round trip** | Scheduled send, over loopback through the shipped engine | Frame flagged last |
 | **Durable wait** | A record enters the log ring | The durable position covers it |
 
-Only the command interval exists so far. The others land with what they time.
+The command and hand-off intervals exist so far. The others land with what they time. `--pin-core` covers the sending thread alone, so a hand-off row prints `unpinned` until the matching thread can be pinned too.
 
 ## Results
 

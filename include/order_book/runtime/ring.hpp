@@ -54,6 +54,11 @@ namespace order_book::runtime {
             return true;
         }
 
+        // Reader only. Whether anything is waiting right now.
+        bool hasItems() const noexcept {
+            return writer.index.load(std::memory_order_acquire) != reader.index.load(std::memory_order_relaxed);
+        }
+
         // Reader only. Calls take(item) on up to limit items, oldest first, and returns how many.
         // Their slots go back to the writer together, once take has seen them all.
         template <typename Take>
@@ -111,7 +116,8 @@ namespace order_book::runtime {
     static_assert(sizeof(CommandElement) == 64, "a command element fills one cache line");
     static_assert(std::is_trivially_copyable_v<CommandElement>, "a command element crosses threads by copy");
 
-    enum class ResponseKind : std::uint8_t { EVENT, LAST_EVENT };
+    // SHARD_STOPPED carries no event: it says this ring will hold nothing more.
+    enum class ResponseKind : std::uint8_t { EVENT, LAST_EVENT, SHARD_STOPPED };
 
     // One event on its way back. Results never cross threads, and a response larger than the ring
     // streams through it.

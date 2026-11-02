@@ -15,6 +15,7 @@
 #include "order_book/order_book.hpp"
 #include "order_book/order_request.hpp"
 #include "order_book/replace_request.hpp"
+#include "order_book/runtime/matching_loop.hpp"
 #include "order_book/runtime/ring.hpp"
 #include "workload.hpp"
 
@@ -240,6 +241,34 @@ void testCancelOrder() {
            "a cancel of a resting order, a pending stop, and an unknown ID");
 }
 
+// With ring pushes, on the thread that matches: the only part of this test that heap calls
+// count against is the loop's own pass.
+void testEveryWorkloadThroughItsRings() {
+    for (const auto* family : {&bench::builtInWorkloads(), &bench::behaviorWorkloads()}) {
+        for (const bench::WorkloadConfig& config : *family) {
+            const std::vector<bench::Workload> workloads =
+                bench::instrumentWorkloads(config, bench::timedCommandCount(bench::BenchmarkSize::SMOKE), 42, 1);
+            bench::ShardRun run(workloads);
+            runtime::Doorbell doorbell;
+            runtime::Ring<runtime::CommandElement> commands(runtime::defaultCommandRingSlots);
+            runtime::Ring<runtime::ResponseRecord> responses(runtime::defaultResponseRingSlots);
+            runtime::MatchingLoop loop(run.onThisThread(), doorbell, {runtime::RingPair{&commands, &responses}});
+
+            std::size_t sent = 0;
+            std::size_t calls = 0;
+            const std::size_t total = run.sharing().size();
+            while (sent < total) {
+                for (std::size_t i = 0; i < runtime::takeBatch && sent < total; ++i, ++sent) {
+                    commands.tryPush(runtime::CommandElement{0, run.commandOf(0, sent), run.slotOf(0), 0, runtime::ControlKind::COMMAND});
+                }
+                calls += heapCallsOf([&loop] { loop.pass(); });
+                responses.drain(runtime::defaultResponseRingSlots, [](const runtime::ResponseRecord&) {});
+            }
+            expect(calls == 0, config.name + " made " + std::to_string(calls) + " heap calls with ring pushes");
+        }
+    }
+}
+
 void testRings() {
     runtime::Ring<runtime::CommandElement> commands(64);
     runtime::Ring<runtime::ResponseRecord> responses(64);
@@ -280,6 +309,7 @@ void testEncodeLogRecord() {
     testACascade();
     testReplacesFourPaths();
     testCancelOrder();
+    testEveryWorkloadThroughItsRings();
     testRings();
     testEncodeLogRecord();
 }
