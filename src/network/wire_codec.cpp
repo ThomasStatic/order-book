@@ -215,9 +215,6 @@ namespace order_book::network {
     }
 
     std::optional<ProtocolError> FrameReader::checkHeader(std::uint8_t type, std::uint8_t flags, std::size_t length) const {
-        if (length < frameHeaderBytes) {
-            return ProtocolError::BAD_LENGTH;
-        }
         const std::optional<std::size_t> known = sizeOf(type);
         if (source == FrameSource::ENGINE) {
             if ((flags & ~flagLast) != 0) {
@@ -272,10 +269,18 @@ namespace order_book::network {
         }
         while (true) {
             const std::span<const std::byte> unread = std::span<const std::byte>(buffer).subspan(position);
-            if (unread.size() < frameHeaderBytes) {
+            if (unread.size() < sizeof(std::uint16_t)) {
                 return NeedMore{};
             }
             const std::size_t length = load16(unread, lengthOffset);
+            if (length < frameHeaderBytes) {
+                // Shorter than a header, so it has no correlation to echo, however many bytes follow.
+                failure = FrameError{ProtocolError::BAD_LENGTH, 0};
+                return *failure;
+            }
+            if (unread.size() < frameHeaderBytes) {
+                return NeedMore{};
+            }
             const std::uint8_t type = load8(unread, typeOffset);
             const std::uint8_t flags = load8(unread, flagsOffset);
             const Correlation correlation = load64(unread, correlationOffset);

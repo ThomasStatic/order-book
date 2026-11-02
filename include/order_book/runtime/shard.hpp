@@ -10,6 +10,10 @@
 #include "order_book/runtime/book_set.hpp"
 #include "order_book/runtime/instruments.hpp"
 
+namespace order_book {
+    struct OrderBookTestAccess;
+}
+
 namespace order_book::runtime {
 
     // What Shard::checkInvariants found broken.
@@ -67,7 +71,7 @@ namespace order_book::runtime {
         std::optional<ShardViolation> checkInvariants() const;
 
     private:
-        friend struct ShardTestAccess;
+        friend struct order_book::OrderBookTestAccess;
 
         const InstrumentDirectory* instruments;
         BookSet bookSet;

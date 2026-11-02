@@ -328,16 +328,17 @@ void testEverySplitPoint(const std::filesystem::path& root) {
     checkEverySplit(FrameSource::CLIENT, broken, "a stream with an error");
 }
 
-void put16(Bytes& frame, std::size_t offset, std::uint16_t value) {
+void put16(Bytes& frame, std::size_t offset, std::uint16_t value) {  // little-endian
     frame[offset] = static_cast<std::byte>(value & 0xFFU);
     frame[offset + 1] = static_cast<std::byte>(value >> 8);
 }
 
-void expectError(const Bytes& stream, ProtocolError code, const std::string& what) {
+void expectError(const Bytes& stream, ProtocolError code, const std::string& what, Correlation correlation = goldenCorrelation) {
     const Outcome outcome = readInChunks(FrameSource::CLIENT, stream, stream.size());
     expect(outcome.error.has_value(), what + " is an error");
     expect(outcome.error->code == code, what + " has the wrong code");
-    expect(outcome.error->correlation == goldenCorrelation, what + " names the frame's correlation");
+    expect(outcome.error->correlation == correlation, what + " names the wrong correlation");
+    checkEverySplit(FrameSource::CLIENT, stream, what);
 }
 
 Bytes after(const Bytes& hello, const Bytes& frame) {
@@ -354,7 +355,11 @@ void testOneCasePerProtocolError(const std::filesystem::path& root) {
 
     Bytes tooShortToBeAFrame = hello;
     put16(tooShortToBeAFrame, 0, 11);
-    expectError(tooShortToBeAFrame, ProtocolError::BAD_LENGTH, "a length under the header");
+    expectError(tooShortToBeAFrame, ProtocolError::BAD_LENGTH, "a length under the header", 0);
+    FrameReader shortLength(FrameSource::CLIENT);
+    shortLength.feed(std::span<const std::byte>(tooShortToBeAFrame).first(2));
+    expect(std::get<FrameError>(shortLength.next()) == FrameError{ProtocolError::BAD_LENGTH, 0},
+           "a length under the header fails at once, with no correlation to wait for");
     Bytes longCommand = add;
     longCommand.push_back(std::byte{0});
     put16(longCommand, 0, 49);
@@ -442,6 +447,7 @@ void testAClientSkipsWhatItDoesNotKnow(const std::filesystem::path& root) {
 
     Bytes stream = unknown;
     stream.insert(stream.end(), longer.begin(), longer.end());
+    checkEverySplit(FrameSource::ENGINE, stream, "a stream with what a client skips");
     FrameReader reader(FrameSource::ENGINE);
     reader.feed(stream);
     const FrameResult result = reader.next();
@@ -453,6 +459,7 @@ void testAClientSkipsWhatItDoesNotKnow(const std::filesystem::path& root) {
     Bytes tooShort = readFrame(root, "order_cancelled");
     tooShort.pop_back();
     put16(tooShort, 0, static_cast<std::uint16_t>(tooShort.size()));
+    checkEverySplit(FrameSource::ENGINE, tooShort, "a frame shorter than its type");
     FrameReader strict(FrameSource::ENGINE);
     strict.feed(tooShort);
     expect(std::get<FrameError>(strict.next()).code == ProtocolError::BAD_LENGTH, "a frame shorter than its type is an error");

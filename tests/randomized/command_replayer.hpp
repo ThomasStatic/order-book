@@ -115,6 +115,13 @@ private:
 // How the book differs from the model, level by level and queue by queue, or nothing.
 std::optional<std::string> compareBookWithModel(const OrderBook& book, const ReferenceBook& model);
 
+// How two books that each match this model differ in what the model cannot see: the next
+// sequence number and trade ID, and each resting order's own numbers and owner, or nothing.
+std::optional<std::string> compareBooks(const OrderBook& book, const OrderBook& witness, const ReferenceBook& model);
+
+// What is wrong with the book's pool: unsound free lists, or live blocks it doesn't account for.
+std::optional<std::string> checkBookPool(const OrderBook& book);
+
 // The book's and the model's best levels per side, and where the command's order is in each.
 // Reads the book's levels directly, never through its index, so it is safe on a corrupted book.
 std::string describeBookState(const OrderBook& book, const ReferenceBook& model, const Command& command);

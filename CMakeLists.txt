@@ -756,7 +756,7 @@ if(BUILD_TESTING)
                 --out-dir ${CMAKE_CURRENT_BINARY_DIR}/randomized-failures)
 
     # The engine's harness: the real entry check and Shard beside a model and a witness per
-    # instrument, in one thread (docs/internals/testing.md).
+    # instrument, in one thread (docs/internals/randomized-tests.md).
     add_library(order_book_engine_testing STATIC
         tests/engine/engine_harness.cpp
     )
@@ -943,11 +943,11 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         add_test(NAME matching_path_allocation_tests COMMAND matching_path_allocation_tests)
         set_tests_properties(matching_path_allocation_tests PROPERTIES SKIP_RETURN_CODE 77)
 
-        # The program end to end on a tiny run of one workload, both kinds, writing both
-        # files. --allow-unoptimized, since CTest runs in every configuration.
         add_test(NAME benchmark_shard_smoke
             COMMAND order_book_benchmarks --workload small-book --commands 2000 --kind shard --instruments 4
                     --repetitions 1 --warmup 0 --allow-unoptimized)
+        # The program end to end on a tiny run of one workload, both kinds, writing both
+        # files. --allow-unoptimized, since CTest runs in every configuration.
         add_test(NAME benchmark_cli_smoke
             COMMAND order_book_benchmarks --workload small-book --commands 500 --kind both
                     --repetitions 2 --warmup 1 --allow-unoptimized

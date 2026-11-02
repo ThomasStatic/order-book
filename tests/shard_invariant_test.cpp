@@ -10,21 +10,14 @@
 
 namespace order_book {
 
-// Befriended by OrderBook so this test can break a book on purpose.
+// Befriended by OrderBook and Shard so this test can break them on purpose.
 struct OrderBookTestAccess {
     static std::uint64_t& aggregate(OrderBook& book, Price askPrice) { return book.asks.at(askPrice).quantity; }
+    static void setNextPosition(runtime::Shard& shard, std::uint64_t position) { shard.nextLogPosition = position; }
+    static void setDirectory(runtime::Shard& shard, const runtime::InstrumentDirectory& directory) { shard.instruments = &directory; }
+    static OrderBook& book(runtime::Shard& shard, std::uint32_t slot) { return const_cast<OrderBook&>(shard.bookSet.book(slot)); }
 };
 
-namespace runtime {
-
-// Befriended by Shard, for the same reason.
-struct ShardTestAccess {
-    static void setNextPosition(Shard& shard, std::uint64_t position) { shard.nextLogPosition = position; }
-    static void setDirectory(Shard& shard, const InstrumentDirectory& directory) { shard.instruments = &directory; }
-    static OrderBook& book(Shard& shard, std::uint32_t slot) { return const_cast<OrderBook&>(shard.bookSet.book(slot)); }
-};
-
-}  // namespace runtime
 }  // namespace order_book
 
 namespace {
@@ -65,7 +58,7 @@ void testABrokenBookIsFound() {
     shard.process(replay::Command{sell(1, 100, 5)}, 1);
     expect(!shard.checkInvariants(), "a sound shard passes");
 
-    OrderBookTestAccess::aggregate(ShardTestAccess::book(shard, 1), 100) = 6;
+    OrderBookTestAccess::aggregate(OrderBookTestAccess::book(shard, 1), 100) = 6;
     expectViolation(shard, ShardViolationKind::BOOK, 1, "a book that fails its own check");
 }
 
@@ -74,18 +67,18 @@ void testASlotThatDoesNotMapBackIsFound() {
     Shard shard(directory, 0);
 
     const InstrumentDirectory moved({on("AAPL", 0), on("MSFT", 1)}, 2);
-    ShardTestAccess::setDirectory(shard, moved);
+    OrderBookTestAccess::setDirectory(shard, moved);
     expectViolation(shard, ShardViolationKind::SLOT_MAPPING, 1, "a book whose instrument moved to another shard");
 
     const InstrumentDirectory renumbered({on("AAPL", 0), on("AMD", 0), on("MSFT", 0)}, 1);
-    ShardTestAccess::setDirectory(shard, renumbered);
+    OrderBookTestAccess::setDirectory(shard, renumbered);
     expectViolation(shard, ShardViolationKind::SLOT_MAPPING, 1, "a book whose instrument moved to another slot");
 
     const InstrumentDirectory gone({on("AAPL", 0)}, 1);
-    ShardTestAccess::setDirectory(shard, gone);
+    OrderBookTestAccess::setDirectory(shard, gone);
     expectViolation(shard, ShardViolationKind::SLOT_MAPPING, 1, "a book the directory no longer lists");
 
-    ShardTestAccess::setDirectory(shard, directory);
+    OrderBookTestAccess::setDirectory(shard, directory);
     expect(!shard.checkInvariants(), "and the true directory still passes");
 }
 
@@ -96,9 +89,9 @@ void testALogPositionOutOfStepIsFound() {
     shard.process(replay::Command{replay::CancelCommand{1}}, 0);
     expect(!shard.checkInvariants(), "two commands from position 1000 stand at 1002");
 
-    ShardTestAccess::setNextPosition(shard, 1003);
+    OrderBookTestAccess::setNextPosition(shard, 1003);
     expectViolation(shard, ShardViolationKind::LOG_POSITION, 0, "a next position past the commands taken");
-    ShardTestAccess::setNextPosition(shard, 1001);
+    OrderBookTestAccess::setNextPosition(shard, 1001);
     expectViolation(shard, ShardViolationKind::LOG_POSITION, 0, "a next position behind them");
 }
 

@@ -14,7 +14,8 @@
 #include "order_book/symbol.hpp"
 
 // The engine's single-threaded harness: generated commands through the real entry check and
-// Shard, beside one model and one witness book per instrument. See docs/internals/testing.md.
+// Shard, beside one model and one witness book per instrument. See
+// docs/internals/randomized-tests.md.
 namespace order_book::engine_testing {
 
     using replay::Symbol;
@@ -35,6 +36,8 @@ namespace order_book::engine_testing {
         // For testing the harness: before this command, a shard's book takes one extra order its
         // witness and model never hear of.
         std::optional<std::size_t> plantDivergenceBefore;
+        // And then cancels it, leaving only what the model can't see: the numbers it used.
+        bool cancelPlantedOrder = false;
     };
 
     enum class SymbolFault { NONE, UNKNOWN, MALFORMED };
@@ -68,7 +71,7 @@ namespace order_book::engine_testing {
 
     struct EngineStats {
         std::size_t queued = 0;
-        std::size_t rejectedAtEntry = 0;
+        std::size_t malformedAtEntry = 0;
         std::size_t refused = 0;
         std::size_t dropped = 0;
         std::uint64_t shardGrowths = 0;    // shows the shard's books really were too small

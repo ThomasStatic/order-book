@@ -189,9 +189,6 @@ void testDeterminism() {
     }
 }
 
-// Pins what each workload generates at the smoke size, so the stream is the same on every
-// compiler and standard library, and a change to what is drawn cannot go unnoticed: it must
-// bump workloadGeneratorVersion and re-pin these.
 // One instrument is exactly today's stream, so its prediction holds on the shard as on the book.
 void testShardRunsDoWhatCoreRunsDo() {
     // Large preloads are out of reach with a book's whole check after every command.
@@ -228,6 +225,28 @@ void testInstrumentPredictionsSumToTheRun() {
     expect(measurement.commands == 4000 && measurement.outcome == total, "the predictions sum to the run's total");
 }
 
+// A run that did other than its prediction must fail, or a measurement can stand for no work.
+void testATamperedPredictionFails() {
+    std::vector<Workload> workloads = instrumentWorkloads(findWorkload("quote-refresh"), 1000, 42, 2);
+    workloads[1].expected.trades += 1;
+    ShardRun run(workloads);
+    run.run();
+    expectThrows([&] { run.check(); }, "a prediction one trade out fails the run");
+    expectThrows([&] { static_cast<void>(runShardOnce(workloads)); }, "and so does the measurement");
+}
+
+void testARunRecordsItsInstruments() {
+    const std::vector<Workload> workloads = instrumentWorkloads(findWorkload("quote-refresh"), 1000, 7, 2);
+    const Measurement first = runShardOnce(workloads);
+    const Measurement again = runShardOnce(workloads);
+    expect(first.outcome == again.outcome, "a seed fixes what a run does");
+    expect(first.instruments == 2, "a run records its instruments");
+    expect(runOnce(workloads[0], BenchmarkKind::CORE).instruments == 1, "every other run is one instrument");
+}
+
+// Pins what each workload generates at the smoke size, so the stream is the same on every
+// compiler and standard library, and a change to what is drawn cannot go unnoticed: it must
+// bump workloadGeneratorVersion and re-pin these.
 void testPinnedFingerprints() {
     expect(workloadGeneratorVersion == 3, "re-pin these fingerprints whenever workloadGeneratorVersion changes");
     const std::vector<std::pair<std::string, std::uint64_t>> pinned{
@@ -576,11 +595,11 @@ void testCsvExport() {
         "workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,"
         "elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,"
         "volume,final_active_orders,final_price_levels,replaces,expirations,preventions,stops_triggered,"
-        "final_pending_stops\n"
+        "final_pending_stops,instruments\n"
         "small-book,core,custom,42,3,Release,true,1,true,600,1500000000,400.000,2500000.000,400,200,0.333333,0,50,"
-        "700,90,12,0,0,0,0,0\n"
+        "700,90,12,0,0,0,0,0,1\n"
         "small-book,core,custom,42,3,Release,true,1,false,600,3000000000,200.000,5000000.000,400,200,0.333333,0,50,"
-        "700,90,12,0,0,0,0,0\n";
+        "700,90,12,0,0,0,0,0,1\n";
     expect(csv == expected, "CSV export:\n" + csv);
 }
 
@@ -799,6 +818,8 @@ int main() {
     testDeterminism();
     testShardRunsDoWhatCoreRunsDo();
     testInstrumentPredictionsSumToTheRun();
+    testATamperedPredictionFails();
+    testARunRecordsItsInstruments();
     testPinnedFingerprints();
     testV1WorkloadsUnchanged();
     testBehaviorWorkloads();

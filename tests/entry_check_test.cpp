@@ -85,7 +85,7 @@ void testChecksRunInOrder() {
 
     RawCommand malformed = addCommand();
     malformed.quantity = 0;
-    expect(std::get<EntryRejected>(check(malformed, true)).event == BookEvent{OrderRejected{7, RejectionReason::INVALID_QUANTITY}},
+    expect(std::get<EntryMalformed>(check(malformed, true)).event == BookEvent{OrderRejected{7, RejectionReason::INVALID_QUANTITY}},
            "malformed comes ahead of stopping");
 
     expect(std::get<EntryRefused>(check(addCommand(), true)).code == RefusedCode::ENGINE_STOPPING,
@@ -105,7 +105,7 @@ void testAMalformedSymbolIsAnUnknownInstrument() {
 }
 
 void testACancelOfIdZero() {
-    expect(std::get<EntryRejected>(check(cancelCommand(0))).event ==
+    expect(std::get<EntryMalformed>(check(cancelCommand(0))).event ==
                BookEvent{CancelRejected{0, RejectionReason::ORDER_NOT_FOUND}},
            "what the book would say");
     expect(std::holds_alternative<EntryAccepted>(check(cancelCommand(1))), "any other ID is queued");
@@ -137,7 +137,7 @@ void testSelfTradeMode() {
         RawCommand unknown = addCommand();
         unknown.owner = owner;
         unknown.selfTradePrevention = 4;
-        expect(std::get<EntryRejected>(check(unknown)).event ==
+        expect(std::get<EntryMalformed>(check(unknown)).event ==
                    BookEvent{OrderRejected{7, RejectionReason::INVALID_SELF_TRADE_PREVENTION}},
                "an unknown mode is refused whatever the owner");
     }
@@ -264,7 +264,7 @@ void testAgreesWithTheBookOnRandomBodies() {
         const RawCommand raw = randomCommand(source);
         const EntryDecision decision = check(raw);
         const BookEvent answer = askTheBook(raw);
-        if (const EntryRejected* rejection = std::get_if<EntryRejected>(&decision)) {
+        if (const EntryMalformed* rejection = std::get_if<EntryMalformed>(&decision)) {
             ++rejected;
             expect(rejection->event == answer, "refused with the book's own event and reason");
             continue;

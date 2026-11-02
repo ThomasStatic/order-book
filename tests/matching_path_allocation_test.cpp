@@ -81,14 +81,19 @@ void testTheCountSeesAHeapCall() {
 }
 
 void testEveryWorkloadOnAWarmShard() {
-    for (const bench::WorkloadConfig& config : bench::builtInWorkloads()) {
-        const std::vector<bench::Workload> workloads =
-            bench::instrumentWorkloads(config, bench::timedCommandCount(bench::BenchmarkSize::SMOKE), 42, 1);
-        bench::ShardRun run(workloads);
-        const std::size_t calls = heapCallsOf([&run] { run.run(); });
-        expect(calls == 0, config.name + " made " + std::to_string(calls) + " heap calls on a warm shard");
-        run.check();
+    std::size_t workloadsRun = 0;
+    for (const auto* family : {&bench::builtInWorkloads(), &bench::behaviorWorkloads()}) {
+        for (const bench::WorkloadConfig& config : *family) {
+            const std::vector<bench::Workload> workloads =
+                bench::instrumentWorkloads(config, bench::timedCommandCount(bench::BenchmarkSize::SMOKE), 42, 1);
+            bench::ShardRun run(workloads);
+            const std::size_t calls = heapCallsOf([&run] { run.run(); });
+            expect(calls == 0, config.name + " made " + std::to_string(calls) + " heap calls on a warm shard");
+            run.check();
+            ++workloadsRun;
+        }
     }
+    expect(workloadsRun == 11, "every workload ran, not " + std::to_string(workloadsRun));
 }
 
 void testSeveralInstrumentsOnAWarmShard() {
@@ -142,8 +147,23 @@ void testEveryTypeAndTimeInForce() {
         OrderRequest postOnly = request(id++, Side::BUY, 90, 1);
         postOnly.postOnly = true;
         warm.book.submitOrder(postOnly, warm.submitted);
+        for (const TimeInForce timeInForce : {TimeInForce::IOC, TimeInForce::FOK}) {
+            OrderRequest stop = request(id++, Side::BUY, 0, 1);
+            stop.type = OrderType::STOP;
+            stop.timeInForce = timeInForce;
+            stop.stopPrice = 200;
+            warm.book.submitOrder(stop, warm.submitted);
+        }
+        for (const TimeInForce timeInForce : {TimeInForce::GTC, TimeInForce::IOC, TimeInForce::FOK}) {
+            OrderRequest stopLimit = request(id++, Side::BUY, 205, 1);
+            stopLimit.type = OrderType::STOP_LIMIT;
+            stopLimit.timeInForce = timeInForce;
+            stopLimit.stopPrice = 200;
+            warm.book.submitOrder(stopLimit, warm.submitted);
+        }
     });
     expect(calls == 0, "a submission of any type and time in force made " + std::to_string(calls) + " heap calls");
+    expect(warm.book.pendingStopCount() == 5, "every stop and stop-limit order pends");
 }
 
 void testACascade() {
@@ -185,6 +205,21 @@ void testReplacesFourPaths() {
     expect(heapCallsOf([&] { warm.book.replaceOrder(increase, warm.replaced); }) == 0, "an increase");
     expect(heapCallsOf([&] { warm.book.replaceOrder(price, warm.replaced); }) == 0, "a new price");
     expect(warm.replaced.isSuccess(), "the last replace succeeded");
+
+    ReplaceRequest crossing = price;
+    crossing.price = 120;
+    expect(heapCallsOf([&] { warm.book.replaceOrder(crossing, warm.replaced); }) == 0, "a replace that crosses and trades");
+    expect(warm.replaced.isSuccess() && warm.book.activeOrderCount() == 1, "it took the ask");
+
+    warm.book.submitOrder(request(4, Side::SELL, 130, 5), warm.submitted);
+    warm.book.submitOrder(request(3, Side::BUY, 100, 5), warm.submitted);
+    ReplaceRequest wouldTake{};
+    wouldTake.id = 3;
+    wouldTake.price = 130;
+    wouldTake.quantity = 5;
+    wouldTake.postOnly = true;
+    expect(heapCallsOf([&] { warm.book.replaceOrder(wouldTake, warm.replaced); }) == 0, "a post-only replace that would take");
+    expect(warm.book.activeOrderCount() == 2, "it expired whole");
 }
 
 void testCancelOrder() {

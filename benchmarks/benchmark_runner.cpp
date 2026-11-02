@@ -101,7 +101,20 @@ void addOutcome(WorkloadOutcome& total, const WorkloadOutcome& outcome) {
     total.finalPendingStops += outcome.finalPendingStops;
 }
 
-// Each instrument's symbol: the benchmark's own for one, so a run names what it did.
+// settings.warmups runs, then settings.repetitions measured runs, warm-ups first.
+template <typename Run>
+std::vector<Measurement> repeated(const RunSettings& settings, Run run) {
+    std::vector<Measurement> measurements;
+    measurements.reserve(settings.warmups + settings.repetitions);
+    for (std::size_t i = 0; i < settings.warmups + settings.repetitions; ++i) {
+        Measurement measurement = run();
+        measurement.warmup = i < settings.warmups;
+        measurement.repetition = measurement.warmup ? i + 1 : i - settings.warmups + 1;
+        measurements.push_back(std::move(measurement));
+    }
+    return measurements;
+}
+
 replay::Symbol instrumentSymbol(std::size_t instrument) {
     return *replay::Symbol::parse("B" + std::to_string(instrument));
 }
@@ -338,7 +351,7 @@ struct ShardRun::Book {
 
 ShardRun::~ShardRun() = default;
 
-ShardRun::ShardRun(const std::vector<Workload>& runWorkloads, std::uint64_t seed) : workloads(&runWorkloads) {
+ShardRun::ShardRun(const std::vector<Workload>& runWorkloads) : workloads(&runWorkloads) {
     std::vector<runtime::Instrument> instruments;
     for (std::size_t i = 0; i < runWorkloads.size(); ++i) {
         const BookCapacity capacity = expectedBookSize(runWorkloads[i]);
@@ -369,7 +382,7 @@ ShardRun::ShardRun(const std::vector<Workload>& runWorkloads, std::uint64_t seed
     for (const Book& book : books) {
         remaining.push_back(book.commands.size());
     }
-    reference::Interleaver interleaver(seed, books.size(), reference::Spread::UNIFORM);
+    reference::Interleaver interleaver(runWorkloads.front().seed, books.size(), reference::Spread::UNIFORM);
     order.reserve(total);
     while (order.size() < total) {
         const std::size_t drawn = interleaver.next();
@@ -422,6 +435,7 @@ Measurement runShardOnce(const std::vector<Workload>& workloads) {
     Measurement measurement;
     measurement.workload = workloads.front().config.name;
     measurement.kind = BenchmarkKind::SHARD;
+    measurement.instruments = workloads.size();
     measurement.elapsedNanoseconds = nanosecondsBetween(start, stop);
     for (const Workload& workload : workloads) {
         measurement.commands += workload.timedCount();
@@ -433,15 +447,7 @@ Measurement runShardOnce(const std::vector<Workload>& workloads) {
 }
 
 std::vector<Measurement> runShardRepeated(const std::vector<Workload>& workloads, const RunSettings& settings) {
-    std::vector<Measurement> measurements;
-    measurements.reserve(settings.warmups + settings.repetitions);
-    for (std::size_t i = 0; i < settings.warmups + settings.repetitions; ++i) {
-        Measurement measurement = runShardOnce(workloads);
-        measurement.warmup = i < settings.warmups;
-        measurement.repetition = measurement.warmup ? i + 1 : i - settings.warmups + 1;
-        measurements.push_back(std::move(measurement));
-    }
-    return measurements;
+    return repeated(settings, [&workloads] { return runShardOnce(workloads); });
 }
 
 Measurement runOnce(const Workload& workload, BenchmarkKind kind) {
@@ -461,15 +467,7 @@ Measurement runOnce(const Workload& workload, BenchmarkKind kind) {
 }
 
 std::vector<Measurement> runRepeated(const Workload& workload, BenchmarkKind kind, const RunSettings& settings) {
-    std::vector<Measurement> measurements;
-    measurements.reserve(settings.warmups + settings.repetitions);
-    for (std::size_t i = 0; i < settings.warmups + settings.repetitions; ++i) {
-        Measurement measurement = runOnce(workload, kind);
-        measurement.warmup = i < settings.warmups;
-        measurement.repetition = measurement.warmup ? i + 1 : i - settings.warmups + 1;
-        measurements.push_back(std::move(measurement));
-    }
-    return measurements;
+    return repeated(settings, [&workload, kind] { return runOnce(workload, kind); });
 }
 
 std::vector<replay::ReplayRecord> workloadRecords(const Workload& workload, replay::Symbol symbol) {

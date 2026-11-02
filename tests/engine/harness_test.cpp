@@ -111,7 +111,7 @@ void testARunPassesAndExercisesEverything() {
         expect(false, "a clean run failed: " + result.failure->reason);
     }
     expect(result.stats.queued > 1000, "commands reach the shard");
-    expect(result.stats.rejectedAtEntry > 0, "the entry check answers some itself");
+    expect(result.stats.malformedAtEntry > 0, "the entry check answers some itself");
     expect(result.stats.refused > 0, "bad symbols are refused");
     expect(result.stats.dropped > 0, "what no entry point expresses is dropped");
     expect(result.stats.shardGrowths > 0, "the shard's books really were too small");
@@ -139,6 +139,17 @@ void testADriftingBookIsCaught() {
     expect(result.failure->instrument == "I0", "and the failure names the instrument");
 }
 
+// What the model can't see is the witness's job: an order placed and cancelled leaves the book
+// looking the same, and only the numbers it used show.
+void testAnInvisibleDriftIsCaught() {
+    EngineSeedConfig config = smallRun();
+    config.plantDivergenceBefore = 50;
+    config.cancelPlantedOrder = true;
+    const EngineRunResult result = runEngineSeed(config);
+    expect(!result.passed(), "a book that differs only in its counters fails the run");
+    expect(result.failure->reason.find("witness") != std::string::npos, "and it is the witness that caught it");
+}
+
 }  // namespace
 
 int main() {
@@ -149,6 +160,7 @@ int main() {
     testARunPassesAndExercisesEverything();
     testEverySpreadAndShardCountPasses();
     testADriftingBookIsCaught();
+    testAnInvisibleDriftIsCaught();
     std::cout << "engine harness tests passed" << std::endl;
     return EXIT_SUCCESS;
 }

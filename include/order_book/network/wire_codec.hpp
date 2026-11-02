@@ -96,7 +96,7 @@ namespace order_book::network {
 
     struct FrameError {
         ProtocolError code;
-        Correlation correlation;  // the offending frame's
+        Correlation correlation;  // the offending frame's, or 0 if it is shorter than a header
 
         bool operator==(const FrameError&) const = default;
     };
@@ -104,8 +104,9 @@ namespace order_book::network {
     using FrameResult = std::variant<Frame, NeedMore, FrameError>;
 
     // Takes bytes in any chunking and gives one frame at a time, the same whatever the chunks.
-    // A frame's shape is judged here, from its header as soon as that is in, and its body once
-    // that is. After an error, every later call returns it again. It keeps the bytes it was
+    // A frame's shape is judged here: a length under 12 once those 2 bytes are in, the rest of
+    // its header once that is, and its body once that is. After an error, every later call
+    // returns it again. It keeps the bytes it was
     // fed, so feed may grow its buffer, and nothing allocates per frame once that has settled.
     class FrameReader {
     public:
@@ -116,6 +117,7 @@ namespace order_book::network {
         FrameResult next();
 
     private:
+        // For a frame at least as long as a header.
         std::optional<ProtocolError> checkHeader(std::uint8_t type, std::uint8_t flags, std::size_t length) const;
         std::optional<ProtocolError> checkBody(FrameType type, std::span<const std::byte> body);
 

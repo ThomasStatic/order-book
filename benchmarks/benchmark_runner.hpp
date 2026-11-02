@@ -41,6 +41,7 @@ struct Measurement {
     // A warm-up's time is kept with the rest but left out of every summary.
     bool warmup = false;
     std::size_t commands = 0;
+    std::size_t instruments = 1;  // 1 but for a SHARD run of several
     std::int64_t elapsedNanoseconds = 0;
     // What the book did, counted from its results; it always equals the workload's expected
     // outcome, or the run throws instead of returning a measurement.
@@ -96,11 +97,12 @@ WorkloadOutcome totalOutcome(const std::vector<Workload>& workloads);
 
 // One Shard on this thread, holding a book for each workload, warmed to that workload's peak and
 // preloaded. run is what a timed region holds: it makes no heap call for a book inside its
-// capacity. A uniform interleaver shares the commands out, each instrument keeping its own order,
-// so each book's prediction holds. The workloads must outlive this.
+// capacity. An interleaver seeded from the first workload's seed shares the commands out, each
+// instrument keeping its own order, so each book's prediction holds. The workloads must outlive
+// this.
 class ShardRun {
 public:
-    explicit ShardRun(const std::vector<Workload>& workloads, std::uint64_t seed = 42);
+    explicit ShardRun(const std::vector<Workload>& workloads);
     ~ShardRun();
 
     void run();

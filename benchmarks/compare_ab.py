@@ -13,7 +13,7 @@ confidence interval, and the share of pairs in which the experiment was faster.
 
     python benchmarks/compare_ab.py --base BASE.exe --exp EXP.exe --out DIR
         [--pairs 16] [--repetitions 5] [--size standard] [--kind both] [--workload NAME]...
-        [--exp-workload NAME] [--exp-kind KIND]
+        [--exp-workload NAME] [--exp-kind KIND] [ANY OTHER OPTION OF THE PROGRAM]...
 
 Writes every invocation's CSV to DIR, and DIR/summary.md.
 
@@ -71,7 +71,8 @@ def main():
     parser.add_argument("--seed", default="42")
     parser.add_argument("--exp-workload")
     parser.add_argument("--exp-kind")
-    options = parser.parse_args()
+    # Anything else goes to both binaries as it is, such as --instruments 8.
+    options, passed_through = parser.parse_known_args()
     # Absolute, since Windows does not search the current directory for a relative path with slashes.
     binaries = {"base": os.path.abspath(options.base), "exp": os.path.abspath(options.exp)}
     os.makedirs(options.out, exist_ok=True)
@@ -79,7 +80,7 @@ def main():
 
     rows = []
     for workload in workloads:
-        common = ["--size", options.size, "--repetitions", str(options.repetitions), "--warmup", "1", "--seed", options.seed]
+        common = ["--size", options.size, "--repetitions", str(options.repetitions), "--warmup", "1", "--seed", options.seed] + passed_through
         args = {"base": ["--workload", workload, "--kind", options.kind] + common,
                 "exp": ["--workload", options.exp_workload or workload, "--kind", options.exp_kind or options.kind] + common}
         ratios = {}

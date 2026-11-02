@@ -65,7 +65,7 @@ IDs, prices, and quantities are 4 bytes each. A side is 1 for buy and 2 for sell
 Once a `Command`'s shape passes, the gateway checks it, stopping at the first failure.
 
 1. **Unknown or malformed symbol:** `Refused`, `UNKNOWN_INSTRUMENT`.
-2. **Malformed:** the book's own event and reason, flagged last. An unknown side, order type, time in force, or self-trade byte gets the book's own `INVALID_*` reason. A `CANCEL` with ID 0 gets `CancelRejected` with `ORDER_NOT_FOUND`.
+2. **Malformed:** the book's own event and reason, flagged last. An unknown side, order type, time in force, or self-trade byte gets the book's own reason, as if the field held a value past every known one. A `CANCEL` with ID 0 gets `CancelRejected` with `ORDER_NOT_FOUND`.
 3. **Engine stopping:** `Refused`, `ENGINE_STOPPING`, meaning retry. It comes last, so that code only ever means this command would have been queued.
 
 No owner clears the self-trade mode to absent, and an owner with an absent mode takes `CANCEL_RESTING`. Any other unknown mode is `INVALID_SELF_TRADE_PREVENTION`, whatever the owner.
@@ -118,4 +118,4 @@ All three tables are append-only: a value is never renumbered or reused.
 | 8 | `UNEXPECTED_FIELD` | a non-zero unused or reserved byte |
 | 9 | `TOO_MANY_CONNECTIONS` | past the limit on one gateway thread |
 
-An unknown frame type closes the connection rather than being refused, because after `Hello` it can only be a bug. On a protocol error the gateway stops reading, answers everything in flight on that connection, sends one `ProtocolError` with the offending frame's correlation, and closes.
+An unknown frame type closes the connection rather than being refused, because after `Hello` it can only be a bug. On a protocol error the gateway stops reading, answers everything in flight on that connection, sends one `ProtocolError` with the offending frame's correlation, or 0 for a length under 12, which has none, and closes.

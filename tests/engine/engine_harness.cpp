@@ -149,7 +149,11 @@ namespace order_book::engine_testing {
                 planted.side = Side::BUY;
                 planted.price = 1;
                 planted.quantity = 1;
-                shards[instrument.location.shard]->process(planted, instrument.location.slot);
+                runtime::Shard& shard = *shards[instrument.location.shard];
+                shard.process(planted, instrument.location.slot);
+                if (config.cancelPlantedOrder) {
+                    shard.process(replay::CancelCommand{planted.orderId}, instrument.location.slot);
+                }
             }
 
             std::optional<EngineFailure> execute(const EngineCommand& line, std::size_t index, EngineStats& stats) {
@@ -172,8 +176,8 @@ namespace order_book::engine_testing {
                 }
 
                 const ExpectedOutcome expected = randomized::applyCommand(instrument.model, command);
-                if (const auto* rejected = std::get_if<network::EntryRejected>(&decision)) {
-                    ++stats.rejectedAtEntry;
+                if (const auto* rejected = std::get_if<network::EntryMalformed>(&decision)) {
+                    ++stats.malformedAtEntry;
                     const std::span<const BookEvent> event(&rejected->event, 1);
                     if (!sameEvents(event, expected.events)) {
                         return failure(index, instrument,
@@ -227,6 +231,15 @@ namespace order_book::engine_testing {
                     const OrderBook& book = shards[instrument.location.shard]->books().book(instrument.location.slot);
                     if (const std::optional<std::string> difference = randomized::compareBookWithModel(book, instrument.model)) {
                         return failure(index, instrument, "the shard's book differs from the model: " + *difference);
+                    }
+                    if (const std::optional<std::string> difference = randomized::compareBooks(book, instrument.witness, instrument.model)) {
+                        return failure(index, instrument, "the shard's book differs from the witness: " + *difference);
+                    }
+                    if (const std::optional<std::string> broken = randomized::checkBookPool(book)) {
+                        return failure(index, instrument, "the shard's book's pool: " + *broken);
+                    }
+                    if (const std::optional<std::string> broken = randomized::checkBookPool(instrument.witness)) {
+                        return failure(index, instrument, "the witness's pool: " + *broken);
                     }
                 }
                 return std::nullopt;

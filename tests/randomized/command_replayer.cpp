@@ -17,6 +17,10 @@ namespace order_book {
 // orders the Order constructor refuses, and read levels and queues without going through the
 // index. This is its only definition in the randomized harness.
 struct OrderBookTestAccess {
+    static std::uint64_t nextSequenceNumber(const OrderBook& book) { return book.nextSequenceNum; }
+    static std::uint64_t nextTrade(const OrderBook& book) { return book.nextTradeId; }
+    static OwnerId ownerOf(const OrderBook& book, OrderId id) { return book.orderIndex.find(id)->second.itr->owner; }
+
     static Order build(const randomized::Command& command) {
         Order order(1, 1, 1, 1, Side::BUY);
         order.orderId = command.orderId;
@@ -397,6 +401,35 @@ std::optional<std::string> checkPool(const OrderBook& book) {
 
 std::optional<std::string> compareBookWithModel(const OrderBook& book, const ReferenceBook& model) {
     return compareState(book, model);
+}
+
+std::optional<std::string> compareBooks(const OrderBook& book, const OrderBook& witness, const ReferenceBook& model) {
+    if (OrderBookTestAccess::nextSequenceNumber(book) != OrderBookTestAccess::nextSequenceNumber(witness)) {
+        return "the next sequence numbers differ: " + std::to_string(OrderBookTestAccess::nextSequenceNumber(book)) + " and " +
+               std::to_string(OrderBookTestAccess::nextSequenceNumber(witness));
+    }
+    if (OrderBookTestAccess::nextTrade(book) != OrderBookTestAccess::nextTrade(witness)) {
+        return "the next trade IDs differ";
+    }
+    for (const Side side : {Side::BUY, Side::SELL}) {
+        for (const reference::ModelLevel& level : model.levels(side)) {
+            for (const auto& [id, open] : level.orders) {
+                const Order left = book.findActiveOrder(id);
+                const Order right = witness.findActiveOrder(id);
+                if (left.getSequenceNum() != right.getSequenceNum() || left.getInitialQuantity() != right.getInitialQuantity() ||
+                    left.getRemainingQuantity() != right.getRemainingQuantity() || left.getPriceTick() != right.getPriceTick() ||
+                    left.getOrderType() != right.getOrderType() ||
+                    OrderBookTestAccess::ownerOf(book, id) != OrderBookTestAccess::ownerOf(witness, id)) {
+                    return "order #" + std::to_string(id) + " differs between the two books";
+                }
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> checkBookPool(const OrderBook& book) {
+    return checkPool(book);
 }
 
 const char* failureTypeName(FailureType type) {

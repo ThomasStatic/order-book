@@ -24,13 +24,13 @@ namespace order_book::network {
     };
 
     // Answered with this event, flagged last: what the book would have said.
-    struct EntryRejected {
+    struct EntryMalformed {
         BookEvent event;
 
-        bool operator==(const EntryRejected&) const = default;
+        bool operator==(const EntryMalformed&) const = default;
     };
 
-    using EntryDecision = std::variant<EntryAccepted, EntryRefused, EntryRejected>;
+    using EntryDecision = std::variant<EntryAccepted, EntryRefused, EntryMalformed>;
 
     // What the gateway does with a command whose frame's shape has passed: pure, stopping at the
     // first failure. An unknown or malformed symbol is refused. A malformed command gets the

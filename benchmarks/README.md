@@ -48,6 +48,8 @@ The two kinds differ only in what sits between the commands and the book:
 - **`core`** times the engine alone. In the five v1 workloads each command is an `Order` passed straight to `submitOrder`, or an ID passed to `cancelOrder`; in the behavior workloads it is an `OrderRequest` passed to `submitOrder`, a `ReplaceRequest` passed to `replaceOrder`, or an ID passed to `cancelOrder`. Inside the timed loop, only each result's trades, volume, and rejections are tallied (and, for a behavior workload, its events: expirations, prevented self-trades, triggered stops). That keeps the results from being optimized away and is needed for the outcome check. No CSV is involved.
 - **`replay`** times the end-to-end path of [`docs/replay-format.md`](../docs/replay-format.md): CSV parsing, the replay engine's dispatch and event collection, the final snapshot, and the formatted summary. The same commands are first rendered as CSV text in memory (untimed): six-column v1 rows for the v1 workloads, twelve-column v2 rows for the behavior workloads. Reading a file from disk is left out on purpose, since it would mostly measure the OS file cache. Invariant validation is `none`, so this path does no checking work that `core` skips.
 
+- **`shard`** runs the same commands through `Shard::process` on one thread, with no rings, so its difference from `core` is `Command` decoding, `BookSet`, and result reuse. `--instruments N` shares the commands between N instruments, each its own unchanged stream.
+
 - **`replay-log`** is `replay` with the same commands as a binary command log in memory instead of CSV text, which is what a `--kind` of its own keeps apart from `replay`'s unchanged path.
 
 The difference between the kinds is the cost of the replay layers.
