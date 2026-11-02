@@ -297,9 +297,12 @@ void testASecondStopForcesIt() {
         return "the client sent " + std::to_string(sent.load()) + " bytes" + (lost.load() ? " and lost its connection" : "") +
                ", and the engine " + ending + ", with stdout:\n" + child.standardOutput() + "\nand stderr:\n" + child.standardError();
     };
-    expect(!lost.load() && child.stillRunningAfter(0ms), "the engine holds the client that stopped sending: " + whatHappened());
+    // Each check is taken before its message is built, since argument order is unspecified.
+    const bool holding = !lost.load() && child.stillRunningAfter(0ms);
+    expect(holding, "the engine holds the client that stopped sending: " + whatHappened());
     sendStop(child, stopSignals[0]);
-    expect(child.stillRunningAfter(2s), "the first stop waits for the answers it owes: " + whatHappened());
+    const bool waiting = child.stillRunningAfter(2s);
+    expect(waiting, "the first stop waits for the answers it owes: " + whatHappened());
     sendStop(child, stopSignals[stopSignals.size() - 1]);
     const ExitStatus status = child.wait(20s);
     expect(!status.killed && status.code == 8, "a second stop exits at once with 8, not " + described(status) + ", with stderr:\n" +
