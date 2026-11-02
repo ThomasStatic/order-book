@@ -15,6 +15,7 @@
 #include "order_book/order_book.hpp"
 #include "order_book/order_request.hpp"
 #include "order_book/replace_request.hpp"
+#include "order_book/runtime/ring.hpp"
 #include "workload.hpp"
 
 // Counts every heap call on this thread, so a run judges only the thread that matches.
@@ -239,6 +240,24 @@ void testCancelOrder() {
            "a cancel of a resting order, a pending stop, and an unknown ID");
 }
 
+void testRings() {
+    runtime::Ring<runtime::CommandElement> commands(64);
+    runtime::Ring<runtime::ResponseRecord> responses(64);
+    const runtime::CommandElement element{1, replay::CancelCommand{1}, 0, 0, runtime::ControlKind::COMMAND};
+    const runtime::ResponseRecord record{1, 0, 0, OrderCancelled{1, 1}, runtime::ResponseKind::LAST_EVENT};
+    std::size_t taken = 0;
+    const std::size_t calls = heapCallsOf([&] {
+        for (int i = 0; i < 1000; ++i) {
+            commands.tryPush(element);
+            commands.drain(64, [&taken](const runtime::CommandElement&) { ++taken; });
+            responses.tryPush(record);
+            responses.drain(64, [&taken](const runtime::ResponseRecord&) { ++taken; });
+        }
+    });
+    expect(calls == 0, "tryPush and drain made " + std::to_string(calls) + " heap calls");
+    expect(taken == 2000, "every item came through");
+}
+
 void testEncodeLogRecord() {
     const replay::Symbol symbol = *replay::Symbol::parse("AAPL");
     std::array<std::byte, replay::logRecordBytes> record{};
@@ -261,6 +280,7 @@ void testEncodeLogRecord() {
     testACascade();
     testReplacesFourPaths();
     testCancelOrder();
+    testRings();
     testEncodeLogRecord();
 }
 

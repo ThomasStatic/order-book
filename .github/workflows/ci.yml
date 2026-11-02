@@ -36,6 +36,11 @@ jobs:
           # Debug's checked iterators).
           - { name: "Windows MSVC ASan Debug",         os: windows-2022, config: Debug,   sanitizers: true }
           - { name: "Windows MSVC ASan Release",       os: windows-2022, config: Release, sanitizers: true }
+          # A race or a reordering fails here. These run only the threaded tests, which the jobs
+          # above run too.
+          - { name: "Linux Clang TSan Optimized",      os: ubuntu-24.04, cxx: clang++, config: RelWithDebInfo, tsan: true, threaded: true }
+          - { name: "Linux GCC TSan Debug",            os: ubuntu-24.04, cxx: g++,     config: Debug,          tsan: true, threaded: true }
+          - { name: "Linux Arm Clang Release",         os: ubuntu-24.04-arm, cxx: clang++, config: Release,    threaded: true }
 
     env:
       # Linux only: MSVC's ASan runtime refuses to start when asked for leak detection.
@@ -53,9 +58,17 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ninja-build
 
+      # ThreadSanitizer needs a smaller address-space randomization than these runners default to.
+      - name: Make room for ThreadSanitizer
+        if: matrix.tsan
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+
       - name: Configure
         run: |
           args=(-DORDER_BOOK_WARNINGS_AS_ERRORS=ON -DORDER_BOOK_BUILD_BENCHMARKS=ON)
+          if [ "${{ matrix.tsan }}" = "true" ]; then
+            args+=(-DORDER_BOOK_ENABLE_TSAN=ON)
+          fi
           if [ "${{ runner.os }}" = "Linux" ]; then
             args+=(-G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx }})
           fi
@@ -77,9 +90,10 @@ jobs:
           fi
 
       - name: Test
-        run: ctest --test-dir build -C ${{ matrix.config }} --output-on-failure --parallel 4
+        run: ctest --test-dir build -C ${{ matrix.config }} --output-on-failure --parallel 4 ${{ matrix.threaded && '-L threaded' || '' }}
 
       - name: Run the CLI
+        if: ${{ !matrix.threaded }}
         run: |
           if [ "${{ runner.os }}" = "Windows" ]; then
             cli=./build/${{ matrix.config }}/order_book_cli.exe

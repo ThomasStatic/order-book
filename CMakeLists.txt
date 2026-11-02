@@ -15,6 +15,7 @@ option(ORDER_BOOK_BUILD_BENCHMARKS "Build the benchmark executable" OFF)
 option(ORDER_BOOK_BUILD_PROFILING "Build the profiling tools in benchmarks/profiling (needs ORDER_BOOK_BUILD_BENCHMARKS)" OFF)
 option(ORDER_BOOK_ENABLE_ASAN "Enable AddressSanitizer for project-owned targets" OFF)
 option(ORDER_BOOK_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer for project-owned targets" OFF)
+option(ORDER_BOOK_ENABLE_TSAN "Enable ThreadSanitizer for project-owned targets" OFF)
 option(ORDER_BOOK_WARNINGS_AS_ERRORS "Treat warnings as errors" OFF)
 set(ORDER_BOOK_INVARIANT_CHECKS AUTO CACHE STRING
     "Check the whole book after every public command: AUTO (only where NDEBUG is undefined, i.e. Debug), ON, or OFF")
@@ -31,6 +32,13 @@ if(MSVC AND ORDER_BOOK_ENABLE_ASAN)
         string(REGEX REPLACE "/INCREMENTAL(:YES|:NO)?" "" linker_flags "${CMAKE_EXE_LINKER_FLAGS_${config}}")
         set(CMAKE_EXE_LINKER_FLAGS_${config} "${linker_flags} /INCREMENTAL:NO")
     endforeach()
+endif()
+
+if(ORDER_BOOK_ENABLE_TSAN AND ORDER_BOOK_ENABLE_ASAN)
+    message(FATAL_ERROR "ThreadSanitizer and AddressSanitizer cannot be combined: build them separately.")
+endif()
+if(ORDER_BOOK_ENABLE_TSAN AND MSVC)
+    message(FATAL_ERROR "ThreadSanitizer is not available with MSVC.")
 endif()
 
 if(MSVC AND ORDER_BOOK_ENABLE_UBSAN)
@@ -60,7 +68,7 @@ function(order_book_enable_warnings target_name)
 endfunction()
 
 function(order_book_enable_sanitizers target_name)
-    if(NOT ORDER_BOOK_ENABLE_ASAN AND NOT ORDER_BOOK_ENABLE_UBSAN)
+    if(NOT ORDER_BOOK_ENABLE_ASAN AND NOT ORDER_BOOK_ENABLE_UBSAN AND NOT ORDER_BOOK_ENABLE_TSAN)
         return()
     endif()
 
@@ -101,6 +109,9 @@ function(order_book_enable_sanitizers target_name)
         endif()
         if(ORDER_BOOK_ENABLE_UBSAN)
             list(APPEND sanitizers undefined)
+        endif()
+        if(ORDER_BOOK_ENABLE_TSAN)
+            list(APPEND sanitizers thread)
         endif()
         list(JOIN sanitizers "," sanitizer_list)
 
@@ -479,6 +490,19 @@ if(BUILD_TESTING)
     order_book_enable_warnings(book_set_tests)
     order_book_enable_sanitizers(book_set_tests)
     add_test(NAME book_set_tests COMMAND book_set_tests)
+
+    # Threaded tests use a fixed command count, never a time limit, and take turns, so one test's
+    # timing isn't another's noise. ThreadSanitizer and Arm CI run exactly this label.
+    add_executable(ring_tests
+        tests/ring_test.cpp
+    )
+
+    target_compile_features(ring_tests PRIVATE cxx_std_20)
+    target_link_libraries(ring_tests PRIVATE order_book_runtime)
+    order_book_enable_warnings(ring_tests)
+    order_book_enable_sanitizers(ring_tests)
+    add_test(NAME ring_tests COMMAND ring_tests)
+    set_tests_properties(ring_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads)
 
     add_executable(shard_tests
         tests/shard_test.cpp

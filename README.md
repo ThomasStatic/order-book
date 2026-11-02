@@ -317,6 +317,7 @@ Executables are then under `build/Release/` or `build/Debug/`.
 | `ORDER_BOOK_INVARIANT_CHECKS` | `AUTO` | `AUTO` checks the whole book after every mutating command only where `NDEBUG` is undefined (Debug). `ON` or `OFF` forces it in every configuration. |
 | `ORDER_BOOK_WARNINGS_AS_ERRORS` | `OFF` | Treat warnings as errors. Warnings are already high: `/W4`, or `-Wall -Wextra -Wpedantic -Wconversion -Wshadow`. CI turns this on. |
 | `ORDER_BOOK_ENABLE_ASAN` | `OFF` | AddressSanitizer (GCC, Clang, MSVC). On MSVC the runtime DLL is copied next to each executable. |
+| `ORDER_BOOK_ENABLE_TSAN` | `OFF` | ThreadSanitizer. GCC and Clang only, and a configure error beside AddressSanitizer. |
 | `ORDER_BOOK_ENABLE_UBSAN` | `OFF` | UndefinedBehaviorSanitizer, with `-fno-sanitize-recover`, so any finding fails the test. GCC and Clang only: ignored with a warning on MSVC. |
 | `ORDER_BOOK_BUILD_BENCHMARKS` | `OFF` | Build `order_book_benchmarks` and its tests. |
 | `ORDER_BOOK_BUILD_PROFILING` | `OFF` | Build the profiling tools ([`benchmarks/profiling/README.md`](benchmarks/profiling/README.md)). Needs the benchmarks. |
