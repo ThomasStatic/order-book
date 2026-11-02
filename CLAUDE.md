@@ -15,6 +15,7 @@ Read the matching note in `docs/internals/` before changing that area, and updat
 - `replay.md`: the CSV parser, replay engine, samples, and expected CLI output.
 - `benchmarks.md`: workloads, `workloadGeneratorVersion`, recorded baselines, what results may claim, profiling.
 - `latency.md`: the latency harness: clock, histogram, drivers, run record, report.
+- `runtime.md`: `order_book_runtime`: the instrument list, placement, `InstrumentDirectory`, `BookSet`.
 
 ## Build and test
 

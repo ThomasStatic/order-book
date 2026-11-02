@@ -162,6 +162,18 @@ target_link_libraries(order_book_replay PUBLIC order_book)
 order_book_enable_warnings(order_book_replay)
 order_book_enable_sanitizers(order_book_replay)
 
+# The engine's single-threaded pieces (docs/internals/runtime.md). Not public API.
+find_package(Threads REQUIRED)
+add_library(order_book_runtime STATIC
+    src/runtime/book_set.cpp
+    src/runtime/instruments.cpp
+)
+
+target_compile_features(order_book_runtime PUBLIC cxx_std_20)
+target_link_libraries(order_book_runtime PUBLIC order_book_replay Threads::Threads)
+order_book_enable_warnings(order_book_runtime)
+order_book_enable_sanitizers(order_book_runtime)
+
 add_executable(order_book_cli
     apps/order_book_cli.cpp
 )
@@ -177,6 +189,7 @@ include(CTest)
 # the behavior benchmark workloads; it never touches an OrderBook.
 if(BUILD_TESTING OR ORDER_BOOK_BUILD_BENCHMARKS)
     add_library(order_book_reference STATIC
+        tests/reference/interleaver.cpp
         tests/reference/reference_book.cpp
     )
     target_compile_features(order_book_reference PUBLIC cxx_std_20)
@@ -434,6 +447,52 @@ if(BUILD_TESTING)
     order_book_enable_warnings(replay_instruments_tests)
     order_book_enable_sanitizers(replay_instruments_tests)
     add_test(NAME replay_instruments_tests COMMAND replay_instruments_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay)
+
+    add_executable(instrument_directory_tests
+        tests/instrument_directory_test.cpp
+    )
+
+    target_compile_features(instrument_directory_tests PRIVATE cxx_std_20)
+    target_link_libraries(instrument_directory_tests PRIVATE order_book_runtime)
+    order_book_enable_warnings(instrument_directory_tests)
+    order_book_enable_sanitizers(instrument_directory_tests)
+    add_test(NAME instrument_directory_tests COMMAND instrument_directory_tests)
+
+    add_executable(book_set_tests
+        tests/book_set_test.cpp
+    )
+
+    target_compile_features(book_set_tests PRIVATE cxx_std_20)
+    target_link_libraries(book_set_tests PRIVATE order_book_runtime)
+    order_book_enable_warnings(book_set_tests)
+    order_book_enable_sanitizers(book_set_tests)
+    add_test(NAME book_set_tests COMMAND book_set_tests)
+
+    add_executable(book_set_owner_tests
+        tests/book_set_owner_test.cpp
+    )
+
+    target_compile_features(book_set_owner_tests PRIVATE cxx_std_20)
+    target_link_libraries(book_set_owner_tests PRIVATE order_book_runtime)
+    order_book_enable_warnings(book_set_owner_tests)
+    order_book_enable_sanitizers(book_set_owner_tests)
+    foreach(call execute book)
+        add_test(NAME book_set_owner_${call} COMMAND book_set_owner_tests ${call})
+        set_tests_properties(book_set_owner_${call} PROPERTIES
+            PASS_REGULAR_EXPRESSION "order book runtime: BookSet::${call} called off its owning thread: shard=0 slot=0"
+            FAIL_REGULAR_EXPRESSION "FAILED"
+            SKIP_REGULAR_EXPRESSION "SKIPPED")
+    endforeach()
+
+    add_executable(interleaver_tests
+        tests/interleaver_test.cpp
+    )
+
+    target_compile_features(interleaver_tests PRIVATE cxx_std_20)
+    target_link_libraries(interleaver_tests PRIVATE order_book_reference)
+    order_book_enable_warnings(interleaver_tests)
+    order_book_enable_sanitizers(interleaver_tests)
+    add_test(NAME interleaver_tests COMMAND interleaver_tests)
 
     add_executable(replay_engine_tests
         tests/replay_engine_test.cpp
