@@ -10,7 +10,9 @@
 #include "workload.hpp"
 
 // The queue kind on real threads, so this carries the threaded label, and ThreadSanitizer and Arm
-// run it. It keeps to workloads with small preloads, which a checked build can afford.
+// run it. A checked build gets only the workloads with small preloads: it checks the whole book
+// after every command, so the others take minutes under ThreadSanitizer. Clang's ThreadSanitizer
+// job is optimized, and runs them all.
 namespace {
 
 using namespace order_book::benchmark;
@@ -33,10 +35,9 @@ void expectThrows(Body body, const std::string& message) {
 }
 
 void testAQueueRunDoesWhatACoreRunDoes() {
-    // A large preload is out of reach with a book's whole check after every command.
-    std::vector<const char*> names{"small-book", "quote-refresh", "immediate", "self-trade"};
+    std::vector<const char*> names{"small-book", "quote-refresh"};
     if constexpr (!order_book::invariantChecksAfterCommands) {
-        names.push_back("pending-stops");
+        names.insert(names.end(), {"immediate", "self-trade", "pending-stops"});
     }
     for (const char* name : names) {
         const Workload workload = generateWorkload(findWorkload(name), 1000, 42);
