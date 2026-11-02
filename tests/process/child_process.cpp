@@ -49,11 +49,12 @@ namespace order_book::process_testing {
 
     struct ChildProcess::Platform {
         HANDLE process = nullptr;
+        DWORD processId = 0;
         HANDLE stdinWrite = nullptr;
         HANDLE outputs[2] = {nullptr, nullptr};  // the read ends of stdout and stderr
     };
 
-    ChildProcess::ChildProcess(const std::string& program, const std::vector<std::string>& arguments)
+    ChildProcess::ChildProcess(const std::string& program, const std::vector<std::string>& arguments, ChildOptions options)
         : platform(std::make_unique<Platform>()) {
         SECURITY_ATTRIBUTES inherit{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
         HANDLE childStdin = nullptr;
@@ -78,8 +79,9 @@ namespace order_book::process_testing {
         startup.hStdOutput = childOutputs[0];
         startup.hStdError = childOutputs[1];
         PROCESS_INFORMATION created{};
-        const BOOL started = CreateProcessA(program.c_str(), commandLine.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr,
-                                            &startup, &created);
+        const DWORD flags = options.ownProcessGroup ? CREATE_NEW_PROCESS_GROUP : CREATE_NO_WINDOW;
+        const BOOL started =
+            CreateProcessA(program.c_str(), commandLine.data(), nullptr, nullptr, TRUE, flags, nullptr, nullptr, &startup, &created);
         CloseHandle(childStdin);
         CloseHandle(childOutputs[0]);
         CloseHandle(childOutputs[1]);
@@ -88,6 +90,7 @@ namespace order_book::process_testing {
         }
         CloseHandle(created.hThread);
         platform->process = created.hProcess;
+        platform->processId = created.dwProcessId;
         for (int which = 0; which < 2; ++which) {
             readers[which] = std::thread([this, which] { collect(which); });
         }
@@ -142,6 +145,14 @@ namespace order_book::process_testing {
         return result;
     }
 
+    bool ChildProcess::stillRunningAfter(std::chrono::milliseconds limit) {
+        return !status && WaitForSingleObject(platform->process, static_cast<DWORD>(limit.count())) != WAIT_OBJECT_0;
+    }
+
+    bool ChildProcess::sendCtrlBreak() {
+        return GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, platform->processId) != 0;
+    }
+
     ChildProcess::~ChildProcess() {
         if (!status) {
             kill();
@@ -159,13 +170,19 @@ namespace order_book::process_testing {
         CloseHandle(platform->process);
     }
 #else
+    namespace {
+        int statusCode(int raw) {
+            return WIFEXITED(raw) ? WEXITSTATUS(raw) : WIFSIGNALED(raw) ? 128 + WTERMSIG(raw) : -1;
+        }
+    }  // namespace
+
     struct ChildProcess::Platform {
         pid_t process = -1;
         int stdinWrite = -1;
         int outputs[2] = {-1, -1};
     };
 
-    ChildProcess::ChildProcess(const std::string& program, const std::vector<std::string>& arguments)
+    ChildProcess::ChildProcess(const std::string& program, const std::vector<std::string>& arguments, ChildOptions)
         : platform(std::make_unique<Platform>()) {
         int stdinPipe[2];
         int outputPipes[2][2];
@@ -266,10 +283,31 @@ namespace order_book::process_testing {
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
-        result.code = WIFEXITED(raw) ? WEXITSTATUS(raw) : WIFSIGNALED(raw) ? 128 + WTERMSIG(raw) : -1;
+        result.code = statusCode(raw);
         status = result;
         awaitStreamsEnded();
         return result;
+    }
+
+    bool ChildProcess::stillRunningAfter(std::chrono::milliseconds limit) {
+        const auto deadline = std::chrono::steady_clock::now() + limit;
+        while (!status) {
+            int raw = 0;
+            if (waitpid(platform->process, &raw, WNOHANG) == platform->process) {
+                status = ExitStatus{false, statusCode(raw)};
+                awaitStreamsEnded();
+                return false;
+            }
+            if (std::chrono::steady_clock::now() >= deadline) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    }
+
+    bool ChildProcess::sendSignal(int signal) {
+        return !status && ::kill(platform->process, signal) == 0;
     }
 
     ChildProcess::~ChildProcess() {

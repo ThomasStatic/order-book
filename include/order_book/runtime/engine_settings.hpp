@@ -9,6 +9,9 @@
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
+
+#include "order_book/runtime/thread_placement.hpp"
 
 // order_book_engine's settings: its whole command line, since it has no config file and reads
 // no environment, so a run's flags are its record. See docs/internals/runtime.md.
@@ -38,6 +41,9 @@ namespace order_book::runtime {
         std::size_t highWaterMark = 1024 * 1024;
         std::size_t hardLimit = 16 * 1024 * 1024;
         std::chrono::nanoseconds stopGrace = std::chrono::seconds(5);
+        std::vector<std::uint32_t> pinMatching;  // a core per shard, in shard order; empty is off
+        std::vector<std::uint32_t> pinGateway;   // a core per gateway thread; empty is off
+        ThreadPriority threadPriority = ThreadPriority::NORMAL;  // matching and gateway threads
         bool stopOnStdinClose = false;
 
         bool operator==(const EngineSettings&) const = default;

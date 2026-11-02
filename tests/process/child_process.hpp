@@ -20,10 +20,16 @@ namespace order_book::process_testing {
         int code = 0;         // the exit status, or on POSIX 128 plus a signal that ended it
     };
 
+    struct ChildOptions {
+        // Windows only: the child shares this process's console in a process group of its own,
+        // so sendCtrlBreak reaches it and nothing else. Elsewhere it changes nothing.
+        bool ownProcessGroup = false;
+    };
+
     class ChildProcess {
     public:
         // Throws std::runtime_error if the program can't be started.
-        ChildProcess(const std::string& program, const std::vector<std::string>& arguments);
+        ChildProcess(const std::string& program, const std::vector<std::string>& arguments, ChildOptions options = {});
         // Kills the child if it is still running.
         ~ChildProcess();
         ChildProcess(const ChildProcess&) = delete;
@@ -37,6 +43,17 @@ namespace order_book::process_testing {
         // Waits for the child to exit, killing it if it hasn't within the limit, then for both its
         // streams to end, so standardOutput and standardError hold everything it wrote.
         ExitStatus wait(std::chrono::milliseconds limit);
+        // Whether the child is still running once this long has passed, killing nothing. If it
+        // exited sooner, wait then says how.
+        bool stillRunningAfter(std::chrono::milliseconds limit);
+#ifdef _WIN32
+        // Ctrl-Break to the child's process group, which needs ownProcessGroup and a console in
+        // this process. Whether the system sent it.
+        bool sendCtrlBreak();
+#else
+        // Whether the system sent it.
+        bool sendSignal(int signal);
+#endif
         // Everything each stream has written so far, readLine's lines included.
         std::string standardOutput();
         std::string standardError();

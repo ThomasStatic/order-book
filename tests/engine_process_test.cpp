@@ -68,6 +68,17 @@ void testAUsageError() {
     expect(child.standardOutput().empty(), "and stdout stays empty");
 }
 
+void testHelpWinsAnywhere() {
+    ChildProcess child(engine, {"--shards", "two", "--help", "--no-such-flag"});
+    const ExitStatus status = child.wait(30s);
+    expect(!status.killed && status.code == 0, "--help exits 0, whatever else the line holds, not " + std::to_string(status.code));
+    expect(plain(child.standardOutput()).starts_with("usage: order_book_engine --instruments FILE") &&
+               plain(child.standardOutput()).ends_with("       order_book_engine --help\n"),
+           "printing the usage on stdout:\n" + child.standardOutput());
+    expect(child.standardError().empty(), "and nothing on stderr:\n" + child.standardError());
+    expect(ChildProcess(engine, {"-h"}).wait(30s).code == 0, "-h too");
+}
+
 void testAStartRefusal() {
     ChildProcess child(engine, {"--instruments", "no/such/list.csv", "--shards", "1", "--listen", "127.0.0.1:0"});
     const ExitStatus status = child.wait(30s);
@@ -152,6 +163,7 @@ int main(int argc, char** argv) {
     }
     engine = argv[1];
     testAUsageError();
+    testHelpWinsAnywhere();
     testAStartRefusal();
     testACleanStopOverStdin();
     testABusyPort();

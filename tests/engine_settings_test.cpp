@@ -39,6 +39,17 @@ EngineSettings parsed(std::vector<std::string_view> args) {
     return std::get<EngineSettings>(result);
 }
 
+// A run's record split back into its words.
+std::vector<std::string> wordsOf(const std::string& line) {
+    std::vector<std::string> words;
+    for (std::size_t start = 0; start < line.size();) {
+        const std::size_t space = line.find(' ', start);
+        words.push_back(line.substr(start, space - start));
+        start = space == std::string::npos ? line.size() : space + 1;
+    }
+    return words;
+}
+
 std::string usage(std::vector<std::string_view> args) {
     const std::variant<EngineSettings, UsageError> result = parse(std::move(args));
     expect(std::holds_alternative<UsageError>(result), "expected a usage error");
@@ -55,6 +66,8 @@ void testTheRequiredFlagsAndTheDefaults() {
     expect(settings.maxConnections == 64 && settings.highWaterMark == 1024 * 1024 && settings.hardLimit == 16 * 1024 * 1024,
            "the connection defaults");
     expect(settings.stopGrace == 5s && !settings.stopOnStdinClose, "the stop defaults");
+    expect(settings.pinMatching.empty() && settings.pinGateway.empty() && settings.threadPriority == ThreadPriority::NORMAL,
+           "no pinning, at normal priority");
 
     for (const std::string_view missing : {"--instruments", "--shards", "--listen"}) {
         std::vector<std::string_view> args;
@@ -79,6 +92,24 @@ void testEveryFlag() {
            "the capacities, with M and G");
     expect(settings.maxConnections == 2 && settings.highWaterMark == 64 * 1024 && settings.hardLimit == 2 * 1024 * 1024, "the connection limits");
     expect(settings.stopGrace == 250ms && settings.stopOnStdinClose, "the stop grace, and the one flag with no value");
+
+    const EngineSettings placed = parsed(required({"--pin-matching", "3,0", "--pin-gateway", "7", "--thread-priority", "high"}));
+    expect(placed.pinMatching == std::vector<std::uint32_t>{3, 0} && placed.pinGateway == std::vector<std::uint32_t>{7},
+           "the cores, in the order given");
+    expect(placed.threadPriority == ThreadPriority::HIGH, "high priority");
+    expect(parsed(required({"--thread-priority", "normal"})).threadPriority == ThreadPriority::NORMAL, "normal, said outright");
+}
+
+// A count that doesn't match the threads is the start's to refuse; only the shape is checked here.
+void testCoresAndPriority() {
+    expect(parsed(required({"--pin-matching", "1,1,1"})).pinMatching.size() == 3, "a core may repeat, and the count isn't checked here");
+    for (const std::string_view bad : {"", ",", "1,", ",1", "1,,2", "a", "-1", "1 2", "4294967296"}) {
+        expect(usage(required({"--pin-matching", bad})) == "--pin-matching needs cores: numbers with commas between, not '" + std::string(bad) + "'",
+               "a malformed core list: '" + std::string(bad) + "'");
+    }
+    expect(usage(required({"--pin-gateway", "x"})) == "--pin-gateway needs cores: numbers with commas between, not 'x'", "the gateway's too");
+    expect(usage(required({"--thread-priority", "realtime"})) == "--thread-priority needs normal or high, not 'realtime'", "two priorities");
+    expect(usage(required({"--pin-log-writers", "0"})) == "unknown option '--pin-log-writers'", "log writers come with their threads");
 }
 
 void testTimesNeedAUnit() {
@@ -131,17 +162,21 @@ void testTheRunsRecordGivesTheSameRun() {
     expect(line ==
                "--instruments list.csv --shards 2 --listen 127.0.0.1:0 --command-ring 4096 --response-ring 16384 --spin-window unlimited "
                "--capacity-orders 4096 --capacity-stops 1024 --capacity-levels 256 --max-connections 64 --high-water-mark 64K "
-               "--hard-limit 16M --stop-grace 1500ms --stop-on-stdin-close",
+               "--hard-limit 16M --stop-grace 1500ms --thread-priority normal --stop-on-stdin-close",
            "the record names every flag:\n" + line);
 
-    std::vector<std::string> words;
-    for (std::size_t start = 0; start < line.size();) {
-        const std::size_t space = line.find(' ', start);
-        words.push_back(line.substr(start, space - start));
-        start = space == std::string::npos ? line.size() : space + 1;
-    }
+    const std::vector<std::string> words = wordsOf(line);
     const std::vector<std::string_view> again(words.begin(), words.end());
     expect(parsed(again) == settings, "and parses back to the same settings");
+
+    const EngineSettings placed = parsed(required({"--pin-matching", "2,0", "--pin-gateway", "1", "--thread-priority", "high"}));
+    const std::string placedLine = formatEngineSettings(placed);
+    expect(placedLine.ends_with("--stop-grace 5s --pin-matching 2,0 --pin-gateway 1 --thread-priority high"),
+           "pins print only when set, and the priority always:\n" + placedLine);
+    expect(line.find("--pin-") == std::string::npos && line.find("--thread-priority normal") != std::string::npos,
+           "an unpinned run names its priority and no cores");
+    const std::vector<std::string> placedWords = wordsOf(placedLine);
+    expect(parsed(std::vector<std::string_view>(placedWords.begin(), placedWords.end())) == placed, "which parses back too");
     expect(formatEngineSettings(parsed(required({"--spin-window", "0", "--stop-grace", "3ns"}))).find("--spin-window 0 ") != std::string::npos,
            "a zero prints bare");
 }
@@ -155,6 +190,7 @@ int main() {
     testSizes();
     testTheAddress();
     testTheCommandLinesShape();
+    testCoresAndPriority();
     testTheRunsRecordGivesTheSameRun();
     std::cout << "engine settings tests passed" << std::endl;
     return EXIT_SUCCESS;

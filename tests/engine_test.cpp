@@ -25,6 +25,7 @@
 #include "order_book/order_book.hpp"
 #include "order_book/runtime/engine_settings.hpp"
 #include "order_book/runtime/instruments.hpp"
+#include "order_book/runtime/thread_placement.hpp"
 
 // runEngine in this process, on a thread of its own, with a test's StopSource and real loopback
 // sockets. Threaded, so ThreadSanitizer and Arm run it. See docs/internals/network.md.
@@ -270,6 +271,67 @@ void testRefusals() {
     std::filesystem::remove(bad);
 }
 
+// The first core a scratch thread can pin to, so a run pinned there can start.
+std::uint32_t aCoreThisProcessMayUse() {
+    std::uint32_t found = 0;
+    std::thread([&found] {
+        while (runtime::pinThisThread(found)) {
+            expect(++found < 4096, "this process may run on some core");
+        }
+    }).join();
+    return found;
+}
+
+void expectACleanRun(const runtime::EngineSettings& settings, const std::string& what) {
+    Run run(settings);
+    run.port();
+    run.stop.request();
+    expect(run.finish() == EngineExit::CLEAN_STOP, what);
+}
+
+void testPinningAndPriority() {
+    const std::filesystem::path list = writeList("placed", "symbol,shard,orders,stops,levels\nAAPL,,,,\nMSFT,1,,,\n");
+    const std::uint32_t core = aCoreThisProcessMayUse();
+
+    runtime::EngineSettings settings = settingsFor(list, 2);
+    settings.pinMatching = {core};
+    expect(refusedWith(settings, "--pin-matching needs 2 cores, one per shard, not 1") == EngineExit::START_REFUSED,
+           "a core for each shard");
+    settings = settingsFor(list, 2);
+    settings.pinGateway = {core, core};
+    expect(refusedWith(settings, "--pin-gateway needs 1 core, one per gateway thread, not 2") == EngineExit::START_REFUSED,
+           "and for each gateway thread");
+
+    // Past what any build can pin, so the refusal comes from the thread that tried.
+    settings = settingsFor(list, 2);
+    settings.pinMatching = {core, 4'000'000'000u};
+    const std::string past = *runtime::pinThisThread(4'000'000'000u);
+    expect(refusedWith(settings, "cannot pin matching thread 1 to core 4000000000: " + past) == EngineExit::START_REFUSED,
+           "a core one shard's thread can't take refuses the start, naming that shard");
+    settings = settingsFor(list, 2);
+    settings.pinGateway = {4'000'000'000u};
+    expect(refusedWith(settings, "cannot pin the gateway thread to core 4000000000: " + past) == EngineExit::START_REFUSED,
+           "and the gateway's");
+
+    settings = settingsFor(list, 2);
+    settings.pinMatching = {core, core};
+    settings.pinGateway = {core};
+    expectACleanRun(settings, "a run pinned where it may run starts and stops cleanly");
+
+    // Whether this process may raise a thread is the system's to say, so a scratch thread asks it.
+    std::optional<std::string> denied;
+    std::thread([&denied] { denied = runtime::setThisThreadPriority(runtime::ThreadPriority::HIGH); }).join();
+    settings = settingsFor(list, 2);
+    settings.threadPriority = runtime::ThreadPriority::HIGH;
+    if (denied) {
+        expect(refusedWith(settings, "--thread-priority high was denied: " + *denied) == EngineExit::START_REFUSED,
+               "a denied priority refuses the start, so no record claims it");
+    } else {
+        expectACleanRun(settings, "a priority the system grants starts and stops cleanly");
+    }
+    std::filesystem::remove(list);
+}
+
 void testTheConnectionLimitIsASetting() {
     const std::filesystem::path list = writeList("limit", "symbol,shard,orders,stops,levels\nAAPL,,,,\n");
     runtime::EngineSettings settings = settingsFor(list, 1);
@@ -303,6 +365,7 @@ int main() {
     testACleanStop();
     testAStopBeforeReady();
     testRefusals();
+    testPinningAndPriority();
     testTheConnectionLimitIsASetting();
     std::cout << "engine tests passed" << std::endl;
     return EXIT_SUCCESS;

@@ -20,16 +20,19 @@
 
 #include "order_book/network/gateway_thread.hpp"
 #include "order_book/network/poll_socket_set.hpp"
+#include "order_book/runtime/abort_report.hpp"
 #include "order_book/runtime/instruments.hpp"
 #include "order_book/runtime/matching_loop.hpp"
 #include "order_book/runtime/ring.hpp"
 #include "order_book/runtime/shard.hpp"
+#include "order_book/runtime/thread_placement.hpp"
 
 namespace order_book::network {
 
     namespace {
 
         constexpr std::string_view prefix = "order_book_engine: ";
+        constexpr std::size_t gatewayThreads = 1;  // until --gateway-threads
 
         // What a start refusal names, rather than a usage error, since the command line parsed.
         struct Refusal {
@@ -71,7 +74,28 @@ namespace order_book::network {
                 return Refusal{"--max-connections must be from 1 to " + std::to_string(mostConnectionsPerThread) + ", not " +
                                std::to_string(settings.maxConnections)};
             }
+            if (!settings.pinMatching.empty() && settings.pinMatching.size() != settings.shards) {
+                return Refusal{"--pin-matching needs " + std::to_string(settings.shards) + (settings.shards == 1 ? " core" : " cores") +
+                               ", one per shard, not " + std::to_string(settings.pinMatching.size())};
+            }
+            if (!settings.pinGateway.empty() && settings.pinGateway.size() != gatewayThreads) {
+                return Refusal{"--pin-gateway needs " + std::to_string(gatewayThreads) + " core, one per gateway thread, not " +
+                               std::to_string(settings.pinGateway.size())};
+            }
             return std::nullopt;
+        }
+
+        // On the thread being placed, before it is ready, so a refusal stops the start.
+        void placeThisThread(const std::vector<std::uint32_t>& pins, std::size_t index, runtime::ThreadPriority priority,
+                             const std::string& name) {
+            if (!pins.empty()) {
+                if (const std::optional<std::string> refused = runtime::pinThisThread(pins[index])) {
+                    throw Refusal{"cannot pin " + name + " to core " + std::to_string(pins[index]) + ": " + *refused};
+                }
+            }
+            if (const std::optional<std::string> refused = runtime::setThisThreadPriority(priority)) {
+                throw Refusal{"--thread-priority high was denied: " + *refused};
+            }
         }
 
         std::chrono::nanoseconds spinWindowOf(const runtime::EngineSettings& settings) {
@@ -93,6 +117,7 @@ namespace order_book::network {
                 stop.onRequest({});
                 if (gateway.joinable()) {
                     stopRequested.store(true, std::memory_order_seq_cst);
+                    releaseGateway();
                     sockets->wake();
                     gateway.join();
                     if (gatewayFailure) {
@@ -118,6 +143,10 @@ namespace order_book::network {
             EngineExit waitForStop();
             void writeStopReport();
             EngineExit forceStop(const std::string& why);
+            void releaseGateway() {
+                gatewayReleased.store(true, std::memory_order_seq_cst);
+                gatewayReleased.notify_all();
+            }
 
             const runtime::EngineSettings& settings;
             StopSource& stop;
@@ -127,6 +156,10 @@ namespace order_book::network {
             std::unique_ptr<PollSocketSet> sockets;
             std::vector<std::unique_ptr<ShardRuntime>> shards;
             std::thread gateway;
+            // A member, as each shard's ready is, since the gateway thread may still be inside
+            // set_value when get returns.
+            std::promise<void> gatewayListening;
+            std::atomic<bool> gatewayReleased{false};  // once listening is printed, or to stop
             std::exception_ptr gatewayFailure;
             std::atomic<bool> stopRequested{false};
             std::atomic<bool> gatewayDone{false};
@@ -153,6 +186,8 @@ namespace order_book::network {
             std::vector<std::uint64_t> growthsAtReady;
             ShardRuntime& own = *shards[number];
             try {
+                // First, so the books are built on the core they will run on.
+                placeThisThread(settings.pinMatching, number, settings.threadPriority, "matching thread " + std::to_string(number));
                 const BookCapacity defaults{settings.capacityOrders, settings.capacityStops, settings.capacityLevels};
                 shard.emplace(*directory, number, defaults);
                 loop.emplace(*shard, own.doorbell, std::vector<runtime::RingPair>{runtime::RingPair{&own.commands, &own.responses}},
@@ -168,6 +203,7 @@ namespace order_book::network {
                 own.ready.set_exception(std::current_exception());
                 return;
             }
+            const runtime::AbortScope abortNamesThisShard(*shard);
             own.ready.set_value();
             loop->run();
             // After the stop, with nothing left to allocate for.
@@ -242,9 +278,6 @@ namespace order_book::network {
                 return EngineExit::STOPPED_BEFORE_READY;
             }
 
-            sockets->startListening();
-            report << "listening " << runtime::formatListenAddress(runtime::ListenAddress{settings.listen.host, sockets->port()}) << std::endl;
-
             GatewaySettings gatewaySettings;
             gatewaySettings.maxConnections = settings.maxConnections;
             gatewaySettings.highWaterMark = settings.highWaterMark;
@@ -255,17 +288,38 @@ namespace order_book::network {
             for (const std::unique_ptr<ShardRuntime>& shard : shards) {
                 links.push_back(ShardLink{&shard->commands, &shard->responses, &shard->doorbell});
             }
+            // The gateway thread places itself, is built, and starts listening before anything
+            // is printed, so a refused pin or priority, or a failed allocation, refuses the start,
+            // and no client connects too early. It runs only once listening is printed.
             gateway = std::thread([this, links = std::move(links), gatewaySettings = std::move(gatewaySettings)] {
+                bool listening = false;
                 try {
+                    placeThisThread(settings.pinGateway, 0, settings.threadPriority, "the gateway thread");
                     GatewayThread gatewayThread(*directory, links, *sockets, gatewaySettings);
+                    sockets->startListening();
+                    listening = true;
+                    gatewayListening.set_value();
+                    gatewayReleased.wait(false, std::memory_order_seq_cst);
                     runGateway(gatewayThread, stopRequested);
                 } catch (...) {
                     gatewayFailure = std::current_exception();
+                    if (!listening) {
+                        gatewayListening.set_exception(gatewayFailure);
+                    }
                 }
                 gatewayDone.store(true, std::memory_order_seq_cst);
                 happenings.fetch_add(1, std::memory_order_seq_cst);
                 happenings.notify_all();
             });
+            // A failure here leaves the destructor to join the gateway thread and, since it never
+            // ran, send the shards their markers itself.
+            gatewayListening.get_future().get();
+            if (stop.requests() != 0) {
+                diagnostics << prefix << "stopped before ready" << std::endl;
+                return EngineExit::STOPPED_BEFORE_READY;
+            }
+            report << "listening " << runtime::formatListenAddress(runtime::ListenAddress{settings.listen.host, sockets->port()}) << std::endl;
+            releaseGateway();
             return waitForStop();
         }
 

@@ -184,11 +184,13 @@ order_book_enable_sanitizers(order_book_replay)
 # The engine's single-threaded pieces (docs/internals/runtime.md). Not public API.
 find_package(Threads REQUIRED)
 add_library(order_book_runtime STATIC
+    src/runtime/abort_report.cpp
     src/runtime/book_set.cpp
     src/runtime/engine_settings.cpp
     src/runtime/instruments.cpp
     src/runtime/matching_loop.cpp
     src/runtime/shard.cpp
+    src/runtime/thread_placement.cpp
 )
 
 target_compile_features(order_book_runtime PUBLIC cxx_std_20)
@@ -224,6 +226,7 @@ add_executable(order_book_cli
 # The engine as a process (docs/internals/network.md): only parsing and the exit status are here.
 add_executable(order_book_engine
     apps/order_book_engine.cpp
+    apps/engine_handlers.cpp
 )
 
 target_compile_features(order_book_engine PRIVATE cxx_std_20)
@@ -951,6 +954,17 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(engine_settings_tests)
     add_test(NAME engine_settings_tests COMMAND engine_settings_tests)
 
+    add_executable(thread_placement_tests
+        tests/thread_placement_test.cpp
+    )
+
+    target_compile_features(thread_placement_tests PRIVATE cxx_std_20)
+    target_link_libraries(thread_placement_tests PRIVATE order_book_runtime)
+    order_book_enable_warnings(thread_placement_tests)
+    order_book_enable_sanitizers(thread_placement_tests)
+    add_test(NAME thread_placement_tests COMMAND thread_placement_tests)
+    set_tests_properties(thread_placement_tests PROPERTIES LABELS threaded)
+
     add_executable(engine_tests
         tests/engine_test.cpp
     )
@@ -994,6 +1008,21 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(engine_process_tests)
     add_test(NAME engine_process_tests COMMAND engine_process_tests $<TARGET_FILE:order_book_engine>)
     set_tests_properties(engine_process_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 180)
+
+    # Real signals and the abort handler, so it builds apps/' handlers in with the test.
+    add_executable(engine_signal_tests
+        tests/engine_signal_test.cpp
+        apps/engine_handlers.cpp
+    )
+
+    target_compile_features(engine_signal_tests PRIVATE cxx_std_20)
+    target_include_directories(engine_signal_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/apps)
+    target_link_libraries(engine_signal_tests PRIVATE order_book_process_testing order_book_network)
+    order_book_enable_warnings(engine_signal_tests)
+    order_book_enable_sanitizers(engine_signal_tests)
+    add_dependencies(engine_signal_tests order_book_engine)
+    add_test(NAME engine_signal_tests COMMAND engine_signal_tests $<TARGET_FILE:order_book_engine>)
+    set_tests_properties(engine_signal_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads SKIP_RETURN_CODE 77 TIMEOUT 180)
 
     add_executable(engine_end_to_end_tests
         tests/engine_end_to_end_test.cpp

@@ -13,7 +13,9 @@ namespace order_book::runtime {
             "                         [--command-ring SLOTS] [--response-ring SLOTS] [--spin-window TIME|unlimited]\n"
             "                         [--capacity-orders N] [--capacity-stops N] [--capacity-levels N]\n"
             "                         [--max-connections N] [--high-water-mark SIZE] [--hard-limit SIZE]\n"
-            "                         [--stop-grace TIME] [--stop-on-stdin-close]\n";
+            "                         [--stop-grace TIME] [--stop-on-stdin-close]\n"
+            "                         [--pin-matching CORES] [--pin-gateway CORES] [--thread-priority normal|high]\n"
+            "       order_book_engine --help\n";
 
         std::optional<std::uint64_t> parseDigits(std::string_view text) {
             std::uint64_t value = 0;
@@ -95,6 +97,31 @@ namespace order_book::runtime {
             return std::to_string(count) + "ns";
         }
 
+        // Numbers with commas between, at least one.
+        std::optional<std::vector<std::uint32_t>> parseCores(std::string_view text) {
+            std::vector<std::uint32_t> cores;
+            for (;;) {
+                const std::size_t comma = text.find(',');
+                const std::optional<std::uint64_t> core = parseDigits(text.substr(0, comma));
+                if (!core || *core > std::numeric_limits<std::uint32_t>::max()) {
+                    return std::nullopt;
+                }
+                cores.push_back(static_cast<std::uint32_t>(*core));
+                if (comma == std::string_view::npos) {
+                    return cores;
+                }
+                text.remove_prefix(comma + 1);
+            }
+        }
+
+        std::string formatCores(const std::vector<std::uint32_t>& cores) {
+            std::string text;
+            for (const std::uint32_t core : cores) {
+                text += (text.empty() ? "" : ",") + std::to_string(core);
+            }
+            return text;
+        }
+
         UsageError needs(std::string_view flag, std::string_view what, std::string_view value) {
             return UsageError{std::string(flag) + " needs " + std::string(what) + ", not '" + std::string(value) + "'"};
         }
@@ -123,7 +150,8 @@ namespace order_book::runtime {
                                 : flag == "--hard-limit"      ? sizeFlag(settings.hardLimit)
                                                               : nullptr;
             const bool known = size != nullptr || flag == "--instruments" || flag == "--shards" || flag == "--listen" ||
-                               flag == "--spin-window" || flag == "--stop-grace";
+                               flag == "--spin-window" || flag == "--stop-grace" || flag == "--pin-matching" || flag == "--pin-gateway" ||
+                               flag == "--thread-priority";
             if (!known) {
                 return UsageError{"unknown option '" + std::string(flag) + "'"};
             }
@@ -151,6 +179,17 @@ namespace order_book::runtime {
                     return needs(flag, "an IPv4 address and port, as 127.0.0.1:0", value);
                 }
                 settings.listen = *address;
+            } else if (flag == "--pin-matching" || flag == "--pin-gateway") {
+                std::optional<std::vector<std::uint32_t>> cores = parseCores(value);
+                if (!cores) {
+                    return needs(flag, "cores: numbers with commas between", value);
+                }
+                (flag == "--pin-matching" ? settings.pinMatching : settings.pinGateway) = std::move(*cores);
+            } else if (flag == "--thread-priority") {
+                if (value != "normal" && value != "high") {
+                    return needs(flag, "normal or high", value);
+                }
+                settings.threadPriority = value == "high" ? ThreadPriority::HIGH : ThreadPriority::NORMAL;
             } else {
                 const bool spin = flag == "--spin-window";
                 const std::optional<std::chrono::nanoseconds> time = spin && value == "unlimited" ? unlimitedSpinSetting : parseTime(value);
@@ -209,6 +248,13 @@ namespace order_book::runtime {
                            " --max-connections " + std::to_string(settings.maxConnections) +
                            " --high-water-mark " + formatSize(settings.highWaterMark) + " --hard-limit " + formatSize(settings.hardLimit) +
                            " --stop-grace " + formatTime(settings.stopGrace);
+        if (!settings.pinMatching.empty()) {
+            line += " --pin-matching " + formatCores(settings.pinMatching);
+        }
+        if (!settings.pinGateway.empty()) {
+            line += " --pin-gateway " + formatCores(settings.pinGateway);
+        }
+        line += settings.threadPriority == ThreadPriority::HIGH ? " --thread-priority high" : " --thread-priority normal";
         if (settings.stopOnStdinClose) {
             line += " --stop-on-stdin-close";
         }
