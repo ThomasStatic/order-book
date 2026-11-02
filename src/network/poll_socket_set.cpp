@@ -7,7 +7,12 @@
 
 namespace order_book::network {
 
-    PollSocketSet::PollSocketSet(std::uint16_t port, Clock lingerClock) : listener(TcpSocket::listenLoopback(port)), clock(std::move(lingerClock)) {
+    PollSocketSet::PollSocketSet(std::uint16_t port, Clock lingerClock) : PollSocketSet({127, 0, 0, 1}, port, std::move(lingerClock)) {
+        startListening();
+    }
+
+    PollSocketSet::PollSocketSet(const std::array<std::uint8_t, 4>& host, std::uint16_t port, Clock lingerClock)
+        : listener(TcpSocket::bindIpv4(host, port)), clock(std::move(lingerClock)) {
         listeningPort = listener.localPort();
 
         // The wake pair: a connection to a listener of its own, made before anything can race it.
@@ -26,6 +31,11 @@ namespace order_book::network {
             throw std::runtime_error("the gateway's wake socket could not connect to itself");
         }
         wakeReceiver = std::move(*accepted);
+    }
+
+    void PollSocketSet::startListening() {
+        listener.listen();
+        listening = true;
     }
 
     void PollSocketSet::wake() noexcept {

@@ -185,6 +185,7 @@ order_book_enable_sanitizers(order_book_replay)
 find_package(Threads REQUIRED)
 add_library(order_book_runtime STATIC
     src/runtime/book_set.cpp
+    src/runtime/engine_settings.cpp
     src/runtime/instruments.cpp
     src/runtime/matching_loop.cpp
     src/runtime/shard.cpp
@@ -197,10 +198,12 @@ order_book_enable_sanitizers(order_book_runtime)
 
 # The wire protocol's pure half (docs/wire-protocol.md). Not public API.
 add_library(order_book_network STATIC
+    src/network/engine.cpp
     src/network/entry_check.cpp
     src/network/gateway_thread.cpp
     src/network/in_memory_socket_set.cpp
     src/network/poll_socket_set.cpp
+    src/network/stop_source.cpp
     src/network/tcp.cpp
     src/network/wire_codec.cpp
 )
@@ -216,6 +219,16 @@ order_book_enable_sanitizers(order_book_network)
 add_executable(order_book_cli
     apps/order_book_cli.cpp
 )
+
+# The engine as a process (docs/internals/network.md): only parsing and the exit status are here.
+add_executable(order_book_engine
+    apps/order_book_engine.cpp
+)
+
+target_compile_features(order_book_engine PRIVATE cxx_std_20)
+target_link_libraries(order_book_engine PRIVATE order_book_network)
+order_book_enable_warnings(order_book_engine)
+order_book_enable_sanitizers(order_book_engine)
 
 target_compile_features(order_book_cli PRIVATE cxx_std_20)
 target_link_libraries(order_book_cli PRIVATE order_book_replay)
@@ -892,6 +905,60 @@ if(BUILD_TESTING)
     order_book_enable_warnings(gateway_socket_tests)
     order_book_enable_sanitizers(gateway_socket_tests)
     add_test(NAME gateway_socket_tests COMMAND gateway_socket_tests)
+
+    add_executable(engine_settings_tests
+        tests/engine_settings_test.cpp
+    )
+
+    target_compile_features(engine_settings_tests PRIVATE cxx_std_20)
+    target_link_libraries(engine_settings_tests PRIVATE order_book_runtime)
+    order_book_enable_warnings(engine_settings_tests)
+    order_book_enable_sanitizers(engine_settings_tests)
+    add_test(NAME engine_settings_tests COMMAND engine_settings_tests)
+
+    add_executable(engine_tests
+        tests/engine_test.cpp
+    )
+
+    target_compile_features(engine_tests PRIVATE cxx_std_20)
+    target_link_libraries(engine_tests PRIVATE order_book_network)
+    order_book_enable_warnings(engine_tests)
+    order_book_enable_sanitizers(engine_tests)
+    add_test(NAME engine_tests COMMAND engine_tests)
+    set_tests_properties(engine_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
+
+    # Replaces operator new, so it is its own executable.
+    add_executable(engine_start_allocation_tests
+        tests/engine_start_allocation_test.cpp
+    )
+
+    target_compile_features(engine_start_allocation_tests PRIVATE cxx_std_20)
+    target_link_libraries(engine_start_allocation_tests PRIVATE order_book_network)
+    order_book_enable_warnings(engine_start_allocation_tests)
+    order_book_enable_sanitizers(engine_start_allocation_tests)
+    add_test(NAME engine_start_allocation_tests COMMAND engine_start_allocation_tests)
+    set_tests_properties(engine_start_allocation_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+
+    # A real child process, with a limit on every wait that kills it.
+    add_library(order_book_process_testing STATIC
+        tests/process/child_process.cpp
+    )
+
+    target_compile_features(order_book_process_testing PUBLIC cxx_std_20)
+    target_include_directories(order_book_process_testing PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/process)
+    order_book_enable_warnings(order_book_process_testing)
+    order_book_enable_sanitizers(order_book_process_testing)
+
+    add_executable(engine_process_tests
+        tests/engine_process_test.cpp
+    )
+
+    target_compile_features(engine_process_tests PRIVATE cxx_std_20)
+    target_link_libraries(engine_process_tests PRIVATE order_book_process_testing order_book_network)
+    order_book_enable_warnings(engine_process_tests)
+    order_book_enable_sanitizers(engine_process_tests)
+    add_test(NAME engine_process_tests COMMAND engine_process_tests $<TARGET_FILE:order_book_engine>)
+    set_tests_properties(engine_process_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 180)
     set_tests_properties(gateway_socket_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
 
     add_executable(randomized_harness_tests

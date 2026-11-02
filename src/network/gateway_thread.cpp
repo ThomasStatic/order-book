@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <array>
+#include <stdexcept>
+#include <string>
 #include <thread>
 #include <utility>
 #include <variant>
@@ -19,6 +21,13 @@ namespace order_book::network {
             const std::size_t size = encode(std::span<std::byte>(frame));
             unsent.insert(unsent.end(), frame.begin(), frame.begin() + static_cast<std::ptrdiff_t>(size));
         }
+        std::size_t checkedConnections(std::size_t wanted) {
+            if (wanted == 0 || wanted > mostConnectionsPerThread) {
+                throw std::invalid_argument("a gateway thread holds from 1 to " + std::to_string(mostConnectionsPerThread) +
+                                            " connections, not " + std::to_string(wanted));
+            }
+            return wanted;
+        }
     }  // namespace
 
     GatewayThread::GatewayThread(const runtime::InstrumentDirectory& instruments, std::vector<ShardLink> links, SocketSet& socketSet,
@@ -27,11 +36,11 @@ namespace order_book::network {
           shards(std::move(links)),
           sockets(socketSet),
           settings(std::move(gatewaySettings)),
-          connections(connectionsPerThread),
+          connections(checkedConnections(settings.maxConnections)),
           shardStates(shards.size()),
           readBuffer(readBufferBytes) {
-        parkedOldestFirst.reserve(connectionsPerThread);
-        interest.reserve(connectionsPerThread);
+        parkedOldestFirst.reserve(connections.size());
+        interest.reserve(connections.size());
     }
 
     bool GatewayThread::readable(const Connection& connection) const noexcept {

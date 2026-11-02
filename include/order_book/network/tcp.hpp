@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -31,6 +32,11 @@ namespace order_book::network {
         // A non-blocking listener on 127.0.0.1. Port 0 lets the system pick, and localPort says
         // which it did.
         static TcpSocket listenLoopback(std::uint16_t port);
+        // A non-blocking socket bound to this IPv4 address and port, not yet listening, so a busy
+        // port fails now and nobody can connect before listen. It takes the address exclusively
+        // on Windows, and with SO_REUSEADDR elsewhere, so a restart needn't wait out TIME_WAIT.
+        static TcpSocket bindIpv4(const std::array<std::uint8_t, 4>& host, std::uint16_t port);
+        void listen() const;
         // A blocking connection to 127.0.0.1, with TCP_NODELAY on.
         static TcpSocket connectLoopback(std::uint16_t port);
 

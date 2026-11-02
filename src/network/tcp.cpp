@@ -79,14 +79,17 @@ namespace order_book::network {
         }
 
         // Network byte order by hand, since htons can be a macro that trips -Wconversion.
-        sockaddr_in loopback(std::uint16_t port) noexcept {
+        sockaddr_in ipv4(const std::array<std::uint8_t, 4>& host, std::uint16_t port) noexcept {
             sockaddr_in address{};
             address.sin_family = AF_INET;
             const std::array<std::uint8_t, 2> portBytes{static_cast<std::uint8_t>(port >> 8), static_cast<std::uint8_t>(port & 0xffU)};
             std::memcpy(&address.sin_port, portBytes.data(), portBytes.size());
-            const std::array<std::uint8_t, 4> host{127, 0, 0, 1};
             std::memcpy(&address.sin_addr, host.data(), host.size());
             return address;
+        }
+
+        sockaddr_in loopback(std::uint16_t port) noexcept {
+            return ipv4({127, 0, 0, 1}, port);
         }
 
         std::uint16_t portOf(const sockaddr_in& address) noexcept {
@@ -121,16 +124,34 @@ namespace order_book::network {
     }
 
     TcpSocket TcpSocket::listenLoopback(std::uint16_t port) {
+        TcpSocket socket = bindIpv4({127, 0, 0, 1}, port);
+        socket.listen();
+        return socket;
+    }
+
+    TcpSocket TcpSocket::bindIpv4(const std::array<std::uint8_t, 4>& host, std::uint16_t port) {
         TcpSocket socket = openStream();
-        const sockaddr_in address = loopback(port);
+        const int on = 1;
+#ifdef _WIN32
+        const int option = SO_EXCLUSIVEADDRUSE;
+#else
+        const int option = SO_REUSEADDR;
+#endif
+        if (::setsockopt(native(socket.held), SOL_SOCKET, option, reinterpret_cast<const char*>(&on), sizeof(on)) != 0) {
+            fail("setsockopt");
+        }
+        const sockaddr_in address = ipv4(host, port);
         if (::bind(native(socket.held), reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0) {
             fail("bind");
         }
-        if (::listen(native(socket.held), SOMAXCONN) != 0) {
-            fail("listen");
-        }
         socket.setNonBlocking();
         return socket;
+    }
+
+    void TcpSocket::listen() const {
+        if (::listen(native(held), SOMAXCONN) != 0) {
+            fail("listen");
+        }
     }
 
     TcpSocket TcpSocket::connectLoopback(std::uint16_t port) {

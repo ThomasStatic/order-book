@@ -88,9 +88,18 @@ void testAResultHoldsALargeResponse() {
     for (OrderId id = 1; id <= 600; ++id) {
         shard.process(add(id, Side::SELL, 100, 1), 0);
     }
+    expect(shard.resultGrowths() == 0, "600 small commands stay inside the reserved result");
     shard.process(add(1000, Side::BUY, 100, 600), 0);
     expect(shard.result().events().size() == 601, "a response past what was reserved still comes back whole");
     expect(shard.result().submission().getGeneratedTrades().size() == 600, "with every trade");
+    expect(shard.resultGrowths() == 1, "and that command is counted as making the result grow");
+
+    for (OrderId id = 2000; id < 2600; ++id) {
+        shard.process(add(id, Side::SELL, 100, 1), 0);
+    }
+    shard.process(add(3000, Side::BUY, 100, 600), 0);
+    expect(shard.result().submission().getGeneratedTrades().size() == 600, "the same size again");
+    expect(shard.resultGrowths() == 1, "fits what it grew to, so it isn't counted twice");
 }
 
 }  // namespace

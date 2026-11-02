@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-A correctness-first C++20 limit-order-book and matching-engine library: the static library `order_book`, the non-interactive CLI `order_book_cli` (`replay`, `convert`, `demo`; see `--help`), and optional benchmarks. Released as `v2.0.0`. README's "Public API" section lists which headers are the API, and a change to those is breaking.
+A correctness-first C++20 limit-order-book and matching-engine library: the static library `order_book`, the non-interactive CLI `order_book_cli` (`replay`, `convert`, `demo`; see `--help`), the engine executable `order_book_engine`, and optional benchmarks. Released as `v2.0.0`. README's "Public API" section lists which headers are the API, and a change to those is breaking.
 
 All code is in namespace `order_book`, with headers in `include/order_book/` and implementations in `src/`. Domain terms are in `GLOSSARY.md` and decisions in `docs/adr/`.
 
@@ -15,8 +15,8 @@ Read the matching note in `docs/internals/` before changing that area, and updat
 - `replay.md`: the CSV parser, replay engine, samples, and expected CLI output.
 - `benchmarks.md`: workloads, `workloadGeneratorVersion`, recorded baselines, what results may claim, profiling.
 - `latency.md`: the latency harness: clock, histogram, drivers, run record, report.
-- `runtime.md`: `order_book_runtime`: the instrument list, placement, `InstrumentDirectory`, `BookSet`.
-- `network.md`: `order_book_network`: `FrameReader`, the frame encoders, `checkEntry`, `SocketSet`, `GatewayThread`, `TcpSocket`, `PollSocketSet`.
+- `runtime.md`: `order_book_runtime`, and `EngineSettings`: the instrument list, placement, `InstrumentDirectory`, `BookSet`.
+- `network.md`: `order_book_network`: `FrameReader`, the frame encoders, `checkEntry`, `SocketSet`, `GatewayThread`, `TcpSocket`, `PollSocketSet`, `runEngine`, `StopSource`.
 
 ## Build and test
 

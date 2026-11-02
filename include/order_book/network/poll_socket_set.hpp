@@ -21,9 +21,15 @@ namespace order_book::network {
     public:
         using Clock = std::function<std::chrono::steady_clock::time_point()>;
 
-        // Port 0 lets the system pick. clock times lingering sockets and nothing else.
+        // Listening on the loopback interface at once. Port 0 lets the system pick. clock times
+        // lingering sockets and nothing else.
         explicit PollSocketSet(std::uint16_t port = 0, Clock clock = std::chrono::steady_clock::now);
+        // Bound to this address, and listening only once startListening runs, so a busy port
+        // fails here and no client can connect before the engine is ready.
+        PollSocketSet(const std::array<std::uint8_t, 4>& host, std::uint16_t port, Clock clock = std::chrono::steady_clock::now);
 
+        void startListening();
+        // The port bound, which the system picked if it was asked for 0.
         std::uint16_t port() const noexcept { return listeningPort; }
         // Ends a sleeping wait, from any thread, through a loopback socket of this set's own. Every
         // change to its flag is a sequentially consistent exchange, as a doorbell's is, so a wake
@@ -64,7 +70,7 @@ namespace order_book::network {
         std::atomic<bool> wakePending{false};
         Clock clock;
         std::uint16_t listeningPort = 0;
-        bool listening = true;
+        bool listening = false;
         bool listenerReadable = false;
         std::vector<std::optional<Slot>> slots;
         std::vector<SocketId> freeSlots;

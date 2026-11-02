@@ -8,11 +8,23 @@ namespace order_book::runtime {
         lastResult.reserve(resultTrades, resultEvents);
     }
 
+    namespace {
+        // The capacities of everything a result reuses, which only ever grow.
+        std::size_t heldCapacity(const replay::CommandResult& result) noexcept {
+            return result.submission().getGeneratedTrades().capacity() + result.submission().getEvents().capacity() +
+                   result.replacement().getGeneratedTrades().capacity() + result.replacement().getEvents().capacity();
+        }
+    }  // namespace
+
     void Shard::process(const replay::Command& command, std::uint32_t slot) {
         if constexpr (invariantChecksAfterCommands) {
             progress = ShardProgress{slot, nextLogPosition};
         }
+        const std::size_t before = heldCapacity(lastResult);
         bookSet.execute(slot, command, lastResult);
+        if (heldCapacity(lastResult) != before) {
+            ++growths;
+        }
         ++nextLogPosition;
         ++taken;
     }

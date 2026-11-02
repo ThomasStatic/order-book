@@ -57,6 +57,9 @@ namespace order_book::runtime {
         void process(const replay::Command& command, std::uint32_t slot);
 
         const replay::CommandResult& result() const noexcept { return lastResult; }
+        // How many commands made the reused result reach the heap, since it was built: zero for a
+        // shard whose results stayed inside what it reserved.
+        std::uint64_t resultGrowths() const noexcept { return growths; }
         const BookSet& books() const noexcept { return bookSet; }
         std::size_t size() const noexcept { return bookSet.size(); }
 
@@ -76,6 +79,7 @@ namespace order_book::runtime {
         const InstrumentDirectory* instruments;
         BookSet bookSet;
         replay::CommandResult lastResult;
+        std::uint64_t growths = 0;
         std::uint64_t logStart;
         std::uint64_t nextLogPosition;
         std::uint64_t taken = 0;

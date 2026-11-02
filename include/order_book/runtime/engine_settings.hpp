@@ -1,0 +1,67 @@
+#pragma once
+
+#include <array>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <variant>
+
+// order_book_engine's settings: its whole command line, since it has no config file and reads
+// no environment, so a run's flags are its record. See docs/internals/runtime.md.
+namespace order_book::runtime {
+
+    struct ListenAddress {
+        std::array<std::uint8_t, 4> host;  // IPv4
+        std::uint16_t port;                // 0 lets the system pick
+
+        bool operator==(const ListenAddress&) const = default;
+    };
+
+    // A spin window of this many nanoseconds means never sleep: --spin-window unlimited.
+    inline constexpr std::chrono::nanoseconds unlimitedSpinSetting = std::chrono::nanoseconds::max();
+
+    struct EngineSettings {
+        std::string instruments;  // the instrument list's path
+        std::uint32_t shards = 0;
+        ListenAddress listen{};
+        std::size_t commandRing = 4096;
+        std::size_t responseRing = 16384;
+        std::chrono::nanoseconds spinWindow = std::chrono::microseconds(100);
+        std::size_t capacityOrders = 4096;
+        std::size_t capacityStops = 1024;
+        std::size_t capacityLevels = 256;
+        std::size_t maxConnections = 64;
+        std::size_t highWaterMark = 1024 * 1024;
+        std::size_t hardLimit = 16 * 1024 * 1024;
+        std::chrono::nanoseconds stopGrace = std::chrono::seconds(5);
+        bool stopOnStdinClose = false;
+
+        bool operator==(const EngineSettings&) const = default;
+    };
+
+    struct UsageError {
+        std::string message;
+
+        bool operator==(const UsageError&) const = default;
+    };
+
+    // The arguments after the program's name. `--flag value` only, with --stop-on-stdin-close
+    // the one flag that takes no value. --instruments, --shards, and --listen are required, a
+    // repeated or unknown flag is an error, sizes take a binary K, M, or G, and times must carry
+    // a unit (ns, us, ms, or s), all but a bare 0. What each value means is checked at start,
+    // where a bad one refuses the start rather than being a usage error.
+    std::variant<EngineSettings, UsageError> parseEngineArguments(std::span<const std::string_view> args);
+
+    // The settings as a command line that would give them, every flag in its canonical order with
+    // its value, defaults included: the one line a run prints first.
+    std::string formatEngineSettings(const EngineSettings& settings);
+    std::string formatListenAddress(const ListenAddress& address);
+
+    // What a usage error prints after its message.
+    std::string_view engineUsage() noexcept;
+
+}  // namespace order_book::runtime

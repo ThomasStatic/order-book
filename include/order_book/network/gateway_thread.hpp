@@ -18,8 +18,10 @@
 
 namespace order_book::network {
 
-    // The most connections one gateway thread holds.
+    // The most connections one gateway thread holds unless its settings say otherwise, and the
+    // most they may say, since a connection's index has 16 bits.
     inline constexpr std::uint32_t connectionsPerThread = 64;
+    inline constexpr std::size_t mostConnectionsPerThread = 65536;
     // A pass takes at most this many frames from a connection, which is the matching thread's batch.
     inline constexpr std::size_t framesPerPass = runtime::takeBatch;
     // A pass skips the wait while a reader holds frames, but never more than this many in a row,
@@ -37,6 +39,9 @@ namespace order_book::network {
     }
 
     struct GatewaySettings {
+        // Past this many open at once, a connection is accepted only to hear TOO_MANY_CONNECTIONS.
+        // From 1 to mostConnectionsPerThread; anything else throws std::invalid_argument.
+        std::size_t maxConnections = connectionsPerThread;
         // Past this many unsent bytes a connection is backlogged, and not read until they drain.
         std::size_t highWaterMark = 1024 * 1024;
         // Past this many it closes.
