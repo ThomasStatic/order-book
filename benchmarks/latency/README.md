@@ -14,6 +14,7 @@ With the Visual Studio generator, build and run the Release configuration: `cmak
 | Option | Effect |
 |---|---|
 | `--interval command\|hand-off` | the interval to time: one book call (default), or into the command ring and back out of the response ring, through a real matching thread |
+| `--matching-core N` | for hand-off, pin the matching thread to this core; needed with `--pin-core` |
 | `--time service\|response` | closed-loop service time (default), or response time on a timetable |
 | `--workload NAME` | run this workload; repeat for several (default: all eleven) |
 | `--size smoke\|standard\|extended` | 10,000, 100,000, or 1,000,000 (default) commands per run |

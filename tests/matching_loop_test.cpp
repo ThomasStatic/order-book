@@ -11,6 +11,17 @@
 
 #include "order_book/runtime/matching_loop.hpp"
 
+namespace order_book {
+
+// Befriended by Doorbell, so a test can catch a sleeper at the moment it announces itself.
+struct OrderBookTestAccess {
+    static bool sleeperAnnounced(const runtime::Doorbell& doorbell) {
+        return doorbell.state.load(std::memory_order_seq_cst) == runtime::Doorbell::asleep;
+    }
+};
+
+}  // namespace order_book
+
 namespace {
 
 using namespace order_book;
@@ -38,10 +49,6 @@ replay::Command add(OrderId id, Side side, Price price, Quantity quantity) {
 
 CommandElement element(const replay::Command& command, std::uint64_t correlation, std::uint32_t slot = 0) {
     return CommandElement{correlation, command, slot, 5, ControlKind::COMMAND};
-}
-
-CommandElement stopMarker() {
-    return CommandElement{0, replay::CancelCommand{1}, 0, 0, ControlKind::STOP};
 }
 
 std::vector<ResponseRecord> drainAll(Ring<ResponseRecord>& ring) {
@@ -103,11 +110,11 @@ void testStopNeedsAMarkerFromEveryProducer() {
     Ring<ResponseRecord> secondResponses(16);
     MatchingLoop loop(shard, doorbell, {RingPair{&first, &firstResponses}, RingPair{&second, &secondResponses}});
 
-    first.tryPush(stopMarker());
+    first.tryPush(CommandElement::stopMarker());
     loop.pass();
     expect(!loop.stopped(), "one producer's marker is not a stop");
     second.tryPush(element(add(1, Side::BUY, 100, 5), 1));
-    second.tryPush(stopMarker());
+    second.tryPush(CommandElement::stopMarker());
     loop.run();
     expect(loop.stopped(), "every producer's is");
     expect(shard.commandsTaken() == 1, "a marker is not a command, and takes no log position");
@@ -132,7 +139,7 @@ struct Client {
 
     // Everything up to and including the stop, on a shard that is being asked to stop.
     std::vector<ResponseRecord> stopAndCollect() {
-        send(stopMarker());
+        send(CommandElement::stopMarker());
         std::vector<ResponseRecord> records;
         bool stopped = false;
         while (!stopped) {
@@ -148,11 +155,29 @@ struct Client {
     }
 };
 
+// A command that arrives after a pass found nothing, and whose ring came before the sleeper
+// announced itself: only the re-check after the announcement can see it, since nothing will ring
+// again. Stepped on one thread, so it lands there every time. Without the re-check this hangs,
+// and the CTest timeout fails it.
+void testACommandBeforeTheSleepIsSeen() {
+    const InstrumentDirectory directory({on("AAPL", 0)}, 1);
+    Shard shard(directory, 0);
+    Doorbell doorbell;
+    Ring<CommandElement> commands(16);
+    Ring<ResponseRecord> responses(16);
+    MatchingLoop loop(shard, doorbell, {RingPair{&commands, &responses}}, std::chrono::nanoseconds::zero());
+
+    expect(loop.pass() == 0, "the rings start empty");
+    commands.tryPush(element(replay::CancelCommand{1}, 1));
+    doorbell.ring();
+    loop.sleepUntilRung();
+    expect(loop.pass() == 1, "the sleep returned at once, and the command is taken");
+}
+
 // One command at a time, each sent only once the thread has announced that it is going to sleep,
-// so every one lands in the window a lost wake-up needs. That one hangs here, and the CTest
-// timeout fails it. Without the wait the producer mostly beats the thread to sleep, and this
-// would pass whether the doorbell worked or not.
-void testNoWakeUpIsLost() {
+// so a ring must wake it. Without the notify this hangs, and the CTest timeout fails it. Without
+// the wait the producer mostly beats the thread to sleep, and this would pass regardless.
+void testARingWakesASleeper() {
     constexpr std::size_t commands = 5000;
     const InstrumentDirectory directory({on("AAPL", 0)}, 1);
     Doorbell doorbell;
@@ -167,7 +192,7 @@ void testNoWakeUpIsLost() {
     });
 
     for (std::size_t i = 0; i < commands; ++i) {
-        while (!doorbell.sleeperAnnounced()) {
+        while (!OrderBookTestAccess::sleeperAnnounced(doorbell)) {
             std::this_thread::yield();
         }
         client.send(element(replay::CancelCommand{1}, i));
@@ -277,7 +302,8 @@ int main() {
     testAPassRunsCommandsAndSendsTheirEvents();
     testTakesABatchFromEachRingInTurn();
     testStopNeedsAMarkerFromEveryProducer();
-    testNoWakeUpIsLost();
+    testACommandBeforeTheSleepIsSeen();
+    testARingWakesASleeper();
     testAFullResponseRingWaitsInPlace();
     testAThreadGivesWhatOneThreadGives();
     std::cout << "matching loop tests passed" << std::endl;

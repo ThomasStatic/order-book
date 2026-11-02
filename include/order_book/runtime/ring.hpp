@@ -112,6 +112,11 @@ namespace order_book::runtime {
         std::uint32_t slot;
         std::uint32_t connection;  // an index plus a generation, so a reused index hears nothing
         ControlKind control;
+
+        // A producer's last element: it will send nothing more.
+        static constexpr CommandElement stopMarker() noexcept {
+            return CommandElement{0, replay::CancelCommand{0}, 0, 0, ControlKind::STOP};
+        }
     };
     static_assert(sizeof(CommandElement) == 64, "a command element fills one cache line");
     static_assert(std::is_trivially_copyable_v<CommandElement>, "a command element crosses threads by copy");

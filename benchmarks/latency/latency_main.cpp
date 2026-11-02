@@ -48,7 +48,8 @@ constexpr std::string_view usageText =
     "usage: order_book_latency_benchmarks [--interval command|hand-off] [--time service|response]\n"
     "                                     [--workload NAME]... [--size smoke|standard|extended | --commands N]\n"
     "                                     [--runs N] [--warmup N] [--seed N] [--noise-seconds N]\n"
-    "                                     [--pin-core N] [--priority normal|high] [--machine-record FILE]\n"
+    "                                     [--pin-core N] [--matching-core N] [--priority normal|high]\n"
+    "                                     [--machine-record FILE]\n"
     "                                     [--out-dir DIR] [--allow-unoptimized]\n"
     "       order_book_latency_benchmarks --help\n";
 
@@ -75,6 +76,8 @@ constexpr std::string_view helpText =
     "  --noise-seconds N    seconds of noise floor before and after the session (default 10; 0 skips\n"
     "                       them, which leaves every row unquotable)\n"
     "  --pin-core N         pin the measuring thread to this core\n"
+    "  --matching-core N    for hand-off, pin the matching thread to this core; needed with --pin-core,\n"
+    "                       since a thread that starts on a pinned one may inherit its core\n"
     "  --priority LEVEL     normal (the default) or high; a refusal fails the session\n"
     "  --machine-record F   the hand-written machine record, copied into the run record\n"
     "  --out-dir DIR        write report.txt, runs.csv, and every run's histogram counts\n"
@@ -101,6 +104,7 @@ struct Settings {
     std::uint64_t seed = 42;
     std::uint64_t noiseSeconds = 10;
     std::optional<unsigned int> pinCore;
+    std::optional<unsigned int> matchingCore;
     bool highPriority = false;
     std::optional<std::string> machineRecordPath;
     std::optional<std::string> outDirectory;
@@ -137,7 +141,7 @@ std::optional<std::string> parseArguments(const std::vector<std::string_view>& a
         const bool textValue = arg == "--interval" || arg == "--time" || arg == "--workload" || arg == "--size" ||
                                arg == "--priority" || arg == "--machine-record" || arg == "--out-dir";
         const bool numberValue = arg == "--commands" || arg == "--runs" || arg == "--warmup" || arg == "--seed" ||
-                                 arg == "--noise-seconds" || arg == "--pin-core";
+                                 arg == "--noise-seconds" || arg == "--pin-core" || arg == "--matching-core";
         if (!textValue && !numberValue) {
             return "unknown option '" + std::string(arg) + "'";
         }
@@ -158,6 +162,8 @@ std::optional<std::string> parseArguments(const std::vector<std::string_view>& a
                 settings.noiseSeconds = *number;
             } else if (arg == "--pin-core") {
                 settings.pinCore = static_cast<unsigned int>(*number);
+            } else if (arg == "--matching-core") {
+                settings.matchingCore = static_cast<unsigned int>(*number);
             } else if (*number == 0) {
                 return std::string(arg) + " must be at least 1";
             } else if (arg == "--runs") {
@@ -251,8 +257,7 @@ latency::ReportRow startRow(const Session& session, const bench::Workload& workl
     row.emptyPairP50Nanoseconds = session.clockRecord.emptyPairP50Nanoseconds;
     row.clockName = session.clockRecord.name;
     row.optimizedBuild = session.build.optimized();
-    // --pin-core covers the sending thread alone, so a hand-off row can't claim it for both.
-    row.pinnedAtHighPriority = session.settings.pinCore.has_value() && session.settings.highPriority && !session.settings.handOff;
+    row.pinnedAtHighPriority = session.settings.pinCore.has_value() && session.settings.highPriority;
 
     latency::RunRecord& record = row.record;
     record.set("interval", session.settings.handOff ? "hand-off" : "command");
@@ -274,8 +279,10 @@ latency::ReportRow startRow(const Session& session, const bench::Workload& workl
         record.set("logs-share-drive", "none, no log");
     }
     const std::string senderCore = session.settings.pinCore ? std::to_string(*session.settings.pinCore) : "none";
-    record.set("core-map", session.settings.handOff ? "sender " + senderCore + ", matching thread unpinned" : senderCore);
-    record.set("pinned", session.settings.pinCore && !session.settings.handOff ? "yes" : "no");
+    record.set("core-map", session.settings.handOff && session.settings.pinCore
+                               ? "sender " + senderCore + ", matching thread " + std::to_string(*session.settings.matchingCore)
+                               : senderCore);
+    record.set("pinned", session.settings.pinCore ? "yes" : "no");
     record.set("priority", session.settings.highPriority ? "high" : "normal");
     const order_book::BookCapacity capacity = bench::expectedBookSize(workload);
     record.set("book-capacity", "orders=" + std::to_string(capacity.orders) + " stops=" + std::to_string(capacity.stops) +
@@ -302,11 +309,31 @@ double secondsOf(Ticks ticks, const latency::ClockRecord& clock) {
     return static_cast<double>(ticks) / clock.ticksPerNanosecond / 1e9;
 }
 
+std::string intervalName(const Session& session) {
+    return session.settings.handOff ? "hand-off" : "command";
+}
+
+template <typename Target>
+Target makeTarget(const Session& session, const bench::Workload& workload) {
+    if constexpr (std::is_same_v<Target, latency::HandOffTarget>) {
+        const Settings& settings = session.settings;
+        return Target(workload, [matchingCore = settings.matchingCore, highPriority = settings.highPriority] {
+            if (matchingCore) {
+                latency::pinCurrentThread(*matchingCore);
+            }
+            if (highPriority) {
+                latency::raiseCurrentThreadPriority();
+            }
+        });
+    } else {
+        return Target(workload);
+    }
+}
+
 template <typename Target>
 latency::ReportRow runClosedLoopRow(const Session& session, const bench::Workload& workload) {
     latency::ReportRow row =
-        startRow(session, workload, std::string(session.settings.handOff ? "hand-off" : "command") + ", service time, " +
-                                        workload.config.name + ", closed-loop");
+        startRow(session, workload, intervalName(session) + ", service time, " + workload.config.name + ", closed-loop");
     row.record.set("time", "service");
     row.record.set("load", "closed-loop");
     row.record.set("target-rate", "none");
@@ -315,7 +342,7 @@ latency::ReportRow runClosedLoopRow(const Session& session, const bench::Workloa
     Ticks elapsed = 0;
     std::uint64_t growths = 0;
     for (std::size_t run = 0; run < session.settings.warmups + session.settings.runs; ++run) {
-        Target target(workload);
+        Target target = makeTarget<Target>(session, workload);
         const Ticks start = session.clock.now();
         latency::Histogram service = latency::runClosedLoop(workload.timedCount(), session.clock, target);
         const Ticks stop = session.clock.now();
@@ -346,7 +373,7 @@ void runTimetableRows(const Session& session, const bench::Workload& workload, c
     const double gapTicks = session.clockRecord.ticksPerNanosecond * 1e9 / rate;
     const std::string percent = std::to_string(static_cast<int>(load.share * 100.0 + 0.5)) + "%";
     latency::ReportRow row = startRow(session, workload,
-                                      std::string(session.settings.handOff ? "hand-off" : "command") + ", response time, " + workload.config.name + ", " + load.name + " at " + percent);
+                                      intervalName(session) + ", response time, " + workload.config.name + ", " + load.name + " at " + percent);
     row.record.set("time", "response");
     row.record.set("load", load.name);
     row.record.set("target-rate", bench::formatFixed(rate, 0) + "/s, " + percent + " of capacity measured this session");
@@ -363,7 +390,7 @@ void runTimetableRows(const Session& session, const bench::Workload& workload, c
     Ticks elapsed = 0;
     std::uint64_t growths = 0;
     for (std::size_t run = 0; run < session.settings.warmups + session.settings.runs; ++run) {
-        Target target(workload);
+        Target target = makeTarget<Target>(session, workload);
         latency::TimetableRun result = latency::runTimetable(schedule, session.clock, target);
         target.checkOutcome();
         if (run >= session.settings.warmups) {
@@ -389,10 +416,11 @@ void runTimetableRows(const Session& session, const bench::Workload& workload, c
 }
 
 // Closed-loop, with no per-command stamps, so it is never a throughput claim for a timed run.
-double measureCapacity(const bench::Workload& workload) {
+double measureCapacity(const Session& session, const bench::Workload& workload) {
+    const bench::BenchmarkKind kind = session.settings.handOff ? bench::BenchmarkKind::QUEUE : bench::BenchmarkKind::CORE;
     std::vector<double> rates;
     for (int run = 0; run < 3; ++run) {
-        rates.push_back(bench::runOnce(workload, bench::BenchmarkKind::CORE).operationsPerSecond());
+        rates.push_back(bench::runOnce(workload, kind).operationsPerSecond());
     }
     std::sort(rates.begin(), rates.end());
     return rates[1];
@@ -455,6 +483,9 @@ int runSession(const Settings& settings) {
         return unoptimizedBuild;
     }
 
+    if (settings.handOff && settings.pinCore.has_value() != settings.matchingCore.has_value()) {
+        return usage("--interval hand-off needs both --pin-core and --matching-core, or neither");
+    }
     if (settings.pinCore) {
         latency::pinCurrentThread(*settings.pinCore);
     }
@@ -475,7 +506,7 @@ int runSession(const Settings& settings) {
                                                     : runClosedLoopRow<latency::CommandTarget>(session, workload));
             continue;
         }
-        const double capacity = measureCapacity(workload);
+        const double capacity = measureCapacity(session, workload);
         for (const Load& load : {Load{"fixed", 0.10, false}, Load{"fixed", 0.25, false}, Load{"fixed", 0.50, false},
                                  Load{"fixed", 0.75, false}, Load{"fixed", 0.90, false}, Load{"poisson", 0.50, true}}) {
             if (session.settings.handOff) {

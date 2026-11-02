@@ -535,8 +535,9 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(matching_abort_tests)
     add_test(NAME matching_abort_tests COMMAND matching_abort_tests)
     set_tests_properties(matching_abort_tests PROPERTIES
-        PASS_REGULAR_EXPRESSION "order book runtime: shard 0 symbol AAPL +position [0-9]+ command ADD id=[0-9]+: |SKIPPED"
-        FAIL_REGULAR_EXPRESSION "FAILED")
+        PASS_REGULAR_EXPRESSION "order book runtime: shard 0 symbol AAPL +position [0-9]+ command ADD id=[0-9]+: "
+        FAIL_REGULAR_EXPRESSION "FAILED"
+        SKIP_REGULAR_EXPRESSION "SKIPPED")
 
     # A deliberate race that must be reported, so a passing ThreadSanitizer job means something.
     if(ORDER_BOOK_ENABLE_TSAN)
@@ -548,10 +549,10 @@ if(BUILD_TESTING)
         target_link_libraries(tsan_control_tests PRIVATE Threads::Threads)
         order_book_enable_warnings(tsan_control_tests)
         order_book_enable_sanitizers(tsan_control_tests)
-        add_test(NAME tsan_control_tests COMMAND tsan_control_tests)
-        set_tests_properties(tsan_control_tests PROPERTIES
-            LABELS threaded RESOURCE_LOCK threads
-            WILL_FAIL TRUE)
+        add_test(NAME tsan_control_tests
+            COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:tsan_control_tests>
+                    "-DOUTPUT_REGEX=ThreadSanitizer: data race" -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
+        set_tests_properties(tsan_control_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads)
     endif()
 
     add_executable(shard_tests
@@ -1009,6 +1010,17 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         order_book_enable_sanitizers(benchmark_harness_tests)
         add_test(NAME benchmark_harness_tests COMMAND benchmark_harness_tests)
 
+        add_executable(benchmark_queue_tests
+            tests/benchmark_queue_test.cpp
+        )
+
+        target_compile_features(benchmark_queue_tests PRIVATE cxx_std_20)
+        target_link_libraries(benchmark_queue_tests PRIVATE order_book_benchmarking)
+        order_book_enable_warnings(benchmark_queue_tests)
+        order_book_enable_sanitizers(benchmark_queue_tests)
+        add_test(NAME benchmark_queue_tests COMMAND benchmark_queue_tests)
+        set_tests_properties(benchmark_queue_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
+
         # Exactly zero heap calls on every workload, where only a checked build's own checks
         # could allocate.
         add_executable(matching_path_allocation_tests
@@ -1025,13 +1037,13 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         add_test(NAME benchmark_queue_smoke
             COMMAND order_book_benchmarks --workload small-book --commands 2000 --kind queue --instruments 4
                     --repetitions 1 --warmup 0 --allow-unoptimized)
+        # It must exit 1, for the prediction's reason, not for any other.
         add_test(NAME benchmark_queue_tampered
-            COMMAND order_book_benchmarks --workload small-book --commands 2000 --kind queue --tamper-prediction
-                    --repetitions 1 --warmup 0 --allow-unoptimized)
-        set_tests_properties(benchmark_queue_smoke PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
-        # It must exit 1 for the prediction's reason, not for any other.
-        set_tests_properties(benchmark_queue_tampered PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120
-            PASS_REGULAR_EXPRESSION "but the workload predicted")
+            COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:order_book_benchmarks> -DEXPECTED_EXIT=1
+                    "-DARGS=--workload|small-book|--commands|2000|--kind|queue|--tamper-prediction|--repetitions|1|--warmup|0|--allow-unoptimized"
+                    "-DOUTPUT_REGEX=but the workload predicted" -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
+        set_tests_properties(benchmark_queue_smoke benchmark_queue_tampered PROPERTIES
+            LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
         add_test(NAME benchmark_shard_smoke
             COMMAND order_book_benchmarks --workload small-book --commands 2000 --kind shard --instruments 4
                     --repetitions 1 --warmup 0 --allow-unoptimized)

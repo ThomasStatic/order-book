@@ -26,6 +26,18 @@
 #define ORDER_BOOK_ADDRESS_SANITIZER 0
 #endif
 
+// The same for ThreadSanitizer, under its own macro and feature.
+#if defined(__SANITIZE_THREAD__)
+#define ORDER_BOOK_THREAD_SANITIZER 1
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define ORDER_BOOK_THREAD_SANITIZER 1
+#endif
+#endif
+#ifndef ORDER_BOOK_THREAD_SANITIZER
+#define ORDER_BOOK_THREAD_SANITIZER 0
+#endif
+
 // GCC defines no macro under UBSan, so CMakeLists.txt defines this when ORDER_BOOK_ENABLE_UBSAN
 // applies it.
 #ifndef ORDER_BOOK_UNDEFINED_SANITIZER
@@ -244,6 +256,7 @@ BuildInfo currentBuild() {
     build.invariantChecks = invariantChecksAfterCommands;
     build.addressSanitizer = ORDER_BOOK_ADDRESS_SANITIZER != 0;
     build.undefinedBehaviorSanitizer = ORDER_BOOK_UNDEFINED_SANITIZER != 0;
+    build.threadSanitizer = ORDER_BOOK_THREAD_SANITIZER != 0;
     return build;
 }
 

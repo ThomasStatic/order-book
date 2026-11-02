@@ -9,6 +9,10 @@
 #include "order_book/runtime/ring.hpp"
 #include "order_book/runtime/shard.hpp"
 
+namespace order_book {
+    struct OrderBookTestAccess;
+}
+
 namespace order_book::runtime {
 
     // How long a matching thread spins on empty rings before it sleeps. 0 sleeps at once, and
@@ -21,12 +25,14 @@ namespace order_book::runtime {
 
     // Wakes a sleeping matching thread: one per shard. A producer rings after each batch.
     //
-    // Both sides exchange the one atomic, sequentially consistent and never a fence, since GCC's
-    // -Wtsan fails a fence under warnings as errors. Sharing the atomic is what rules out a lost
-    // wake-up. If a producer's exchange comes second it sees the sleeper and wakes it. If it comes
-    // first, the sleeper's exchange reads what it wrote, and so sees the commands pushed before
-    // it, on its re-check. A producer that only read a flag would not be enough, since its load
-    // could pass its own earlier push to the ring.
+    // Every change to the one atomic is an exchange, sequentially consistent and never a fence,
+    // since GCC's -Wtsan fails a fence under warnings as errors. That is what rules out a lost
+    // wake-up. Exchanges on one atomic form a single order. If a producer's comes after the
+    // sleeper's it reads asleep, and wakes it. If it comes before, the sleeper's exchange reads
+    // what it wrote, or a later exchange in that unbroken chain, and so synchronizes with it, and
+    // the sleeper's re-check sees everything pushed before the ring. A plain store anywhere would
+    // break the chain, and a producer that only read a flag could have its load pass its own
+    // earlier push.
     class Doorbell {
     public:
         void ring() noexcept {
@@ -38,13 +44,12 @@ namespace order_book::runtime {
         // The sleeper's half. After this it must look at its rings again: if they hold anything
         // it calls cancelSleep, and otherwise wait, then cancelSleep.
         void announceSleep() noexcept { state.exchange(asleep, std::memory_order_seq_cst); }
-        void cancelSleep() noexcept { state.store(awake, std::memory_order_seq_cst); }
+        void cancelSleep() noexcept { state.exchange(awake, std::memory_order_seq_cst); }
         void wait() noexcept { state.wait(asleep, std::memory_order_seq_cst); }
 
-        // Whether the sleeper has announced itself, so a test can catch it there.
-        bool sleeperAnnounced() const noexcept { return state.load(std::memory_order_seq_cst) == asleep; }
-
     private:
+        friend struct order_book::OrderBookTestAccess;
+
         static constexpr std::uint32_t awake = 0;
         static constexpr std::uint32_t asleep = 1;
 
@@ -71,6 +76,10 @@ namespace order_book::runtime {
         // process, naming the shard, instrument, and command: the book may have executions
         // standing that its log can't reproduce, so carrying on would break determinism.
         std::size_t pass();
+
+        // Sleeps until a producer rings, unless a command is already waiting. run calls this once
+        // its rings have stayed empty for the spin window.
+        void sleepUntilRung();
 
         // Passes until every producer has sent a stop marker, spinning for the spin window, then
         // sleeping, on empty rings. Then sends SHARD_STOPPED on every response ring.

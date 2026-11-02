@@ -431,19 +431,24 @@ std::vector<WorkloadOutcome> ShardRun::outcomes() const {
     return counted;
 }
 
-void ShardRun::check() const {
-    const std::vector<WorkloadOutcome> counted = outcomes();
-    for (std::size_t i = 0; i < books.size(); ++i) {
-        const Workload& workload = (*workloads)[i];
-        requireNoGrowth(shard->books().book(books[i].location.slot), workload);
-        if (counted[i] != workload.expected) {
-            throw std::runtime_error("workload " + workload.config.name + " instrument " + std::to_string(i) + " (shard): the book did " +
-                                     describeOutcome(counted[i]) + " but the workload predicted " + describeOutcome(workload.expected));
+void requireOutcomes(const std::vector<WorkloadOutcome>& outcomes, const std::vector<Workload>& workloads, BenchmarkKind kind) {
+    for (std::size_t i = 0; i < outcomes.size(); ++i) {
+        if (outcomes[i] != workloads[i].expected) {
+            throw std::runtime_error("workload " + workloads[i].config.name + " instrument " + std::to_string(i) + " (" +
+                                     benchmarkKindName(kind) + "): the book did " + describeOutcome(outcomes[i]) +
+                                     " but the workload predicted " + describeOutcome(workloads[i].expected));
         }
     }
 }
 
-QueueRun::QueueRun(const std::vector<Workload>& runWorkloads)
+void ShardRun::check() const {
+    for (std::size_t i = 0; i < books.size(); ++i) {
+        requireNoGrowth(shard->books().book(books[i].location.slot), (*workloads)[i]);
+    }
+    requireOutcomes(outcomes(), *workloads, BenchmarkKind::SHARD);
+}
+
+QueueRun::QueueRun(const std::vector<Workload>& runWorkloads, std::function<void()> setUpMatchingThread)
     : workloads(&runWorkloads),
       commands(runtime::defaultCommandRingSlots),
       responses(runtime::defaultResponseRingSlots),
@@ -451,26 +456,36 @@ QueueRun::QueueRun(const std::vector<Workload>& runWorkloads)
       counted(runWorkloads.size()) {
     std::promise<void> ready;
     std::future<void> started = ready.get_future();
-    matching = std::thread([this, &ready] {
+    matching = std::thread([this, &ready, setUp = std::move(setUpMatchingThread)] {
         // Everything a book's owner must do happens here, its build and destruction included.
         std::optional<ShardRun> run;
         try {
+            if (setUp) {
+                setUp();
+            }
             run.emplace(*workloads);
         } catch (...) {
             ready.set_exception(std::current_exception());
             return;
         }
-        prepared = &*run;
+        books = &*run;
         ready.set_value();
+        bool told = false;
         try {
             runtime::MatchingLoop loop(run->onThisThread(), doorbell, {runtime::RingPair{&commands, &responses}});
             loop.run();
+            told = true;
             finalShapes = run->outcomes();
             for (std::size_t i = 0; i < workloads->size(); ++i) {
                 requireNoGrowth(run->onThisThread().books().book(run->slotOf(static_cast<std::uint32_t>(i))), (*workloads)[i]);
             }
         } catch (...) {
             failure = std::current_exception();
+            // The producer is waiting on this ring, and must hear even a failed thread stop.
+            const runtime::ResponseRecord stopped{0, 0, 0, BookEvent{}, runtime::ResponseKind::SHARD_STOPPED};
+            while (!told && !responses.tryPush(stopped)) {
+                std::this_thread::yield();
+            }
         }
     });
     try {
@@ -485,13 +500,14 @@ QueueRun::~QueueRun() {
     if (matching.joinable()) {
         try {
             finish();
-        } catch (const std::exception&) {  // a failed run has already been reported, or will be
+        } catch (const std::exception&) {  // a destructor can't report it; check would have
         }
     }
 }
 
 runtime::CommandElement QueueRun::elementFor(std::uint32_t book) {
-    return runtime::CommandElement{book, prepared->commandOf(book, nextCommand[book]), prepared->slotOf(book), 0,
+    // Its correlation names the book, which is all a producer has to match a response to.
+    return runtime::CommandElement{book, books->commandOf(book, nextCommand[book]), books->slotOf(book), 0,
                                    runtime::ControlKind::COMMAND};
 }
 
@@ -506,25 +522,22 @@ bool QueueRun::trySend(const runtime::CommandElement& element) {
     return true;
 }
 
-std::size_t QueueRun::drainResponses(std::size_t limit) {
-    std::size_t lastEvents = 0;
-    responses.drain(limit, [this, &lastEvents](const runtime::ResponseRecord& record) {
+void QueueRun::drainResponses() {
+    responses.drain(runtime::defaultResponseRingSlots, [this](const runtime::ResponseRecord& record) {
         if (record.kind == runtime::ResponseKind::SHARD_STOPPED) {
             stopReceived = true;
             return;
         }
         countResponse(record.event, counted[static_cast<std::size_t>(record.correlation)]);
         if (record.kind == runtime::ResponseKind::LAST_EVENT) {
-            ++lastEvents;
+            ++answered;
         }
     });
-    answered += lastEvents;
-    return lastEvents;
 }
 
 void QueueRun::run() {
-    const std::vector<std::uint32_t>& sharing = prepared->sharing();
-    while (answered < sharing.size()) {
+    const std::vector<std::uint32_t>& sharing = books->sharing();
+    while (answered < sharing.size() && !stopReceived) {
         std::size_t batch = 0;
         while (batch < runtime::takeBatch && sent < sharing.size() && trySend(elementFor(sharing[sent]))) {
             ++batch;
@@ -532,12 +545,12 @@ void QueueRun::run() {
         if (batch != 0) {
             doorbell.ring();
         }
-        drainResponses(runtime::defaultResponseRingSlots);
+        drainResponses();
     }
 }
 
 void QueueRun::prepare(std::size_t index) {
-    held = elementFor(prepared->sharing()[index]);
+    held = elementFor(books->sharing()[index]);
 }
 
 void QueueRun::sendPrepared() {
@@ -547,19 +560,18 @@ void QueueRun::sendPrepared() {
 }
 
 void QueueRun::awaitResponse() {
-    while (answered < sent) {
-        drainResponses(runtime::defaultResponseRingSlots);
+    while (answered < sent && !stopReceived) {
+        drainResponses();
     }
 }
 
 void QueueRun::finish() {
-    const runtime::CommandElement marker{0, replay::CancelCommand{1}, 0, 0, runtime::ControlKind::STOP};
-    while (!commands.tryPush(marker)) {
-        drainResponses(runtime::defaultResponseRingSlots);
+    while (!stopReceived && !commands.tryPush(runtime::CommandElement::stopMarker())) {
+        drainResponses();
     }
     doorbell.ring();
     while (!stopReceived) {
-        drainResponses(runtime::defaultResponseRingSlots);
+        drainResponses();
     }
     matching.join();
     if (failure) {
@@ -578,14 +590,7 @@ std::vector<WorkloadOutcome> QueueRun::outcomes() const {
 }
 
 void QueueRun::check() const {
-    const std::vector<WorkloadOutcome> outcome = outcomes();
-    for (std::size_t i = 0; i < outcome.size(); ++i) {
-        const Workload& workload = (*workloads)[i];
-        if (outcome[i] != workload.expected) {
-            throw std::runtime_error("workload " + workload.config.name + " instrument " + std::to_string(i) + " (queue): the book did " +
-                                     describeOutcome(outcome[i]) + " but the workload predicted " + describeOutcome(workload.expected));
-        }
-    }
+    requireOutcomes(outcomes(), *workloads, BenchmarkKind::QUEUE);
 }
 
 Measurement runInstrumentsOnce(const std::vector<Workload>& workloads, BenchmarkKind kind) {

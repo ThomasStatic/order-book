@@ -79,10 +79,12 @@ void testCapacityIsAPowerOfTwo() {
 
 void testEmpty() {
     Ring<std::uint64_t> ring(4);
-    expect(drained(ring, 8).empty(), "a new ring holds nothing");
+    expect(!ring.hasItems(), "a new ring says it is empty");
+    expect(drained(ring, 8).empty(), "and holds nothing");
     expect(ring.tryPush(1), "a push succeeds");
+    expect(ring.hasItems(), "the reader can see it");
     expect(drained(ring, 8) == Items{1}, "the item comes out");
-    expect(drained(ring, 8).empty(), "and the ring is empty again");
+    expect(!ring.hasItems() && drained(ring, 8).empty(), "and the ring is empty again");
 }
 
 void testExactlyFull() {

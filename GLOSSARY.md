@@ -129,6 +129,14 @@ _Avoid_: accepted commands, order flow
 Where a command waits on its way to a shard's matching thread. It is bounded. A command in it will execute and cannot be withdrawn, even if its connection closes. It enters the command sequence when the matching thread takes it.
 _Avoid_: inbox, mailbox, buffer
 
+**Doorbell**:
+How a producer wakes a shard's sleeping matching thread. There is one per shard, and producers ring it after each batch.
+_Avoid_: signal, event, notifier
+
+**Stop marker**:
+A producer's last element on a command queue, saying it will send nothing more. It sits beside a command and is never one, so it can never reach the log.
+_Avoid_: poison pill, sentinel
+
 **Response queue**:
 Where a command's events wait on their way back from a matching thread, and where they stay until the command is durable. It is bounded, and a matching thread with no room waits rather than lose an event.
 _Avoid_: outbox, result queue

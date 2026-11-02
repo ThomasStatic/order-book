@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 #include "benchmark_runner.hpp"
@@ -17,9 +18,9 @@ namespace order_book::latency {
 
 class HandOffTarget {
 public:
-    // Starts the matching thread, which builds and preloads the book, untimed. The workload must
-    // outlive the target.
-    explicit HandOffTarget(const benchmark::Workload& workload);
+    // Starts the matching thread, which runs setUpMatchingThread, then builds and preloads the
+    // book, untimed. The workload must outlive the target.
+    HandOffTarget(const benchmark::Workload& workload, std::function<void()> setUpMatchingThread);
 
     template <typename DriverClock>
     Stamps operator()(std::size_t index, DriverClock& clock) {

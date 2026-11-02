@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -101,6 +102,9 @@ std::vector<Workload> instrumentWorkloads(const WorkloadConfig& config, std::siz
 // What these workloads predict between them, counter by counter.
 WorkloadOutcome totalOutcome(const std::vector<Workload>& workloads);
 
+// Throws std::runtime_error if any book's outcome differs from its workload's prediction.
+void requireOutcomes(const std::vector<WorkloadOutcome>& outcomes, const std::vector<Workload>& workloads, BenchmarkKind kind);
+
 // One Shard on this thread, holding a book for each workload, warmed to that workload's peak and
 // preloaded. run is what a timed region holds: it makes no heap call for a book inside its
 // capacity. An interleaver seeded from the first workload's seed shares the commands out, each
@@ -139,7 +143,8 @@ private:
 // thread once it has stopped. The workloads must outlive this.
 class QueueRun {
 public:
-    explicit QueueRun(const std::vector<Workload>& workloads);
+    // setUpMatchingThread, if given, runs first on the matching thread, for pinning it.
+    explicit QueueRun(const std::vector<Workload>& workloads, std::function<void()> setUpMatchingThread = {});
     // Stops the matching thread if finish has not.
     ~QueueRun();
 
@@ -160,14 +165,14 @@ public:
 
 private:
     bool trySend(const runtime::CommandElement& element);
-    std::size_t drainResponses(std::size_t limit);
+    void drainResponses();
     runtime::CommandElement elementFor(std::uint32_t book);
 
     const std::vector<Workload>* workloads;
     runtime::Doorbell doorbell;
     runtime::Ring<runtime::CommandElement> commands;
     runtime::Ring<runtime::ResponseRecord> responses;
-    const ShardRun* prepared = nullptr;  // on the matching thread, until it stops
+    const ShardRun* books = nullptr;  // on the matching thread, until it stops
     std::vector<std::size_t> nextCommand;
     std::vector<WorkloadOutcome> counted;
     std::vector<WorkloadOutcome> finalShapes;

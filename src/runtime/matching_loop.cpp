@@ -74,6 +74,14 @@ namespace order_book::runtime {
         return false;
     }
 
+    void MatchingLoop::sleepUntilRung() {
+        doorbell.announceSleep();
+        if (!commandsWaiting()) {
+            doorbell.wait();
+        }
+        doorbell.cancelSleep();
+    }
+
     void MatchingLoop::run() {
         using Clock = std::chrono::steady_clock;
         bool idle = false;
@@ -93,11 +101,7 @@ namespace order_book::runtime {
                     continue;
                 }
             }
-            doorbell.announceSleep();
-            if (!commandsWaiting()) {
-                doorbell.wait();
-            }
-            doorbell.cancelSleep();
+            sleepUntilRung();
             idle = false;
         }
         for (const RingPair& pair : rings) {

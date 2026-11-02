@@ -20,11 +20,12 @@ struct BuildInfo {
     bool invariantChecks = false;  // invariantChecksAfterCommands: a full book check per command
     bool addressSanitizer = false;
     bool undefinedBehaviorSanitizer = false;
+    bool threadSanitizer = false;
 
     // NDEBUG, no automatic invariant checks, and no sanitizer: the only builds whose numbers
     // say anything about the engine's speed.
     bool optimized() const {
-        return ndebug && !invariantChecks && !addressSanitizer && !undefinedBehaviorSanitizer;
+        return ndebug && !invariantChecks && !addressSanitizer && !undefinedBehaviorSanitizer && !threadSanitizer;
     }
 };
 
