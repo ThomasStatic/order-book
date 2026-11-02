@@ -30,6 +30,11 @@ void* operator new(std::size_t size) {
     throw std::bad_alloc();
 }
 
+// GCC pairs this free with the new it can see, not with the replacement above.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+#endif
 void operator delete(void* block) noexcept {
     std::free(block);
 }
@@ -37,6 +42,9 @@ void operator delete(void* block) noexcept {
 void operator delete(void* block, std::size_t) noexcept {
     std::free(block);
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 namespace {
 

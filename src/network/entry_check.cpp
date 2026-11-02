@@ -2,7 +2,6 @@
 
 #include <optional>
 #include <span>
-#include <utility>
 
 namespace order_book::network {
     namespace {
@@ -78,26 +77,13 @@ namespace order_book::network {
                                           clearedWithoutOwner(modeOf(raw.selfTradePrevention), raw.owner)};
         }
 
-        // The command, or the event the book would answer it with.
-        std::variant<replay::Command, EntryRejected> checkCommand(const replay::RawCommand& raw) {
-            if (raw.command == replay::rawCommandCancel) {
-                if (raw.orderId == 0) {
-                    return EntryRejected{CancelRejected{raw.orderId, RejectionReason::ORDER_NOT_FOUND}};
-                }
-                return replay::Command{replay::CancelCommand{raw.orderId}};
+        // A well-formed command's last check.
+        EntryDecision admit(const Symbol& symbol, const runtime::BookLocation& location, const replay::Command& command,
+                            bool stopping) {
+            if (stopping) {
+                return EntryRefused{RefusedCode::ENGINE_STOPPING};
             }
-            if (raw.command == replay::rawCommandReplace) {
-                const replay::ReplaceCommand command = replaceCommandOf(raw);
-                if (const std::optional<RejectionReason> reason = malformedReason(replay::toRequest(command))) {
-                    return EntryRejected{ReplaceRejected{raw.orderId, *reason}};
-                }
-                return replay::Command{command};
-            }
-            const replay::AddCommand command = addCommandOf(raw);
-            if (const std::optional<RejectionReason> reason = malformedReason(replay::toRequest(command))) {
-                return EntryRejected{OrderRejected{raw.orderId, *reason}};
-            }
-            return replay::Command{command};
+            return EntryAccepted{symbol, location, command};
         }
     }  // namespace
 
@@ -109,14 +95,24 @@ namespace order_book::network {
             return EntryRefused{RefusedCode::UNKNOWN_INSTRUMENT};
         }
 
-        std::variant<replay::Command, EntryRejected> checked = checkCommand(raw);
-        if (const EntryRejected* rejected = std::get_if<EntryRejected>(&checked)) {
-            return *rejected;
+        if (raw.command == replay::rawCommandCancel) {
+            if (raw.orderId == 0) {
+                return EntryRejected{CancelRejected{raw.orderId, RejectionReason::ORDER_NOT_FOUND}};
+            }
+            return admit(*symbol, *location, replay::CancelCommand{raw.orderId}, stopping);
         }
-        if (stopping) {
-            return EntryRefused{RefusedCode::ENGINE_STOPPING};
+        if (raw.command == replay::rawCommandReplace) {
+            const replay::ReplaceCommand command = replaceCommandOf(raw);
+            if (const std::optional<RejectionReason> reason = malformedReason(replay::toRequest(command))) {
+                return EntryRejected{ReplaceRejected{raw.orderId, *reason}};
+            }
+            return admit(*symbol, *location, command, stopping);
         }
-        return EntryAccepted{*symbol, *location, std::get<replay::Command>(std::move(checked))};
+        const replay::AddCommand command = addCommandOf(raw);
+        if (const std::optional<RejectionReason> reason = malformedReason(replay::toRequest(command))) {
+            return EntryRejected{OrderRejected{raw.orderId, *reason}};
+        }
+        return admit(*symbol, *location, command, stopping);
     }
 
 }  // namespace order_book::network
