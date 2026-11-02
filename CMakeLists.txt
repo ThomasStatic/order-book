@@ -512,6 +512,22 @@ if(BUILD_TESTING)
     add_test(NAME ring_tests COMMAND ring_tests)
     set_tests_properties(ring_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads)
 
+    # A deliberate race that must be reported, so a passing ThreadSanitizer job means something.
+    if(ORDER_BOOK_ENABLE_TSAN)
+        add_executable(tsan_control_tests
+            tests/tsan_control_test.cpp
+        )
+
+        target_compile_features(tsan_control_tests PRIVATE cxx_std_20)
+        target_link_libraries(tsan_control_tests PRIVATE Threads::Threads)
+        order_book_enable_warnings(tsan_control_tests)
+        order_book_enable_sanitizers(tsan_control_tests)
+        add_test(NAME tsan_control_tests COMMAND tsan_control_tests)
+        set_tests_properties(tsan_control_tests PROPERTIES
+            LABELS threaded RESOURCE_LOCK threads
+            WILL_FAIL TRUE)
+    endif()
+
     add_executable(shard_tests
         tests/shard_test.cpp
     )
