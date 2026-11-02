@@ -74,6 +74,7 @@ namespace {
         std::string size = bench::benchmarkSizeName(bench::BenchmarkSize::STANDARD);
         std::size_t timedCommands = bench::timedCommandCount(bench::BenchmarkSize::STANDARD);
         std::vector<bench::BenchmarkKind> kinds{bench::BenchmarkKind::CORE};
+        std::size_t instruments = 1;
         bench::RunSettings run;
         std::uint64_t seed = 42;
         std::optional<std::string> csvPath;
@@ -115,7 +116,7 @@ namespace {
             }
             const bool takesValue = arg == "--workload" || arg == "--size" || arg == "--commands" ||
                                     arg == "--kind" || arg == "--repetitions" || arg == "--warmup" ||
-                                    arg == "--seed" || arg == "--csv" || arg == "--json";
+                                    arg == "--seed" || arg == "--csv" || arg == "--json" || arg == "--instruments";
             if (!takesValue) {
                 return "unknown option '" + std::string(arg) + "'";
             }
@@ -145,7 +146,12 @@ namespace {
                     if (!number) {
                         return std::string(arg) + " needs a non-negative integer, not '" + std::string(value) + "'";
                     }
-                    if (arg == "--seed") {
+                    if (arg == "--instruments") {
+                        if (*number == 0) {
+                            return "--instruments needs a positive integer";
+                        }
+                        settings.instruments = static_cast<std::size_t>(*number);
+                    } else if (arg == "--seed") {
                         settings.seed = *number;
                     } else if (arg == "--warmup") {
                         settings.run.warmups = static_cast<std::size_t>(*number);
@@ -282,7 +288,12 @@ namespace {
                       << " orders on " << workload.expected.finalPriceLevels << " levels); generated in "
                       << milliseconds(record.generationNanoseconds) << ", untimed\n";
             for (const bench::BenchmarkKind kind : settings.kinds) {
-                for (bench::Measurement& measurement : bench::runRepeated(workload, kind, settings.run)) {
+                std::vector<bench::Measurement> measurements =
+                    kind == bench::BenchmarkKind::SHARD
+                        ? bench::runShardRepeated(bench::instrumentWorkloads(config, settings.timedCommands, settings.seed, settings.instruments),
+                                                  settings.run)
+                        : bench::runRepeated(workload, kind, settings.run);
+                for (bench::Measurement& measurement : measurements) {
                     printMeasurement(measurement);
                     report.measurements.push_back(std::move(measurement));
                 }

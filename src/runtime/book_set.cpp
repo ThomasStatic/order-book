@@ -13,7 +13,9 @@ namespace order_book::runtime {
         : shardIndex(shardNumber), owningThread(std::this_thread::get_id()) {
         const std::span<const Instrument> instruments = directory.onShard(shardNumber);
         books.reserve(instruments.size());
+        symbols.reserve(instruments.size());
         for (const Instrument& instrument : instruments) {
+            symbols.push_back(instrument.symbol);
             books.emplace_back();
             books.back().reserve(capacityOf(instrument, defaults));
         }

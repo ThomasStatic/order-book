@@ -17,6 +17,7 @@
 #include "order_book/order.hpp"
 #include "order_book/order_book.hpp"
 #include "order_book/replay_engine.hpp"
+#include "interleaver.hpp"
 #include "order_book/replay_summary.hpp"
 #include "order_book/submission_result.hpp"
 
@@ -34,6 +35,75 @@ replay::Symbol benchmarkSymbol() {
 
 std::int64_t nanosecondsBetween(Clock::time_point start, Clock::time_point stop) {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
+}
+
+std::vector<replay::ReplayRecord> recordsOf(const std::vector<BenchmarkCommand>& plain, const std::vector<BehaviorCommand>& behavior,
+                                            replay::Symbol symbol) {
+    std::vector<replay::ReplayRecord> records;
+    records.reserve(plain.size() + behavior.size());
+    const auto add = [&](replay::Command command) {
+        const std::uint64_t sequence = records.size() + 1;
+        records.push_back(replay::ReplayRecord{static_cast<std::size_t>(sequence + 1), sequence, std::move(command), symbol});
+    };
+    for (const BenchmarkCommand& command : plain) {
+        if (command.type == CommandType::SUBMIT) {
+            add(replay::AddCommand{command.orderId, command.side, command.price, command.quantity});
+        } else {
+            add(replay::CancelCommand{command.orderId});
+        }
+    }
+    for (const BehaviorCommand& command : behavior) {
+        if (command.type == CommandType::SUBMIT) {
+            const OrderRequest& request = command.request;
+            add(replay::AddCommand{request.id, request.side, request.price, request.quantity, request.type, request.timeInForce,
+                                   request.stopPrice, request.postOnly, request.owner, request.selfTradePrevention});
+        } else if (command.type == CommandType::REPLACE) {
+            const ReplaceRequest& request = command.replacement;
+            add(replay::ReplaceCommand{request.id, request.price, request.quantity, request.postOnly, request.owner,
+                                       request.selfTradePrevention});
+        } else {
+            add(replay::CancelCommand{command.request.id});
+        }
+    }
+    return records;
+}
+
+// One command's part of a WorkloadOutcome, from its events alone.
+void countCommand(const replay::Command& command, std::span<const BookEvent> events, WorkloadOutcome& outcome) {
+    if (std::holds_alternative<replay::AddCommand>(command)) {
+        ++outcome.submits;
+    } else if (std::holds_alternative<replay::CancelCommand>(command)) {
+        ++outcome.cancels;
+    } else {
+        ++outcome.replaces;
+    }
+    for (const BookEvent& event : events) {
+        if (std::holds_alternative<OrderRejected>(event) || std::holds_alternative<CancelRejected>(event) ||
+            std::holds_alternative<ReplaceRejected>(event)) {
+            ++outcome.rejections;
+        }
+    }
+    countEvents(events, outcome);
+}
+
+void addOutcome(WorkloadOutcome& total, const WorkloadOutcome& outcome) {
+    total.submits += outcome.submits;
+    total.cancels += outcome.cancels;
+    total.rejections += outcome.rejections;
+    total.trades += outcome.trades;
+    total.volume += outcome.volume;
+    total.finalActiveOrders += outcome.finalActiveOrders;
+    total.finalPriceLevels += outcome.finalPriceLevels;
+    total.replaces += outcome.replaces;
+    total.expirations += outcome.expirations;
+    total.preventions += outcome.preventions;
+    total.stopsTriggered += outcome.stopsTriggered;
+    total.finalPendingStops += outcome.finalPendingStops;
+}
+
+// Each instrument's symbol: the benchmark's own for one, so a run names what it did.
+replay::Symbol instrumentSymbol(std::size_t instrument) {
+    return *replay::Symbol::parse("B" + std::to_string(instrument));
 }
 
 // Sends one command to the book and counts what it did. The sequence number passed to Order
@@ -209,17 +279,18 @@ const char* benchmarkKindName(BenchmarkKind kind) {
         case BenchmarkKind::CORE: return "core";
         case BenchmarkKind::REPLAY: return "replay";
         case BenchmarkKind::REPLAY_LOG: return "replay-log";
+        case BenchmarkKind::SHARD: return "shard";
     }
     return "unknown";
 }
 
 BenchmarkKind parseBenchmarkKind(std::string_view name) {
-    for (const BenchmarkKind kind : {BenchmarkKind::CORE, BenchmarkKind::REPLAY, BenchmarkKind::REPLAY_LOG}) {
+    for (const BenchmarkKind kind : {BenchmarkKind::CORE, BenchmarkKind::REPLAY, BenchmarkKind::REPLAY_LOG, BenchmarkKind::SHARD}) {
         if (name == benchmarkKindName(kind)) {
             return kind;
         }
     }
-    throw std::invalid_argument("unknown kind '" + std::string(name) + "' (known: core, replay, replay-log)");
+    throw std::invalid_argument("unknown kind '" + std::string(name) + "' (known: core, replay, replay-log, shard)");
 }
 
 double operationsPerSecond(std::size_t commands, std::int64_t elapsedNanoseconds) {
@@ -237,7 +308,146 @@ double Measurement::nanosecondsPerCommand() const {
     return commands == 0 ? 0.0 : static_cast<double>(elapsedNanoseconds) / static_cast<double>(commands);
 }
 
+std::vector<Workload> instrumentWorkloads(const WorkloadConfig& config, std::size_t timedCommands, std::uint64_t seed,
+                                          std::size_t instruments) {
+    if (instruments == 0 || timedCommands < instruments) {
+        throw std::invalid_argument("each of " + std::to_string(instruments) + " instruments needs a command");
+    }
+    std::vector<Workload> workloads;
+    workloads.reserve(instruments);
+    for (std::size_t i = 0; i < instruments; ++i) {
+        workloads.push_back(generateWorkload(config, timedCommands / instruments, seed + i));
+    }
+    return workloads;
+}
+
+WorkloadOutcome totalOutcome(const std::vector<Workload>& workloads) {
+    WorkloadOutcome total;
+    for (const Workload& workload : workloads) {
+        addOutcome(total, workload.expected);
+    }
+    return total;
+}
+
+struct ShardRun::Book {
+    runtime::BookLocation location;
+    std::vector<replay::ReplayRecord> commands;
+    std::size_t next = 0;
+    WorkloadOutcome counted;
+};
+
+ShardRun::~ShardRun() = default;
+
+ShardRun::ShardRun(const std::vector<Workload>& runWorkloads, std::uint64_t seed) : workloads(&runWorkloads) {
+    std::vector<runtime::Instrument> instruments;
+    for (std::size_t i = 0; i < runWorkloads.size(); ++i) {
+        const BookCapacity capacity = expectedBookSize(runWorkloads[i]);
+        instruments.push_back(runtime::Instrument{instrumentSymbol(i), 0, capacity.orders, capacity.stops, capacity.levels});
+    }
+    directory = std::make_unique<runtime::InstrumentDirectory>(instruments, 1);
+    shard = std::make_unique<runtime::Shard>(*directory, 0);
+
+    books.reserve(runWorkloads.size());
+    std::size_t total = 0;
+    for (std::size_t i = 0; i < runWorkloads.size(); ++i) {
+        const replay::Symbol symbol = instrumentSymbol(i);
+        const runtime::BookLocation location = *directory->find(symbol);
+        WorkloadOutcome preloaded;
+        for (const replay::ReplayRecord& record : preloadRecords(runWorkloads[i], symbol)) {
+            shard->process(record.command, location.slot);
+            countCommand(record.command, shard->result().events(), preloaded);
+        }
+        if (preloaded.rejections != 0 || preloaded.trades != 0) {
+            throw std::runtime_error("workload " + runWorkloads[i].config.name + ": the book refused or traded its preload");
+        }
+        books.push_back(Book{location, workloadRecords(runWorkloads[i], symbol), 0, WorkloadOutcome{}});
+        total += books.back().commands.size();
+    }
+
+    // Each book's commands stay in order, whichever it draws: only the sharing is random.
+    std::vector<std::size_t> remaining;
+    for (const Book& book : books) {
+        remaining.push_back(book.commands.size());
+    }
+    reference::Interleaver interleaver(seed, books.size(), reference::Spread::UNIFORM);
+    order.reserve(total);
+    while (order.size() < total) {
+        const std::size_t drawn = interleaver.next();
+        if (remaining[drawn] != 0) {
+            --remaining[drawn];
+            order.push_back(static_cast<std::uint32_t>(drawn));
+        }
+    }
+}
+
+void ShardRun::run() {
+    for (const std::uint32_t index : order) {
+        Book& book = books[index];
+        const replay::Command& command = book.commands[book.next++].command;
+        shard->process(command, book.location.slot);
+        countCommand(command, shard->result().events(), book.counted);
+    }
+}
+
+std::vector<WorkloadOutcome> ShardRun::outcomes() const {
+    std::vector<WorkloadOutcome> counted;
+    counted.reserve(books.size());
+    for (const Book& book : books) {
+        WorkloadOutcome outcome = book.counted;
+        recordFinalBook(shard->books().book(book.location.slot), outcome);
+        counted.push_back(outcome);
+    }
+    return counted;
+}
+
+void ShardRun::check() const {
+    const std::vector<WorkloadOutcome> counted = outcomes();
+    for (std::size_t i = 0; i < books.size(); ++i) {
+        const Workload& workload = (*workloads)[i];
+        requireNoGrowth(shard->books().book(books[i].location.slot), workload);
+        if (counted[i] != workload.expected) {
+            throw std::runtime_error("workload " + workload.config.name + " instrument " + std::to_string(i) + " (shard): the book did " +
+                                     describeOutcome(counted[i]) + " but the workload predicted " + describeOutcome(workload.expected));
+        }
+    }
+}
+
+Measurement runShardOnce(const std::vector<Workload>& workloads) {
+    ShardRun run(workloads);
+    const Clock::time_point start = Clock::now();
+    run.run();
+    const Clock::time_point stop = Clock::now();
+    run.check();
+
+    Measurement measurement;
+    measurement.workload = workloads.front().config.name;
+    measurement.kind = BenchmarkKind::SHARD;
+    measurement.elapsedNanoseconds = nanosecondsBetween(start, stop);
+    for (const Workload& workload : workloads) {
+        measurement.commands += workload.timedCount();
+    }
+    for (const WorkloadOutcome& outcome : run.outcomes()) {
+        addOutcome(measurement.outcome, outcome);
+    }
+    return measurement;
+}
+
+std::vector<Measurement> runShardRepeated(const std::vector<Workload>& workloads, const RunSettings& settings) {
+    std::vector<Measurement> measurements;
+    measurements.reserve(settings.warmups + settings.repetitions);
+    for (std::size_t i = 0; i < settings.warmups + settings.repetitions; ++i) {
+        Measurement measurement = runShardOnce(workloads);
+        measurement.warmup = i < settings.warmups;
+        measurement.repetition = measurement.warmup ? i + 1 : i - settings.warmups + 1;
+        measurements.push_back(std::move(measurement));
+    }
+    return measurements;
+}
+
 Measurement runOnce(const Workload& workload, BenchmarkKind kind) {
+    if (kind == BenchmarkKind::SHARD) {
+        return runShardOnce({workload});
+    }
     Measurement measurement = kind == BenchmarkKind::CORE ? runCore(workload) : runReplay(workload, kind == BenchmarkKind::REPLAY_LOG);
     measurement.workload = workload.config.name;
     measurement.kind = kind;
@@ -263,33 +473,11 @@ std::vector<Measurement> runRepeated(const Workload& workload, BenchmarkKind kin
 }
 
 std::vector<replay::ReplayRecord> workloadRecords(const Workload& workload, replay::Symbol symbol) {
-    std::vector<replay::ReplayRecord> records;
-    records.reserve(workload.timedCount());
-    const auto add = [&](replay::Command command) {
-        const std::uint64_t sequence = records.size() + 1;
-        records.push_back(replay::ReplayRecord{static_cast<std::size_t>(sequence + 1), sequence, std::move(command), symbol});
-    };
-    for (const BenchmarkCommand& command : workload.timed) {
-        if (command.type == CommandType::SUBMIT) {
-            add(replay::AddCommand{command.orderId, command.side, command.price, command.quantity});
-        } else {
-            add(replay::CancelCommand{command.orderId});
-        }
-    }
-    for (const BehaviorCommand& command : workload.behaviorTimed) {
-        if (command.type == CommandType::SUBMIT) {
-            const OrderRequest& request = command.request;
-            add(replay::AddCommand{request.id, request.side, request.price, request.quantity, request.type, request.timeInForce,
-                                   request.stopPrice, request.postOnly, request.owner, request.selfTradePrevention});
-        } else if (command.type == CommandType::REPLACE) {
-            const ReplaceRequest& request = command.replacement;
-            add(replay::ReplaceCommand{request.id, request.price, request.quantity, request.postOnly, request.owner,
-                                       request.selfTradePrevention});
-        } else {
-            add(replay::CancelCommand{command.request.id});
-        }
-    }
-    return records;
+    return recordsOf(workload.timed, workload.behaviorTimed, symbol);
+}
+
+std::vector<replay::ReplayRecord> preloadRecords(const Workload& workload, replay::Symbol symbol) {
+    return recordsOf(workload.preload, workload.behaviorPreload, symbol);
 }
 
 std::string renderCommandLog(const Workload& workload, replay::Symbol symbol) {

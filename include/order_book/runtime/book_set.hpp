@@ -29,6 +29,9 @@ namespace order_book::runtime {
         std::uint32_t shard() const noexcept { return shardIndex; }
         std::size_t size() const noexcept { return books.size(); }
 
+        // The instrument this slot's book was built for, which outlives any directory.
+        const Symbol& symbol(std::uint32_t slot) const noexcept { return symbols[slot]; }
+
         // slot must be below size().
         replay::CommandOutcome execute(std::uint32_t slot, const replay::Command& command);
         // Overwrites out, as executeCommand's out overload does.
@@ -41,6 +44,7 @@ namespace order_book::runtime {
 
         std::uint32_t shardIndex;
         std::vector<OrderBook> books;
+        std::vector<Symbol> symbols;  // by slot
         std::thread::id owningThread;
     };
 

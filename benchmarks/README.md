@@ -18,7 +18,8 @@ With the Visual Studio generator, build and run the Release configuration: `cmak
 | `--workload NAME` | run this workload; repeat for several (default: all eleven, the five v1 workloads then the six behavior workloads) |
 | `--size smoke\|standard\|extended` | 10,000, 100,000 (default), or 1,000,000 timed commands per run |
 | `--commands N` | exactly N timed commands, instead of a size (recorded as size `custom`) |
-| `--kind core\|replay\|replay-log\|both` | which path to time (default `core`, see below); `both` is `core` and `replay` |
+| `--kind core\|replay\|replay-log\|shard\|both` | which path to time (default `core`, see below); `both` is `core` and `replay` |
+| `--instruments N` | for `shard`: share the commands between N instruments on one shard (default 1) |
 | `--repetitions N` | measured runs per workload and kind (default 5) |
 | `--warmup N` | runs before those, recorded but left out of summaries (default 1) |
 | `--seed N` | generator seed (default 42) |

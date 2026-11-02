@@ -1,7 +1,5 @@
 #include "order_book/runtime/shard.hpp"
 
-#include <span>
-
 namespace order_book::runtime {
 
     Shard::Shard(const InstrumentDirectory& directory, std::uint32_t shardNumber, const BookCapacity& defaults,
@@ -20,13 +18,12 @@ namespace order_book::runtime {
     }
 
     std::optional<ShardViolation> Shard::checkInvariants() const {
-        const std::span<const Instrument> onThisShard = instruments->onShard(bookSet.shard());
         for (std::uint32_t slot = 0; slot < bookSet.size(); ++slot) {
             const InvariantResult result = bookSet.book(slot).checkInvariants();
             if (result.violation) {
                 return ShardViolation{ShardViolationKind::BOOK, slot, formatInvariantResult(result)};
             }
-            const std::optional<BookLocation> location = instruments->find(onThisShard[slot].symbol);
+            const std::optional<BookLocation> location = instruments->find(bookSet.symbol(slot));
             if (location != BookLocation{bookSet.shard(), slot}) {
                 return ShardViolation{ShardViolationKind::SLOT_MAPPING, slot,
                                       "slot " + std::to_string(slot) + " does not map back to shard " +

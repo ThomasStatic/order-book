@@ -2,12 +2,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "order_book/order_book.hpp"
 #include "order_book/replay_parser.hpp"
+#include "order_book/runtime/shard.hpp"
 #include "workload.hpp"
 
 // Runs generated workloads against the book and times them. Only the timed commands are
@@ -22,10 +24,12 @@ namespace order_book::benchmark {
 // of both, since it would mostly measure the file cache.
 // REPLAY_LOG is REPLAY's path with the same commands as a binary command log in memory, so the
 // difference between the two is the cost of the text.
-enum class BenchmarkKind { CORE, REPLAY, REPLAY_LOG };
+// SHARD runs the commands through Shard::process on one thread, with no rings, so its difference
+// from CORE is Command decoding, BookSet, and result reuse.
+enum class BenchmarkKind { CORE, REPLAY, REPLAY_LOG, SHARD };
 
 const char* benchmarkKindName(BenchmarkKind kind);
-// Throws std::invalid_argument on a name other than core, replay, or replay-log.
+// Throws std::invalid_argument on a name other than core, replay, replay-log, or shard.
 BenchmarkKind parseBenchmarkKind(std::string_view name);
 
 // One timed run of a workload's timed commands on a freshly preloaded book.
@@ -81,6 +85,46 @@ Measurement runOnce(const Workload& workload, BenchmarkKind kind);
 // in that order. Every run is returned, warm-ups first.
 std::vector<Measurement> runRepeated(const Workload& workload, BenchmarkKind kind, const RunSettings& settings);
 
+// One workload per instrument, sharing timedCommands between them, each its own unchanged
+// generateWorkload stream. Instrument 0 uses seed, so one instrument is exactly today's stream,
+// and no fingerprint moves.
+std::vector<Workload> instrumentWorkloads(const WorkloadConfig& config, std::size_t timedCommands, std::uint64_t seed,
+                                          std::size_t instruments);
+
+// What these workloads predict between them, counter by counter.
+WorkloadOutcome totalOutcome(const std::vector<Workload>& workloads);
+
+// One Shard on this thread, holding a book for each workload, warmed to that workload's peak and
+// preloaded. run is what a timed region holds: it makes no heap call for a book inside its
+// capacity. A uniform interleaver shares the commands out, each instrument keeping its own order,
+// so each book's prediction holds. The workloads must outlive this.
+class ShardRun {
+public:
+    explicit ShardRun(const std::vector<Workload>& workloads, std::uint64_t seed = 42);
+    ~ShardRun();
+
+    void run();
+
+    // The books' final shapes added to what run counted, per workload.
+    std::vector<WorkloadOutcome> outcomes() const;
+    // Throws std::runtime_error if a book did other than its workload predicted, or grew.
+    void check() const;
+
+private:
+    struct Book;
+
+    const std::vector<Workload>* workloads;
+    std::unique_ptr<order_book::runtime::InstrumentDirectory> directory;
+    std::unique_ptr<order_book::runtime::Shard> shard;
+    std::vector<Book> books;
+    std::vector<std::uint32_t> order;  // which book takes each command
+};
+
+// runOnce for a SHARD run of several instruments, whose outcome is the run's total.
+Measurement runShardOnce(const std::vector<Workload>& workloads);
+// runRepeated for the same.
+std::vector<Measurement> runShardRepeated(const std::vector<Workload>& workloads, const RunSettings& settings);
+
 // The workload's timed commands as a replay file (header, then one record per command,
 // numbered from 1), for the REPLAY kind and for inspecting a workload by hand.
 std::string renderReplayCsv(const std::vector<BenchmarkCommand>& commands);
@@ -89,6 +133,8 @@ std::string renderReplayCsv(const std::vector<BehaviorCommand>& commands);
 
 // The workload's timed commands as the replay records they are, naming no instrument's book.
 std::vector<order_book::replay::ReplayRecord> workloadRecords(const Workload& workload, order_book::replay::Symbol symbol);
+// The same for its preload.
+std::vector<order_book::replay::ReplayRecord> preloadRecords(const Workload& workload, order_book::replay::Symbol symbol);
 // The same as a command log in memory, with no placement at position 0.
 std::string renderCommandLog(const Workload& workload, order_book::replay::Symbol symbol);
 

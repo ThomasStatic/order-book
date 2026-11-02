@@ -490,6 +490,16 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(shard_tests)
     add_test(NAME shard_tests COMMAND shard_tests)
 
+    add_executable(shard_invariant_tests
+        tests/shard_invariant_test.cpp
+    )
+
+    target_compile_features(shard_invariant_tests PRIVATE cxx_std_20)
+    target_link_libraries(shard_invariant_tests PRIVATE order_book_runtime)
+    order_book_enable_warnings(shard_invariant_tests)
+    order_book_enable_sanitizers(shard_invariant_tests)
+    add_test(NAME shard_invariant_tests COMMAND shard_invariant_tests)
+
     add_executable(book_set_thread_tests
         tests/book_set_thread_test.cpp
     )
@@ -920,8 +930,24 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         order_book_enable_sanitizers(benchmark_harness_tests)
         add_test(NAME benchmark_harness_tests COMMAND benchmark_harness_tests)
 
+        # Exactly zero heap calls on every workload, where only a checked build's own checks
+        # could allocate.
+        add_executable(matching_path_allocation_tests
+            tests/matching_path_allocation_test.cpp
+        )
+
+        target_compile_features(matching_path_allocation_tests PRIVATE cxx_std_20)
+        target_link_libraries(matching_path_allocation_tests PRIVATE order_book_benchmarking)
+        order_book_enable_warnings(matching_path_allocation_tests)
+        order_book_enable_sanitizers(matching_path_allocation_tests)
+        add_test(NAME matching_path_allocation_tests COMMAND matching_path_allocation_tests)
+        set_tests_properties(matching_path_allocation_tests PROPERTIES SKIP_RETURN_CODE 77)
+
         # The program end to end on a tiny run of one workload, both kinds, writing both
         # files. --allow-unoptimized, since CTest runs in every configuration.
+        add_test(NAME benchmark_shard_smoke
+            COMMAND order_book_benchmarks --workload small-book --commands 2000 --kind shard --instruments 4
+                    --repetitions 1 --warmup 0 --allow-unoptimized)
         add_test(NAME benchmark_cli_smoke
             COMMAND order_book_benchmarks --workload small-book --commands 500 --kind both
                     --repetitions 2 --warmup 1 --allow-unoptimized

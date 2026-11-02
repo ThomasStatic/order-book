@@ -192,6 +192,42 @@ void testDeterminism() {
 // Pins what each workload generates at the smoke size, so the stream is the same on every
 // compiler and standard library, and a change to what is drawn cannot go unnoticed: it must
 // bump workloadGeneratorVersion and re-pin these.
+// One instrument is exactly today's stream, so its prediction holds on the shard as on the book.
+void testShardRunsDoWhatCoreRunsDo() {
+    // Large preloads are out of reach with a book's whole check after every command.
+    std::vector<const char*> names{"small-book", "quote-refresh", "immediate", "self-trade"};
+    if constexpr (!order_book::invariantChecksAfterCommands) {
+        names.insert(names.end(), {"deep-book", "pending-stops"});
+    }
+    for (const char* name : names) {
+        const Workload workload = generateWorkload(findWorkload(name), 2000, 42);
+        expect(workloadFingerprint(workload) == workloadFingerprint(instrumentWorkloads(findWorkload(name), 2000, 42, 1).front()),
+               "instrument 0 is the unchanged stream");
+        const Measurement core = runOnce(workload, BenchmarkKind::CORE);
+        const Measurement shard = runOnce(workload, BenchmarkKind::SHARD);
+        expect(shard.kind == BenchmarkKind::SHARD && shard.commands == core.commands, "a shard run takes the same commands");
+        expect(shard.outcome == core.outcome, "and does what the book does directly");
+    }
+    expect(parseBenchmarkKind("shard") == BenchmarkKind::SHARD, "the kind has a name");
+}
+
+void testInstrumentPredictionsSumToTheRun() {
+    const std::vector<Workload> workloads = instrumentWorkloads(findWorkload("quote-refresh"), 4000, 42, 4);
+    expect(workloads.size() == 4 && workloads[0].timedCount() == 1000, "the commands are shared between the instruments");
+    expect(workloadFingerprint(workloads[0]) != workloadFingerprint(workloads[1]), "each instrument has its own stream");
+
+    ShardRun run(workloads);
+    run.run();
+    run.check();  // each book against its own prediction
+    const std::vector<WorkloadOutcome> counted = run.outcomes();
+    expect(counted.size() == 4 && counted[1] == workloads[1].expected, "each book does what it predicts");
+
+    const WorkloadOutcome total = totalOutcome(workloads);
+    expect(total.submits + total.cancels + total.replaces == 4000, "the total is every command");
+    const Measurement measurement = runShardOnce(workloads);
+    expect(measurement.commands == 4000 && measurement.outcome == total, "the predictions sum to the run's total");
+}
+
 void testPinnedFingerprints() {
     expect(workloadGeneratorVersion == 3, "re-pin these fingerprints whenever workloadGeneratorVersion changes");
     const std::vector<std::pair<std::string, std::uint64_t>> pinned{
@@ -761,6 +797,8 @@ int main() {
     testBuiltInWorkloads();
     testConfigValidation();
     testDeterminism();
+    testShardRunsDoWhatCoreRunsDo();
+    testInstrumentPredictionsSumToTheRun();
     testPinnedFingerprints();
     testV1WorkloadsUnchanged();
     testBehaviorWorkloads();
