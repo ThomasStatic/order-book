@@ -1,7 +1,7 @@
-#include <cstdint>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -60,16 +60,18 @@ void testATamperedPredictionFails() {
                  "a prediction one trade out fails the run on real threads too");
 }
 
-// A matching thread that fails after it has told the producer it is ready must not leave the
-// producer waiting for ever: a book that outgrows its capacity is refused once it stops.
-void testAFailedMatchingThreadDoesNotHang() {
+// The book can only be checked on the thread that owns it, once that thread has stopped, so this
+// failure has to cross back to the producer through finish.
+void testABookThatGrewFailsTheRun() {
     std::vector<Workload> workloads = instrumentWorkloads(findWorkload("quote-refresh"), 1000, 42, 1);
     workloads[0].peak.orders = 1;
     workloads[0].peak.levels = 1;
     expectThrows([&] { static_cast<void>(runInstrumentsOnce(workloads, BenchmarkKind::QUEUE)); },
-                 "a book past its capacity fails the run, and finishing it returns");
+                 "a book past its capacity fails the run");
 }
 
+// Everything that can fail before the loop runs reaches the constructor, so no producer is ever
+// left waiting on a thread that never started.
 void testASetUpFailureReachesTheCaller() {
     const std::vector<Workload> workloads = instrumentWorkloads(findWorkload("small-book"), 100, 42, 1);
     expectThrows([&] { QueueRun run(workloads, [] { throw std::runtime_error("could not pin"); }); },
@@ -82,7 +84,7 @@ int main() {
     testAQueueRunDoesWhatACoreRunDoes();
     testPredictionsSumToTheRun();
     testATamperedPredictionFails();
-    testAFailedMatchingThreadDoesNotHang();
+    testABookThatGrewFailsTheRun();
     testASetUpFailureReachesTheCaller();
     std::cout << "benchmark queue tests passed" << std::endl;
     return EXIT_SUCCESS;

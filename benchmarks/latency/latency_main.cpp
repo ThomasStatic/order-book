@@ -416,11 +416,22 @@ void runTimetableRows(const Session& session, const bench::Workload& workload, c
 }
 
 // Closed-loop, with no per-command stamps, so it is never a throughput claim for a timed run.
+// A hand-off waits for each answer before sending the next, so its capacity is what that target
+// does one command at a time. The queue kind's rate, from batches, is several times too high.
+template <typename Target>
 double measureCapacity(const Session& session, const bench::Workload& workload) {
-    const bench::BenchmarkKind kind = session.settings.handOff ? bench::BenchmarkKind::QUEUE : bench::BenchmarkKind::CORE;
     std::vector<double> rates;
     for (int run = 0; run < 3; ++run) {
-        rates.push_back(bench::runOnce(workload, kind).operationsPerSecond());
+        if constexpr (std::is_same_v<Target, latency::HandOffTarget>) {
+            Target target = makeTarget<Target>(session, workload);
+            const Ticks start = session.clock.now();
+            latency::runClosedLoop(workload.timedCount(), session.clock, target);
+            const Ticks stop = session.clock.now();
+            target.checkOutcome();
+            rates.push_back(static_cast<double>(workload.timedCount()) / secondsOf(stop - start, session.clockRecord));
+        } else {
+            rates.push_back(bench::runOnce(workload, bench::BenchmarkKind::CORE).operationsPerSecond());
+        }
     }
     std::sort(rates.begin(), rates.end());
     return rates[1];
@@ -506,7 +517,8 @@ int runSession(const Settings& settings) {
                                                     : runClosedLoopRow<latency::CommandTarget>(session, workload));
             continue;
         }
-        const double capacity = measureCapacity(session, workload);
+        const double capacity = session.settings.handOff ? measureCapacity<latency::HandOffTarget>(session, workload)
+                                                         : measureCapacity<latency::CommandTarget>(session, workload);
         for (const Load& load : {Load{"fixed", 0.10, false}, Load{"fixed", 0.25, false}, Load{"fixed", 0.50, false},
                                  Load{"fixed", 0.75, false}, Load{"fixed", 0.90, false}, Load{"poisson", 0.50, true}}) {
             if (session.settings.handOff) {

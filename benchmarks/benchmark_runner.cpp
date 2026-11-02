@@ -458,34 +458,30 @@ QueueRun::QueueRun(const std::vector<Workload>& runWorkloads, std::function<void
     std::future<void> started = ready.get_future();
     matching = std::thread([this, &ready, setUp = std::move(setUpMatchingThread)] {
         // Everything a book's owner must do happens here, its build and destruction included.
+        // Whatever can fail before the loop runs fails here, while the constructor is still
+        // waiting to hear: once the loop runs, it always sends SHARD_STOPPED.
         std::optional<ShardRun> run;
+        std::optional<runtime::MatchingLoop> loop;
         try {
             if (setUp) {
                 setUp();
             }
             run.emplace(*workloads);
+            loop.emplace(run->onThisThread(), doorbell, std::vector<runtime::RingPair>{runtime::RingPair{&commands, &responses}});
         } catch (...) {
             ready.set_exception(std::current_exception());
             return;
         }
         books = &*run;
         ready.set_value();
-        bool told = false;
         try {
-            runtime::MatchingLoop loop(run->onThisThread(), doorbell, {runtime::RingPair{&commands, &responses}});
-            loop.run();
-            told = true;
+            loop->run();
             finalShapes = run->outcomes();
             for (std::size_t i = 0; i < workloads->size(); ++i) {
                 requireNoGrowth(run->onThisThread().books().book(run->slotOf(static_cast<std::uint32_t>(i))), (*workloads)[i]);
             }
         } catch (...) {
             failure = std::current_exception();
-            // The producer is waiting on this ring, and must hear even a failed thread stop.
-            const runtime::ResponseRecord stopped{0, 0, 0, BookEvent{}, runtime::ResponseKind::SHARD_STOPPED};
-            while (!told && !responses.tryPush(stopped)) {
-                std::this_thread::yield();
-            }
         }
     });
     try {
@@ -537,7 +533,7 @@ void QueueRun::drainResponses() {
 
 void QueueRun::run() {
     const std::vector<std::uint32_t>& sharing = books->sharing();
-    while (answered < sharing.size() && !stopReceived) {
+    while (answered < sharing.size()) {
         std::size_t batch = 0;
         while (batch < runtime::takeBatch && sent < sharing.size() && trySend(elementFor(sharing[sent]))) {
             ++batch;
@@ -560,13 +556,13 @@ void QueueRun::sendPrepared() {
 }
 
 void QueueRun::awaitResponse() {
-    while (answered < sent && !stopReceived) {
+    while (answered < sent) {
         drainResponses();
     }
 }
 
 void QueueRun::finish() {
-    while (!stopReceived && !commands.tryPush(runtime::CommandElement::stopMarker())) {
+    while (!commands.tryPush(runtime::CommandElement::stopMarker())) {
         drainResponses();
     }
     doorbell.ring();
