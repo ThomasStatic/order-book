@@ -260,6 +260,7 @@ void testASecondStopForcesIt() {
         rest.insert(rest.end(), frame.begin(), frame.begin() + static_cast<std::ptrdiff_t>(size));
     }
     std::atomic<std::uint64_t> sent{0};
+    std::atomic<bool> lost{false};
     std::thread sender([&] {
         std::span<const std::byte> left(chunk);
         for (;;) {
@@ -268,7 +269,8 @@ void testASecondStopForcesIt() {
             }
             const std::optional<std::size_t> taken = client.send(left);
             if (!taken) {
-                return;  // the engine is gone
+                lost.store(true);  // the engine closed the connection, or is gone
+                return;
             }
             left = left.subspan(*taken);
             sent.fetch_add(*taken);
@@ -288,8 +290,16 @@ void testASecondStopForcesIt() {
         }
     }
 
+    // What the stall was, for a failure to report.
+    const auto whatHappened = [&] {
+        const bool running = child.stillRunningAfter(0ms);
+        const std::string ending = running ? std::string("still runs") : described(child.wait(1s));
+        return "the client sent " + std::to_string(sent.load()) + " bytes" + (lost.load() ? " and lost its connection" : "") +
+               ", and the engine " + ending + ", with stdout:\n" + child.standardOutput() + "\nand stderr:\n" + child.standardError();
+    };
+    expect(!lost.load() && child.stillRunningAfter(0ms), "the engine holds the client that stopped sending: " + whatHappened());
     sendStop(child, stopSignals[0]);
-    expect(child.stillRunningAfter(2s), "the first stop waits for the answers it owes, with stderr:\n" + child.standardError());
+    expect(child.stillRunningAfter(2s), "the first stop waits for the answers it owes: " + whatHappened());
     sendStop(child, stopSignals[stopSignals.size() - 1]);
     const ExitStatus status = child.wait(20s);
     expect(!status.killed && status.code == 8, "a second stop exits at once with 8, not " + described(status) + ", with stderr:\n" +
