@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -62,6 +63,7 @@ struct ShardActor {
     Ring<CommandElement> commands;
     Ring<ResponseRecord> responses;
     std::optional<MatchingLoop> loop;
+    bool reportedStop = false;
 };
 
 // One gateway thread and every shard, all stepped here. A matching thread that finds its response
@@ -69,8 +71,9 @@ struct ShardActor {
 // runs one gateway pass.
 class Rig {
 public:
-    Rig(std::vector<Instrument> instruments, std::uint32_t shardCount, std::size_t ringSlots)
+    Rig(std::vector<Instrument> instruments, std::uint32_t shardCount, std::size_t ringSlots, GatewaySettings settings = {})
         : directory(std::move(instruments), shardCount) {
+        settings.clock = [this] { return now; };
         std::vector<ShardLink> links;
         for (std::uint32_t number = 0; number < shardCount; ++number) {
             shards.push_back(std::make_unique<ShardActor>(directory, number, ringSlots));
@@ -82,10 +85,20 @@ public:
                                    gateway->pass();
                                });
         }
-        gateway.emplace(directory, std::move(links), sockets);
+        gateway.emplace(directory, std::move(links), sockets, std::move(settings));
     }
 
-    std::size_t match(std::uint32_t shard = 0) { return shards[shard]->loop->pass(); }
+    // One pass, and a shard with every producer's marker reports that it has stopped, which is
+    // all run does then.
+    std::size_t match(std::uint32_t shard = 0) {
+        ShardActor& actor = *shards[shard];
+        const std::size_t taken = actor.loop->pass();
+        if (actor.loop->stopped() && !actor.reportedStop) {
+            actor.reportedStop = true;
+            actor.loop->run();
+        }
+        return taken;
+    }
 
     // Every actor in turn, far more times than any test here needs.
     void settle() {
@@ -102,6 +115,7 @@ public:
     std::vector<std::unique_ptr<ShardActor>> shards;
     std::optional<GatewayThread> gateway;
     std::size_t waitsInPlace = 0;
+    std::chrono::steady_clock::time_point now;
 };
 
 struct Received {
@@ -111,6 +125,7 @@ struct Received {
     std::uint16_t version = 0;
     std::optional<EventFrame> event;
     std::optional<RefusedFrame> refused;
+    std::optional<ProtocolErrorFrame> error;
 };
 
 class Client {
@@ -130,11 +145,13 @@ public:
                 expect(std::holds_alternative<NeedMore>(result), "the engine sent a frame a client can't read");
                 return received;
             }
-            Received item{frame->type, frame->last, frame->correlation, 0, std::nullopt, std::nullopt};
+            Received item{frame->type, frame->last, frame->correlation, 0, std::nullopt, std::nullopt, std::nullopt};
             if (frame->type == FrameType::WELCOME) {
                 item.version = decodeVersion(*frame);
             } else if (frame->type == FrameType::REFUSED) {
                 item.refused = decodeRefused(*frame);
+            } else if (frame->type == FrameType::PROTOCOL_ERROR) {
+                item.error = decodeProtocolError(*frame);
             } else {
                 item.event = decodeEvent(*frame);
                 expect(item.event.has_value(), "an event frame can be decoded");
@@ -146,7 +163,7 @@ public:
     std::size_t answered() {
         std::size_t count = 0;
         for (const Received& frame : frames()) {
-            if (frame.last && frame.type != FrameType::WELCOME) {
+            if (frame.last && frame.type != FrameType::WELCOME && frame.type != FrameType::PROTOCOL_ERROR) {
                 ++count;
             }
         }
@@ -201,6 +218,19 @@ std::vector<CommandElement> takeElements(Ring<CommandElement>& ring, std::size_t
     std::vector<CommandElement> taken;
     ring.drain(most, [&taken](const CommandElement& element) { taken.push_back(element); });
     return taken;
+}
+
+bool refusedForStopping(const Received& frame) {
+    return frame.refused && frame.refused->code == static_cast<std::uint16_t>(RefusedCode::ENGINE_STOPPING);
+}
+
+Bytes refusedStream(OrderId count) {
+    Bytes stream;
+    for (OrderId id = 1; id <= count; ++id) {
+        const Bytes frame = commandFrame(id, "ZZZZ", limit(id, Side::BUY, 100));
+        stream.insert(stream.end(), frame.begin(), frame.end());
+    }
+    return stream;
 }
 
 void testHelloIsWelcomed() {
@@ -555,6 +585,386 @@ void testSleepsOnlyWithNothingOutstanding() {
     expect(client.answered() == 1 && rig.gateway->mayWait(), "until it is answered");
 }
 
+struct BadFrame {
+    const char* name;
+    bool helloFirst;
+    Bytes frame;
+    ProtocolError code;
+    Correlation correlation;  // what the error should echo
+};
+
+std::vector<BadFrame> badFrames() {
+    const auto headerOnly = [](std::uint16_t length, std::uint8_t type, Correlation correlation) {
+        Bytes frame(12);
+        store16(frame, 0, length);
+        store8(frame, 2, type);
+        store64(frame, 4, correlation);
+        return frame;
+    };
+    Bytes badMagic = helloFrame(21);
+    badMagic[12] = std::byte{0};
+    Bytes badVersion(64);
+    badVersion.resize(encodeHello(22, static_cast<std::uint16_t>(wireVersion + 1), badVersion));
+    Bytes unknownCommand = commandFrame(23, "AAPL", limit(50, Side::BUY, 100));
+    unknownCommand[12] = std::byte{9};
+    Bytes unexpectedField = commandFrame(24, "AAPL", limit(51, Side::BUY, 100));
+    unexpectedField[3] = std::byte{2};  // a flag no frame from a client may set
+
+    return {
+        {"a length under a header", true, headerOnly(5, 3, 20), ProtocolError::BAD_LENGTH, 0},
+        {"bad magic", false, badMagic, ProtocolError::BAD_MAGIC, 21},
+        {"an unknown frame type", true, headerOnly(12, 99, 25), ProtocolError::UNKNOWN_FRAME_TYPE, 25},
+        {"a command before Hello", false, commandFrame(26, "AAPL", limit(52, Side::BUY, 100)), ProtocolError::HELLO_REQUIRED, 26},
+        {"a second Hello", true, helloFrame(27), ProtocolError::DUPLICATE_HELLO, 27},
+        {"a version it can't speak", false, badVersion, ProtocolError::UNSUPPORTED_VERSION, 22},
+        {"an unknown command", true, unknownCommand, ProtocolError::UNKNOWN_COMMAND, 23},
+        {"a field that must be zero", true, unexpectedField, ProtocolError::UNEXPECTED_FIELD, 24},
+    };
+}
+
+// Answers what came before it, says why once, closes, and never touches what came after.
+void testEveryProtocolErrorIsAnsweredThenCloses() {
+    for (const BadFrame& bad : badFrames()) {
+        Rig rig({on("AAPL", 0)}, 1, 16);
+        Client client(rig.sockets);
+        Bytes stream;
+        if (bad.helloFirst) {
+            stream = joined({helloFrame(), commandFrame(9, "AAPL", limit(1, Side::BUY, 100))});
+        }
+        stream.insert(stream.end(), bad.frame.begin(), bad.frame.end());
+        const Bytes after = commandFrame(10, "AAPL", limit(2, Side::BUY, 100));
+        stream.insert(stream.end(), after.begin(), after.end());
+        client.send(stream);
+        rig.settle();
+
+        const std::string name = bad.name;
+        const std::vector<Received>& frames = client.frames();
+        expect(!frames.empty() && frames.back().type == FrameType::PROTOCOL_ERROR, name + " ends with a ProtocolError");
+        expect(frames.back().last && frames.back().correlation == bad.correlation, name + " echoes the offending frame's correlation");
+        expect(frames.back().error->code == static_cast<std::uint16_t>(bad.code), name + " gets its own code");
+        expect(frames.back().error->engineVersion == wireVersion, name + " says what the engine speaks");
+        expect(std::count_if(frames.begin(), frames.end(), [](const Received& f) { return f.error.has_value(); }) == 1, name + " says so once");
+        expect(client.answered() == (bad.helloFirst ? 1U : 0U), name + " answers the command before it, and not the one after");
+        expect(rig.sockets.sendShutDown(client.socket) && rig.sockets.closed(client.socket), name + " closes");
+    }
+}
+
+void testAProtocolErrorWaitsForWhatIsInFlight() {
+    Rig rig({on("AAPL", 0)}, 1, 16);
+    Client client(rig.sockets);
+    introduce(rig, client);
+    client.send(joined({commandFrame(1, "AAPL", limit(1, Side::BUY, 100)), helloFrame(2)}));
+    rig.gateway->pass();
+    rig.gateway->pass();
+    expect(client.frames().size() == 1 && !rig.sockets.closed(client.socket), "nothing is said while the command is out");
+    const std::size_t reads = rig.sockets.reads(client.socket);
+    rig.gateway->pass();
+    expect(rig.sockets.reads(client.socket) == reads, "and it has stopped reading");
+
+    rig.match();
+    rig.gateway->pass();
+    const std::vector<Received>& frames = client.frames();
+    expect(frames.size() == 3 && frames[1].correlation == 1, "the answer comes first");
+    expect(frames[2].type == FrameType::PROTOCOL_ERROR, "the error after it");
+    expect(rig.sockets.closed(client.socket), "and then it closes");
+}
+
+void testAHalfCloseIsAnsweredInFull() {
+    Rig rig({on("AAPL", 0)}, 1, 2);
+    Client client(rig.sockets);
+    introduce(rig, client);
+    Bytes stream;
+    for (OrderId id = 1; id <= 5; ++id) {
+        const Bytes frame = commandFrame(id, "AAPL", limit(id, Side::BUY, 100));
+        stream.insert(stream.end(), frame.begin(), frame.end());
+    }
+    client.send(stream);
+    rig.sockets.clientHalfClose(client.socket);
+    rig.gateway->pass();
+    expect(!rig.sockets.closed(client.socket), "it isn't closed with commands still to run");
+
+    rig.settle();
+    expect(client.answered() == 5, "every command is answered, parked ones too");
+    const std::vector<Received>& frames = client.frames();
+    expect(frames.back().type != FrameType::PROTOCOL_ERROR, "with no error frame");
+    expect(rig.sockets.sendShutDown(client.socket) && rig.sockets.closed(client.socket), "and it closes after that");
+}
+
+void testPastTheLimitAConnectionIsTurnedAway() {
+    Rig rig({on("AAPL", 0)}, 1, 16);
+    std::vector<Client> clients;
+    clients.reserve(connectionsPerThread + 1);
+    for (std::uint32_t i = 0; i <= connectionsPerThread; ++i) {
+        clients.emplace_back(rig.sockets);
+    }
+    rig.gateway->pass();
+
+    Client& extra = clients.back();
+    const std::vector<Received>& frames = extra.frames();
+    expect(frames.size() == 1 && frames[0].type == FrameType::PROTOCOL_ERROR && frames[0].correlation == 0, "one past the limit hears why");
+    expect(frames[0].error->code == static_cast<std::uint16_t>(ProtocolError::TOO_MANY_CONNECTIONS), "with the right code");
+    expect(rig.sockets.closed(extra.socket), "and is closed");
+
+    Client& lastInside = clients[connectionsPerThread - 1];
+    introduce(rig, lastInside);
+    expect(!rig.sockets.closed(lastInside.socket), "the one before it was taken on");
+}
+
+void testABackloggedConnectionIsNotRead() {
+    GatewaySettings settings;
+    settings.highWaterMark = 100;
+    Rig rig({on("AAPL", 0)}, 1, 16, settings);
+    Client client(rig.sockets);
+    introduce(rig, client);
+
+    rig.sockets.limitWrite(0);
+    client.send(refusedStream(100));
+    rig.gateway->pass();
+    expect(client.answered() == 0, "the client takes nothing");
+    const std::size_t reads = rig.sockets.reads(client.socket);
+    rig.gateway->pass();
+    rig.gateway->pass();
+    expect(rig.sockets.reads(client.socket) == reads, "past the high-water mark it isn't read");
+    expect(!rig.sockets.closed(client.socket), "and under the hard limit it just waits");
+
+    rig.sockets.limitWrite(std::numeric_limits<std::size_t>::max());
+    rig.settle();
+    expect(client.answered() == 100, "once it drains, it is read again");
+}
+
+void testAtTheHighWaterMarkAConnectionIsStillRead() {
+    GatewaySettings settings;
+    settings.highWaterMark = 28;  // exactly one Refused frame
+    Rig rig({on("AAPL", 0)}, 1, 16, settings);
+    Client client(rig.sockets);
+    introduce(rig, client);
+
+    rig.sockets.limitWrite(0);
+    client.send(refusedStream(1));
+    rig.gateway->pass();
+    const std::size_t reads = rig.sockets.reads(client.socket);
+    rig.gateway->pass();
+    expect(rig.sockets.reads(client.socket) == reads + 1, "exactly at the mark isn't past it");
+}
+
+void testPastTheHardLimitAConnectionCloses() {
+    expect(GatewaySettings{}.highWaterMark == 1024 * 1024 && GatewaySettings{}.hardLimit == 16 * 1024 * 1024, "the defaults are 1 MiB and 16 MiB");
+
+    GatewaySettings settings;
+    settings.hardLimit = 1000;
+    Rig rig({on("AAPL", 0)}, 1, 16, settings);
+    Client client(rig.sockets);
+    introduce(rig, client);
+    rig.sockets.limitWrite(0);
+    client.send(refusedStream(36));  // 1,008 bytes of Refused frames
+    rig.gateway->pass();
+    expect(rig.sockets.closed(client.socket), "it closes");
+    expect(!rig.sockets.sendShutDown(client.socket), "without pretending it was answered");
+}
+
+void testAtTheHardLimitAConnectionStaysOpen() {
+    GatewaySettings settings;
+    settings.hardLimit = 1008;
+    Rig rig({on("AAPL", 0)}, 1, 16, settings);
+    Client client(rig.sockets);
+    introduce(rig, client);
+    rig.sockets.limitWrite(0);
+    client.send(refusedStream(36));
+    rig.gateway->pass();
+    expect(!rig.sockets.closed(client.socket), "exactly at the limit isn't past it");
+}
+
+// Through a second connection, so what the first left behind is read from the books themselves.
+void expectResting(Rig& rig, OrderId id, bool resting, const std::string& message) {
+    Client looker(rig.sockets);
+    introduce(rig, looker);
+    looker.send(commandFrame(1000 + id, "AAPL", replay::CancelCommand{id}));
+    rig.settle();
+    const std::vector<Received>& frames = looker.frames();
+    const bool cancelled = std::holds_alternative<OrderCancelled>(frames.back().event->event);
+    expect(cancelled == resting, message);
+}
+
+void testAClosedConnectionsCommandsRunUnheardAndItsParkedOneIsDropped() {
+    Rig rig({on("AAPL", 0)}, 1, 2);
+    Client client(rig.sockets);
+    introduce(rig, client);
+
+    rig.sockets.limitWrite(0);
+    client.send(joined({refusedStream(1), commandFrame(11, "AAPL", limit(1, Side::BUY, 100)), commandFrame(12, "AAPL", limit(2, Side::BUY, 99)),
+                        commandFrame(13, "AAPL", limit(3, Side::BUY, 98))}));
+    rig.gateway->pass();
+    rig.sockets.clientReset(client.socket);
+    rig.gateway->pass();
+    expect(rig.sockets.closed(client.socket), "a failed write closes a parked connection, which nobody is reading");
+    expect(!rig.gateway->mayWait(), "its queued commands are still in flight");
+
+    rig.sockets.limitWrite(std::numeric_limits<std::size_t>::max());
+    rig.settle();
+    expect(rig.gateway->mayWait(), "they ran, and nobody heard");
+    expectResting(rig, 1, true, "a queued command still runs");
+    expectResting(rig, 2, true, "and the next");
+    expectResting(rig, 3, false, "a parked one is dropped");
+
+    Client next(rig.sockets);
+    introduce(rig, next);
+    next.send(commandFrame(14, "AAPL", limit(4, Side::BUY, 97)));
+    rig.gateway->pass();
+    expect(rig.shards[0]->commands.hasItems(), "and with nobody really parked, a new command goes straight to the ring");
+}
+
+void testClosingAConnectionLeavesItsRestingOrders() {
+    Rig rig({on("AAPL", 0)}, 1, 16);
+    Client client(rig.sockets);
+    introduce(rig, client);
+    client.send(commandFrame(1, "AAPL", limit(1, Side::BUY, 100)));
+    rig.settle();
+    rig.sockets.clientHalfClose(client.socket);
+    rig.settle();
+    expect(rig.sockets.closed(client.socket), "the connection is gone");
+    expectResting(rig, 1, true, "and its order isn't");
+}
+
+void testAStopRefusesWhatItCanNoLongerQueue() {
+    Rig rig({on("AAPL", 0)}, 1, 2);
+    Client client(rig.sockets);
+    introduce(rig, client);
+    client.send(joined({commandFrame(11, "AAPL", limit(1, Side::BUY, 100)), commandFrame(12, "AAPL", limit(2, Side::BUY, 99)),
+                        commandFrame(13, "AAPL", limit(3, Side::BUY, 98))}));
+    rig.gateway->pass();  // 11 and 12 are queued, and 13 is parked
+
+    rig.gateway->beginStop();
+    expect(rig.sockets.listenerClosed(), "the listener closes first");
+    client.send(commandFrame(14, "AAPL", limit(4, Side::BUY, 97)));
+    Client late(rig.sockets);
+    rig.settle();
+
+    std::map<Correlation, std::vector<Received>> byCommand;
+    for (const Received& frame : client.frames()) {
+        byCommand[frame.correlation].push_back(frame);
+    }
+    expect(byCommand[11].size() == 1 && byCommand[11][0].event && byCommand[12].size() == 1 && byCommand[12][0].event,
+           "what was queued gets its full answer");
+    expect(byCommand[13].size() == 1 && refusedForStopping(byCommand[13][0]), "a parked command is refused with the retry code");
+    expect(byCommand[13][0].refused->orderId == 3 && byCommand[13][0].refused->symbol == symbolOf("AAPL").bytes(), "naming it");
+    expect(byCommand[14].size() == 1 && refusedForStopping(byCommand[14][0]), "and so is a command read after the stop");
+
+    expect(rig.sockets.reads(late.socket) == 0, "a late connection is never taken on");
+    expect(rig.sockets.closed(client.socket) && rig.sockets.sendShutDown(client.socket), "everything flushed, connections close");
+    expect(rig.gateway->finished(), "and the gateway is done");
+}
+
+void testAStopStillAnswersWhatEntryAnswers() {
+    Rig rig({on("AAPL", 0)}, 1, 16);
+    Client client(rig.sockets);
+    introduce(rig, client);
+    rig.gateway->beginStop();
+    Bytes badSide = commandFrame(2, "AAPL", limit(2, Side::BUY, 100));
+    badSide[13] = std::byte{0x7f};
+    client.send(joined({commandFrame(1, "ZZZZ", limit(1, Side::BUY, 100)), badSide}));
+    rig.gateway->pass();
+    const std::vector<Received>& frames = client.frames();
+    expect(frames.size() == 3, "both are answered");
+    expect(frames[1].refused->code == static_cast<std::uint16_t>(RefusedCode::UNKNOWN_INSTRUMENT), "an unknown symbol stays unknown");
+    expect(frames[2].event.has_value(), "and a malformed command stays malformed, since stopping comes last");
+}
+
+void testNothingIsClosedUntilEveryShardHasStopped() {
+    Rig rig({on("AAPL", 0), on("MSFT", 1)}, 2, 16);
+    Client client(rig.sockets);
+    introduce(rig, client);
+    rig.gateway->beginStop();
+    expect(!rig.gateway->mayWait(), "with nothing in flight it still may not sleep, since the shards have yet to answer");
+    rig.gateway->pass();
+    rig.match(0);
+    rig.gateway->pass();
+    expect(!rig.gateway->finished() && !rig.sockets.closed(client.socket), "one shard stopping isn't enough");
+
+    client.send(commandFrame(1, "AAPL", limit(1, Side::BUY, 100)));
+    rig.gateway->pass();
+    expect(refusedForStopping(client.frames().back()), "and meanwhile the gateway reads, to refuse");
+
+    rig.match(1);
+    rig.gateway->pass();
+    expect(rig.gateway->finished() && rig.sockets.closed(client.socket), "both have, so it flushes and closes");
+}
+
+void testABackloggedConnectionStaysUnreadThroughAStop() {
+    GatewaySettings settings;
+    settings.highWaterMark = 100;
+    Rig rig({on("AAPL", 0)}, 1, 16, settings);
+    Client client(rig.sockets);
+    introduce(rig, client);
+
+    rig.sockets.limitWrite(0);
+    client.send(refusedStream(100));
+    rig.gateway->pass();
+    const std::size_t reads = rig.sockets.reads(client.socket);
+    rig.gateway->beginStop();
+    rig.gateway->pass();
+    rig.gateway->pass();
+    expect(rig.sockets.reads(client.socket) == reads, "a stop doesn't start reading it");
+}
+
+void testTheStopGraceBoundsTheFlush() {
+    expect(GatewaySettings{}.stopGrace == std::chrono::seconds(5), "the default grace is 5 s");
+
+    Rig rig({on("AAPL", 0)}, 1, 16);
+    Client stalled(rig.sockets);
+    introduce(rig, stalled);
+    rig.sockets.limitWrite(0);
+    stalled.send(refusedStream(1));
+    rig.gateway->pass();
+
+    rig.gateway->beginStop();
+    rig.settle();
+    expect(!rig.sockets.closed(stalled.socket), "every shard has stopped, and it gets the grace to read");
+    expect(!rig.gateway->finished(), "so the gateway isn't done");
+
+    const std::size_t reads = rig.sockets.reads(stalled.socket);
+    stalled.send(commandFrame(9, "AAPL", limit(9, Side::BUY, 100)));
+    rig.gateway->pass();
+    expect(rig.sockets.reads(stalled.socket) == reads, "the flush reads nothing more, so anything unread gets no answer");
+
+    rig.now += std::chrono::seconds(5) - std::chrono::nanoseconds(1);
+    rig.gateway->pass();
+    expect(!rig.sockets.closed(stalled.socket), "a moment short of the grace it is still open");
+
+    rig.now += std::chrono::nanoseconds(1);
+    rig.gateway->pass();
+    expect(rig.sockets.closed(stalled.socket) && rig.gateway->finished(), "and at the grace it closes anyway");
+}
+
+// A shard waits for a marker from every gateway thread, and tells each of them.
+void testAShardStopsOnceEveryGatewayThreadHasSaidSo() {
+    const InstrumentDirectory directory({on("AAPL", 0)}, 1);
+    Shard shard(directory, 0);
+    Doorbell doorbell;
+    Ring<CommandElement> firstCommands(16);
+    Ring<ResponseRecord> firstResponses(16);
+    Ring<CommandElement> secondCommands(16);
+    Ring<ResponseRecord> secondResponses(16);
+    MatchingLoop loop(shard, doorbell, {RingPair{&firstCommands, &firstResponses}, RingPair{&secondCommands, &secondResponses}});
+    InMemorySocketSet firstSockets;
+    InMemorySocketSet secondSockets;
+    GatewayThread first(directory, {ShardLink{&firstCommands, &firstResponses, &doorbell}}, firstSockets);
+    GatewayThread second(directory, {ShardLink{&secondCommands, &secondResponses, &doorbell}}, secondSockets);
+
+    first.beginStop();
+    first.pass();
+    loop.pass();
+    expect(!loop.stopped(), "one gateway thread's marker isn't a stop");
+
+    second.beginStop();
+    second.pass();
+    loop.pass();
+    expect(loop.stopped(), "every gateway thread's is");
+    loop.run();  // with every marker in, this only reports
+    first.pass();
+    second.pass();
+    expect(first.finished() && second.finished(), "and both heard, on their own rings");
+}
+
 // The seeded stepper: one thread plays each actor, choosing the next from a seeded source, with
 // rings of capacity 2, reads and writes split anywhere. One connection owns each instrument, so
 // its book's order is one stream's order and the answers must equal a single-threaded run. What
@@ -567,6 +977,12 @@ struct Line {
     bool operator==(const Line&) const = default;
 };
 
+struct StreamCommand {
+    Correlation correlation;
+    std::size_t connection;
+    EntryAccepted accepted;
+};
+
 struct SteppedStream {
     std::vector<Instrument> instruments;
     std::vector<Bytes> bytes;                            // per connection
@@ -574,6 +990,7 @@ struct SteppedStream {
     std::map<std::string, std::vector<Line>> expected;   // from the books, per instrument
     std::map<Correlation, BookEvent> rejectedAtEntry;
     std::set<Correlation> refused;
+    std::vector<StreamCommand> commands;                 // those that passed the entry check
 };
 
 constexpr std::uint32_t steppedShards = 2;
@@ -653,6 +1070,7 @@ SteppedStream steppedStream(std::uint64_t seed, std::size_t commands) {
             ++stream.frames[connection];
         } else {
             const EntryAccepted& accepted = std::get<EntryAccepted>(decision);
+            stream.commands.push_back(StreamCommand{correlation, connection, accepted});
             Shard& witness = *witnesses[accepted.location.shard];
             witness.process(accepted.command, accepted.location.slot);
             const std::span<const BookEvent> events = witness.result().events();
@@ -668,6 +1086,8 @@ SteppedStream steppedStream(std::uint64_t seed, std::size_t commands) {
 struct SteppedTotals {
     std::size_t sleeps = 0;
     std::size_t waitsInPlace = 0;
+    std::size_t commandsRun = 0;
+    std::size_t commandsRefused = 0;
 };
 
 // Sleeping is only safe with every command read so far answered, counted here from the bytes the
@@ -754,6 +1174,84 @@ void runSchedule(const SteppedStream& stream, std::uint64_t seed, SteppedTotals&
     totals.waitsInPlace += rig.waitsInPlace;
 }
 
+// A stop lands at a chosen step. What it must leave: every command is answered in full, refused
+// with the retry code, or was never read, and for one connection they fall in that order, so what
+// ran is what a single-threaded run of those same commands does.
+void runStoppedSchedule(const SteppedStream& stream, std::uint64_t seed, SteppedTotals& totals) {
+    Rig rig(stream.instruments, steppedShards, 2);
+    std::mt19937_64 random(seed);
+    std::vector<Client> clients;
+    clients.reserve(steppedConnections);
+    for (std::size_t i = 0; i < steppedConnections; ++i) {
+        clients.emplace_back(rig.sockets);
+    }
+
+    std::vector<std::size_t> sent(steppedConnections, 0);
+    const std::uint64_t stopAt = random() % 3000;
+    std::size_t steps = 0;
+    while (!rig.gateway->finished()) {
+        expect(++steps < 40'000'000, "the stopped run stopped making progress");
+        if (steps == stopAt) {
+            rig.gateway->beginStop();
+        }
+        const std::uint64_t choice = random();
+        if (choice % 3 == 0) {
+            const std::size_t connection = (choice >> 8) % steppedConnections;
+            const Bytes& bytes = stream.bytes[connection];
+            const std::size_t chunk = std::min<std::size_t>(bytes.size() - sent[connection], 1 + (choice >> 16) % 150);
+            clients[connection].send(std::span<const std::byte>(bytes).subspan(sent[connection], chunk));
+            sent[connection] += chunk;
+        } else if (choice % 3 == 1) {
+            rig.sockets.limitRead(1 + (choice >> 8) % 200);
+            rig.sockets.limitWrite(1 + (choice >> 16) % 200);
+            rig.gateway->pass();
+        } else {
+            rig.match(static_cast<std::uint32_t>((choice >> 8) % steppedShards));
+        }
+    }
+
+    std::map<std::string, std::vector<Line>> answered;
+    std::set<Correlation> ran;
+    std::set<Correlation> refusedByStop;
+    for (Client& client : clients) {
+        for (const Received& frame : client.frames()) {
+            if (refusedForStopping(frame)) {
+                refusedByStop.insert(frame.correlation);
+            } else if (frame.event && !stream.rejectedAtEntry.contains(frame.correlation)) {
+                ran.insert(frame.correlation);
+                answered[frame.event->symbol.text()].push_back(Line{frame.correlation, frame.event->event, frame.last});
+            }
+        }
+        expect(rig.sockets.closed(client.socket), "a finished gateway has closed every connection");
+    }
+
+    const InstrumentDirectory directory(stream.instruments, steppedShards);
+    std::vector<std::unique_ptr<Shard>> witnesses;
+    for (std::uint32_t shard = 0; shard < steppedShards; ++shard) {
+        witnesses.push_back(std::make_unique<Shard>(directory, shard));
+    }
+    std::map<std::string, std::vector<Line>> expected;
+    std::vector<bool> connectionCut(steppedConnections, false);
+    for (const StreamCommand& command : stream.commands) {
+        const bool didRun = ran.contains(command.correlation);
+        expect(!(didRun && refusedByStop.contains(command.correlation)), "no command both ran and was refused");
+        expect(!(didRun && connectionCut[command.connection]), "nothing ran after a connection's first command that didn't");
+        if (!didRun) {
+            connectionCut[command.connection] = true;
+            continue;
+        }
+        Shard& witness = *witnesses[command.accepted.location.shard];
+        witness.process(command.accepted.command, command.accepted.location.slot);
+        const std::span<const BookEvent> events = witness.result().events();
+        for (std::size_t i = 0; i < events.size(); ++i) {
+            expected[command.accepted.symbol.text()].push_back(Line{command.correlation, events[i], i + 1 == events.size()});
+        }
+    }
+    expect(answered == expected, "what ran equals a single-threaded run of those commands, seed " + std::to_string(seed));
+    totals.commandsRun += ran.size();
+    totals.commandsRefused += refusedByStop.size();
+}
+
 void testSteppedSchedules() {
     SteppedTotals totals;
     for (std::uint64_t seed = 1; seed <= 100; ++seed) {
@@ -761,6 +1259,14 @@ void testSteppedSchedules() {
     }
     expect(totals.sleeps > 0, "the gateway slept, or the check above checked nothing");
     expect(totals.waitsInPlace > 0, "matching threads did wait on a full response ring");
+}
+
+void testSteppedStops() {
+    SteppedTotals totals;
+    for (std::uint64_t seed = 1; seed <= 100; ++seed) {
+        runStoppedSchedule(steppedStream(seed, 1000), seed, totals);
+    }
+    expect(totals.commandsRun > 0 && totals.commandsRefused > 0, "stops landed mid-stream, or the check above checked little");
 }
 
 }  // namespace
@@ -783,7 +1289,24 @@ int main() {
     testAParkedConnectionHoldsItsOtherShardToo();
     testAReusedIndexHearsNothingOfTheDead();
     testSleepsOnlyWithNothingOutstanding();
+    testEveryProtocolErrorIsAnsweredThenCloses();
+    testAProtocolErrorWaitsForWhatIsInFlight();
+    testAHalfCloseIsAnsweredInFull();
+    testPastTheLimitAConnectionIsTurnedAway();
+    testABackloggedConnectionIsNotRead();
+    testAtTheHighWaterMarkAConnectionIsStillRead();
+    testPastTheHardLimitAConnectionCloses();
+    testAtTheHardLimitAConnectionStaysOpen();
+    testAClosedConnectionsCommandsRunUnheardAndItsParkedOneIsDropped();
+    testClosingAConnectionLeavesItsRestingOrders();
+    testAStopRefusesWhatItCanNoLongerQueue();
+    testAStopStillAnswersWhatEntryAnswers();
+    testNothingIsClosedUntilEveryShardHasStopped();
+    testABackloggedConnectionStaysUnreadThroughAStop();
+    testTheStopGraceBoundsTheFlush();
+    testAShardStopsOnceEveryGatewayThreadHasSaidSo();
     testSteppedSchedules();
+    testSteppedStops();
     std::cout << "gateway tests passed" << std::endl;
     return EXIT_SUCCESS;
 }

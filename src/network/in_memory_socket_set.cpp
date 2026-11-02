@@ -20,6 +20,10 @@ namespace order_book::network {
         return std::exchange(sockets.at(socket).toClient, {});
     }
 
+    void InMemorySocketSet::clientHalfClose(SocketId socket) {
+        sockets.at(socket).halfClosed = true;
+    }
+
     void InMemorySocketSet::clientReset(SocketId socket) {
         sockets.at(socket).reset = true;
     }
@@ -32,7 +36,7 @@ namespace order_book::network {
     }
 
     std::optional<SocketId> InMemorySocketSet::accept() {
-        if (nextToAccept == sockets.size()) {
+        if (listenerGone || nextToAccept == sockets.size()) {
             return std::nullopt;
         }
         return nextToAccept++;
@@ -52,19 +56,31 @@ namespace order_book::network {
             std::memcpy(into.data(), held.toEngine.data() + held.position, bytes);
             held.position += bytes;
         }
-        return ReadResult{bytes, ReadStatus::OPEN};
+        const bool ended = held.halfClosed && held.position == held.toEngine.size() && bytes == 0;
+        return ReadResult{bytes, ended ? ReadStatus::ENDED : ReadStatus::OPEN};
     }
 
-    std::size_t InMemorySocketSet::write(SocketId socket, std::span<const std::byte> bytes) {
+    std::optional<std::size_t> InMemorySocketSet::write(SocketId socket, std::span<const std::byte> bytes) {
         Socket& held = sockets.at(socket);
         ++held.writes;
+        if (held.reset) {
+            return std::nullopt;
+        }
         const std::span<const std::byte> taken = bytes.first(std::min(bytes.size(), writeLimit));
         held.toClient.insert(held.toClient.end(), taken.begin(), taken.end());
         return taken.size();
     }
 
+    void InMemorySocketSet::shutdownSend(SocketId socket) {
+        sockets.at(socket).sendShutDown = true;
+    }
+
     void InMemorySocketSet::close(SocketId socket) {
         sockets.at(socket).closed = true;
+    }
+
+    void InMemorySocketSet::closeListener() {
+        listenerGone = true;
     }
 
 }  // namespace order_book::network

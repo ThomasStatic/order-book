@@ -11,6 +11,7 @@ namespace order_book::network {
 
     enum class ReadStatus {
         OPEN,
+        ENDED,   // the client half-closed, after everything it sent: it still hears what it's owed
         FAILED,  // the connection is gone, and nothing more will come
     };
 
@@ -32,9 +33,14 @@ namespace order_book::network {
         virtual std::optional<SocketId> accept() = 0;
         // Takes whatever has arrived, up to into's size.
         virtual ReadResult read(SocketId socket, std::span<std::byte> into) = 0;
-        // Returns how much of bytes the socket took, which may be none of it.
-        virtual std::size_t write(SocketId socket, std::span<const std::byte> bytes) = 0;
+        // Returns how much of bytes the socket took, which may be none of it, or nothing if the
+        // connection is gone.
+        virtual std::optional<std::size_t> write(SocketId socket, std::span<const std::byte> bytes) = 0;
+        // Ends what this side sends, so the client reads to the end of its stream.
+        virtual void shutdownSend(SocketId socket) = 0;
         virtual void close(SocketId socket) = 0;
+        // From now on accept finds nothing.
+        virtual void closeListener() = 0;
     };
 
 }  // namespace order_book::network

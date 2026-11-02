@@ -1,7 +1,9 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <vector>
@@ -30,6 +32,17 @@ namespace order_book::network {
         return handle & 0xffffU;
     }
 
+    struct GatewaySettings {
+        // Past this many unsent bytes a connection is backlogged, and not read until they drain.
+        std::size_t highWaterMark = 1024 * 1024;
+        // Past this many it closes.
+        std::size_t hardLimit = 16 * 1024 * 1024;
+        // How long, once every shard has stopped, connections have to take what they're owed.
+        std::chrono::nanoseconds stopGrace = std::chrono::seconds(5);
+        // The gateway's only clock, read only during a stop.
+        std::function<std::chrono::steady_clock::time_point()> clock = std::chrono::steady_clock::now;
+    };
+
     // One shard as a gateway thread sees it. This thread is the only writer of commands and the
     // only reader of responses.
     struct ShardLink {
@@ -43,13 +56,22 @@ namespace order_book::network {
     // sockets must outlive it.
     class GatewayThread {
     public:
-        GatewayThread(const runtime::InstrumentDirectory& directory, std::vector<ShardLink> shards, SocketSet& sockets);
+        GatewayThread(const runtime::InstrumentDirectory& directory, std::vector<ShardLink> shards, SocketSet& sockets,
+                      GatewaySettings settings = {});
 
         // One pass: sleeps if mayWait, accepts, drains every response ring into per-connection
         // buffers, retries parked connections oldest first, reads and answers up to framesPerPass
-        // frames from each connection that isn't parked, rings the doorbells, then makes one write
-        // per connection with bytes to send.
+        // frames from each connection that is neither parked nor backlogged, rings the doorbells,
+        // then makes one write per connection with bytes to send, closing those that are done.
         void pass();
+
+        // Closes the listener, refuses parked commands, and from now on reads only to refuse, then
+        // sends each shard a stop marker. Once every shard has stopped, connections stop being
+        // read, take what they're owed, and close, within the stop grace.
+        void beginStop();
+
+        // Whether a stop has run its course: every shard stopped, and every connection closed.
+        bool finished() const noexcept;
 
         // Whether nothing is in flight, parked, read and waiting, or unsent, so no response can
         // arrive during a sleep, and a matching thread never makes a system call on the way back.
@@ -67,24 +89,32 @@ namespace order_book::network {
             FrameReader reader;
             std::vector<std::byte> unsent;
             std::optional<Parked> parked;
+            std::optional<FrameError> error;  // sent once its commands have been answered
+            std::uint32_t inFlight = 0;       // this connection's share of the thread's count
             SocketId socket = 0;
             std::uint16_t generation = 0;
             bool open = false;
             bool reading = false;
             bool framesWaiting = false;  // a pass stopped with frames possibly still in reader
+            bool finishing = false;      // closes once it has answered everything it read
         };
 
         void acceptConnections();
+        void refuseConnection(SocketId socket);
         void closeConnection(std::uint32_t index);
         void drainResponses();
         void retryParked();
+        void refuseParked();
+        void sendStopMarkers();
+        void beginFlush();
         void readConnection(std::uint32_t index);
         void takeFrame(std::uint32_t index, const Frame& frame);
         void takeCommand(std::uint32_t index, const Frame& frame);
         void queue(std::uint32_t index, const EntryAccepted& accepted, Correlation correlation);
-        bool tryQueue(std::uint32_t shard, const runtime::CommandElement& element);
+        bool tryQueue(std::uint32_t index, std::uint32_t shard, const runtime::CommandElement& element);
         void ringDoorbells();
         void sendResponses();
+        void sendTo(std::uint32_t index);
         std::uint32_t handleOf(std::uint32_t index) const noexcept {
             return connectionHandle(index, connections[index].generation);
         }
@@ -92,13 +122,19 @@ namespace order_book::network {
         const runtime::InstrumentDirectory& directory;
         std::vector<ShardLink> shards;
         SocketSet& sockets;
+        GatewaySettings settings;
         std::vector<Connection> connections;
         std::vector<std::uint32_t> parkedOldestFirst;  // connection indices
         std::vector<std::uint32_t> parkedOnShard;
         std::vector<char> shardBlocked;  // in this pass's retry, per shard
         std::vector<char> shardRung;     // pushed to since the last doorbell, per shard
+        std::vector<char> markerOwed;    // per shard
         std::vector<std::byte> readBuffer;
         std::uint64_t inFlight = 0;  // commands pushed whose last event hasn't come back
+        std::size_t shardsStopped = 0;
+        bool stopBegun = false;
+        bool flushing = false;  // every shard has stopped
+        std::chrono::steady_clock::time_point graceEnds;
     };
 
 }  // namespace order_book::network
