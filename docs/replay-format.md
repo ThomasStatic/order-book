@@ -210,12 +210,14 @@ The engine is `include/order_book/replay_engine.hpp`, in the same library and na
 ### Command line
 
 ```text
-order_book_cli replay <file.csv> [--trades] [--events] [--book] [--validate none|final|per-command]
+order_book_cli replay <path>... [--trades] [--events] [--book] [--validate none|final|per-command]
+                                [--symbol SYM] [--no-statistics]
+order_book_cli convert <path>... --out <path> [--symbol SYM]
 order_book_cli demo
 order_book_cli --help
 ```
 
-It replays the file on an empty book and prints, on stdout with LF line endings on every platform: each trade (`--trades`) or each event (`--events`, which includes the trades), as `formatReplayEvent` writes them, then a blank line if any were printed; then the statistics (`formatReplayStatistics`), always; then the final book (`formatFinalBook`) with `--book`. `--events --book` is the full summary, `formatReplaySummary`. Options go before or after the file, and `--` makes the next argument the file. `-h` or `--help` anywhere before `--` prints the help on stdout and exits 0; there are no prompts. A parse error stops the replay at that line: what ran before it is printed as usual, and the diagnostic follows on stderr. Exit statuses:
+It replays the file on an empty book and prints, on stdout with LF line endings on every platform: each trade (`--trades`) or each event (`--events`, which includes the trades), as `formatReplayEvent` writes them, then a blank line if any were printed; then the statistics (`formatReplayStatistics`), always; then the final book (`formatFinalBook`) with `--book`. `--events --book` is the full summary, `formatReplaySummary`. Options go before or after the file, `--` makes the next argument the file, and an option given twice is a usage error. `-h` or `--help` anywhere before `--` prints the help on stdout and exits 0; there are no prompts. A parse error stops the replay at that line: what ran before it is printed as usual, and the diagnostic follows on stderr. Exit statuses:
 
 | Status | Meaning |
 |---|---|
@@ -307,9 +309,9 @@ sequence,command,order_id,side,price,quantity,order_type,time_in_force,stop_pric
 
 **Output.** One section per symbol, sorted by symbol bytes, each `symbol <text>` then exactly what one book prints, with a blank line between sections. A one-symbol file gets its heading too, and a file with no commands prints nothing. `--symbol SYM` lets a v1 or v2 file stand in for one instrument, with the same output, and on a v3 file it is a usage error. `--no-statistics` leaves out the statistics.
 
-**Several inputs.** `replay` takes several paths, and a directory means every log file in it. Logs an engine wrote run by shard then first position, whatever the argument order, and it exits 1 on a shard's logs that don't start at position 0, a gap between files, or a symbol in two shards' logs. v3 CSVs and converted logs stay in argument order. A v1 or v2 file with no `--symbol` runs alone, before any file that names symbols. An event then reads `<file name>:<line>:`, since lines repeat across files.
+**Several inputs.** `replay` takes several paths, and a directory means every log file in it, leaving out a file still being made (`.tmp`) and cut records (`cut-`), which stay valid logs that can be named directly. Logs an engine wrote run by shard then first position, whatever the argument order, and it exits 1 on a shard's logs that don't start at position 0, a gap between files, or a symbol in two shards' logs. v3 CSVs and converted logs stay in argument order. A v1 or v2 file with no `--symbol` runs alone, before any file that names symbols. An event then reads `<file name>:<line>:`, since lines repeat across files, and one file keeps `line N:`, even from a directory.
 
-**`convert <path>... --out <path> [--symbol SYM]`.** Direction comes from the first bytes: a CSV becomes a log with no placement at position 0, and a log a v3 CSV. One input keeps its interleaving. Several inputs or a directory make `--out` a directory of `commands-<symbol>.csv`. `--symbol` is required for v1 and v2 input and a usage error otherwise. An existing output is refused, and a damaged input's good prefix is still written, with exit 1.
+**`convert <path>... --out <path> [--symbol SYM]`.** Direction comes from the first bytes: a CSV becomes a log with no placement at position 0, and a log a v3 CSV. One input keeps its interleaving. Any one log converts, wherever it starts, since no book runs. Several inputs or a directory make `--out` a directory of `commands-<symbol>.csv`, and are refused as `replay` refuses them, since a gap would quietly lose commands. `--symbol` is required for v1 and v2 input and a usage error otherwise. An existing output is refused. A damaged input's good prefix is still written, with exit 1, and with no good prefix no file is written.
 
 If a file stops part-way, every record before the error runs, all sections print, then the diagnostic, and it exits 1. If a book fails, only its diagnostic prints, prefixed with its symbol, and it exits 3: books run in symbol order, so later ones do not run. `--validate` applies per book, and a failed `final` check reruns that book alone with per-command checks.
 

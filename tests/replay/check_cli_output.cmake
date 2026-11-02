@@ -2,7 +2,8 @@
 # and stderr byte for byte with the expected ones. Invoked by CTest with -D for NAME, CLI,
 # ARGS (separated by '|', since add_test splits on ';'), WORKING_DIRECTORY, OUTPUT_DIR (for
 # the captured output), EXPECTED_EXIT, and the optional EXPECTED_STDOUT and EXPECTED_STDERR
-# files; a stream without one must be empty.
+# files; a stream without one must be empty. CLEAN, if given, is removed first, since a command
+# that writes a file refuses one that exists.
 #
 # Output is captured to files and compared as hex: execute_process's OUTPUT_VARIABLE and a
 # plain file(READ) both drop CRs on Windows, which would hide CRLF output.
@@ -10,6 +11,9 @@ string(REPLACE "|" ";" args "${ARGS}")
 set(actual_stdout_file "${OUTPUT_DIR}/${NAME}.stdout")
 set(actual_stderr_file "${OUTPUT_DIR}/${NAME}.stderr")
 file(MAKE_DIRECTORY "${OUTPUT_DIR}")
+if(CLEAN)
+    file(REMOVE_RECURSE "${CLEAN}")
+endif()
 
 execute_process(
     COMMAND "${CLI}" ${args}

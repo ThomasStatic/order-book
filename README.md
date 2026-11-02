@@ -106,7 +106,7 @@ The code is split into libraries that depend in one direction only. The book kno
 | `order_book` | static library | The engine: `OrderBook`, `Order`, the result and event types, the invariant checker, and `formatEvent`. |
 | `order_book_replay` | static library | The CSV replay format: a parser that turns text into typed records, an engine that runs records through a book, and locale-free printing of the outcome. |
 | `order_book_runtime` | static library | The engine's instrument list, placement, and per-shard books. Not public API. |
-| `order_book_cli` | executable | `replay <file.csv>` and a scripted `demo`. Non-interactive, so it scripts cleanly. |
+| `order_book_cli` | executable | `replay <path>...`, `convert`, and a scripted `demo`. Non-interactive, so it scripts cleanly. |
 | `order_book_reference` | test library | `ReferenceBook`, an independent model of the book that never touches an `OrderBook`, and the seeded interleaver. |
 | `order_book_randomized`, `randomized_tests` | test library, executable | Seeded command generation against the reference model, failure reports, and stream shrinking. |
 | `order_book_benchmarking`, `order_book_benchmarks` | optional | Workload generation and timing (`ORDER_BOOK_BUILD_BENCHMARKS=ON`). |
@@ -272,9 +272,9 @@ Everything is in namespace `order_book`, with headers in `include/order_book/`. 
 - **`event_format.hpp`**: one line of text per event, for callers that print them. The engine itself never prints.
 - **`invariants.hpp`**: `InvariantResult`, `formatInvariantResult`, and the `ORDER_BOOK_INVARIANT_CHECKS` switch.
 - **`replay_parser.hpp`, `replay_engine.hpp`, `replay_summary.hpp`**: the replay format, in namespace `order_book::replay` and library `order_book_replay`.
-- **`symbol.hpp`, `command.hpp`, `command_log.hpp`, `replay_instruments.hpp`, `replay_inputs.hpp`**, in the same namespace and library. `Symbol` is an instrument's only identity, exactly 8 bytes. `command.hpp` holds `AddCommand`, `CancelCommand`, `ReplaceCommand`, and `Command`, and `executeCommand`, the one place that maps a command to a book call, with an overload that overwrites a reused `CommandResult`. `command_log.hpp` is the binary log's codec and its reader, specified in [`docs/command-log-format.md`](docs/command-log-format.md). `replay_instruments.hpp` groups records by symbol and runs a book for each. `replay_inputs.hpp` reads several inputs and converts between logs and CSVs.
+- **`symbol.hpp`, `command.hpp`, `command_log.hpp`**, in the same namespace and library. `Symbol` is an instrument's only identity, exactly 8 bytes. `command.hpp` holds `AddCommand`, `CancelCommand`, `ReplaceCommand`, and `Command`, and `executeCommand`, the one place that maps a command to a book call, with an overload that overwrites a reused `CommandResult`. `command_log.hpp` is the binary log's codec and its reader, specified in [`docs/command-log-format.md`](docs/command-log-format.md).
 
-**Open sets.** `BookEvent`, `RejectionReason`, replay's `Command`, and replay's `ParseErrorCode` are open: a later release may append alternatives or enumerators, but never reorders, renumbers, or removes one. Code that visits or switches over them should keep a fallback for one it does not know. From v2.0.0 on, such an addition is a minor release. (Adding to them was not promised by v1.0.0, which is why the order behaviors shipped as v2.0.0.)
+**Open sets.** `BookEvent`, `RejectionReason`, replay's `Command`, `ReplayFormat`, and `ParseErrorCode` are open: a later release may append alternatives or enumerators, but never reorders, renumbers, or removes one. Code that visits or switches over them should keep a fallback for one it does not know. From v2.0.0 on, such an addition is a minor release. (Adding to them was not promised by v1.0.0, which is why the order behaviors shipped as v2.0.0.)
 
 Error policy:
 
@@ -446,7 +446,9 @@ sequence,command,order_id,side,price,quantity
 - Any parse error stops the replay at that line. Commands that already ran are not rolled back.
 
 ```text
-order_book_cli replay <file.csv> [--trades] [--events] [--book] [--validate none|final|per-command]
+order_book_cli replay <path>... [--trades] [--events] [--book] [--validate none|final|per-command]
+                                [--symbol SYM] [--no-statistics]
+order_book_cli convert <path>... --out <path> [--symbol SYM]
 order_book_cli demo
 order_book_cli --help
 ```

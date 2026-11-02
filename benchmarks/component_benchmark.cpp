@@ -22,6 +22,7 @@
 #include "order_book/order_book.hpp"
 #include "order_book/order_index.hpp"
 #include "order_book/replay_parser.hpp"
+#include "order_book/runtime/instruments.hpp"
 #include "order_book/submission_result.hpp"
 #include "workload.hpp"
 
@@ -216,6 +217,30 @@ ComponentResult symbolCompareResult(std::size_t passes) {
     return result;
 }
 
+// Hits only, cycling through the list, on one thread.
+ComponentResult symbolLookupResult(std::size_t instruments, std::size_t passes) {
+    std::vector<runtime::Instrument> list;
+    std::vector<replay::Symbol> symbols;
+    for (std::size_t i = 0; i < instruments; ++i) {
+        symbols.push_back(*replay::Symbol::parse("S" + std::to_string(i)));
+        list.push_back(runtime::Instrument{symbols.back(), std::nullopt, std::nullopt, std::nullopt, std::nullopt});
+    }
+    const runtime::InstrumentDirectory directory(list, 4);
+    constexpr std::size_t lookups = std::size_t{1} << 20;
+    ComponentResult result{"symbol-lookup", std::to_string(instruments) + "-instruments", "hit", 0, 0,
+                           passes, 0, passes * lookups};
+    std::uint64_t found = 0;
+    for (std::size_t pass = 0; pass < passes; ++pass) {
+        const Clock::time_point start = Clock::now();
+        for (std::size_t i = 0; i < lookups; ++i) {
+            found += directory.find(symbols[i % instruments])->slot;
+        }
+        result.elapsedNanoseconds += nanosecondsBetween(start, Clock::now());
+    }
+    controlSink = found;
+    return result;
+}
+
 // xorshift64: no load or store, so only the core's clock can change how long this takes.
 std::uint64_t cpuLoop(std::size_t iterations) {
     std::uint64_t state = 88172645463325252ULL;
@@ -352,6 +377,9 @@ std::vector<ComponentResult> runLogGroup(const WorkloadComponentSettings& settin
 std::vector<ComponentResult> runEntryGroup(const WorkloadComponentSettings& settings) {
     std::vector<ComponentResult> results;
     results.push_back(symbolCompareResult(settings.passes));
+    for (const std::size_t instruments : std::array<std::size_t, 3>{8, 64, 512}) {
+        results.push_back(symbolLookupResult(instruments, settings.passes));
+    }
     for (const std::string& name : settings.workloads) {
         const Workload workload = generateWorkload(findWorkload(name), settings.commands, settings.seed);
         results.push_back(executeCommandResult(workload, workloadRecords(workload, componentSymbol()), settings.passes));

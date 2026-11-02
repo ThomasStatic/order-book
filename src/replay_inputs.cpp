@@ -9,7 +9,9 @@
 #include <utility>
 
 #include "order_book/command_log.hpp"
+#include "order_book/replay_instruments.hpp"
 #include "order_book/replay_parser.hpp"
+#include "order_book/replay_summary.hpp"
 
 namespace order_book::replay {
     namespace {
@@ -35,12 +37,21 @@ namespace order_book::replay {
             return path.generic_string();
         }
 
+        // Cut records name a placement but no longer belong to a shard's history.
+        bool isCutRecords(const fs::path& path) {
+            return path.filename().string().starts_with("cut-");
+        }
+
+        bool isBeingMade(const fs::path& path) {
+            return path.extension() == ".tmp";
+        }
+
         // Logs that name a placement, in the order they must run, and every other input after.
         std::vector<fs::path> runOrder(const std::vector<fs::path>& paths, std::vector<EngineLog>& engineLogs) {
             std::vector<fs::path> others;
             for (const fs::path& path : paths) {
                 std::optional<LogHeader> header;
-                if (isCommandLogFile(path)) {
+                if (isCommandLogFile(path) && !isCutRecords(path)) {
                     header = readLogHeader(path);
                 }
                 if (header && header->shardCount > 0) {
@@ -98,7 +109,7 @@ namespace order_book::replay {
             return std::nullopt;
         }
 
-        bool isNamed(const ReplayInput& input) {
+        bool namesSymbols(const ReplayInput& input) {
             return input.format == ReplayFormat::V3;
         }
 
@@ -154,7 +165,8 @@ namespace order_book::replay {
             }
             std::vector<fs::path> logs;
             for (const fs::directory_entry& entry : fs::directory_iterator(path)) {
-                if (entry.is_regular_file() && isCommandLogFile(entry.path())) {
+                if (entry.is_regular_file() && !isBeingMade(entry.path()) && !isCutRecords(entry.path()) &&
+                    isCommandLogFile(entry.path())) {
                     logs.push_back(entry.path());
                 }
             }
@@ -188,11 +200,26 @@ namespace order_book::replay {
             const std::string name = file->path.filename().string();
             for (ReplayRecord record : file->input.records) {
                 merged.tags.push_back(name + ':' + std::to_string(record.lineNumber));
+                merged.origins.push_back(RecordOrigin{file, record.lineNumber});
                 record.lineNumber = merged.records.size();
                 merged.records.push_back(std::move(record));
             }
         }
         return merged;
+    }
+
+    std::string formatMergedError(const ReplayError& error, const MergedRecords& merged) {
+        if (!error.lineNumber || *error.lineNumber >= merged.origins.size()) {
+            return formatReplayError(error, "several inputs");
+        }
+        const RecordOrigin& origin = merged.origins[*error.lineNumber];
+        ReplayError located = error;
+        located.lineNumber = origin.line;
+        return formatReplayError(located, pathText(origin.file->path));
+    }
+
+    std::string symbolOnNamedInput(const fs::path& path) {
+        return "--symbol is for a v1 or v2 file; '" + pathText(path) + "' names its own symbols";
     }
 
     ConvertOutcome convertReplayFiles(const std::vector<fs::path>& inputs, const fs::path& out, std::optional<Symbol> symbol) {
@@ -203,23 +230,28 @@ namespace order_book::replay {
             return outcome;
         }
         const std::vector<fs::path> expanded = expandInputs(inputs);
-        const bool several = expanded.size() > 1 || (inputs.size() == 1 && fs::is_directory(inputs[0], ignored));
+        const bool several = expanded.size() != 1 || (inputs.size() == 1 && fs::is_directory(inputs[0], ignored));
 
-        const ReplayInputs read = readReplayInputs(inputs);
-        if (read.refusal) {
-            outcome.refusal = read.refusal;
-            return outcome;
+        ReplayInputs read;
+        if (several) {
+            read = readReplayInputs(inputs);
+            if (read.refusal) {
+                outcome.refusal = read.refusal;
+                return outcome;
+            }
+        } else {
+            read.files.push_back(LoadedInput{expanded[0], readReplayOrLogFile(expanded[0])});
         }
         for (const LoadedInput& file : read.files) {
             // A file that failed at its header has no format to judge it by.
             if (file.input.records.empty() && file.input.error) {
                 continue;
             }
-            if (isNamed(file.input) && symbol) {
-                outcome.usage = "--symbol is for a v1 or v2 file; '" + pathText(file.path) + "' names its own symbols";
+            if (namesSymbols(file.input) && symbol) {
+                outcome.usage = symbolOnNamedInput(file.path);
                 return outcome;
             }
-            if (!isNamed(file.input) && !symbol) {
+            if (!namesSymbols(file.input) && !symbol) {
                 outcome.usage = "'" + pathText(file.path) + "' names no symbol, so it needs --symbol";
                 return outcome;
             }
@@ -233,8 +265,11 @@ namespace order_book::replay {
             }
         }
         outcome.records = records.size();
+        if (records.empty() && outcome.error) {
+            return outcome;
+        }
         const Symbol standIn = symbol.value_or(Symbol{});
-        if (!several && !read.files.empty()) {
+        if (!several) {
             if (isCommandLogFile(read.files[0].path)) {
                 writeCsv(out, records, false);
             } else {
@@ -244,16 +279,12 @@ namespace order_book::replay {
             return outcome;
         }
         fs::create_directories(out);
-        std::map<Symbol, std::vector<ReplayRecord>> grouped;
-        for (ReplayRecord& record : records) {
-            if (record.symbol.empty()) {
-                record.symbol = standIn;
+        for (InstrumentRecords& instrument : groupBySymbol(records, standIn)) {
+            for (ReplayRecord& record : instrument.records) {
+                record.symbol = instrument.symbol;
             }
-            grouped[record.symbol].push_back(record);
-        }
-        for (const auto& [held, group] : grouped) {
-            const fs::path path = out / ("commands-" + held.text() + ".csv");
-            writeCsv(path, group, true);
+            const fs::path path = out / ("commands-" + instrument.symbol.text() + ".csv");
+            writeCsv(path, instrument.records, true);
             outcome.outputs.push_back(path);
         }
         return outcome;

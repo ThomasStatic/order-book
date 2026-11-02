@@ -13,7 +13,7 @@ Everything is little-endian. Byte values are defined here, not taken from any C+
 | 12 | 4 | minimum reader version (1) |
 | 16 | 4 | header bytes (64), the fixed part |
 | 20 | 4 | record bytes (40) |
-| 24 | 6 | writing engine's version: major, minor, patch, `u16` each; recorded, not enforced |
+| 24 | 6 | writing engine's version: major, minor, patch, `u16` each; recorded, not enforced; 0.0.0 when no engine wrote it, as in a converted file |
 | 30 | 2 | reserved, 0 |
 | 32 | 8 | first position |
 | 40 | 4 | shard count, 0 for no placement |

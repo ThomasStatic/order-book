@@ -5,3 +5,4 @@
 *.stderr -text
 # Golden command logs, compared byte for byte.
 *.oblog -text
+*.tmp -text

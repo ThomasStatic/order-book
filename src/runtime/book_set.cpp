@@ -10,7 +10,7 @@
 namespace order_book::runtime {
 
     BookSet::BookSet(const InstrumentDirectory& directory, std::uint32_t shardNumber, const BookCapacity& defaults)
-        : shardIndex(shardNumber), owner(std::this_thread::get_id()) {
+        : shardIndex(shardNumber), owningThread(std::this_thread::get_id()) {
         const std::span<const Instrument> instruments = directory.onShard(shardNumber);
         books.reserve(instruments.size());
         for (const Instrument& instrument : instruments) {
@@ -21,7 +21,7 @@ namespace order_book::runtime {
 
     void BookSet::checkCaller(const char* call, std::uint32_t slot) const {
         if constexpr (invariantChecksAfterCommands) {
-            if (std::this_thread::get_id() != owner) {
+            if (std::this_thread::get_id() != owningThread) {
                 std::cerr << "order book runtime: BookSet::" << call << " called off its owning thread: shard=" << shardIndex
                           << " slot=" << slot << std::endl;
                 std::abort();

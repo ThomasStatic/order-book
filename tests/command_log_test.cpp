@@ -190,16 +190,9 @@ std::vector<Entry> everyCommand() {
             Entry{symbolOf("ES-Z26"), CancelCommand{77}}};
 }
 
-LogHeader goldenHeader() {
-    LogHeader header;
-    header.engineMajor = 2;
-    header.engineMinor = 1;
-    return header;
-}
-
 void testGoldenFiles(const std::filesystem::path& root) {
     const Bytes every = readFile(root / "log" / "every_command.oblog");
-    expect(makeLog(goldenHeader(), everyCommand()) == every, "the encoder writes the golden log byte for byte");
+    expect(makeLog(LogHeader{}, everyCommand()) == every, "the encoder writes the golden log byte for byte");
     const ReadAll read = readAll(every);
     expect(!read.error, "the golden log reads to its end");
     expect(read.records.size() == 10, "every record reads");
@@ -210,7 +203,9 @@ void testGoldenFiles(const std::filesystem::path& root) {
         expect(read.records[i].lineNumber == i + 2, "line is the twin's");
     }
 
-    LogHeader placement = goldenHeader();
+    LogHeader placement;
+    placement.engineMajor = 2;
+    placement.engineMinor = 1;
     placement.firstPosition = 1000;
     placement.shardCount = 4;
     placement.shardIndex = 2;
@@ -227,7 +222,7 @@ void testGoldenFiles(const std::filesystem::path& root) {
            "position counts from the header, and the line from the file");
 
     const Bytes empty = readFile(root / "log" / "header_only.oblog");
-    expect(makeLog(goldenHeader(), {}) == empty, "a header alone is byte for byte");
+    expect(makeLog(LogHeader{}, {}) == empty, "a header alone is byte for byte");
     expect(!readAll(empty).error && readAll(empty).records.empty(), "a header alone is a clean end");
 }
 
@@ -464,7 +459,7 @@ void testTinyChunks() {
 // Changing any byte is refused or stays a sound command. It must never crash, under ASan and
 // UBSan above all.
 void testByteSweep() {
-    const Bytes log = makeLog(goldenHeader(), everyCommand());
+    const Bytes log = makeLog(LogHeader{}, everyCommand());
     std::uint32_t state = 1;
     for (std::size_t at = 0; at < log.size(); ++at) {
         for (int round = 0; round < 3; ++round) {

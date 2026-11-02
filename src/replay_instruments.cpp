@@ -23,6 +23,21 @@ namespace order_book::replay {
         return instruments;
     }
 
+    bool isFailedFinalCheck(const ReplayError& error) noexcept {
+        return error.code == ReplayErrorCode::INVARIANT_VIOLATION && !error.lineNumber;
+    }
+
+    std::optional<ReplayError> locateFailedFinalCheck(const std::vector<ReplayRecord>& records, const ReplayOptions& options) {
+        ReplayOptions perCommand = options;
+        perCommand.invariantValidation = InvariantValidation::PER_COMMAND;
+        OrderBook book;
+        const ReplayOutcome rerun = ReplayEngine::run(records, book, perCommand);
+        if (const ReplayError* located = std::get_if<ReplayError>(&rerun)) {
+            return *located;
+        }
+        return std::nullopt;
+    }
+
     InstrumentsOutcome replayInstruments(const std::vector<InstrumentRecords>& instruments, const ReplayOptions& options) {
         std::vector<InstrumentReplay> replays;
         replays.reserve(instruments.size());
@@ -30,15 +45,9 @@ namespace order_book::replay {
             OrderBook book;
             ReplayOutcome outcome = ReplayEngine::run(instrument.records, book, options);
             if (ReplayError* failure = std::get_if<ReplayError>(&outcome)) {
-                InstrumentFailure failed{instrument.symbol, *failure, {}};
-                if (failure->code == ReplayErrorCode::INVARIANT_VIOLATION && !failure->lineNumber) {
-                    ReplayOptions perCommand = options;
-                    perCommand.invariantValidation = InvariantValidation::PER_COMMAND;
-                    OrderBook freshBook;
-                    const ReplayOutcome rerun = ReplayEngine::run(instrument.records, freshBook, perCommand);
-                    if (const ReplayError* located = std::get_if<ReplayError>(&rerun)) {
-                        failed.located.push_back(*located);
-                    }
+                InstrumentFailure failed{instrument.symbol, *failure, std::nullopt};
+                if (isFailedFinalCheck(*failure)) {
+                    failed.located = locateFailedFinalCheck(instrument.records, options);
                 }
                 return failed;
             }

@@ -7,6 +7,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include "order_book/replay_parser.hpp"
+
 namespace order_book::runtime {
 
     namespace {
@@ -22,18 +24,6 @@ namespace order_book::runtime {
         InstrumentListError fieldError(std::size_t lineNumber, InstrumentListErrorCode code, std::size_t column,
                                        std::string message) {
             return InstrumentListError{lineNumber, code, std::string(columnNames[column]), std::move(message)};
-        }
-
-        std::vector<std::string_view> splitFields(std::string_view text) {
-            std::vector<std::string_view> fields;
-            while (true) {
-                const std::size_t comma = text.find(',');
-                fields.push_back(text.substr(0, comma));
-                if (comma == std::string_view::npos) {
-                    return fields;
-                }
-                text.remove_prefix(comma + 1);
-            }
         }
 
         struct NumberField {
@@ -90,7 +80,7 @@ namespace order_book::runtime {
             if (text.find('"') != std::string_view::npos) {
                 return fileError(lineNumber, InstrumentListErrorCode::QUOTE_CHARACTER, "fields are never quoted");
             }
-            const std::vector<std::string_view> fields = splitFields(text);
+            const std::vector<std::string> fields = replay::splitRecord(text, lineNumber).fields;
             if (fields.size() != columnCount) {
                 return fileError(lineNumber, InstrumentListErrorCode::WRONG_COLUMN_COUNT,
                                  "expected 5 fields, found " + std::to_string(fields.size()));
@@ -99,7 +89,7 @@ namespace order_book::runtime {
             const std::optional<Symbol> symbol = Symbol::parse(fields[0]);
             if (!symbol) {
                 return fieldError(lineNumber, InstrumentListErrorCode::INVALID_SYMBOL, 0,
-                                  "'" + std::string(fields[0]) + "' is not a symbol");
+                                  "'" + fields[0] + "' is not a symbol");
             }
             Instrument instrument{*symbol, std::nullopt, std::nullopt, std::nullopt, std::nullopt};
 
@@ -110,7 +100,7 @@ namespace order_book::runtime {
             if (shard.value) {
                 if (*shard.value >= shardCount) {
                     return fieldError(lineNumber, InstrumentListErrorCode::SHARD_OUT_OF_RANGE, 1,
-                                      "shard " + std::string(fields[1]) + " is not below the shard count " +
+                                      "shard " + fields[1] + " is not below the shard count " +
                                           std::to_string(shardCount));
                 }
                 instrument.shard = static_cast<std::uint32_t>(*shard.value);

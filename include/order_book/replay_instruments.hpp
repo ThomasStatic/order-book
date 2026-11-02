@@ -35,10 +35,16 @@ namespace order_book::replay {
         ReplayError error;
         // Where a failed final check first went wrong, from replaying that book alone with
         // per-command checks; empty if that was not done or found nothing.
-        std::vector<ReplayError> located;
+        std::optional<ReplayError> located;
     };
 
     using InstrumentsOutcome = std::variant<std::vector<InstrumentReplay>, InstrumentFailure>;
+
+    // Whether this error is a final check that failed, which names no line.
+    bool isFailedFinalCheck(const ReplayError& error) noexcept;
+
+    // Replays records on a fresh book with per-command checks, and gives what that finds.
+    std::optional<ReplayError> locateFailedFinalCheck(const std::vector<ReplayRecord>& records, const ReplayOptions& options);
 
     InstrumentsOutcome replayInstruments(const std::vector<InstrumentRecords>& instruments, const ReplayOptions& options);
 

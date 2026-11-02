@@ -20,6 +20,13 @@ namespace order_book::replay {
         constexpr std::uint8_t commandCancel = 2;
         constexpr std::uint8_t commandReplace = 3;
 
+        constexpr std::uint8_t orderTypeLimit = 1;
+        constexpr std::uint8_t orderTypeMarket = 2;
+        constexpr std::uint8_t orderTypeStop = 3;
+        constexpr std::uint8_t orderTypeStopLimit = 4;
+
+        constexpr std::uint8_t timeInForceGtc = 1;
+
         constexpr std::uint8_t flagPostOnly = 1;
 
         // Field offsets within a record.
@@ -43,17 +50,17 @@ namespace order_book::replay {
 
         constexpr std::uint8_t orderTypeByte(OrderType type) noexcept {
             switch (type) {
-                case OrderType::LIMIT: return 1;
-                case OrderType::MARKET: return 2;
-                case OrderType::STOP: return 3;
-                case OrderType::STOP_LIMIT: return 4;
+                case OrderType::LIMIT: return orderTypeLimit;
+                case OrderType::MARKET: return orderTypeMarket;
+                case OrderType::STOP: return orderTypeStop;
+                case OrderType::STOP_LIMIT: return orderTypeStopLimit;
             }
             return 0;
         }
 
         constexpr std::uint8_t timeInForceByte(TimeInForce timeInForce) noexcept {
             switch (timeInForce) {
-                case TimeInForce::GTC: return 1;
+                case TimeInForce::GTC: return timeInForceGtc;
                 case TimeInForce::IOC: return 2;
                 case TimeInForce::FOK: return 3;
             }
@@ -213,9 +220,9 @@ namespace order_book::replay {
                     return error(ParseErrorCode::INVALID_TIME_IN_FORCE, timeInForceColumn, fields.timeInForce,
                                  "not a time in force");
                 }
-                const bool priceless = fields.orderType == 2 || fields.orderType == 3;
-                const bool stop = fields.orderType == 3 || fields.orderType == 4;
-                if (priceless && fields.timeInForce == 1) {
+                const bool priceless = fields.orderType == orderTypeMarket || fields.orderType == orderTypeStop;
+                const bool stop = fields.orderType == orderTypeStop || fields.orderType == orderTypeStopLimit;
+                if (priceless && fields.timeInForce == timeInForceGtc) {
                     return error(ParseErrorCode::INVALID_COMBINATION, timeInForceColumn, fields.timeInForce,
                                  "a MARKET or STOP order must be IOC or FOK, not GTC");
                 }
@@ -236,7 +243,7 @@ namespace order_book::replay {
                                                              : absent(stopPriceColumn, fields.stopPrice, "a non-stop ADD")) {
                     return problem;
                 }
-                return checkInstructions(fields.orderType == 1 && fields.timeInForce == 1);
+                return checkInstructions(fields.orderType == orderTypeLimit && fields.timeInForce == timeInForceGtc);
             }
 
             std::optional<ParseError> checkReplace() const {
@@ -392,6 +399,7 @@ namespace order_book::replay {
     std::uint32_t encodeLogRecord(const Symbol& symbol, const Command& command, std::uint32_t previousChecksum,
                                   std::span<std::byte, logRecordBytes> out) noexcept {
         std::memset(out.data(), 0, out.size());
+        assert(!symbol.empty());
         const std::span<std::byte> record(out);
         const std::array<char, Symbol::size> stored = symbol.bytes();
         std::memcpy(out.data() + symbolOffset, stored.data(), stored.size());
@@ -410,6 +418,7 @@ namespace order_book::replay {
                     store32(record, stopPriceOffset, held.stopPrice);
                     encodeInstructions(record, held.postOnly, held.owner, held.selfTradePrevention);
                 } else if constexpr (std::is_same_v<Kind, CancelCommand>) {
+                    assert(held.orderId != 0);
                     store8(record, commandOffset, commandCancel);
                 } else {
                     static_assert(std::is_same_v<Kind, ReplaceCommand>, "every Command alternative needs a record");

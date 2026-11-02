@@ -3,3 +3,5 @@ cmake-build-*/
 compile_commands.json
 .vscode/
 *.swp
+__pycache__/
+*.pyc

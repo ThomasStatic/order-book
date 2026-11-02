@@ -31,7 +31,8 @@ namespace order_book::replay {
         std::uint32_t minimumReaderVersion = logFormatVersion;
         std::uint32_t headerBytes = logHeaderBytes;
         std::uint32_t recordBytes = logRecordBytes;
-        // The writing engine's version: recorded, not enforced.
+        // The writing engine's version: recorded, not enforced. 0.0.0 means no engine wrote it,
+        // as in a converted file, which is what keeps that file's round trip byte-identical.
         std::uint16_t engineMajor = 0;
         std::uint16_t engineMinor = 0;
         std::uint16_t enginePatch = 0;

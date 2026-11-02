@@ -468,17 +468,17 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(book_set_tests)
     add_test(NAME book_set_tests COMMAND book_set_tests)
 
-    add_executable(book_set_owner_tests
-        tests/book_set_owner_test.cpp
+    add_executable(book_set_thread_tests
+        tests/book_set_thread_test.cpp
     )
 
-    target_compile_features(book_set_owner_tests PRIVATE cxx_std_20)
-    target_link_libraries(book_set_owner_tests PRIVATE order_book_runtime)
-    order_book_enable_warnings(book_set_owner_tests)
-    order_book_enable_sanitizers(book_set_owner_tests)
+    target_compile_features(book_set_thread_tests PRIVATE cxx_std_20)
+    target_link_libraries(book_set_thread_tests PRIVATE order_book_runtime)
+    order_book_enable_warnings(book_set_thread_tests)
+    order_book_enable_sanitizers(book_set_thread_tests)
     foreach(call execute book)
-        add_test(NAME book_set_owner_${call} COMMAND book_set_owner_tests ${call})
-        set_tests_properties(book_set_owner_${call} PROPERTIES
+        add_test(NAME book_set_thread_${call} COMMAND book_set_thread_tests ${call})
+        set_tests_properties(book_set_thread_${call} PROPERTIES
             PASS_REGULAR_EXPRESSION "order book runtime: BookSet::${call} called off its owning thread: shard=0 slot=0"
             FAIL_REGULAR_EXPRESSION "FAILED"
             SKIP_REGULAR_EXPRESSION "SKIPPED")
@@ -509,12 +509,15 @@ if(BUILD_TESTING)
     # are relative to tests/replay, so diagnostics don't depend on the checkout location.
     # A stream with no expected file must stay empty.
     function(order_book_add_replay_cli_test name)
-        cmake_parse_arguments(PARSE_ARGV 1 cli "" "EXIT;STDOUT;STDERR" "ARGS")
+        cmake_parse_arguments(PARSE_ARGV 1 cli "" "EXIT;STDOUT;STDERR;CLEAN" "ARGS")
         set(dir ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay)
         list(JOIN cli_ARGS "|" args)
         set(defines -DNAME=${name} -DCLI=$<TARGET_FILE:order_book_cli> -DARGS=${args}
                     -DWORKING_DIRECTORY=${dir} -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/replay-cli-output
                     -DEXPECTED_EXIT=${cli_EXIT})
+        if(cli_CLEAN)
+            list(APPEND defines -DCLEAN=${cli_CLEAN})
+        endif()
         if(cli_STDOUT)
             list(APPEND defines -DEXPECTED_STDOUT=${dir}/expected/${cli_STDOUT})
         endif()
@@ -615,6 +618,12 @@ if(BUILD_TESTING)
         ARGS replay valid/v3_two_instruments.csv log/every_command.oblog --events --no-statistics
         EXIT 0 STDOUT two_named_inputs.stdout)
     order_book_add_replay_cli_test(directory_of_logs ARGS replay log/shards --no-statistics --events EXIT 0 STDOUT shard_logs.stdout)
+    # A directory leaves out files being made and cut records, and one file keeps "line N:".
+    order_book_add_replay_cli_test(directory_skips_cut_records
+        ARGS replay log/cut --events --no-statistics EXIT 0 STDOUT cut_directory.stdout)
+    order_book_add_replay_cli_test(cut_records_read_directly
+        ARGS replay log/cut/cut-0000-00000000000000000002.oblog --events --no-statistics
+        EXIT 0 STDOUT cut_records.stdout)
     order_book_add_replay_cli_test(logs_not_from_zero
         ARGS replay log/shards/shard0-part2.oblog EXIT 1 STDERR logs_not_from_zero.stderr)
     order_book_add_replay_cli_test(logs_with_a_gap
@@ -629,6 +638,28 @@ if(BUILD_TESTING)
     order_book_add_replay_cli_test(usage_convert_symbol_on_v3
         ARGS convert valid/v3_one_instrument.csv --symbol AAPL --out ${CMAKE_CURRENT_BINARY_DIR}/no-such-output.oblog
         EXIT 2 STDERR usage_convert_symbol_on_v3.stderr)
+    order_book_add_replay_cli_test(usage_convert_unknown_option
+        ARGS convert valid/basic.csv --outt somewhere EXIT 2 STDERR usage_convert_unknown_option.stderr)
+    order_book_add_replay_cli_test(usage_convert_bad_symbol
+        ARGS convert valid/basic.csv --symbol aapl --out somewhere EXIT 2 STDERR usage_bad_symbol.stderr)
+    order_book_add_replay_cli_test(usage_convert_repeated_out
+        ARGS convert valid/basic.csv --out one --out two EXIT 2 STDERR usage_convert_repeated_out.stderr)
+    order_book_add_replay_cli_test(usage_repeated_flag
+        ARGS replay valid/basic.csv --trades --trades EXIT 2 STDERR usage_repeated_flag.stderr)
+    set(convert_output ${CMAKE_CURRENT_BINARY_DIR}/replay-cli-convert)
+    order_book_add_replay_cli_test(convert_csv_to_log
+        ARGS convert log/every_command.csv --out ${convert_output}-csv.oblog EXIT 0 CLEAN ${convert_output}-csv.oblog)
+    order_book_add_replay_cli_test(convert_log_to_csv
+        ARGS convert log/every_command.oblog --out ${convert_output}-log.csv EXIT 0 CLEAN ${convert_output}-log.csv)
+    order_book_add_replay_cli_test(convert_placed_log
+        ARGS convert log/placement.oblog --out ${convert_output}-placed.csv EXIT 0 CLEAN ${convert_output}-placed.csv)
+    order_book_add_replay_cli_test(convert_directory
+        ARGS convert log/shards --out ${convert_output}-directory EXIT 0 CLEAN ${convert_output}-directory)
+    order_book_add_replay_cli_test(convert_damaged_input
+        ARGS convert log/torn_tail.oblog --out ${convert_output}-damaged.csv
+        EXIT 1 STDERR log_torn_tail.stderr CLEAN ${convert_output}-damaged.csv)
+    order_book_add_replay_cli_test(convert_missing_input
+        ARGS convert no_such_file.csv --out ${convert_output}-missing.oblog EXIT 1 STDERR missing_file.stderr)
     order_book_add_replay_cli_test(convert_existing_output
         ARGS convert valid/v3_one_instrument.csv --out valid/basic.csv EXIT 1 STDERR convert_existing_output.stderr)
     order_book_add_replay_cli_test(usage_unknown_option
@@ -722,7 +753,7 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
     find_package(Threads REQUIRED)
     target_compile_features(order_book_benchmarking PUBLIC cxx_std_20)
     target_include_directories(order_book_benchmarking PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks)
-    target_link_libraries(order_book_benchmarking PUBLIC order_book_replay order_book_reference Threads::Threads)
+    target_link_libraries(order_book_benchmarking PUBLIC order_book_runtime order_book_reference Threads::Threads)
     # Recorded with every result, so a report says which configuration produced it.
     target_compile_definitions(order_book_benchmarking PRIVATE ORDER_BOOK_BUILD_CONFIG="$<CONFIG>")
     # GCC defines no macro under UBSan, so say whether order_book_enable_sanitizers applies it.

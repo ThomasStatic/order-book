@@ -72,7 +72,9 @@ TIF = {'': 0, 'GTC': 1, 'IOC': 2, 'FOK': 3}
 MODE = {'': 0, 'CANCEL_RESTING': 1, 'CANCEL_INCOMING': 2, 'CANCEL_BOTH': 3}
 
 
-def header(first_position=0, shard_count=0, shard_index=0, symbols=(), engine=(2, 1, 0)):
+def header(first_position=0, shard_count=0, shard_index=0, symbols=()):
+    # Only an engine writes a placement. A file with none was converted, so no engine wrote it.
+    engine = (2, 1, 0) if shard_count else (0, 0, 0)
     body = b'OBCLOG\r\n'
     body += struct.pack('<IIII', 1, 1, 64, 40)
     body += struct.pack('<HHH', *engine) + b'\0\0'
@@ -148,6 +150,15 @@ def main():
     moved = here / 'moved'
     moved.mkdir(exist_ok=True)
     (moved / 'shard2-aapl.oblog').write_bytes(log(header(0, 3, 2, ('AAPL',)), [record('CANCEL', 2, 'AAPL')]))
+
+    # One real log beside what replay <directory> must leave out: records cut away from its tail,
+    # and a file still being made.
+    cut = here / 'cut'
+    cut.mkdir(exist_ok=True)
+    (cut / 'log-0000-00000000000000000000.oblog').write_bytes(log(header(0, 1, 0, ('AAPL',)), PLACEMENT))
+    cut_away = [record('ADD', 2, 'AAPL', 'BUY', 90, 1, 'LIMIT', 'GTC')]
+    (cut / 'cut-0000-00000000000000000002.oblog').write_bytes(log(header(2, 1, 0, ('AAPL',)), cut_away))
+    (cut / 'log-0000-00000000000000000002.oblog.tmp').write_bytes(log(header(2, 1, 0, ('AAPL',)), cut_away))
 
 
 if __name__ == '__main__':

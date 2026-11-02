@@ -49,7 +49,7 @@ int main(int argc, char** argv) {
         return EXIT_SUCCESS;
     } else {
         if (argc != 2) {
-            std::cerr << "FAILED: usage: book_set_owner_tests <call>" << std::endl;
+            std::cerr << "FAILED: usage: book_set_thread_tests <call>" << std::endl;
             return EXIT_FAILURE;
         }
 #ifdef _MSC_VER

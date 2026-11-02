@@ -6,7 +6,7 @@ Sample input for the CSV replay format defined in [`docs/replay-format.md`](../.
 
 ## `log/`
 
-Golden command logs, compared byte for byte, written by the standalone `make_golden.py` from `docs/command-log-format.md`: `every_command.oblog` (every command type, with its CSV twin `every_command.csv`), `placement.oblog` (a placement and a nonzero first position), `header_only.oblog`, and `torn_tail.oblog` (two records, then a third cut short).
+Golden command logs, compared byte for byte, written by the standalone `make_golden.py` from `docs/command-log-format.md`: `every_command.oblog` (every command type, with its CSV twin `every_command.csv`), `placement.oblog` (a placement and a nonzero first position), `header_only.oblog`, `torn_tail.oblog` (two records, then a third cut short), `shards/` (one session on two shards), `gap/` (a position missing after it), `moved/` (its symbol on another shard), and `cut/` (one log beside cut records and a file being made). A log with no placement records engine version 0.0.0, as a converted file does.
 
 ## `valid/`
 
@@ -372,3 +372,12 @@ Each breaks one v2 rule (`v1_replace.csv` uses the v1 header). The last column i
 | `replace_missing_price.csv` | 4 | `price` | 2 | `MISSING_REQUIRED_FIELD` |
 | `replace_missing_quantity.csv` | 4 | `quantity` | 2 | `MISSING_REQUIRED_FIELD` |
 | `replace_with_stop_price.csv` | 4 | `stop_price` | 2 | `UNEXPECTED_FIELD` |
+
+### Version 3
+
+Each uses the v3 header. The last column is the `ParseErrorCode`.
+
+| File | Line | Column | Commands before it | Code |
+|---|---|---|---|---|
+| `symbol_lower_case.csv` | 4 | `symbol` | 2 | `INVALID_SYMBOL` |
+| `symbol_missing.csv` | 4 | `symbol` | 2 | `MISSING_REQUIRED_FIELD` |

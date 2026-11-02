@@ -1,7 +1,9 @@
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -100,6 +102,10 @@ namespace {
         return arg == "-h" || arg == "--help";
     }
 
+    std::string repeated(std::string_view option) {
+        return "'" + std::string(option) + "' was given twice";
+    }
+
     // Printing lives here, outside the engine: the book only returns events.
     void printEvents(std::span<const order_book::BookEvent> events) {
         for (const order_book::BookEvent& event : events) {
@@ -138,6 +144,24 @@ namespace {
         return replay::ReplayOutput{settings.printTrades, settings.printEvents, settings.printBook, settings.printStatistics};
     }
 
+    using ErrorText = std::function<std::string(const replay::ReplayError&)>;
+
+    // A book that failed, then, for a failed final check, where replaying it alone found it
+    // broken. The result was lost with the failure, so nothing else prints.
+    void printBookFailure(std::string_view prefix, const replay::ReplayError& error,
+                          const std::optional<replay::ReplayError>& located, const ErrorText& text) {
+        std::cout.flush();
+        std::cerr << prefix << text(error) << '\n';
+        if (replay::isFailedFinalCheck(error)) {
+            std::cerr << prefix << "replaying with per-command checks to find the first failing command\n";
+            if (located) {
+                std::cerr << prefix << text(*located) << '\n';
+            } else {
+                std::cerr << prefix << "the per-command replay found no failure\n";
+            }
+        }
+    }
+
     // Each book's run, then every section, then any diagnostic, as a single book does below. A
     // book that fails prints only its diagnostic, prefixed with its symbol.
     int runInstruments(const ReplaySettings& settings, const replay::ReplayInput& input) {
@@ -147,18 +171,8 @@ namespace {
             replay::groupBySymbol(input.records, settings.symbol.value_or(replay::Symbol{})), options);
 
         if (const auto* failure = std::get_if<replay::InstrumentFailure>(&outcome)) {
-            const std::string prefix = "symbol " + failure->symbol.text() + ": ";
-            std::cout.flush();
-            std::cerr << prefix << replay::formatReplayError(failure->error, settings.path) << '\n';
-            if (failure->error.code == replay::ReplayErrorCode::INVARIANT_VIOLATION && !failure->error.lineNumber) {
-                std::cerr << prefix << "replaying with per-command checks to find the first failing command\n";
-                if (failure->located.empty()) {
-                    std::cerr << prefix << "the per-command replay found no failure\n";
-                }
-                for (const replay::ReplayError& located : failure->located) {
-                    std::cerr << prefix << replay::formatReplayError(located, settings.path) << '\n';
-                }
-            }
+            printBookFailure("symbol " + failure->symbol.text() + ": ", failure->error, failure->located,
+                             [&settings](const replay::ReplayError& error) { return replay::formatReplayError(error, settings.path); });
             return engineFailure;
         }
 
@@ -188,7 +202,7 @@ namespace {
         for (const replay::LoadedInput& file : inputs.files) {
             const bool namesSymbols = file.input.format == replay::ReplayFormat::V3;
             if (namesSymbols && settings.symbol) {
-                return usage("--symbol is for a v1 or v2 file; '" + file.path.generic_string() + "' names its own symbols");
+                return usage(replay::symbolOnNamedInput(file.path));
             }
             (namesSymbols || settings.symbol ? named : alone).push_back(&file);
         }
@@ -201,8 +215,12 @@ namespace {
             order_book::OrderBook book;
             const replay::ReplayOutcome outcome = replay::ReplayEngine::run(merged.records, book, options);
             if (const replay::ReplayError* failure = std::get_if<replay::ReplayError>(&outcome)) {
-                std::cout.flush();
-                std::cerr << replay::formatReplayError(*failure, file->path.generic_string()) << '\n';
+                std::optional<replay::ReplayError> located;
+                if (replay::isFailedFinalCheck(*failure)) {
+                    located = replay::locateFailedFinalCheck(merged.records, options);
+                }
+                printBookFailure("", *failure, located,
+                                 [&merged](const replay::ReplayError& error) { return replay::formatMergedError(error, merged); });
                 return engineFailure;
             }
             replay::ReplayOutput output = outputOf(settings);
@@ -215,9 +233,8 @@ namespace {
         const replay::InstrumentsOutcome outcome =
             replay::replayInstruments(replay::groupBySymbol(merged.records, settings.symbol.value_or(replay::Symbol{})), options);
         if (const auto* failure = std::get_if<replay::InstrumentFailure>(&outcome)) {
-            std::cout.flush();
-            std::cerr << "symbol " << failure->symbol.text() << ": " << replay::formatReplayError(failure->error, "several inputs")
-                      << '\n';
+            printBookFailure("symbol " + failure->symbol.text() + ": ", failure->error, failure->located,
+                             [&merged](const replay::ReplayError& error) { return replay::formatMergedError(error, merged); });
             return engineFailure;
         }
         replay::ReplayOutput output = outputOf(settings);
@@ -254,7 +271,7 @@ namespace {
         const replay::ReplayInput input = replay::readReplayOrLogFile(path);
         if (input.format == replay::ReplayFormat::V3) {
             if (settings.symbol) {
-                return usage("--symbol is for a v1 or v2 file; '" + path + "' names its own symbols");
+                return usage(replay::symbolOnNamedInput(path));
             }
             return runInstruments(settings, input);
         }
@@ -268,19 +285,12 @@ namespace {
         const replay::ReplayOutcome outcome = replay::ReplayEngine::run(input.records, book, options);
 
         if (const replay::ReplayError* failure = std::get_if<replay::ReplayError>(&outcome)) {
-            std::cout.flush();
-            std::cerr << replay::formatReplayError(*failure, path) << '\n';
-            if (failure->code == replay::ReplayErrorCode::INVARIANT_VIOLATION && !failure->lineNumber) {
-                std::cerr << "replaying with per-command checks to find the first failing command\n";
-                options.invariantValidation = replay::InvariantValidation::PER_COMMAND;
-                order_book::OrderBook freshBook;
-                const replay::ReplayOutcome rerun = replay::ReplayEngine::run(input.records, freshBook, options);
-                if (const replay::ReplayError* located = std::get_if<replay::ReplayError>(&rerun)) {
-                    std::cerr << replay::formatReplayError(*located, path) << '\n';
-                } else {
-                    std::cerr << "the per-command replay found no failure\n";
-                }
+            std::optional<replay::ReplayError> located;
+            if (replay::isFailedFinalCheck(*failure)) {
+                located = replay::locateFailedFinalCheck(input.records, options);
             }
+            printBookFailure("", *failure, located,
+                             [&path](const replay::ReplayError& error) { return replay::formatReplayError(error, path); });
             return engineFailure;
         }
 
@@ -299,10 +309,13 @@ namespace {
     int replayCommand(const std::vector<std::string_view>& args) {
         ReplaySettings settings;
         bool optionsEnded = false;
+        std::set<std::string_view> given;
         for (std::size_t i = 0; i < args.size(); ++i) {
             const std::string_view arg = args[i];
             if (!optionsEnded && arg == "--") {
                 optionsEnded = true;
+            } else if (!optionsEnded && arg.starts_with("--") && !given.insert(arg).second) {
+                return usage(repeated(arg));
             } else if (!optionsEnded && arg == "--trades") {
                 settings.printTrades = true;
             } else if (!optionsEnded && arg == "--events") {
@@ -344,9 +357,11 @@ namespace {
         if (settings.paths.empty()) {
             return usage("replay needs a file to read");
         }
-        std::error_code ignored;
-        if (settings.paths.size() == 1 && !std::filesystem::is_directory(settings.paths[0], ignored)) {
-            settings.path = settings.paths[0];
+        // One file keeps the "line N:" tag, however it was named. As typed, when it was typed.
+        const std::vector<std::filesystem::path> paths(settings.paths.begin(), settings.paths.end());
+        const std::vector<std::filesystem::path> expanded = replay::expandInputs(paths);
+        if (expanded.size() == 1) {
+            settings.path = expanded[0] == paths[0] ? settings.paths[0] : expanded[0].generic_string();
             return runReplay(settings);
         }
         return runSeveral(settings);
@@ -357,8 +372,12 @@ namespace {
         std::vector<std::filesystem::path> inputs;
         std::optional<std::filesystem::path> out;
         std::optional<replay::Symbol> symbol;
+        std::set<std::string_view> given;
         for (std::size_t i = 0; i < args.size(); ++i) {
             const std::string_view arg = args[i];
+            if (arg.starts_with("--") && !given.insert(arg).second) {
+                return usage(repeated(arg));
+            }
             if (arg == "--out" || arg == "--symbol") {
                 if (i + 1 == args.size()) {
                     return usage(std::string(arg) + " needs a value");
