@@ -117,6 +117,11 @@ function(order_book_enable_sanitizers target_name)
 
         target_compile_options(${target_name} PRIVATE -fsanitize=${sanitizer_list} -fno-omit-frame-pointer)
         target_link_options(${target_name} PRIVATE -fsanitize=${sanitizer_list})
+        if(ORDER_BOOK_ENABLE_TSAN AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+            # Clang's static runtime defines operator new, which collides with the tests that
+            # replace it to count allocations. The shared one lets their replacements win.
+            target_link_options(${target_name} PRIVATE -shared-libsan -frtlib-add-rpath)
+        endif()
         if(ORDER_BOOK_ENABLE_UBSAN)
             # UBSan otherwise prints a report and carries on, so the test would still pass.
             target_compile_options(${target_name} PRIVATE -fno-sanitize-recover=undefined)
