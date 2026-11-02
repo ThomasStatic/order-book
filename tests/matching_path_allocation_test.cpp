@@ -217,6 +217,18 @@ void testEncodeLogRecord() {
            "encoding a record");
 }
 
+// Unused when automatic checks are on, since main then skips.
+[[maybe_unused]] void runAll() {
+    testTheCountSeesAHeapCall();
+    testEveryWorkloadOnAWarmShard();
+    testSeveralInstrumentsOnAWarmShard();
+    testEveryTypeAndTimeInForce();
+    testACascade();
+    testReplacesFourPaths();
+    testCancelOrder();
+    testEncodeLogRecord();
+}
+
 }  // namespace
 
 int main() {
@@ -225,14 +237,7 @@ int main() {
         std::cout << "SKIPPED: automatic invariant checks are on in this build" << std::endl;
         return skipped;
     } else {
-        testTheCountSeesAHeapCall();
-        testEveryWorkloadOnAWarmShard();
-        testSeveralInstrumentsOnAWarmShard();
-        testEveryTypeAndTimeInForce();
-        testACascade();
-        testReplacesFourPaths();
-        testCancelOrder();
-        testEncodeLogRecord();
+        runAll();
         std::cout << "matching path allocation tests passed" << std::endl;
         return EXIT_SUCCESS;
     }
