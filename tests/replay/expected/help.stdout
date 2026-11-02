@@ -1,6 +1,7 @@
 usage: order_book_cli replay <path>... [--trades] [--events] [--book] [--validate none|final|per-command]
                                        [--symbol SYM] [--no-statistics]
        order_book_cli convert <path>... --out <path> [--symbol SYM]
+       order_book_cli send <file> --connect ADDR:PORT [--symbol SYM]
        order_book_cli demo
        order_book_cli --help
 
@@ -13,6 +14,8 @@ commands:
                      log file in it
   convert <path>...  turn a CSV into a log, or a log into a v3 CSV; several inputs or a
                      directory make --out a directory of commands-<symbol>.csv
+  send <file>        send the file's commands to a running order_book_engine and print
+                     its answers as replay --events --no-statistics prints the file
   demo               print the events of a short scripted session
   help               print this help
 
@@ -30,12 +33,22 @@ replay options, in any order before or after the file:
   --                 treat the next argument as the file, even if it starts with '-'
   -h, --help         print this help and exit
 
+send options, in any order before or after the file:
+  --connect ADDR:PORT  the engine's IPv4 address and port; required
+  --symbol SYM         as for replay, and required for a v1 or v2 file
+  --                   as for replay
+
 exit status:
-  0  replayed to the end, even if the book rejected some commands; or help printed
+  0  replayed to the end, even if the book rejected some commands; or help printed;
+     for send, every command answered
   1  input error: the file can't be opened or read, or is malformed (what ran before
-     the error is still printed)
+     the error is still printed); for send, also no connection
   2  usage error
-  3  engine failure: the book threw, or failed an invariant check
+  3  engine failure: the book threw, or failed an invariant check; for send, the
+     connection was lost or the engine sent ProtocolError before every command was
+     answered, so what ran is unknown (this wins over 1 and 4)
+  4  send only: every command answered, but at least one was Refused, so that one
+     certainly did not run and is safe to send again
 
 A file that names instruments prints one section per symbol, sorted by symbol bytes,
 each holding one book's output.
@@ -45,3 +58,4 @@ examples:
   order_book_cli replay orders.csv --trades
   order_book_cli replay orders.csv --trades --book
   order_book_cli replay orders.csv --events --book --validate per-command
+  order_book_cli send orders.csv --connect 127.0.0.1:9000 --symbol AAPL

@@ -67,34 +67,6 @@ namespace order_book::runtime {
             return std::nullopt;
         }
 
-        // A dotted IPv4 address, a colon, and a port.
-        std::optional<ListenAddress> parseListen(std::string_view text) {
-            const std::size_t colon = text.rfind(':');
-            if (colon == std::string_view::npos) {
-                return std::nullopt;
-            }
-            const std::optional<std::uint64_t> port = parseDigits(text.substr(colon + 1));
-            if (!port || *port > 65535) {
-                return std::nullopt;
-            }
-            ListenAddress address{{}, static_cast<std::uint16_t>(*port)};
-            std::string_view host = text.substr(0, colon);
-            for (std::size_t part = 0; part < 4; ++part) {
-                const std::size_t dot = part == 3 ? host.size() : host.find('.');
-                if (dot == std::string_view::npos) {
-                    return std::nullopt;
-                }
-                const std::string_view digits = host.substr(0, dot);
-                const std::optional<std::uint64_t> value = digits.size() <= 3 ? parseDigits(digits) : std::nullopt;
-                if (!value || *value > 255) {
-                    return std::nullopt;
-                }
-                address.host[part] = static_cast<std::uint8_t>(*value);
-                host = part == 3 ? std::string_view() : host.substr(dot + 1);
-            }
-            return address;
-        }
-
         // Bytes, in the largest binary unit that divides them.
         std::string formatSize(std::size_t value) {
             constexpr std::pair<char, std::size_t> suffixes[] = {{'G', std::size_t{1} << 30}, {'M', std::size_t{1} << 20}, {'K', std::size_t{1} << 10}};
@@ -174,7 +146,7 @@ namespace order_book::runtime {
                 }
                 settings.shards = static_cast<std::uint32_t>(*shards);
             } else if (flag == "--listen") {
-                const std::optional<ListenAddress> address = parseListen(value);
+                const std::optional<ListenAddress> address = parseListenAddress(value);
                 if (!address) {
                     return needs(flag, "an IPv4 address and port, as 127.0.0.1:0", value);
                 }
@@ -194,6 +166,33 @@ namespace order_book::runtime {
             }
         }
         return settings;
+    }
+
+    std::optional<ListenAddress> parseListenAddress(std::string_view text) {
+        const std::size_t colon = text.rfind(':');
+        if (colon == std::string_view::npos) {
+            return std::nullopt;
+        }
+        const std::optional<std::uint64_t> port = parseDigits(text.substr(colon + 1));
+        if (!port || *port > 65535) {
+            return std::nullopt;
+        }
+        ListenAddress address{{}, static_cast<std::uint16_t>(*port)};
+        std::string_view host = text.substr(0, colon);
+        for (std::size_t part = 0; part < 4; ++part) {
+            const std::size_t dot = part == 3 ? host.size() : host.find('.');
+            if (dot == std::string_view::npos) {
+                return std::nullopt;
+            }
+            const std::string_view digits = host.substr(0, dot);
+            const std::optional<std::uint64_t> value = digits.size() <= 3 ? parseDigits(digits) : std::nullopt;
+            if (!value || *value > 255) {
+                return std::nullopt;
+            }
+            address.host[part] = static_cast<std::uint8_t>(*value);
+            host = part == 3 ? std::string_view() : host.substr(dot + 1);
+        }
+        return address;
     }
 
     std::string formatListenAddress(const ListenAddress& address) {

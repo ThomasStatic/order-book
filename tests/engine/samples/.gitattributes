@@ -1,0 +1,3 @@
+# Byte-exact: send's input and its expected output.
+*.csv -text
+*.stdout -text

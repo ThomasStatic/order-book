@@ -88,10 +88,6 @@ namespace order_book::network {
             return address;
         }
 
-        sockaddr_in loopback(std::uint16_t port) noexcept {
-            return ipv4({127, 0, 0, 1}, port);
-        }
-
         std::uint16_t portOf(const sockaddr_in& address) noexcept {
             std::array<std::uint8_t, 2> portBytes{};
             std::memcpy(portBytes.data(), &address.sin_port, portBytes.size());
@@ -155,8 +151,12 @@ namespace order_book::network {
     }
 
     TcpSocket TcpSocket::connectLoopback(std::uint16_t port) {
+        return connectIpv4({127, 0, 0, 1}, port);
+    }
+
+    TcpSocket TcpSocket::connectIpv4(const std::array<std::uint8_t, 4>& host, std::uint16_t port) {
         TcpSocket socket = openStream();
-        const sockaddr_in address = loopback(port);
+        const sockaddr_in address = ipv4(host, port);
         if (::connect(native(socket.held), reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0) {
             fail("connect");
         }

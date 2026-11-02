@@ -39,6 +39,8 @@ namespace order_book::network {
         void listen() const;
         // A blocking connection to 127.0.0.1, with TCP_NODELAY on.
         static TcpSocket connectLoopback(std::uint16_t port);
+        // A blocking connection to this IPv4 address and port, with TCP_NODELAY on.
+        static TcpSocket connectIpv4(const std::array<std::uint8_t, 4>& host, std::uint16_t port);
 
         // A waiting connection, non-blocking and with TCP_NODELAY on, or nothing if none waits.
         std::optional<TcpSocket> accept() const;

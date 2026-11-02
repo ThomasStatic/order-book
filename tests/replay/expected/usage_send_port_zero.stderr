@@ -1,0 +1,7 @@
+order_book_cli: --connect needs an IPv4 address and a port other than 0, as 127.0.0.1:9000, not '127.0.0.1:0'
+usage: order_book_cli replay <path>... [--trades] [--events] [--book] [--validate none|final|per-command]
+                                       [--symbol SYM] [--no-statistics]
+       order_book_cli convert <path>... --out <path> [--symbol SYM]
+       order_book_cli send <file> --connect ADDR:PORT [--symbol SYM]
+       order_book_cli demo
+       order_book_cli --help

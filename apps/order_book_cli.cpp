@@ -20,12 +20,15 @@
 #include "order_book/book_event.hpp"
 #include "order_book/command_log.hpp"
 #include "order_book/event_format.hpp"
+#include "order_book/network/client_stream.hpp"
+#include "order_book/network/tcp.hpp"
 #include "order_book/order.hpp"
 #include "order_book/order_book.hpp"
 #include "order_book/replay_engine.hpp"
 #include "order_book/replay_inputs.hpp"
 #include "order_book/replay_instruments.hpp"
 #include "order_book/replay_summary.hpp"
+#include "order_book/runtime/engine_settings.hpp"
 #include "order_book/symbol.hpp"
 
 namespace {
@@ -36,11 +39,15 @@ namespace {
     constexpr int inputError = 1;    // the file can't be opened or read, or is malformed
     constexpr int usageError = 2;
     constexpr int engineFailure = 3; // the book threw, or failed an invariant check
+    // send's own: 1 is also no connection, and 3 a connection lost before every answer came.
+    constexpr int connectionLost = 3;
+    constexpr int someRefused = 4;   // every command answered, some refused: safe to send again
 
     constexpr std::string_view usageText =
         "usage: order_book_cli replay <path>... [--trades] [--events] [--book] [--validate none|final|per-command]\n"
         "                                       [--symbol SYM] [--no-statistics]\n"
         "       order_book_cli convert <path>... --out <path> [--symbol SYM]\n"
+        "       order_book_cli send <file> --connect ADDR:PORT [--symbol SYM]\n"
         "       order_book_cli demo\n"
         "       order_book_cli --help\n";
 
@@ -54,6 +61,8 @@ namespace {
         "                     log file in it\n"
         "  convert <path>...  turn a CSV into a log, or a log into a v3 CSV; several inputs or a\n"
         "                     directory make --out a directory of commands-<symbol>.csv\n"
+        "  send <file>        send the file's commands to a running order_book_engine and print\n"
+        "                     its answers as replay --events --no-statistics prints the file\n"
         "  demo               print the events of a short scripted session\n"
         "  help               print this help\n"
         "\n"
@@ -71,12 +80,22 @@ namespace {
         "  --                 treat the next argument as the file, even if it starts with '-'\n"
         "  -h, --help         print this help and exit\n"
         "\n"
+        "send options, in any order before or after the file:\n"
+        "  --connect ADDR:PORT  the engine's IPv4 address and port; required\n"
+        "  --symbol SYM         as for replay, and required for a v1 or v2 file\n"
+        "  --                   as for replay\n"
+        "\n"
         "exit status:\n"
-        "  0  replayed to the end, even if the book rejected some commands; or help printed\n"
+        "  0  replayed to the end, even if the book rejected some commands; or help printed;\n"
+        "     for send, every command answered\n"
         "  1  input error: the file can't be opened or read, or is malformed (what ran before\n"
-        "     the error is still printed)\n"
+        "     the error is still printed); for send, also no connection\n"
         "  2  usage error\n"
-        "  3  engine failure: the book threw, or failed an invariant check\n"
+        "  3  engine failure: the book threw, or failed an invariant check; for send, the\n"
+        "     connection was lost or the engine sent ProtocolError before every command was\n"
+        "     answered, so what ran is unknown (this wins over 1 and 4)\n"
+        "  4  send only: every command answered, but at least one was Refused, so that one\n"
+        "     certainly did not run and is safe to send again\n"
         "\n"
         "A file that names instruments prints one section per symbol, sorted by symbol bytes,\n"
         "each holding one book's output.\n"
@@ -85,7 +104,8 @@ namespace {
         "  order_book_cli replay orders.csv\n"
         "  order_book_cli replay orders.csv --trades\n"
         "  order_book_cli replay orders.csv --trades --book\n"
-        "  order_book_cli replay orders.csv --events --book --validate per-command\n";
+        "  order_book_cli replay orders.csv --events --book --validate per-command\n"
+        "  order_book_cli send orders.csv --connect 127.0.0.1:9000 --symbol AAPL\n";
 
     int printHelp() {
         std::cout << usageText << '\n' << helpText;
@@ -104,6 +124,23 @@ namespace {
 
     std::string repeated(std::string_view option) {
         return "'" + std::string(option) + "' was given twice";
+    }
+
+    std::string notASymbol(std::string_view text) {
+        return "'" + std::string(text) + "' is not a symbol (1 to 8 of A-Z, 0-9, '.', '-')";
+    }
+
+    // One engine log still has to stand at position 0, or its books would start wrong. Prints
+    // why not, if it doesn't.
+    bool refusedLog(const std::string& path) {
+        if (!replay::isCommandLogFile(path)) {
+            return false;
+        }
+        const replay::ReplayInputs checked = replay::readReplayInputs({std::filesystem::path(path)});
+        if (checked.refusal) {
+            std::cerr << "order_book_cli: " << *checked.refusal << '\n';
+        }
+        return checked.refusal.has_value();
     }
 
     // Printing lives here, outside the engine: the book only returns events.
@@ -260,13 +297,8 @@ namespace {
     // the first line after which the book is broken.
     int runReplay(const ReplaySettings& settings) {
         const std::string& path = settings.path;
-        // One engine log still has to stand at position 0, or its books would start wrong.
-        if (replay::isCommandLogFile(path)) {
-            const replay::ReplayInputs checked = replay::readReplayInputs({std::filesystem::path(path)});
-            if (checked.refusal) {
-                std::cerr << "order_book_cli: " << *checked.refusal << '\n';
-                return inputError;
-            }
+        if (refusedLog(path)) {
+            return inputError;
         }
         const replay::ReplayInput input = replay::readReplayOrLogFile(path);
         if (input.format == replay::ReplayFormat::V3) {
@@ -331,7 +363,7 @@ namespace {
                 const std::string_view text = args[++i];
                 settings.symbol = replay::Symbol::parse(text);
                 if (!settings.symbol) {
-                    return usage("'" + std::string(text) + "' is not a symbol (1 to 8 of A-Z, 0-9, '.', '-')");
+                    return usage(notASymbol(text));
                 }
             } else if (!optionsEnded && arg == "--validate") {
                 if (i + 1 == args.size()) {
@@ -388,7 +420,7 @@ namespace {
                 } else {
                     symbol = replay::Symbol::parse(value);
                     if (!symbol) {
-                        return usage("'" + std::string(value) + "' is not a symbol (1 to 8 of A-Z, 0-9, '.', '-')");
+                        return usage(notASymbol(value));
                     }
                 }
             } else if (arg.starts_with('-')) {
@@ -417,6 +449,110 @@ namespace {
             return inputError;
         }
         return EXIT_SUCCESS;
+    }
+
+    // args are what follows "send". One file, sent over one connection: its answers print as
+    // replay --events --no-statistics prints the file, once the engine's stream has ended.
+    int sendCommand(const std::vector<std::string_view>& args) {
+        std::vector<std::string_view> files;
+        std::optional<order_book::runtime::ListenAddress> address;
+        std::optional<replay::Symbol> symbol;
+        std::set<std::string_view> given;
+        bool optionsEnded = false;
+        for (std::size_t i = 0; i < args.size(); ++i) {
+            const std::string_view arg = args[i];
+            if (!optionsEnded && arg == "--") {
+                optionsEnded = true;
+            } else if (!optionsEnded && arg.starts_with("--") && !given.insert(arg).second) {
+                return usage(repeated(arg));
+            } else if (!optionsEnded && (arg == "--connect" || arg == "--symbol")) {
+                if (i + 1 == args.size()) {
+                    return usage(std::string(arg) + " needs a value");
+                }
+                const std::string_view value = args[++i];
+                if (arg == "--connect") {
+                    address = order_book::runtime::parseListenAddress(value);
+                    if (!address || address->port == 0) {
+                        return usage("--connect needs an IPv4 address and a port other than 0, as 127.0.0.1:9000, not '" +
+                                     std::string(value) + "'");
+                    }
+                } else {
+                    symbol = replay::Symbol::parse(value);
+                    if (!symbol) {
+                        return usage(notASymbol(value));
+                    }
+                }
+            } else if (!optionsEnded && arg.starts_with('-')) {
+                return usage("unknown option '" + std::string(arg) + "'");
+            } else {
+                files.push_back(arg);
+            }
+        }
+        if (files.empty()) {
+            return usage("send needs a file to read");
+        }
+        if (files.size() > 1) {
+            return usage("send takes one file, not " + std::to_string(files.size()));
+        }
+        if (!address) {
+            return usage("send needs --connect");
+        }
+
+        const std::string path(files[0]);
+        if (refusedLog(path)) {
+            return inputError;
+        }
+        const replay::ReplayInput input = replay::readReplayOrLogFile(path);
+        if (input.records.empty() && input.error) {
+            std::cerr << replay::formatReplayError(*input.error, path) << '\n';
+            return inputError;
+        }
+        if (input.format == replay::ReplayFormat::V3 && symbol) {
+            return usage(replay::symbolOnNamedInput(path));
+        }
+        if (input.format != replay::ReplayFormat::V3 && !symbol) {
+            return usage("'" + path + "' names no symbol, so it needs --symbol");
+        }
+
+        std::vector<order_book::network::ClientCommand> commands;
+        commands.reserve(input.records.size());
+        for (const replay::ReplayRecord& record : input.records) {
+            commands.push_back({record.lineNumber, record.symbol.empty() ? *symbol : record.symbol, record.command});
+        }
+
+        order_book::network::TcpSocket socket;
+        try {
+            socket = order_book::network::TcpSocket::connectIpv4(address->host, address->port);
+        } catch (const std::system_error& error) {
+            std::cerr << "order_book_cli: cannot connect to " << order_book::runtime::formatListenAddress(*address) << ": "
+                      << error.what() << '\n';
+            return inputError;
+        }
+        order_book::network::ClientStream stream(std::move(commands));
+        try {
+            order_book::network::exchange(stream, socket);
+        } catch (const std::system_error& error) {
+            // poll failed: the connection is over, and what came still prints.
+            std::cerr << "order_book_cli: " << error.what() << '\n';
+            stream.ended();
+        }
+
+        std::cout << stream.sections();
+        std::cout.flush();
+        for (const std::string& problem : stream.diagnostics()) {
+            std::cerr << "order_book_cli: " << problem << '\n';
+        }
+        if (input.error) {
+            std::cerr << replay::formatReplayError(*input.error, path) << '\n';
+        }
+        // 3 wins over 1, and both over 4: what ran unknown is worse than a file cut short.
+        if (stream.end() == order_book::network::ConnectionEnd::LOST) {
+            return connectionLost;
+        }
+        if (input.error) {
+            return inputError;
+        }
+        return stream.end() == order_book::network::ConnectionEnd::REFUSED ? someRefused : EXIT_SUCCESS;
     }
 }  // namespace
 
@@ -448,6 +584,9 @@ int main(int argc, char** argv) {
     }
     if (command == "convert") {
         return convertCommand(rest);
+    }
+    if (command == "send") {
+        return sendCommand(rest);
     }
     if (command == "demo" || command == "help") {
         if (!rest.empty()) {

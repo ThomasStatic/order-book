@@ -11,7 +11,7 @@ There is no session: nothing outlives a connection. A client's first frame is `H
 - **Who hears.** Only the sender. A resting order's owner gets no report when another connection's order trades with it, and a triggered stop's cascade goes whole to the connection whose command caused it. Closing a connection does nothing to its resting orders.
 - **Owners and IDs.** `owner` passes through unchanged and order IDs are not scoped to a connection, so a CSV reaches the book as written. Two connections using one live ID get `DUPLICATE_ORDER_ID`, and any connection may cancel or replace any order. Clients are trusted.
 - **Ordering.** Responses for one connection and one instrument arrive in command order, except a command the entry check refuses itself, with a `Refused` frame or, for a malformed command, the book's own event, which can overtake earlier commands' responses. Nothing is ordered across instruments, so a client matches responses by correlation.
-- **Half-close.** A client that half-closes is answered in full, then closed, with no error frame, so a client can send a file, half-close, and read to end of stream knowing it has every answer. Read and write at once: a client that writes everything before reading anything can hang, because a connection with too many unsent responses stops being read.
+- **Half-close.** A client that half-closes is answered in full, then closed, with no error frame, so a client can send a file, half-close, and read to end of stream knowing it has every answer. Read and write at once: a client that writes everything before reading anything can hang, because a connection with too many unsent responses stops being read. `order_book_cli send` is such a client.
 
 ## Header
 

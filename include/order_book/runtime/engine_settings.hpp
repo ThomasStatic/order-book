@@ -60,6 +60,8 @@ namespace order_book::runtime {
     // its value, defaults included: the one line a run prints first.
     std::string formatEngineSettings(const EngineSettings& settings);
     std::string formatListenAddress(const ListenAddress& address);
+    // A dotted IPv4 address, a colon, and a port, as --listen takes it, and send's --connect.
+    std::optional<ListenAddress> parseListenAddress(std::string_view text);
 
     // What a usage error prints after its message.
     std::string_view engineUsage() noexcept;

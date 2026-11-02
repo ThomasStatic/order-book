@@ -198,6 +198,7 @@ order_book_enable_sanitizers(order_book_runtime)
 
 # The wire protocol's pure half (docs/wire-protocol.md). Not public API.
 add_library(order_book_network STATIC
+    src/network/client_stream.cpp
     src/network/engine.cpp
     src/network/entry_check.cpp
     src/network/gateway_thread.cpp
@@ -231,7 +232,7 @@ order_book_enable_warnings(order_book_engine)
 order_book_enable_sanitizers(order_book_engine)
 
 target_compile_features(order_book_cli PRIVATE cxx_std_20)
-target_link_libraries(order_book_cli PRIVATE order_book_replay)
+target_link_libraries(order_book_cli PRIVATE order_book_network)
 order_book_enable_warnings(order_book_cli)
 order_book_enable_sanitizers(order_book_cli)
 
@@ -621,6 +622,16 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(wire_codec_tests)
     add_test(NAME wire_codec_tests COMMAND wire_codec_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/wire)
 
+    add_executable(client_stream_tests
+        tests/client_stream_test.cpp
+    )
+
+    target_compile_features(client_stream_tests PRIVATE cxx_std_20)
+    target_link_libraries(client_stream_tests PRIVATE order_book_network)
+    order_book_enable_warnings(client_stream_tests)
+    order_book_enable_sanitizers(client_stream_tests)
+    add_test(NAME client_stream_tests COMMAND client_stream_tests)
+
     add_executable(entry_check_tests
         tests/entry_check_test.cpp
     )
@@ -816,6 +827,29 @@ if(BUILD_TESTING)
     order_book_add_replay_cli_test(usage_bad_validation
         ARGS replay valid/basic.csv --validate sometimes EXIT 2 STDERR usage_bad_validation.stderr)
     order_book_add_replay_cli_test(usage_demo_argument ARGS demo valid/basic.csv EXIT 2 STDERR usage_demo_argument.stderr)
+    # send: everything decided before connecting. What it prints over a connection is
+    # engine_end_to_end_tests'.
+    order_book_add_replay_cli_test(usage_send_no_file ARGS send --connect 127.0.0.1:9000 EXIT 2 STDERR usage_send_no_file.stderr)
+    order_book_add_replay_cli_test(usage_send_two_files
+        ARGS send valid/basic.csv valid/limits.csv --connect 127.0.0.1:9000 EXIT 2 STDERR usage_send_two_files.stderr)
+    order_book_add_replay_cli_test(usage_send_no_connect
+        ARGS send valid/basic.csv --symbol AAPL EXIT 2 STDERR usage_send_no_connect.stderr)
+    order_book_add_replay_cli_test(usage_send_missing_connect_value
+        ARGS send valid/basic.csv --connect EXIT 2 STDERR usage_send_missing_connect_value.stderr)
+    order_book_add_replay_cli_test(usage_send_bad_address
+        ARGS send valid/basic.csv --connect localhost:9000 EXIT 2 STDERR usage_send_bad_address.stderr)
+    order_book_add_replay_cli_test(usage_send_port_zero
+        ARGS send valid/basic.csv --connect 127.0.0.1:0 EXIT 2 STDERR usage_send_port_zero.stderr)
+    order_book_add_replay_cli_test(usage_send_repeated_connect
+        ARGS send valid/basic.csv --connect 127.0.0.1:9000 --connect 127.0.0.1:9001 EXIT 2 STDERR usage_send_repeated_connect.stderr)
+    order_book_add_replay_cli_test(usage_send_unknown_option
+        ARGS send valid/basic.csv --events --connect 127.0.0.1:9000 EXIT 2 STDERR usage_send_unknown_option.stderr)
+    order_book_add_replay_cli_test(usage_send_needs_symbol
+        ARGS send valid/basic.csv --connect 127.0.0.1:9000 EXIT 2 STDERR usage_send_needs_symbol.stderr)
+    order_book_add_replay_cli_test(usage_send_symbol_on_v3
+        ARGS send valid/v3_two_instruments.csv --symbol AAPL --connect 127.0.0.1:9000 EXIT 2 STDERR usage_send_symbol_on_v3.stderr)
+    order_book_add_replay_cli_test(send_missing_file
+        ARGS send no_such_file.csv --symbol AAPL --connect 127.0.0.1:9000 EXIT 1 STDERR missing_file.stderr)
 
     # Randomized command testing: seeded streams of submissions and cancellations, each command
     # checked against the book's invariants and a reference model. The harness is a library so
@@ -905,6 +939,7 @@ if(BUILD_TESTING)
     order_book_enable_warnings(gateway_socket_tests)
     order_book_enable_sanitizers(gateway_socket_tests)
     add_test(NAME gateway_socket_tests COMMAND gateway_socket_tests)
+    set_tests_properties(gateway_socket_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
 
     add_executable(engine_settings_tests
         tests/engine_settings_test.cpp
@@ -959,7 +994,20 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(engine_process_tests)
     add_test(NAME engine_process_tests COMMAND engine_process_tests $<TARGET_FILE:order_book_engine>)
     set_tests_properties(engine_process_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 180)
-    set_tests_properties(gateway_socket_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
+
+    add_executable(engine_end_to_end_tests
+        tests/engine_end_to_end_test.cpp
+    )
+
+    target_compile_features(engine_end_to_end_tests PRIVATE cxx_std_20)
+    target_link_libraries(engine_end_to_end_tests PRIVATE order_book_process_testing order_book_network)
+    order_book_enable_warnings(engine_end_to_end_tests)
+    order_book_enable_sanitizers(engine_end_to_end_tests)
+    add_dependencies(engine_end_to_end_tests order_book_engine order_book_cli)
+    add_test(NAME engine_end_to_end_tests
+        COMMAND engine_end_to_end_tests $<TARGET_FILE:order_book_engine> $<TARGET_FILE:order_book_cli>
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay ${CMAKE_CURRENT_SOURCE_DIR}/tests/engine/samples)
+    set_tests_properties(engine_end_to_end_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
 
     add_executable(randomized_harness_tests
         tests/randomized/harness_test.cpp

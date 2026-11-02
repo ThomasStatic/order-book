@@ -106,8 +106,8 @@ The code is split into libraries that depend in one direction only. The book kno
 | `order_book` | static library | The engine: `OrderBook`, `Order`, the result and event types, the invariant checker, and `formatEvent`. |
 | `order_book_replay` | static library | The CSV replay format: a parser that turns text into typed records, an engine that runs records through a book, and locale-free printing of the outcome. |
 | `order_book_runtime` | static library | The engine's instrument list, placement, and per-shard books. Not public API. |
-| `order_book_network` | static library | The wire protocol's frames and entry check, the gateway thread, sockets, and `runEngine`. Not public API; its contract is [`docs/wire-protocol.md`](docs/wire-protocol.md). |
-| `order_book_cli` | executable | `replay <path>...`, `convert`, and a scripted `demo`. Non-interactive, so it scripts cleanly. |
+| `order_book_network` | static library | The wire protocol's frames and entry check, the gateway thread, sockets, `runEngine`, and `ClientStream`, the client `send` uses. Not public API; its contract is [`docs/wire-protocol.md`](docs/wire-protocol.md). |
+| `order_book_cli` | executable | `replay <path>...`, `convert`, `send` (a file's commands to a running engine), and a scripted `demo`. Non-interactive, so it scripts cleanly. |
 | `order_book_engine` | executable | The engine as a process: `--instruments FILE --shards N --listen ADDR:PORT`, printing `listening ADDR:PORT` once ready and a stop report after a clean stop. No persistence yet, so a restart loses every book. |
 | `order_book_reference` | test library | `ReferenceBook`, an independent model of the book that never touches an `OrderBook`, and the seeded interleaver. |
 | `order_book_randomized`, `randomized_tests` | test library, executable | Seeded command generation against the reference model, failure reports, and stream shrinking. |
@@ -452,6 +452,7 @@ sequence,command,order_id,side,price,quantity
 order_book_cli replay <path>... [--trades] [--events] [--book] [--validate none|final|per-command]
                                 [--symbol SYM] [--no-statistics]
 order_book_cli convert <path>... --out <path> [--symbol SYM]
+order_book_cli send <file> --connect ADDR:PORT [--symbol SYM]
 order_book_cli demo
 order_book_cli --help
 ```
@@ -497,6 +498,29 @@ A valid replay, then a malformed one that stops at its bad line:
 ![A terminal replaying price_time_priority.csv with --trades --book, printing five trades, the statistics, and the final book, exit status 0; then replaying malformed/price_zero.csv, which prints the statistics of the two commands before line 4 and an error on stderr, exit status 1.](docs/images/replay-terminal.svg)
 
 Output is byte-identical on every platform, with LF line endings. Sample files are in [`tests/replay/valid/`](tests/replay/valid/) and [`tests/replay/malformed/`](tests/replay/malformed/). [`tests/replay/README.md`](tests/replay/README.md) lists each one's expected events, or the line and rule it breaks.
+
+### Sending to a running engine
+
+`send` sends one file's commands, a CSV or a log, to an `order_book_engine` over one connection, and prints exactly what `replay <file> --events --no-statistics` prints, so a live run and a replay compare byte for byte. Each command's correlation is its line, it half-closes after the last command and reads to the end of the stream, and it never retries. A v1 or v2 file needs `--symbol`. A command the engine refuses, never queued, prints in its line's place:
+
+```text
+$ order_book_engine --instruments list.csv --shards 2 --listen 127.0.0.1:9000 &
+listening 127.0.0.1:9000
+$ order_book_cli send tests/replay/valid/v3_two_instruments.csv --connect 127.0.0.1:9000
+...
+symbol ZZZ
+line 7: Refused symbol=ZZZ id=9 code=UNKNOWN_INSTRUMENT
+```
+
+| Exit status | Meaning |
+|---|---|
+| 0 | Every command answered, even if a book rejected some. |
+| 1 | Input error, or no connection. A malformed file still sends the commands before its bad line. |
+| 2 | Usage error. |
+| 3 | The connection was lost, or the engine sent `ProtocolError`, before every command was answered: what ran is unknown. Wins over 1 and 4. |
+| 4 | Every command answered, but at least one was `Refused`, so that one certainly did not run and is safe to send again. |
+
+Only a refused command is safe to retry; [`docs/wire-protocol.md`](docs/wire-protocol.md) says why. `send` holds every answer in memory until the end, so it is not a load generator.
 
 ## Benchmarks and optimization
 
