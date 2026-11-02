@@ -34,7 +34,8 @@ namespace order_book::network {
 
     // Closing stdin counts as a stop: a thread reads stdin, throwing away what it reads, and
     // requests a stop when it ends. That thread can't be cancelled, so it outlives this object
-    // when stdin is still open, and holds only what the two share.
+    // when stdin is still open, and holds only what the two share. It reads through the system,
+    // not stdio, since a thread blocked in fread would keep glibc's exit from ever finishing.
     class StdinStopSource final : public StopSource {
     public:
         StdinStopSource();

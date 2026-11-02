@@ -138,6 +138,7 @@ namespace order_book::process_testing {
         GetExitCodeProcess(platform->process, &code);
         result.code = static_cast<int>(code);
         status = result;
+        awaitStreamsEnded();
         return result;
     }
 
@@ -267,6 +268,7 @@ namespace order_book::process_testing {
         }
         result.code = WIFEXITED(raw) ? WEXITSTATUS(raw) : WIFSIGNALED(raw) ? 128 + WTERMSIG(raw) : -1;
         status = result;
+        awaitStreamsEnded();
         return result;
     }
 
@@ -286,6 +288,12 @@ namespace order_book::process_testing {
         }
     }
 #endif
+
+    // The child has gone, so its pipes end as soon as the readers drain them.
+    void ChildProcess::awaitStreamsEnded() {
+        std::unique_lock<std::mutex> hold(guard);
+        changed.wait_for(hold, std::chrono::seconds(30), [this] { return streams[0].ended && streams[1].ended; });
+    }
 
     std::optional<std::string> ChildProcess::readLine(std::chrono::milliseconds limit) {
         std::unique_lock<std::mutex> hold(guard);

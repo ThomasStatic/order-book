@@ -34,7 +34,8 @@ namespace order_book::process_testing {
         std::optional<std::string> readLine(std::chrono::milliseconds limit);
         void writeStdin(const std::string& text);
         void closeStdin();
-        // Waits for the child to exit, killing it if it hasn't within the limit.
+        // Waits for the child to exit, killing it if it hasn't within the limit, then for both its
+        // streams to end, so standardOutput and standardError hold everything it wrote.
         ExitStatus wait(std::chrono::milliseconds limit);
         // Everything each stream has written so far, readLine's lines included.
         std::string standardOutput();
@@ -50,6 +51,7 @@ namespace order_book::process_testing {
 
         void kill();
         void collect(int which);  // 0 stdout, 1 stderr: a reader thread's body
+        void awaitStreamsEnded();
 
         std::unique_ptr<Platform> platform;
         std::mutex guard;

@@ -123,7 +123,9 @@ void testABusyPort() {
     const std::uint16_t port = listeningPort(first);
     ChildProcess second(engine, startArguments(list, port));
     const ExitStatus refused = second.wait(30s);
-    expect(!refused.killed && refused.code == 1, "a second engine on the same port is refused");
+    const std::string how = refused.killed ? "killed" : "exit " + std::to_string(refused.code);
+    expect(!refused.killed && refused.code == 1, "a second engine on the same port is refused, not " + how + ", with stdout:\n" +
+                                                     second.standardOutput() + "\nand stderr:\n" + second.standardError());
     expect(second.standardError().find("start refused: cannot listen on 127.0.0.1:" + std::to_string(port)) != std::string::npos,
            "naming the address:\n" + second.standardError());
     first.closeStdin();
