@@ -148,10 +148,12 @@ struct Client {
     }
 };
 
-// One command, one answer, at spin window 0, so the thread sleeps between almost every command.
-// A lost wake-up hangs here, and the CTest timeout fails it.
+// One command at a time, each sent only once the thread has announced that it is going to sleep,
+// so every one lands in the window a lost wake-up needs. That one hangs here, and the CTest
+// timeout fails it. Without the wait the producer mostly beats the thread to sleep, and this
+// would pass whether the doorbell worked or not.
 void testNoWakeUpIsLost() {
-    constexpr std::size_t commands = 20000;
+    constexpr std::size_t commands = 5000;
     const InstrumentDirectory directory({on("AAPL", 0)}, 1);
     Doorbell doorbell;
     Ring<CommandElement> commandRing(16);
@@ -165,6 +167,9 @@ void testNoWakeUpIsLost() {
     });
 
     for (std::size_t i = 0; i < commands; ++i) {
+        while (!doorbell.sleeperAnnounced()) {
+            std::this_thread::yield();
+        }
         client.send(element(replay::CancelCommand{1}, i));
         bool answered = false;
         while (!answered) {

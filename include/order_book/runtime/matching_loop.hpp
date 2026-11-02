@@ -41,6 +41,9 @@ namespace order_book::runtime {
         void cancelSleep() noexcept { state.store(awake, std::memory_order_seq_cst); }
         void wait() noexcept { state.wait(asleep, std::memory_order_seq_cst); }
 
+        // Whether the sleeper has announced itself, so a test can catch it there.
+        bool sleeperAnnounced() const noexcept { return state.load(std::memory_order_seq_cst) == asleep; }
+
     private:
         static constexpr std::uint32_t awake = 0;
         static constexpr std::uint32_t asleep = 1;
