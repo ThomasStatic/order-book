@@ -32,7 +32,9 @@ namespace order_book::engine_app {
 #ifdef _WIN32
             static_cast<void>(_write(2, line.data(), static_cast<unsigned int>(size)));
 #else
-            static_cast<void>(::write(STDERR_FILENO, line.data(), size));
+            // Nothing to do if it fails; glibc's warn_unused_result ignores a cast to void.
+            const ssize_t written = ::write(STDERR_FILENO, line.data(), size);
+            static_cast<void>(written);
 #endif
             std::signal(SIGABRT, SIG_DFL);
             std::raise(SIGABRT);
