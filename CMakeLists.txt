@@ -119,8 +119,11 @@ function(order_book_enable_sanitizers target_name)
         target_link_options(${target_name} PRIVATE -fsanitize=${sanitizer_list})
         if(ORDER_BOOK_ENABLE_TSAN AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
             # Clang's static runtime defines operator new, which collides with the tests that
-            # replace it to count allocations. The shared one lets their replacements win.
-            target_link_options(${target_name} PRIVATE -shared-libsan -frtlib-add-rpath)
+            # replace it to count allocations. The shared one lets their replacements win, and
+            # nothing else tells a program where it lives.
+            execute_process(COMMAND ${CMAKE_CXX_COMPILER} -print-resource-dir
+                            OUTPUT_VARIABLE clang_resource_dir OUTPUT_STRIP_TRAILING_WHITESPACE)
+            target_link_options(${target_name} PRIVATE -shared-libsan "-Wl,-rpath,${clang_resource_dir}/lib/linux")
         endif()
         if(ORDER_BOOK_ENABLE_UBSAN)
             # UBSan otherwise prints a report and carries on, so the test would still pass.
