@@ -6,6 +6,7 @@
 #include <memory>
 #include <random>
 #include <span>
+#include <sstream>
 #include <stdexcept>
 #include <type_traits>
 #include <variant>
@@ -14,7 +15,11 @@
 #include "command_replayer.hpp"
 #include "order_book/event_format.hpp"
 #include "order_book/network/entry_check.hpp"
+#include "order_book/replay_engine.hpp"
+#include "order_book/replay_instruments.hpp"
 #include "order_book/runtime/instruments.hpp"
+#include "order_book/runtime/log_storage.hpp"
+#include "order_book/runtime/log_writer.hpp"
 #include "order_book/runtime/shard.hpp"
 
 namespace order_book::engine_testing {
@@ -31,6 +36,7 @@ namespace order_book::engine_testing {
         // instrument's past the first.
         constexpr std::uint64_t interleaverStream = 0x9E3779B97F4A7C15ULL;
         constexpr std::uint64_t faultStream = 0xC2B2AE3D27D4EB4FULL;
+        constexpr std::uint64_t logStream = 0x165667B19E3779F9ULL;
 
         Symbol symbolOf(std::size_t instrument) {
             return *Symbol::parse("I" + std::to_string(instrument));
@@ -88,6 +94,17 @@ namespace order_book::engine_testing {
             return std::equal(left.begin(), left.end(), right.begin(), right.end());
         }
 
+        // One shard's log: its ring, as the matching thread fills it, its durable position, and
+        // its log writer on the run's in-memory storage.
+        struct ShardLog {
+            ShardLog(runtime::LogStorage& storage, const runtime::InstrumentDirectory& directory, std::uint32_t shard, std::size_t records)
+                : ring(records), writer(storage, directory, shard, runtime::Durability::MACHINE, ring, durable) {}
+
+            runtime::Ring<runtime::LogEntry> ring;
+            runtime::DurablePosition durable;
+            runtime::LogWriter writer;
+        };
+
         // Everything that runs one instrument, beside its shard's book.
         struct Instrument {
             Symbol symbol;
@@ -101,6 +118,8 @@ namespace order_book::engine_testing {
             explicit Run(const EngineSeedConfig& seedConfig) : config(seedConfig), directory(listOf(seedConfig), seedConfig.shards) {
                 for (std::uint32_t shard = 0; shard < config.shards; ++shard) {
                     shards.push_back(std::make_unique<runtime::Shard>(directory, shard, config.shardCapacity));
+                    logs.push_back(std::make_unique<ShardLog>(storage, directory, shard, config.logRingRecords));
+                    shards.back()->watchDurablePosition(logs.back()->durable);
                 }
                 instruments.reserve(config.instruments);
                 for (std::size_t i = 0; i < config.instruments; ++i) {
@@ -116,10 +135,17 @@ namespace order_book::engine_testing {
                     if (config.plantDivergenceBefore == index) {
                         plantDivergence();
                     }
+                    if (stream[index].action == EngineAction::LOG) {
+                        writeLogs(result.stats);
+                        continue;
+                    }
                     result.failure = execute(stream[index], index, result.stats);
                 }
                 if (!result.failure) {
                     result.failure = finish(stream.size());
+                }
+                if (!result.failure) {
+                    result.failure = finishLogs(stream.size(), result.stats);
                 }
                 for (const Instrument& instrument : instruments) {
                     result.stats.shardGrowths +=
@@ -190,14 +216,39 @@ namespace order_book::engine_testing {
                     return failure(index, instrument, "entry refused a command with a good symbol, with the engine running");
                 }
                 ++stats.queued;
-                return runOnShard(*accepted, instrument, expected, index);
+                return runOnShard(*accepted, instrument, expected, index, stats);
+            }
+
+            // A LOG line: each shard's log writer does one write.
+            void writeLogs(EngineStats& stats) {
+                for (const std::unique_ptr<ShardLog>& shardLog : logs) {
+                    const std::size_t written = shardLog->writer.pass();
+                    stats.logWrites += written != 0 ? 1 : 0;
+                    stats.recordsLogged += written;
+                }
+            }
+
+            // What the matching thread does before running a command: its place in the log is
+            // fixed, waiting for the log writer first if the ring is full.
+            void logCommand(const network::EntryAccepted& accepted, std::size_t index, EngineStats& stats) {
+                if (config.leaveUnloggedFrom && *config.leaveUnloggedFrom <= index && !leftUnlogged) {
+                    leftUnlogged = true;
+                    return;
+                }
+                ShardLog& shardLog = *logs[accepted.location.shard];
+                while (!shardLog.ring.tryPush(runtime::LogEntry{accepted.command, accepted.location.slot, runtime::ControlKind::COMMAND})) {
+                    const std::size_t written = shardLog.writer.pass();
+                    ++stats.logWrites;
+                    stats.recordsLogged += written;
+                }
             }
 
             std::optional<EngineFailure> runOnShard(const network::EntryAccepted& accepted, Instrument& instrument,
-                                                    const ExpectedOutcome& expected, std::size_t index) {
+                                                    const ExpectedOutcome& expected, std::size_t index, EngineStats& stats) {
                 if (accepted.symbol != instrument.symbol || accepted.location != instrument.location) {
                     return failure(index, instrument, "entry routed a command to the wrong book");
                 }
+                logCommand(accepted, index, stats);
                 runtime::Shard& shard = *shards[accepted.location.shard];
                 shard.process(accepted.command, accepted.location.slot);
                 const std::span<const BookEvent> events = shard.result().events();
@@ -245,10 +296,63 @@ namespace order_book::engine_testing {
                 return std::nullopt;
             }
 
+            // Every run ends here: each log writer stopped, as a clean stop stops it, then each
+            // shard's log replayed per instrument, which must give the witness's book, and each
+            // shard, its durable position at the end of its log, sound.
+            std::optional<EngineFailure> finishLogs(std::size_t index, EngineStats& stats) {
+                for (std::size_t shard = 0; shard < logs.size(); ++shard) {
+                    ShardLog& shardLog = *logs[shard];
+                    while (!shardLog.ring.tryPush(runtime::LogEntry::stop())) {
+                        stats.recordsLogged += shardLog.writer.pass();
+                    }
+                    while (!shardLog.writer.stopped()) {
+                        stats.recordsLogged += shardLog.writer.pass();
+                    }
+                    if (const std::optional<runtime::ShardViolation> violation = shards[shard]->checkInvariants()) {
+                        return EngineFailure{index, "", "shard " + std::to_string(shard) + " after its log closed: " + violation->message};
+                    }
+                }
+                std::vector<replay::ReplayRecord> records;
+                for (std::size_t shard = 0; shard < logs.size(); ++shard) {
+                    const std::vector<std::byte> bytes = storage.read(logs[shard]->writer.fileName(), 0);
+                    std::istringstream input(std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()), std::ios::binary);
+                    replay::CommandLogReader reader(input);
+                    for (;;) {
+                        const replay::ReadResult read = reader.next();
+                        if (const auto* record = std::get_if<replay::ReplayRecord>(&read)) {
+                            records.push_back(*record);
+                        } else if (const auto* error = std::get_if<replay::ParseError>(&read)) {
+                            return EngineFailure{index, "", "shard " + std::to_string(shard) + "'s log doesn't read back: " + error->message};
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                const std::vector<replay::InstrumentRecords> grouped = replay::groupBySymbol(records);
+                for (const Instrument& instrument : instruments) {
+                    const auto found = std::find_if(grouped.begin(), grouped.end(),
+                                                    [&instrument](const replay::InstrumentRecords& group) { return group.symbol == instrument.symbol; });
+                    OrderBook replayed;
+                    if (found != grouped.end()) {
+                        const replay::ReplayOutcome outcome = replay::ReplayEngine::run(found->records, replayed);
+                        if (const auto* error = std::get_if<replay::ReplayError>(&outcome)) {
+                            return failure(index, instrument, "the log's replay failed: " + error->message);
+                        }
+                    }
+                    if (const std::optional<std::string> difference = randomized::compareBooks(replayed, instrument.witness, instrument.model)) {
+                        return failure(index, instrument, "the log's replay differs from the witness: " + *difference);
+                    }
+                }
+                return std::nullopt;
+            }
+
             EngineSeedConfig config;
             runtime::InstrumentDirectory directory;
+            runtime::InMemoryLogStorage storage;
             std::vector<std::unique_ptr<runtime::Shard>> shards;
+            std::vector<std::unique_ptr<ShardLog>> logs;
             std::vector<Instrument> instruments;
+            bool leftUnlogged = false;
         };
     }  // namespace
 
@@ -301,6 +405,7 @@ namespace order_book::engine_testing {
 
         reference::Interleaver interleaver(config.seed ^ interleaverStream, config.instruments, config.spread);
         std::mt19937_64 faults(config.seed ^ faultStream);
+        std::mt19937_64 logWrites(config.seed ^ logStream);
         std::vector<EngineCommand> stream;
         stream.reserve(config.commands);
         for (std::size_t i = 0; i < config.commands; ++i) {
@@ -313,7 +418,10 @@ namespace order_book::engine_testing {
             if (roll % 100 < config.symbolFaultPercent) {
                 fault = (roll >> 32) % 2 == 0 ? SymbolFault::UNKNOWN : SymbolFault::MALFORMED;
             }
-            stream.push_back(EngineCommand{instrument, generated, convertForEngine(generated), fault});
+            stream.push_back(EngineCommand{instrument, generated, convertForEngine(generated), fault, EngineAction::COMMAND});
+            if (config.logWritePercent != 0 && logWrites() % 100 < config.logWritePercent) {
+                stream.push_back(EngineCommand{0, generated, std::nullopt, SymbolFault::NONE, EngineAction::LOG});
+            }
         }
         return stream;
     }

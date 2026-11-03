@@ -23,10 +23,11 @@ namespace order_book::engine_testing {
         : shard(directory, number),
           links(ringLinks(ringSlots, gatewayThreads)),
           commands(links.front()->commands),
-          responses(links.front()->responses) {}
+          responses(links.front()->responses),
+          logRing(ringSlots) {}
 
     Rig::Rig(std::vector<Instrument> instruments, std::uint32_t shardCount, std::size_t ringSlots, GatewaySettings settings,
-             std::size_t gatewayThreads)
+             std::size_t gatewayThreads, std::optional<Durability> log)
         : directory(std::move(instruments), shardCount) {
         settings.clock = [this] { return now; };
         settings.spinWindow = std::chrono::nanoseconds::zero();
@@ -43,17 +44,31 @@ namespace order_book::engine_testing {
             for (const std::unique_ptr<RingLink>& link : actor.links) {
                 rings.push_back(RingPair{&link->commands, &link->responses});
             }
-            actor.loop.emplace(actor.shard, actor.doorbell, std::move(rings), std::chrono::nanoseconds::zero(), [this] {
-                ++waitsInPlace;
-                for (const std::unique_ptr<GatewayThread>& each : gateways) {
-                    each->pass();
-                }
-            });
+            std::optional<LogLink> logLink;
+            if (log) {
+                actor.writer.emplace(logStorage, directory, number, *log, actor.logRing, actor.durable);
+                actor.shard.watchDurablePosition(actor.durable);
+                logLink = LogLink{&actor.logRing, &actor.writerBell};
+            }
+            // Only a gateway or a log writer can make room in a response ring or a log ring.
+            actor.loop.emplace(
+                actor.shard, actor.doorbell, std::move(rings), std::chrono::nanoseconds::zero(),
+                [this] {
+                    ++waitsInPlace;
+                    for (const std::unique_ptr<GatewayThread>& each : gateways) {
+                        each->pass();
+                    }
+                    for (std::uint32_t each = 0; each < shards.size(); ++each) {
+                        writeLog(each);
+                    }
+                },
+                logLink);
         }
         for (std::size_t thread = 0; thread < gatewayThreads; ++thread) {
             std::vector<ShardLink> links;
             for (const std::unique_ptr<ShardActor>& actor : shards) {
-                links.push_back(ShardLink{&actor->links[thread]->commands, &actor->links[thread]->responses, &actor->doorbell});
+                links.push_back(ShardLink{&actor->links[thread]->commands, &actor->links[thread]->responses, &actor->doorbell,
+                                          actor->writer ? &actor->durable : nullptr});
             }
             gateways.push_back(std::make_unique<GatewayThread>(directory, std::move(links), socketsOf(thread), settings, handOff.get(), thread));
         }
@@ -70,6 +85,11 @@ namespace order_book::engine_testing {
         return taken;
     }
 
+    std::size_t Rig::writeLog(std::uint32_t shard) {
+        ShardActor& actor = *shards[shard];
+        return actor.writer ? actor.writer->pass() : 0;
+    }
+
     void Rig::settle() {
         for (int round = 0; round < 512; ++round) {
             for (const std::unique_ptr<GatewayThread>& each : gateways) {
@@ -77,6 +97,7 @@ namespace order_book::engine_testing {
             }
             for (std::uint32_t shard = 0; shard < shards.size(); ++shard) {
                 match(shard);
+                writeLog(shard);
             }
         }
     }

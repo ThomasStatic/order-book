@@ -153,6 +153,40 @@ void testEachInstrumentReachesItsOwnBook() {
            "each response names the slot's symbol on its shard");
 }
 
+std::size_t eventsFor(Client& client, Correlation correlation) {
+    std::size_t count = 0;
+    for (const Received& frame : client.frames()) {
+        count += frame.event && frame.correlation == correlation ? 1 : 0;
+    }
+    return count;
+}
+
+// A command matches at once, but its response waits on the response ring behind a marker until
+// the log writer has made its position durable. A held ring holds only itself.
+void testAResponseWaitsForTheLog() {
+    Rig rig({on("AAPL", 0), on("MSFT", 1)}, 2, 16, {}, 1, Durability::PROCESS);
+    Client client(rig.sockets);
+    introduce(rig, client);
+    client.send(joined({commandFrame(1, "AAPL", limit(1, Side::BUY, 100)), commandFrame(2, "MSFT", limit(1, Side::SELL, 200))}));
+    rig.gateway->pass();
+    rig.match(0);
+    rig.match(1);
+    expect(rig.shards[0]->shard.commandsTaken() == 1 && rig.shards[1]->shard.commandsTaken() == 1, "both commands matched at once");
+    rig.gateway->pass();
+    expect(eventsFor(client, 1) == 0 && eventsFor(client, 2) == 0, "but neither answer goes out before its log write");
+    expect(!rig.gateway->mayWait(), "and the gateway stays awake for them");
+
+    expect(rig.writeLog(1) == 1 && rig.shards[1]->durable.load() == 1, "MSFT's log writer writes its one record");
+    rig.gateway->pass();
+    expect(eventsFor(client, 2) == 1, "which releases MSFT's answer");
+    expect(eventsFor(client, 1) == 0, "while AAPL's stays held behind its own shard's log");
+
+    rig.writeLog(0);
+    rig.gateway->pass();
+    expect(eventsFor(client, 1) == 1, "until that one is written too");
+    expect(rig.gateway->mayWait(), "and then nothing is in flight");
+}
+
 void testACascadeComesWholeAndInOrder() {
     Rig rig({on("AAPL", 0)}, 1, 2);
     Client client(rig.sockets);
@@ -477,7 +511,7 @@ void testTheSpinWindowComesBeforeSleep() {
     settings.clock = [&rig] { return rig.now; };
     settings.spinWindow = std::chrono::microseconds(10);
     InMemorySocketSet sockets;
-    GatewayThread gateway(rig.directory, {ShardLink{&rig.shards[0]->commands, &rig.shards[0]->responses, &rig.shards[0]->doorbell}},
+    GatewayThread gateway(rig.directory, {ShardLink{&rig.shards[0]->commands, &rig.shards[0]->responses, &rig.shards[0]->doorbell, nullptr}},
                           sockets, settings);
 
     gateway.pass();
@@ -494,7 +528,7 @@ void testTheSpinWindowComesBeforeSleep() {
     GatewaySettings never = settings;
     never.spinWindow = unlimitedSpin;
     InMemorySocketSet spinning;
-    GatewayThread spinner(rig.directory, {ShardLink{&rig.shards[0]->commands, &rig.shards[0]->responses, &rig.shards[0]->doorbell}},
+    GatewayThread spinner(rig.directory, {ShardLink{&rig.shards[0]->commands, &rig.shards[0]->responses, &rig.shards[0]->doorbell, nullptr}},
                           spinning, never);
     spinner.pass();
     rig.now += std::chrono::hours(1);
@@ -1020,8 +1054,8 @@ void testAShardStopsOnceEveryGatewayThreadHasSaidSo() {
     MatchingLoop loop(shard, doorbell, {RingPair{&firstCommands, &firstResponses}, RingPair{&secondCommands, &secondResponses}});
     InMemorySocketSet firstSockets;
     InMemorySocketSet secondSockets;
-    GatewayThread first(directory, {ShardLink{&firstCommands, &firstResponses, &doorbell}}, firstSockets);
-    GatewayThread second(directory, {ShardLink{&secondCommands, &secondResponses, &doorbell}}, secondSockets);
+    GatewayThread first(directory, {ShardLink{&firstCommands, &firstResponses, &doorbell, nullptr}}, firstSockets);
+    GatewayThread second(directory, {ShardLink{&secondCommands, &secondResponses, &doorbell, nullptr}}, secondSockets);
 
     first.beginStop();
     first.pass();
@@ -1038,18 +1072,21 @@ void testAShardStopsOnceEveryGatewayThreadHasSaidSo() {
     expect(first.finished() && second.finished(), "and both heard, on their own rings");
 }
 
-void runSteppedSchedules(std::size_t gatewayThreads, bool stop, order_book::engine_testing::StepperResult& totals) {
-    for (std::uint64_t seed = 1; seed <= (gatewayThreads == 1 ? 100U : 50U); ++seed) {
+void runSteppedSchedules(std::size_t gatewayThreads, bool stop, bool log, order_book::engine_testing::StepperResult& totals) {
+    const std::uint64_t schedules = (gatewayThreads == 1 ? 100U : 50U) / (log ? 2U : 1U);
+    for (std::uint64_t seed = 1; seed <= schedules; ++seed) {
         order_book::engine_testing::StepperConfig config;
         config.seed = seed;
         config.stop = stop;
+        config.log = log;
         config.gatewayThreads = gatewayThreads;
         config.connections = gatewayThreads == 1 ? config.connections : config.instruments;
         const order_book::engine_testing::StepperResult result = order_book::engine_testing::runStepperSchedule(config);
         expect(result.passed(), (stop ? "stopped" : "unstopped") + std::string(" schedule, seed ") + std::to_string(seed) + ": " +
                                     result.failure.value_or("") + "\nreproduce with: engine_randomized_tests --stepper " +
                                     (stop ? "stop" : "run") + " --seed " + std::to_string(seed) + " --gateway-threads " +
-                                    std::to_string(gatewayThreads) + " --connections " + std::to_string(config.connections));
+                                    std::to_string(gatewayThreads) + " --connections " + std::to_string(config.connections) +
+                                    (log ? " --log on" : ""));
         totals.sleeps += result.sleeps;
         totals.waitsInPlace += result.waitsInPlace;
         totals.commandsRun += result.commandsRun;
@@ -1059,12 +1096,15 @@ void runSteppedSchedules(std::size_t gatewayThreads, bool stop, order_book::engi
 
 // 100 seeded schedules each way on one gateway thread, and 50 each way on two with a connection
 // per instrument, through the harness's stepper, which engine_randomized_tests --stepper also
-// runs, so a failing seed here reproduces there.
+// runs, so a failing seed here reproduces there. Then half as many again with every shard
+// logging, where no response may be released before its command is in the log.
 void testSteppedSchedules() {
     order_book::engine_testing::StepperResult totals;
-    for (const std::size_t gatewayThreads : {std::size_t{1}, std::size_t{2}}) {
-        for (const bool stop : {false, true}) {
-            runSteppedSchedules(gatewayThreads, stop, totals);
+    for (const bool log : {false, true}) {
+        for (const std::size_t gatewayThreads : {std::size_t{1}, std::size_t{2}}) {
+            for (const bool stop : {false, true}) {
+                runSteppedSchedules(gatewayThreads, stop, log, totals);
+            }
         }
     }
     expect(totals.sleeps > 0, "the gateway slept, or the check of each sleep checked nothing");
@@ -1078,6 +1118,7 @@ int main() {
     testHelloIsWelcomed();
     testCommandsNeedNotWaitForWelcome();
     testEachInstrumentReachesItsOwnBook();
+    testAResponseWaitsForTheLog();
     testACascadeComesWholeAndInOrder();
     testEntryAnswersWithoutTheBook();
     testOneWritePerConnectionPerPass();

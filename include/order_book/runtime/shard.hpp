@@ -8,6 +8,7 @@
 #include "order_book/command.hpp"
 #include "order_book/invariants.hpp"
 #include "order_book/runtime/book_set.hpp"
+#include "order_book/runtime/durable_position.hpp"
 #include "order_book/runtime/instruments.hpp"
 
 namespace order_book {
@@ -20,7 +21,8 @@ namespace order_book::runtime {
     enum class ShardViolationKind {
         BOOK,               // a book's own check failed
         SLOT_MAPPING,       // a slot does not map back through the directory
-        LOG_POSITION        // the next log position is not the first plus the commands taken
+        LOG_POSITION,       // the next log position is not the first plus the commands taken
+        DURABLE_POSITION    // the durable position passed the next position, or went back
     };
 
     struct ShardViolation {
@@ -69,8 +71,19 @@ namespace order_book::runtime {
         // In checked builds, the command process took last or is running. Zeroes otherwise.
         ShardProgress lastProgress() const noexcept { return progress; }
 
+        // The durable position this shard's log writer publishes, which must outlive it, for
+        // checkInvariants to hold to what this shard has taken.
+        void watchDurablePosition(const DurablePosition& position) noexcept {
+            durable = &position;
+            durableSeen = logStart;
+        }
+
         // Every book's own check, that each slot maps back through the directory to this shard
-        // and slot, and that the next log position is the first plus the commands taken.
+        // and slot, that the next log position is the first plus the commands taken, and, once
+        // a durable position is watched, that it never passes the next position or goes back,
+        // from the first position or from what an earlier check saw. That last holds wherever
+        // no take is half run, since a whole take reaches the log ring before any of it runs,
+        // so mid-take the log writer may already have made the rest durable.
         std::optional<ShardViolation> checkInvariants() const;
 
     private:
@@ -84,6 +97,8 @@ namespace order_book::runtime {
         std::uint64_t nextLogPosition;
         std::uint64_t taken = 0;
         ShardProgress progress;
+        const DurablePosition* durable = nullptr;
+        mutable std::uint64_t durableSeen = 0;  // the most an earlier check saw
     };
 
 }  // namespace order_book::runtime

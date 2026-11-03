@@ -241,6 +241,84 @@ void testAFullResponseRingWaitsInPlace() {
     expect(events == resting + resting + 1, "every event of a response larger than the ring came through");
 }
 
+std::vector<LogEntry> drainLog(Ring<LogEntry>& ring) {
+    std::vector<LogEntry> entries;
+    while (ring.drain(64, [&entries](const LogEntry& entry) { entries.push_back(entry); }) != 0) {
+    }
+    return entries;
+}
+
+// With a log, each take's commands go to the log ring before any runs, and a hold marker naming
+// the position they all need goes on the response ring ahead of their events.
+void testATakeIsLoggedAndHeld() {
+    const InstrumentDirectory directory({on("AAPL", 0), on("MSFT", 0)}, 1);
+    Shard shard(directory, 0, defaultBookCapacity, 100);
+    Doorbell doorbell;
+    Doorbell writerBell;
+    Ring<CommandElement> commands(16);
+    Ring<ResponseRecord> responses(16);
+    Ring<LogEntry> log(16);
+    MatchingLoop loop(shard, doorbell, {RingPair{&commands, &responses}}, std::chrono::nanoseconds::zero(), {}, LogLink{&log, &writerBell});
+
+    commands.tryPush(element(add(1, Side::SELL, 100, 5), 11, 1));
+    commands.tryPush(element(replay::CancelCommand{1}, 12, 1));
+    expect(loop.pass() == 2, "a pass takes what is there");
+
+    const std::vector<LogEntry> logged = drainLog(log);
+    expect(logged.size() == 2, "both commands went to the log ring");
+    expect(logged[0].command == add(1, Side::SELL, 100, 5) && logged[0].slot == 1 && logged[0].control == ControlKind::COMMAND,
+           "each with its slot, in take order");
+    expect(logged[1].command == replay::Command(replay::CancelCommand{1}), "the second after the first");
+
+    const std::vector<ResponseRecord> records = drainAll(responses);
+    expect(records.size() == 3, "a marker, then one event each");
+    expect(records[0].kind == ResponseKind::HOLD && records[0].correlation == 102,
+           "the marker comes first, naming positions 100 and 101 as needed");
+    expect(records[1].correlation == 11 && records[2].correlation == 12, "then the events, as without a log");
+
+    commands.tryPush(CommandElement::stopMarker());
+    loop.run();
+    expect(drainAll(responses).size() == 1, "a take of only a stop marker needs no hold, just the stop");
+    const std::vector<LogEntry> last = drainLog(log);
+    expect(last.size() == 1 && last[0].control == ControlKind::STOP, "and the log writer is told to finish");
+}
+
+// A take is no larger than the log ring holds, and a full log ring makes the matching thread wait
+// before its next take, never in the middle of one.
+void testAFullLogRingWaitsBeforeATake() {
+    const InstrumentDirectory directory({on("AAPL", 0)}, 1);
+    Shard shard(directory, 0);
+    Doorbell doorbell;
+    Doorbell writerBell;
+    Ring<CommandElement> commands(16);
+    Ring<ResponseRecord> responses(64);
+    Ring<LogEntry> log(2);
+    std::size_t waits = 0;
+    std::size_t takenAtFirstWait = 0;
+    MatchingLoop loop(shard, doorbell, {RingPair{&commands, &responses}}, std::chrono::nanoseconds::zero(),
+                      [&] {
+                          if (waits++ == 0) {
+                              takenAtFirstWait = shard.commandsTaken();
+                          }
+                          drainLog(log);  // as the log writer would
+                      },
+                      LogLink{&log, &writerBell});
+    for (OrderId id = 1; id <= 5; ++id) {
+        commands.tryPush(element(add(id, Side::BUY, 100, 1), id));
+    }
+    expect(loop.pass() == 2, "a take is no larger than the log ring");
+    expect(waits == 0, "and an empty log ring has room for it");
+    expect(loop.pass() == 2, "the next take waits for room");
+    expect(waits != 0 && takenAtFirstWait == 2, "before it takes anything");
+    std::vector<std::uint64_t> holds;
+    for (const ResponseRecord& record : drainAll(responses)) {
+        if (record.kind == ResponseKind::HOLD) {
+            holds.push_back(record.correlation);
+        }
+    }
+    expect(holds == std::vector<std::uint64_t>{2, 4}, "each take holds its own events behind its own end");
+}
+
 std::vector<replay::Command> scriptOf(std::size_t commands) {
     std::vector<replay::Command> script;
     script.reserve(commands);
@@ -305,6 +383,8 @@ int main() {
     testACommandBeforeTheSleepIsSeen();
     testARingWakesASleeper();
     testAFullResponseRingWaitsInPlace();
+    testATakeIsLoggedAndHeld();
+    testAFullLogRingWaitsBeforeATake();
     testAThreadGivesWhatOneThreadGives();
     std::cout << "matching loop tests passed" << std::endl;
     return EXIT_SUCCESS;

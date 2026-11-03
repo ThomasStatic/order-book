@@ -188,6 +188,8 @@ add_library(order_book_runtime STATIC
     src/runtime/book_set.cpp
     src/runtime/engine_settings.cpp
     src/runtime/instruments.cpp
+    src/runtime/log_storage.cpp
+    src/runtime/log_writer.cpp
     src/runtime/matching_loop.cpp
     src/runtime/shard.cpp
     src/runtime/thread_placement.cpp
@@ -195,6 +197,11 @@ add_library(order_book_runtime STATIC
 
 target_compile_features(order_book_runtime PUBLIC cxx_std_20)
 target_link_libraries(order_book_runtime PUBLIC order_book_replay Threads::Threads)
+# A log file's header records the engine that wrote it.
+target_compile_definitions(order_book_runtime PRIVATE
+    ORDER_BOOK_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+    ORDER_BOOK_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+    ORDER_BOOK_VERSION_PATCH=${PROJECT_VERSION_PATCH})
 order_book_enable_warnings(order_book_runtime)
 order_book_enable_sanitizers(order_book_runtime)
 
@@ -561,6 +568,23 @@ if(BUILD_TESTING)
     add_test(NAME matching_loop_tests COMMAND matching_loop_tests)
     # The timeout is what fails a lost wake-up, which hangs.
     set_tests_properties(matching_loop_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
+
+    add_executable(log_writer_tests
+        tests/log_writer_test.cpp
+    )
+
+    target_compile_features(log_writer_tests PRIVATE cxx_std_20)
+    target_link_libraries(log_writer_tests PRIVATE order_book_runtime)
+    order_book_enable_warnings(log_writer_tests)
+    order_book_enable_sanitizers(log_writer_tests)
+    add_test(NAME log_writer_tests COMMAND log_writer_tests)
+    # A failed log write or flush must abort, naming the shard and file.
+    foreach(failing write flush)
+        add_test(NAME log_writer_abort_${failing}
+            COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:log_writer_tests> -DARGS=abort-${failing}
+                    "-DOUTPUT_REGEX=order book runtime: shard 0 log writer: log-0000-0+[.]oblog: cannot ${failing} "
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
+    endforeach()
 
     add_executable(matching_abort_tests
         tests/matching_abort_test.cpp

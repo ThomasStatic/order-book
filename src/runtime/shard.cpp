@@ -47,6 +47,19 @@ namespace order_book::runtime {
                                   "next log position " + std::to_string(nextLogPosition) + " is not " +
                                       std::to_string(logStart) + " plus " + std::to_string(taken) + " commands taken"};
         }
+        if (durable != nullptr) {
+            const std::uint64_t now = durable->load();
+            if (now < durableSeen) {
+                return ShardViolation{ShardViolationKind::DURABLE_POSITION, 0,
+                                      "durable position " + std::to_string(now) + " went back from " + std::to_string(durableSeen)};
+            }
+            if (now > nextLogPosition) {
+                return ShardViolation{ShardViolationKind::DURABLE_POSITION, 0,
+                                      "durable position " + std::to_string(now) + " passes the next log position " +
+                                          std::to_string(nextLogPosition)};
+            }
+            durableSeen = now;
+        }
         return std::nullopt;
     }
 

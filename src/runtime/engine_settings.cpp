@@ -14,7 +14,9 @@ namespace order_book::runtime {
             "                         [--capacity-orders N] [--capacity-stops N] [--capacity-levels N]\n"
             "                         [--max-connections N] [--gateway-threads M] [--high-water-mark SIZE] [--hard-limit SIZE]\n"
             "                         [--stop-grace TIME] [--stop-on-stdin-close]\n"
-            "                         [--pin-matching CORES] [--pin-gateway CORES] [--thread-priority normal|high]\n"
+            "                         [--log-dir DIR] [--durability machine|process] [--log-ring RECORDS]\n"
+            "                         [--pin-matching CORES] [--pin-gateway CORES] [--pin-log-writers CORES]\n"
+            "                         [--thread-priority normal|high]\n"
             "       order_book_engine --help\n";
 
         std::optional<std::uint64_t> parseDigits(std::string_view text) {
@@ -148,10 +150,11 @@ namespace order_book::runtime {
                                 : flag == "--max-connections" ? sizeFlag(settings.maxConnections)
                                 : flag == "--high-water-mark" ? sizeFlag(settings.highWaterMark)
                                 : flag == "--hard-limit"      ? sizeFlag(settings.hardLimit)
+                                : flag == "--log-ring"        ? sizeFlag(settings.logRing)
                                                               : nullptr;
             const bool known = size != nullptr || flag == "--instruments" || flag == "--shards" || flag == "--gateway-threads" || flag == "--listen" ||
                                flag == "--spin-window" || flag == "--stop-grace" || flag == "--pin-matching" || flag == "--pin-gateway" ||
-                               flag == "--thread-priority";
+                               flag == "--pin-log-writers" || flag == "--thread-priority" || flag == "--log-dir" || flag == "--durability";
             if (!known) {
                 return UsageError{"unknown option '" + std::string(flag) + "'"};
             }
@@ -167,6 +170,13 @@ namespace order_book::runtime {
                 *size = *parsed;
             } else if (flag == "--instruments") {
                 settings.instruments = std::string(value);
+            } else if (flag == "--log-dir") {
+                settings.logDir = std::string(value);
+            } else if (flag == "--durability") {
+                if (value != "machine" && value != "process") {
+                    return needs(flag, "machine or process", value);
+                }
+                settings.durability = value == "machine" ? Durability::MACHINE : Durability::PROCESS;
             } else if (flag == "--shards" || flag == "--gateway-threads") {
                 const std::optional<std::uint64_t> count = parseDigits(value);
                 if (!count || *count > std::numeric_limits<std::uint32_t>::max()) {
@@ -179,12 +189,13 @@ namespace order_book::runtime {
                     return needs(flag, "an IPv4 address and port, as 127.0.0.1:0", value);
                 }
                 settings.listen = *address;
-            } else if (flag == "--pin-matching" || flag == "--pin-gateway") {
+            } else if (flag == "--pin-matching" || flag == "--pin-gateway" || flag == "--pin-log-writers") {
                 std::optional<std::vector<std::uint32_t>> cores = parseCores(value);
                 if (!cores) {
                     return needs(flag, "cores: numbers with commas between", value);
                 }
-                (flag == "--pin-matching" ? settings.pinMatching : settings.pinGateway) = std::move(*cores);
+                (flag == "--pin-matching" ? settings.pinMatching : flag == "--pin-gateway" ? settings.pinGateway : settings.pinLogWriters) =
+                    std::move(*cores);
             } else if (flag == "--thread-priority") {
                 if (value != "normal" && value != "high") {
                     return needs(flag, "normal or high", value);
@@ -249,11 +260,19 @@ namespace order_book::runtime {
                            " --gateway-threads " + std::to_string(settings.gatewayThreads) +
                            " --high-water-mark " + formatSize(settings.highWaterMark) + " --hard-limit " + formatSize(settings.hardLimit) +
                            " --stop-grace " + formatTime(settings.stopGrace);
+        if (!settings.logDir.empty()) {
+            line += " --log-dir " + settings.logDir;
+        }
+        line += settings.durability == Durability::MACHINE ? " --durability machine" : " --durability process";
+        line += " --log-ring " + std::to_string(settings.logRing);
         if (!settings.pinMatching.empty()) {
             line += " --pin-matching " + formatCores(settings.pinMatching);
         }
         if (!settings.pinGateway.empty()) {
             line += " --pin-gateway " + formatCores(settings.pinGateway);
+        }
+        if (!settings.pinLogWriters.empty()) {
+            line += " --pin-log-writers " + formatCores(settings.pinLogWriters);
         }
         line += settings.threadPriority == ThreadPriority::HIGH ? " --thread-priority high" : " --thread-priority normal";
         if (settings.stopOnStdinClose) {

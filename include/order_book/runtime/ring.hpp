@@ -54,6 +54,31 @@ namespace order_book::runtime {
             return true;
         }
 
+        // Writer only. Whether count more items would fit right now.
+        bool hasRoomFor(std::size_t count) noexcept {
+            const std::size_t tail = writer.index.load(std::memory_order_relaxed);
+            if (slots - (tail - writer.otherSide) < count) {
+                writer.otherSide = reader.index.load(std::memory_order_acquire);
+            }
+            return slots - (tail - writer.otherSide) >= count;
+        }
+
+        // Reader only. How many items are waiting, up to limit, each of which peek can then see
+        // in place until a drain takes it.
+        std::size_t waiting(std::size_t limit) noexcept {
+            const std::size_t head = reader.index.load(std::memory_order_relaxed);
+            if (reader.otherSide - head < limit) {
+                reader.otherSide = writer.index.load(std::memory_order_acquire);
+            }
+            const std::size_t available = reader.otherSide - head;
+            return available < limit ? available : limit;
+        }
+
+        // Reader only. The offset-th oldest item, which waiting must have counted.
+        const Item& peek(std::size_t offset) const noexcept {
+            return items[(reader.index.load(std::memory_order_relaxed) + offset) & mask];
+        }
+
         // Reader only. Whether anything is waiting right now.
         bool hasItems() const noexcept {
             return writer.index.load(std::memory_order_acquire) != reader.index.load(std::memory_order_relaxed);
@@ -63,6 +88,16 @@ namespace order_book::runtime {
         // Their slots go back to the writer together, once take has seen them all.
         template <typename Take>
         std::size_t drain(std::size_t limit, Take&& take) {
+            return drainWhile(limit, [&take](const Item& item) {
+                take(item);
+                return true;
+            });
+        }
+
+        // Reader only. As drain, but take returns whether to go on: the item it returns false
+        // for is taken, and the rest wait.
+        template <typename Take>
+        std::size_t drainWhile(std::size_t limit, Take&& take) {
             const std::size_t head = reader.index.load(std::memory_order_relaxed);
             std::size_t available = reader.otherSide - head;
             if (available < limit) {
@@ -70,13 +105,18 @@ namespace order_book::runtime {
                 available = reader.otherSide - head;
             }
             const std::size_t count = available < limit ? available : limit;
-            for (std::size_t i = 0; i < count; ++i) {
-                take(static_cast<const Item&>(items[(head + i) & mask]));
+            std::size_t taken = 0;
+            while (taken < count) {
+                const bool goOn = take(static_cast<const Item&>(items[(head + taken) & mask]));
+                ++taken;
+                if (!goOn) {
+                    break;
+                }
             }
-            if (count != 0) {
-                reader.index.store(head + count, std::memory_order_release);
+            if (taken != 0) {
+                reader.index.store(head + taken, std::memory_order_release);
             }
-            return count;
+            return taken;
         }
 
     private:
@@ -121,8 +161,10 @@ namespace order_book::runtime {
     static_assert(sizeof(CommandElement) == 64, "a command element fills one cache line");
     static_assert(std::is_trivially_copyable_v<CommandElement>, "a command element crosses threads by copy");
 
-    // SHARD_STOPPED carries no event: it says this ring will hold nothing more.
-    enum class ResponseKind : std::uint8_t { EVENT, LAST_EVENT, SHARD_STOPPED };
+    // SHARD_STOPPED carries no event: it says this ring will hold nothing more. A HOLD marker
+    // carries none either: what follows it needs the log durable up to the position in its
+    // correlation, so a gateway thread stops draining the ring there until it is (ADR 0013).
+    enum class ResponseKind : std::uint8_t { EVENT, LAST_EVENT, SHARD_STOPPED, HOLD };
 
     // One event on its way back. Results never cross threads, and a response larger than the ring
     // streams through it.
@@ -132,6 +174,11 @@ namespace order_book::runtime {
         std::uint32_t slot;
         BookEvent event;
         ResponseKind kind;
+
+        // What the responses after it need: every log position below position durable.
+        static ResponseRecord hold(std::uint64_t position) noexcept {
+            return ResponseRecord{position, 0, 0, BookEvent{}, ResponseKind::HOLD};
+        }
     };
     static_assert(sizeof(ResponseRecord) == 48, "a response record is one fixed size");
     static_assert(std::is_trivially_copyable_v<ResponseRecord>, "a response record crosses threads by copy");

@@ -27,6 +27,9 @@ namespace order_book::engine_testing {
         // Land a stop at a step chosen from the seed, which each gateway thread begins at its
         // next pass, as runGateway does.
         bool stop = false;
+        // Every shard logs to in-memory storage, its log writer is one more actor, and no
+        // response may be released before its command is in the storage.
+        bool log = false;
     };
 
     struct StepperResult {
@@ -44,7 +47,10 @@ namespace order_book::engine_testing {
     // order per connection, and what ran must equal a single-threaded run of just those commands.
     // Every sleep must leave nothing in the sleeping thread's rings, every connection it holds with
     // bytes to move watched, and it woken if a connection was handed to it. Connection i must end
-    // on gateway thread i mod M.
+    // on gateway thread i mod M. With a log, after every step no client may hold an answer to a
+    // command whose record isn't yet in the storage, the durable position may not pass what the
+    // storage holds, and each instrument's log must end holding exactly the commands that ran, in
+    // order, with a stop's files closed and reading to their end.
     StepperResult runStepperSchedule(const StepperConfig& config);
     // The same schedule on these lines in place of the seed's own stream, which is how a failing
     // schedule shrinks with its seed held fixed. Every line's instrument must be one of config's.

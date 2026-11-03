@@ -18,8 +18,9 @@
 #include "order_book/symbol.hpp"
 
 // order_book_cli send against a real order_book_engine, both child processes, compared byte for
-// byte with order_book_cli replay of the same file. Takes the engine, the CLI, tests/replay, and
-// tests/engine/samples. Threaded, so ThreadSanitizer and Arm run it. See docs/internals/testing.md.
+// byte with order_book_cli replay of the same file, and then the engine's own log replayed, which
+// must give the same books. Takes the engine, the CLI, tests/replay, and tests/engine/samples.
+// Threaded, so ThreadSanitizer and Arm run it. See docs/internals/testing.md.
 namespace {
 
 using namespace order_book;
@@ -81,11 +82,14 @@ std::string describe(const std::vector<std::string>& arguments, const Run& resul
            result.out + "\nand stderr:\n" + result.err;
 }
 
-// One engine on port 0 with these instruments, stopped by closing its stdin.
+// One engine on port 0 with these instruments, stopped by closing its stdin, logging to a log
+// directory of its own at process durability unless told otherwise.
 class Engine {
 public:
-    Engine(std::string named, const std::set<std::string>& symbols, std::uint32_t shards, std::uint32_t gatewayThreads = 1)
+    Engine(std::string named, const std::set<std::string>& symbols, std::uint32_t shards, std::uint32_t gatewayThreads = 1,
+           const std::string& durability = "process")
         : name(std::move(named)), list(fs::temp_directory_path() / ("order_book_end_to_end_" + std::to_string(++started) + ".csv")) {
+        logs = fs::temp_directory_path() / ("order_book_end_to_end_logs_" + std::to_string(started));
         {
             std::ofstream out(list, std::ios::binary);
             out << "symbol,shard,orders,stops,levels\n";
@@ -93,9 +97,11 @@ public:
                 out << symbol << ",,,,\n";
             }
         }
+        fs::remove_all(logs);
+        fs::create_directories(logs);
         child.emplace(engine, std::vector<std::string>{"--instruments", list.string(), "--shards", std::to_string(shards), "--listen",
-                                                       "127.0.0.1:0", "--gateway-threads", std::to_string(gatewayThreads),
-                                                       "--stop-on-stdin-close"});
+                                                       "127.0.0.1:0", "--gateway-threads", std::to_string(gatewayThreads), "--log-dir",
+                                                       logs.string(), "--durability", durability, "--stop-on-stdin-close"});
         const std::optional<std::string> line = child->readLine(30s);
         expect(line && line->starts_with("listening 127.0.0.1:"),
                name + ": the engine said where it listens, with stderr:\n" + child->standardError());
@@ -105,6 +111,7 @@ public:
     ~Engine() {
         std::error_code ignored;
         fs::remove(list, ignored);
+        fs::remove_all(logs, ignored);
     }
 
     Engine(const Engine&) = delete;
@@ -120,6 +127,7 @@ public:
 
     std::string name;
     std::string address;
+    fs::path logs;
 
 private:
     static inline int started = 0;
@@ -147,6 +155,21 @@ void expectSendMatchesReplay(const Engine& running, const fs::path& file, const 
     expect(plain(sent.err) == plain(replayed.err), name + ": and the same diagnostics; send:\n" + sent.err + "\nreplay:\n" + replayed.err);
 }
 
+// After a clean stop, the engine's own log reproduces the books: replay of its log directory prints
+// what replay of what was sent prints, exit and diagnostics included unless the input itself was
+// damaged, since a damaged file still runs its good prefix but exits 1.
+void expectLogReplaysTo(const Engine& stopped, const std::vector<std::string>& fromInput, bool inputIsDamaged = false) {
+    const std::vector<std::string> fromLog{"replay", stopped.logs.string(), "--book"};
+    const Run logged = run(fromLog);
+    const Run replayed = run(fromInput);
+    expect(!logged.status.killed && logged.status.code == 0, stopped.name + ": " + describe(fromLog, logged));
+    expect(logged.out == replayed.out, stopped.name + ": the log replays to the same books; log:\n" + logged.out + "\ninput:\n" + replayed.out);
+    if (!inputIsDamaged) {
+        expect(!replayed.status.killed && replayed.status.code == 0 && plain(logged.err) == plain(replayed.err),
+               stopped.name + ": and says the same: " + describe(fromInput, replayed));
+    }
+}
+
 // Every valid sample. A v1 or v2 file stands in for one instrument, each its own, so they share
 // an engine, with two gateway threads, so thread 0 hands every other send's connection on; a v3
 // file names its own, which may collide, so each has one.
@@ -170,6 +193,25 @@ void testEveryValidSample() {
         expectSendMatchesReplay(shared, standIns[i], "S" + std::to_string(i));
     }
     shared.stop();
+    // The stand-ins' sections, one replay each, in the log's order: by symbol, with a blank line
+    // between them, and none for a file with no commands.
+    std::vector<std::string> sorted(symbols.begin(), symbols.end());
+    std::sort(sorted.begin(), sorted.end());
+    std::string sections;
+    for (const std::string& symbol : sorted) {
+        const std::size_t i = std::stoul(symbol.substr(1));
+        const std::vector<std::string> arguments{"replay", standIns[i].string(), "--symbol", symbol, "--book", "--no-statistics"};
+        const Run replayed = run(arguments);
+        expect(!replayed.status.killed && replayed.status.code == 0, describe(arguments, replayed));
+        if (!replayed.out.empty()) {
+            sections += (sections.empty() ? "" : "\n") + replayed.out;
+        }
+    }
+    const std::vector<std::string> fromLog{"replay", shared.logs.string(), "--book", "--no-statistics"};
+    const Run logged = run(fromLog);
+    expect(!logged.status.killed && logged.status.code == 0, describe(fromLog, logged));
+    expect(logged.out == sections, "stand-ins: the shared engine's log replays to every stand-in's book; log:\n" + logged.out +
+                                       "\ninputs:\n" + sections);
 
     for (const fs::path& path : named) {
         // A header-only file names nothing, and an engine needs an instrument.
@@ -178,6 +220,7 @@ void testEveryValidSample() {
         Engine own(path.stem().string(), listed, 2);
         expectSendMatchesReplay(own, path, std::nullopt);
         own.stop();
+        expectLogReplaysTo(own, {"replay", path.string(), "--book"});
     }
 }
 
@@ -191,14 +234,17 @@ void testManyInstrumentsAtOneAndThreeShards() {
         Engine running("seven instruments on " + std::to_string(shards), symbolsIn(file), shards);
         expectSendMatchesReplay(running, file, std::nullopt);
         running.stop();
+        expectLogReplaysTo(running, {"replay", file.string(), "--book"});
     }
-    Engine running("seven instruments on 3 shards and 2 gateway threads", symbolsIn(file), 3, 2);
+    // The one run at machine durability, every write through to the drive.
+    Engine running("seven instruments on 3 shards and 2 gateway threads", symbolsIn(file), 3, 2, "machine");
     {
         const std::uint16_t port = static_cast<std::uint16_t>(std::stoul(running.address.substr(running.address.rfind(':') + 1)));
         const network::TcpSocket idle = network::TcpSocket::connectLoopback(port);
         expectSendMatchesReplay(running, file, std::nullopt);
     }
     running.stop();
+    expectLogReplaysTo(running, {"replay", file.string(), "--book"});
 }
 
 // A good prefix still runs, then the file's diagnostic, and exit 1.
@@ -207,6 +253,7 @@ void testAMalformedFileSendsItsPrefix() {
     Engine running("a malformed file", {"AAPL"}, 1);
     expectSendMatchesReplay(running, file, std::nullopt, 1);
     running.stop();
+    expectLogReplaysTo(running, {"replay", file.string(), "--book"}, true);
 }
 
 // A log is sniffed as replay sniffs it, so its records go out as its CSV twin's would.
@@ -215,6 +262,7 @@ void testALogSendsItsRecords() {
     Engine running("a log", symbolsIn(file), 2);
     expectSendMatchesReplay(running, file, std::nullopt);
     running.stop();
+    expectLogReplaysTo(running, {"replay", file.string(), "--book"});
 }
 
 // The one case replay can't stand for: a command the engine refuses prints in place, and exits 4.

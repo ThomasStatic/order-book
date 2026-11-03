@@ -71,7 +71,7 @@ public:
         gateway = std::thread([this] {
             GatewaySettings settings;
             settings.spinWindow = std::chrono::nanoseconds::zero();  // so it sleeps the moment it may
-            GatewayThread gatewayThread(directory, {ShardLink{&commands, &responses, &doorbell}}, sockets, settings);
+            GatewayThread gatewayThread(directory, {ShardLink{&commands, &responses, &doorbell, nullptr}}, sockets, settings);
             runGateway(gatewayThread, stopRequested);
         });
     }

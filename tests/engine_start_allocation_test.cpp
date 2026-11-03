@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <iostream>
 #include <new>
 #include <ostream>
@@ -126,9 +127,9 @@ private:
     bool requested = false;
 };
 
-int failEachStartAllocation() {
-    const std::filesystem::path list = std::filesystem::temp_directory_path() / "order_book_engine_start_allocation_test.csv";
-    std::ofstream(list, std::ios::binary) << "symbol,shard,orders,stops,levels\nAAPL,,,,\nMSFT,1,10,10,10\n";
+// Once with no log, and once with one, where a refused start must also leave no log behind, or
+// the next start would be refused on it.
+long failEachStartAllocation(const std::filesystem::path& list, const std::optional<std::filesystem::path>& logs) {
     runtime::EngineSettings settings;
     settings.instruments = list.string();
     settings.shards = 2;
@@ -136,6 +137,12 @@ int failEachStartAllocation() {
     settings.capacityOrders = 64;  // small books, so a start makes few allocations
     settings.capacityStops = 8;
     settings.capacityLevels = 8;
+    if (logs) {
+        std::filesystem::remove_all(*logs);
+        std::filesystem::create_directories(*logs);
+        settings.logDir = logs->string();
+        settings.logRing = 64;
+    }
 
     long refusals = 0;
     for (long k = 0;; ++k) {
@@ -158,11 +165,27 @@ int failEachStartAllocation() {
                                                       std::to_string(static_cast<int>(exit)) + ":\n" + said);
         expect(said.find("order_book_engine: start refused: ") != std::string::npos, "and says so:\n" + said);
         expect(trigger.text.empty(), "and never listened");
+        if (logs) {
+            expect(std::filesystem::is_empty(*logs), "allocation " + std::to_string(k) + " failing left a log behind");
+        }
         ++refusals;
     }
     expect(refusals > 10, "the start allocates enough for this to mean something");
+    if (logs) {
+        std::filesystem::remove_all(*logs);
+    }
+    return refusals;
+}
+
+int failEachStartAllocation() {
+    const std::filesystem::path list = std::filesystem::temp_directory_path() / "order_book_engine_start_allocation_test.csv";
+    std::ofstream(list, std::ios::binary) << "symbol,shard,orders,stops,levels\nAAPL,,,,\nMSFT,1,10,10,10\n";
+    const long unlogged = failEachStartAllocation(list, std::nullopt);
+    const long logged = failEachStartAllocation(list, std::filesystem::temp_directory_path() / "order_book_engine_start_allocation_logs");
+    expect(logged > unlogged, "a log adds allocations to the start");
     std::filesystem::remove(list);
-    std::cout << "engine start allocation tests passed after " << refusals << " refused starts" << std::endl;
+    std::cout << "engine start allocation tests passed after " << unlogged << " refused starts, and " << logged << " with a log"
+              << std::endl;
     return EXIT_SUCCESS;
 }
 

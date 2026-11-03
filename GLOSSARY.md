@@ -130,12 +130,16 @@ Where a command waits on its way to a shard's matching thread. It is bounded. A 
 _Avoid_: inbox, mailbox, buffer
 
 **Doorbell**:
-How a producer wakes a shard's sleeping matching thread. There is one per shard, and producers ring it after each batch.
+How a producer wakes a sleeping thread that consumes a queue: a shard's matching thread, which producers ring after each batch, or its log writer, which the matching thread rings after each take. There is one for each.
 _Avoid_: signal, event, notifier
 
 **Stop marker**:
 A producer's last element on a command queue, saying it will send nothing more. It sits beside a command and is never one, so it can never reach the log.
 _Avoid_: poison pill, sentinel
+
+**Hold marker**:
+What a matching thread puts on a response queue before each batch of commands it takes, naming the log position they all need. A gateway thread drains no further on that queue until the durable position reaches it, so the queue itself holds their responses back.
+_Avoid_: barrier, fence, watermark
 
 **Response queue**:
 Where a command's events wait on their way back from a matching thread, and where they stay until the command is durable. It is bounded, and a matching thread with no room waits rather than lose an event.

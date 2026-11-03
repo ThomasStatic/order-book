@@ -36,6 +36,7 @@ namespace order_book::engine_testing {
             generation.instruments = config.instruments;
             generation.shards = config.shards;
             generation.commands = config.commands;
+            generation.logWritePercent = 0;  // commands alone, as connections send them
             return generation;
         }
 
@@ -116,7 +117,7 @@ namespace order_book::engine_testing {
             for (std::size_t thread = 0; thread < config.gatewayThreads; ++thread) {
                 std::vector<ShardLink> links;
                 for (const std::unique_ptr<ShardRun>& shard : shards) {
-                    links.push_back(ShardLink{&shard->links[thread]->commands, &shard->links[thread]->responses, &shard->doorbell});
+                    links.push_back(ShardLink{&shard->links[thread]->commands, &shard->links[thread]->responses, &shard->doorbell, nullptr});
                 }
                 gateways.push_back(std::make_unique<GatewayThread>(directory, std::move(links), socketsOf(thread), settings, &handOff, thread));
             }

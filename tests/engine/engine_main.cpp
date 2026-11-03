@@ -8,8 +8,9 @@
 // --stepper run|stop, which runs the gateway stepper's schedule for each seed instead, with no
 // stop or with one, on its own default instruments and shards unless those are given too, and
 // with --gateway-threads M, --connections N, --placement hashed|pinned, --stream-seed S (the
-// stream's seed, where --seed is then only the schedule's), and --lines I,J,... (just those lines
-// of the stream, which is how a shrunk reproduction runs).
+// stream's seed, where --seed is then only the schedule's), --lines I,J,... (just those lines
+// of the stream, which is how a shrunk reproduction runs), and --log on|off (every shard logging,
+// with no response released before its command is in the log; off by default).
 //
 // --threads run runs real gateway and matching threads instead, a connection per instrument,
 // with --gateway-threads M, --ring-slots R (0 for the engine's sizes), --spin-window-ns W, and
@@ -55,6 +56,7 @@ struct Options {
     std::size_t gatewayThreads = 1;
     std::optional<std::size_t> connections;
     bool pinned = false;
+    bool log = false;
     std::optional<std::uint64_t> streamSeed;
     std::optional<std::vector<std::size_t>> lines;
     std::size_t ringSlots = 0;
@@ -114,6 +116,7 @@ StepperConfig stepperConfig(const Options& options, std::uint64_t seed) {
     config.gatewayThreads = options.gatewayThreads;
     config.connections = options.connections.value_or(config.connections);
     config.pinned = options.pinned;
+    config.log = options.log;
     return config;
 }
 
@@ -125,6 +128,9 @@ std::string reproduction(const StepperConfig& config, const std::optional<std::v
                        (config.pinned ? "pinned" : "hashed");
     if (config.streamSeed) {
         line += " --stream-seed " + std::to_string(*config.streamSeed);
+    }
+    if (config.log) {
+        line += " --log on";
     }
     if (lines) {
         line += " --lines ";
@@ -144,6 +150,7 @@ bool runSchedule(const StepperConfig& config, const std::optional<std::vector<st
         generation.instruments = config.instruments;
         generation.shards = config.shards;
         generation.commands = config.commands;
+        generation.logWritePercent = 0;  // its log writers are actors of their own
         const std::vector<EngineCommand> all = generateEngineStream(generation);
         std::vector<EngineCommand> kept;
         for (const std::size_t index : *lines) {
@@ -274,6 +281,13 @@ std::optional<std::string> parseArguments(int argc, char** argv, Options& option
                 return "--placement takes hashed or pinned, not '" + std::string(value) + "'";
             }
             options.pinned = value == "pinned";
+            continue;
+        }
+        if (arg == "--log") {
+            if (value != "on" && value != "off") {
+                return "--log takes on or off, not '" + std::string(value) + "'";
+            }
+            options.log = value == "on";
             continue;
         }
         if (arg == "--out-dir") {

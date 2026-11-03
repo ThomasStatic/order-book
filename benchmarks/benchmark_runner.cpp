@@ -799,7 +799,7 @@ GatewayRun::GatewayRun(const std::vector<Workload>& runWorkloads, std::size_t co
                {runtime::RingPair{&commands, &responses}}) {
     gateway = std::thread([this] {
         try {
-            network::GatewayThread gatewayThread(matching.books().instruments(), {network::ShardLink{&commands, &responses, &doorbell}},
+            network::GatewayThread gatewayThread(matching.books().instruments(), {network::ShardLink{&commands, &responses, &doorbell, nullptr}},
                                                  *sockets);
             network::runGateway(gatewayThread, stopRequested);
         } catch (...) {

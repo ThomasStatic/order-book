@@ -4,6 +4,7 @@
 #include <atomic>
 #include <bit>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <future>
 #include <iterator>
@@ -22,6 +23,8 @@
 #include "order_book/network/poll_socket_set.hpp"
 #include "order_book/runtime/abort_report.hpp"
 #include "order_book/runtime/instruments.hpp"
+#include "order_book/runtime/log_storage.hpp"
+#include "order_book/runtime/log_writer.hpp"
 #include "order_book/runtime/matching_loop.hpp"
 #include "order_book/runtime/ring.hpp"
 #include "order_book/runtime/shard.hpp"
@@ -53,13 +56,16 @@ namespace order_book::network {
             runtime::Ring<runtime::ResponseRecord> responses;
         };
 
-        // One shard: a pair of rings per gateway thread, its matching thread, and what that thread
-        // reports once it stops.
+        // One shard: a pair of rings per gateway thread, its matching thread, its log writer if
+        // it has a log, and what those threads report once they stop.
         struct ShardRuntime {
-            ShardRuntime(std::size_t commandSlots, std::size_t responseSlots, std::size_t gatewayThreads) {
+            ShardRuntime(std::size_t commandSlots, std::size_t responseSlots, std::size_t gatewayThreads, std::size_t logSlots) {
                 rings.reserve(gatewayThreads);
                 for (std::size_t gateway = 0; gateway < gatewayThreads; ++gateway) {
                     rings.push_back(std::make_unique<GatewayRings>(commandSlots, responseSlots));
+                }
+                if (logSlots != 0) {
+                    logRing = std::make_unique<runtime::Ring<runtime::LogEntry>>(logSlots);
                 }
             }
 
@@ -71,6 +77,18 @@ namespace order_book::network {
             std::thread thread;
             std::vector<BookLine> books;
             std::uint64_t resultGrowths = 0;
+            bool loopRan = false;  // the matching thread's: its loop tells the log writer to finish
+
+            // With a log. The matching thread alone writes the ring, the log writer alone reads it
+            // and publishes the durable position, and the writer names its file once it made it.
+            std::unique_ptr<runtime::Ring<runtime::LogEntry>> logRing;
+            runtime::DurablePosition durable;
+            runtime::Doorbell writerBell;
+            std::promise<void> writerReady;
+            std::thread writerThread;
+            std::string logName;     // named before the writer starts, so marking it made allocates nothing
+            bool logMade = false;    // the writer's, once its file exists
+            std::uint64_t logEnd = 0;
         };
 
         // One gateway thread, its sockets, and how its start and its end went.
@@ -111,6 +129,16 @@ namespace order_book::network {
                                (settings.gatewayThreads == 1 ? " core" : " cores") + ", one per gateway thread, not " +
                                std::to_string(settings.pinGateway.size())};
             }
+            if (!std::has_single_bit(settings.logRing)) {
+                return Refusal{"--log-ring must be a power of two, not " + std::to_string(settings.logRing)};
+            }
+            if (!settings.pinLogWriters.empty() && settings.logDir.empty()) {
+                return Refusal{"--pin-log-writers needs --log-dir, since there are no log writers without a log"};
+            }
+            if (!settings.pinLogWriters.empty() && settings.pinLogWriters.size() != settings.shards) {
+                return Refusal{"--pin-log-writers needs " + std::to_string(settings.shards) + (settings.shards == 1 ? " core" : " cores") +
+                               ", one per shard, not " + std::to_string(settings.pinLogWriters.size())};
+            }
             return std::nullopt;
         }
 
@@ -140,8 +168,9 @@ namespace order_book::network {
             Engine(const Engine&) = delete;
             Engine& operator=(const Engine&) = delete;
 
-            // Whatever started stops, so a failure anywhere in a start leaves nothing running. Not
-            // reached after a forced stop, whose engine is left to the process's exit.
+            // Whatever started stops, so a failure anywhere in a start leaves nothing running, and
+            // a start that never became ready leaves no log behind, since nothing ran. Not reached
+            // after a forced stop, whose engine is left to the process's exit.
             ~Engine() {
                 stop.onRequest({});
                 // First, since a gateway thread that is ready waits for every shard to stop, and a
@@ -164,6 +193,18 @@ namespace order_book::network {
                         shard->thread.join();
                     }
                 }
+                joinLogWriters();
+                if (!listening && logStorage) {
+                    for (const std::unique_ptr<ShardRuntime>& shard : shards) {
+                        if (shard->logMade) {
+                            try {
+                                logStorage->remove(shard->logName);
+                            } catch (const runtime::LogStorageError&) {
+                                // Only headers: the next start is refused on it, and says where.
+                            }
+                        }
+                    }
+                }
             }
 
             EngineExit run();
@@ -172,6 +213,8 @@ namespace order_book::network {
         private:
             void startShards();
             void runShard(std::uint32_t number);
+            void runLogWriter(std::uint32_t number);
+            void joinLogWriters();
             void startGateways();
             void runGatewayThread(std::size_t thread, const GatewaySettings& gatewaySettings);
             void sendStopMarkers(std::size_t thread);
@@ -195,6 +238,7 @@ namespace order_book::network {
             std::ostream& report;
             std::ostream& diagnostics;
             std::unique_ptr<runtime::InstrumentDirectory> directory;
+            std::unique_ptr<runtime::LogStorage> logStorage;  // with --log-dir
             std::vector<std::unique_ptr<ShardRuntime>> shards;
             std::vector<std::unique_ptr<GatewayRuntime>> gateways;  // thread 0's sockets listen
             std::unique_ptr<ConnectionHandOff> handOff;
@@ -204,6 +248,7 @@ namespace order_book::network {
             std::atomic<std::size_t> failedGateway{noGateway};  // the first to fail once running
             std::atomic<std::uint32_t> happenings{0};  // a request or a gateway thread ending, for waitForStop
             bool forced = false;
+            bool listening = false;  // once listening is printed
         };
 
         void Engine::sendStopMarkers(std::size_t thread) {
@@ -234,7 +279,12 @@ namespace order_book::network {
                 for (const std::unique_ptr<GatewayRings>& pair : own.rings) {
                     rings.push_back(runtime::RingPair{&pair->commands, &pair->responses});
                 }
-                loop.emplace(*shard, own.doorbell, std::move(rings), spinWindowOf(settings));
+                std::optional<runtime::LogLink> log;
+                if (own.logRing) {
+                    shard->watchDurablePosition(own.durable);
+                    log = runtime::LogLink{own.logRing.get(), &own.writerBell};
+                }
+                loop.emplace(*shard, own.doorbell, std::move(rings), spinWindowOf(settings), std::function<void()>{}, log);
                 const std::span<const runtime::Instrument> instruments = directory->onShard(number);
                 own.books.reserve(instruments.size());
                 growthsAtReady.reserve(instruments.size());
@@ -247,6 +297,7 @@ namespace order_book::network {
                 return;
             }
             const runtime::AbortScope abortNamesThisShard(*shard);
+            own.loopRan = true;
             own.ready.set_value();
             loop->run();
             // After the stop, with nothing left to allocate for.
@@ -256,32 +307,90 @@ namespace order_book::network {
             own.resultGrowths = shard->resultGrowths();
         }
 
+        // On its own thread: places itself, then makes its shard's log file, before it is ready,
+        // so a refused pin or a file that can't be made refuses the start.
+        void Engine::runLogWriter(std::uint32_t number) {
+            ShardRuntime& own = *shards[number];
+            std::optional<runtime::LogWriter> writer;
+            try {
+                placeThisThread(settings.pinLogWriters, number, settings.threadPriority, "log writer " + std::to_string(number));
+                writer.emplace(*logStorage, *directory, number, settings.durability, *own.logRing, own.durable);
+                own.logMade = true;
+            } catch (const runtime::LogStorageError& error) {
+                own.writerReady.set_exception(std::make_exception_ptr(
+                    error.kind() == runtime::LogStorageError::Kind::EXISTS
+                        ? Refusal{logStorage->describe(own.logName) +
+                                  " already exists: a log from an earlier run, which this build can't recover, so give a directory "
+                                  "with no log in it"}
+                        : Refusal{error.what()}));
+                return;
+            } catch (...) {
+                own.writerReady.set_exception(std::current_exception());
+                return;
+            }
+            own.writerReady.set_value();
+            writer->run(own.writerBell, spinWindowOf(settings));
+            own.logEnd = writer->nextPosition();
+        }
+
+        // Once every matching thread has been joined, so none still writes a log ring. A shard
+        // whose loop never ran never told its writer to finish, and nothing ran on it, so its
+        // ring is empty, and the STOP goes in here.
+        void Engine::joinLogWriters() {
+            for (const std::unique_ptr<ShardRuntime>& shard : shards) {
+                if (!shard->writerThread.joinable()) {
+                    continue;
+                }
+                if (!shard->loopRan) {
+                    while (!shard->logRing->tryPush(runtime::LogEntry::stop())) {
+                        std::this_thread::yield();
+                    }
+                    shard->writerBell.ring();
+                }
+                shard->writerThread.join();
+            }
+        }
+
         void Engine::startShards() {
+            const bool logged = !settings.logDir.empty();
             std::vector<std::future<void>> started;
+            std::vector<std::future<void>> writersStarted;
             started.reserve(settings.shards);
             for (std::uint32_t number = 0; number < settings.shards; ++number) {
-                shards.push_back(std::make_unique<ShardRuntime>(settings.commandRing, settings.responseRing, settings.gatewayThreads));
+                shards.push_back(std::make_unique<ShardRuntime>(settings.commandRing, settings.responseRing, settings.gatewayThreads,
+                                                                logged ? settings.logRing : 0));
                 started.push_back(shards.back()->ready.get_future());
+                writersStarted.push_back(shards.back()->writerReady.get_future());
+                if (logged) {
+                    shards.back()->logName = runtime::logFileName(number, 0);
+                }
             }
             std::exception_ptr failure;
             for (std::uint32_t number = 0; number < settings.shards && !failure; ++number) {
                 try {
+                    if (logged) {
+                        shards[number]->writerThread = std::thread([this, number] { runLogWriter(number); });
+                    }
                     shards[number]->thread = std::thread([this, number] { runShard(number); });
                 } catch (...) {
                     failure = std::current_exception();
                 }
             }
             // Every thread that started must be heard from before ready goes out of scope.
-            for (std::uint32_t number = 0; number < settings.shards; ++number) {
-                if (shards[number]->thread.joinable()) {
+            const auto hearFrom = [&failure](const std::thread& thread, std::future<void>& ready) {
+                if (thread.joinable()) {
                     try {
-                        started[number].get();
+                        ready.get();
                     } catch (...) {
                         if (!failure) {
                             failure = std::current_exception();
                         }
                     }
                 }
+            };
+            for (std::uint32_t number = 0; number < settings.shards; ++number) {
+                hearFrom(shards[number]->writerThread, writersStarted[number]);
+                hearFrom(shards[number]->thread, started[number]);
             }
             if (failure) {
                 std::rethrow_exception(failure);
@@ -302,6 +411,27 @@ namespace order_book::network {
                 throw Refusal{runtime::formatInstrumentListError(settings.instruments, *error)};
             }
             directory = std::make_unique<runtime::InstrumentDirectory>(std::get<std::vector<runtime::Instrument>>(std::move(list)), settings.shards);
+            if (!settings.logDir.empty()) {
+                std::error_code error;
+                if (!std::filesystem::is_directory(settings.logDir, error)) {
+                    throw Refusal{"cannot use log directory " + settings.logDir + ": no such directory"};
+                }
+                // Recovery isn't built yet, so any engine's log here is one this run would lose
+                // track of: replay of the directory would then refuse a symbol in two shards.
+                std::vector<std::string> earlier;
+                for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(settings.logDir)) {
+                    const std::string name = entry.path().filename().string();
+                    if (name.starts_with("log-") && name.ends_with(".oblog")) {
+                        earlier.push_back(name);
+                    }
+                }
+                if (!earlier.empty()) {
+                    std::sort(earlier.begin(), earlier.end());
+                    throw Refusal{settings.logDir + " holds " + earlier.front() +
+                                  ", a log from an earlier run, which this build can't recover, so give a directory with no log in it"};
+                }
+                logStorage = std::make_unique<runtime::FileLogStorage>(settings.logDir);
+            }
 
             std::vector<SocketSet*> threadSockets;
             for (std::size_t thread = 0; thread < settings.gatewayThreads; ++thread) {
@@ -338,6 +468,7 @@ namespace order_book::network {
             }
             report << "listening "
                    << runtime::formatListenAddress(runtime::ListenAddress{settings.listen.host, gateways[0]->sockets->port()}) << std::endl;
+            listening = true;
             releaseGateways();
             return waitForStop();
         }
@@ -378,7 +509,8 @@ namespace order_book::network {
                                 gateways.size() == 1 ? "the gateway thread" : "gateway thread " + std::to_string(thread));
                 std::vector<ShardLink> links;
                 for (const std::unique_ptr<ShardRuntime>& shard : shards) {
-                    links.push_back(ShardLink{&shard->rings[thread]->commands, &shard->rings[thread]->responses, &shard->doorbell});
+                    links.push_back(ShardLink{&shard->rings[thread]->commands, &shard->rings[thread]->responses, &shard->doorbell,
+                                              shard->logRing ? &shard->durable : nullptr});
                 }
                 GatewayThread gateway(*directory, std::move(links), *own.sockets, gatewaySettings, handOff.get(), thread);
                 if (thread == 0) {
@@ -432,6 +564,8 @@ namespace order_book::network {
             for (const std::unique_ptr<ShardRuntime>& shard : shards) {
                 shard->thread.join();
             }
+            // Each has written the rest, flushed, cut, and closed its file by now, or is about to.
+            joinLogWriters();
             writeStopReport();
             return EngineExit::CLEAN_STOP;
         }
@@ -449,6 +583,9 @@ namespace order_book::network {
             for (const std::unique_ptr<ShardRuntime>& shard : shards) {
                 if (shard->thread.joinable()) {
                     shard->thread.detach();
+                }
+                if (shard->writerThread.joinable()) {
+                    shard->writerThread.detach();
                 }
             }
             return EngineExit::FORCED_STOP;
@@ -469,7 +606,11 @@ namespace order_book::network {
                 growths += book.growths;
             }
             for (std::uint32_t number = 0; number < shards.size(); ++number) {
-                text << "shard " << number << ": result-growths=" << shards[number]->resultGrowths << '\n';
+                text << "shard " << number << ":";
+                if (shards[number]->logRing) {
+                    text << " log-end=" << shards[number]->logEnd;
+                }
+                text << " result-growths=" << shards[number]->resultGrowths << '\n';
             }
             text << "total: books=" << books.size() << " capacity-growths=" << growths << '\n';
             report << text.str() << std::flush;

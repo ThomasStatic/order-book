@@ -57,11 +57,13 @@ namespace order_book::network {
     };
 
     // One shard as a gateway thread sees it. This thread is the only writer of commands and the
-    // only reader of responses.
+    // only reader of responses. A shard with a log has a durable position, and responses behind
+    // a HOLD marker past it wait; with none, a marker holds nothing.
     struct ShardLink {
         runtime::Ring<runtime::CommandElement>* commands;
         runtime::Ring<runtime::ResponseRecord>* responses;
         runtime::Doorbell* doorbell;
+        const runtime::DurablePosition* durable;
     };
 
     // How an engine's gateway threads share its connections. Thread 0 owns the listener and hands
@@ -101,7 +103,8 @@ namespace order_book::network {
 
         // One pass: waits, unless a connection's reader still holds frames and the last
         // mostWaitsSkipped passes didn't wait either, sleeping only if mayWait has held for the
-        // spin window; drains every response ring into per-connection buffers, accepts (thread
+        // spin window; drains every response ring into per-connection buffers, stopping at a
+        // HOLD marker the shard's durable position hasn't reached, accepts (thread
         // 0, handing on what isn't its own) or takes what was handed to it (any other), retries
         // parked connections oldest first, reads and answers up
         // to framesPerPass frames from each connection that is neither parked nor backlogged,
@@ -192,6 +195,10 @@ namespace order_book::network {
             bool retryFailed = false;      // in this pass's retry, so nobody younger passes it
             bool pushedTo = false;         // since its doorbell last rang
             bool markerOwed = false;       // after a stop begins, until its marker is in
+            // The position a HOLD marker taken from its responses needs, until the log reaches
+            // it: nothing after it drains until then. 0 holds nothing, since a marker needs a
+            // command's position, so at least 1.
+            std::uint64_t heldUntil = 0;
         };
 
         std::vector<std::uint32_t> parkedOldestFirst;  // connection indices

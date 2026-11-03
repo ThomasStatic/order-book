@@ -38,16 +38,29 @@ namespace order_book::engine_testing {
         std::optional<std::size_t> plantDivergenceBefore;
         // And then cancels it, leaving only what the model can't see: the numbers it used.
         bool cancelPlantedOrder = false;
+        // How often a LOG line follows a command, from a source of its own, so the commands are
+        // the same whatever this is. 0 gives a stream of commands alone.
+        unsigned int logWritePercent = 3;
+        // Each shard's log ring: small, so a full one makes the shard wait for its log writer.
+        std::size_t logRingRecords = 64;
+        // For testing the harness: the first command queued at or after this one runs on its book
+        // and its witness, but never reaches the log.
+        std::optional<std::size_t> leaveUnloggedFrom;
     };
 
     enum class SymbolFault { NONE, UNKNOWN, MALFORMED };
 
-    // One line of a stream.
+    // A line is a command, or an engine action. LOG: each shard's log writer does one write
+    // through the in-memory LogStorage, so until then commands are unwritten.
+    enum class EngineAction { COMMAND, LOG };
+
+    // One line of a stream. An action's other fields mean nothing.
     struct EngineCommand {
         std::size_t instrument;
         randomized::Command generated;  // as the generator made it
         std::optional<randomized::Command> converted;  // what reaches the engine, if anything
         SymbolFault fault = SymbolFault::NONE;
+        EngineAction action = EngineAction::COMMAND;
     };
 
     // What the seed produces, generated ahead of the run on the models alone, so nothing in the
@@ -76,6 +89,8 @@ namespace order_book::engine_testing {
         std::size_t dropped = 0;
         std::uint64_t shardGrowths = 0;    // shows the shard's books really were too small
         std::uint64_t witnessGrowths = 0;
+        std::size_t logWrites = 0;         // LOG lines and full log rings that wrote anything
+        std::size_t recordsLogged = 0;
     };
 
     struct EngineRunResult {
@@ -85,6 +100,10 @@ namespace order_book::engine_testing {
         bool passed() const { return !failure.has_value(); }
     };
 
+    // Every queued command goes to its shard's log ring, as the matching thread sends it, and its
+    // log writer writes on LOG lines and whenever that ring is full. The run ends by stopping
+    // each log writer, then replaying each shard's log per instrument through ReplayEngine, which
+    // must give a book equal to the witness, and checking each Shard, durable position included.
     EngineRunResult runEngineSeed(const EngineSeedConfig& config);
 
 }  // namespace order_book::engine_testing

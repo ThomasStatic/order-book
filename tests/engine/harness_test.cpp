@@ -27,7 +27,7 @@ void expect(bool condition, const std::string& message) {
 std::vector<Command> generatedFor(const std::vector<EngineCommand>& stream, std::size_t instrument) {
     std::vector<Command> commands;
     for (const EngineCommand& line : stream) {
-        if (line.instrument == instrument) {
+        if (line.action == EngineAction::COMMAND && line.instrument == instrument) {
             commands.push_back(line.generated);
         }
     }
@@ -75,10 +75,42 @@ void testASeedFixesItsStream() {
     const EngineSeedConfig config = smallRun();
     const std::vector<EngineCommand> first = generateEngineStream(config);
     const std::vector<EngineCommand> again = generateEngineStream(config);
-    expect(first.size() == config.commands && again.size() == config.commands, "every command is generated");
+    const auto commandsIn = [](const std::vector<EngineCommand>& stream) {
+        return static_cast<std::size_t>(
+            std::count_if(stream.begin(), stream.end(), [](const EngineCommand& line) { return line.action == EngineAction::COMMAND; }));
+    };
+    expect(commandsIn(first) == config.commands && first.size() == again.size(), "every command is generated");
     for (std::size_t i = 0; i < first.size(); ++i) {
-        expect(first[i].instrument == again[i].instrument && first[i].generated == again[i].generated && first[i].fault == again[i].fault,
+        expect(first[i].action == again[i].action && first[i].instrument == again[i].instrument && first[i].generated == again[i].generated &&
+                   first[i].fault == again[i].fault,
                "a seed fixes the stream");
+    }
+}
+
+// LOG lines come from a source of their own, so a stream's commands are the same with or without
+// them, and with none asked for there are none.
+void testLogLinesChangeNoCommand() {
+    EngineSeedConfig plain = smallRun();
+    plain.logWritePercent = 0;
+    const std::vector<EngineCommand> without = generateEngineStream(plain);
+    const std::vector<EngineCommand> with = generateEngineStream(smallRun());
+    expect(without.size() == plain.commands, "with none asked for, every line is a command");
+    std::vector<const EngineCommand*> commands;
+    std::size_t logs = 0;
+    for (const EngineCommand& line : with) {
+        if (line.action == EngineAction::LOG) {
+            ++logs;
+        } else {
+            commands.push_back(&line);
+        }
+    }
+    expect(logs > plain.commands / 100 && logs < plain.commands / 10, "LOG lines come about as often as asked");
+    expect(with.front().action == EngineAction::COMMAND, "and only ever after a command");
+    expect(commands.size() == without.size(), "the commands are all still there");
+    for (std::size_t i = 0; i < without.size(); ++i) {
+        expect(commands[i]->instrument == without[i].instrument && commands[i]->generated == without[i].generated &&
+                   commands[i]->fault == without[i].fault,
+               "and they are the same commands in the same order");
     }
 }
 
@@ -115,6 +147,9 @@ void testARunPassesAndExercisesEverything() {
     expect(result.stats.refused > 0, "bad symbols are refused");
     expect(result.stats.dropped > 0, "what no entry point expresses is dropped");
     expect(result.stats.shardGrowths > 0, "the shard's books really were too small");
+    expect(result.stats.recordsLogged == result.stats.queued, "every queued command reached its shard's log");
+    expect(result.stats.logWrites > 2 * smallRun().commands * smallRun().logWritePercent / 100 / 3,
+           "in many writes, on LOG lines and full log rings");
 }
 
 void testEverySpreadAndShardCountPasses() {
@@ -150,17 +185,28 @@ void testAnInvisibleDriftIsCaught() {
     expect(result.failure->reason.find("witness") != std::string::npos, "and it is the witness that caught it");
 }
 
+// A log that lost a command still replays, to a book that is not the witness's.
+void testACommandMissingFromTheLogIsCaught() {
+    EngineSeedConfig config = smallRun();
+    config.leaveUnloggedFrom = 50;
+    const EngineRunResult result = runEngineSeed(config);
+    expect(!result.passed(), "a command that never reached the log fails the run");
+    expect(result.failure->reason.find("log") != std::string::npos, "and the log's replay caught it: " + result.failure->reason);
+}
+
 }  // namespace
 
 int main() {
     testOneInstrumentIsTodaysStream();
     testAnInstrumentsCommandsDependOnNoOther();
     testASeedFixesItsStream();
+    testLogLinesChangeNoCommand();
     testConversion();
     testARunPassesAndExercisesEverything();
     testEverySpreadAndShardCountPasses();
     testADriftingBookIsCaught();
     testAnInvisibleDriftIsCaught();
+    testACommandMissingFromTheLogIsCaught();
     std::cout << "engine harness tests passed" << std::endl;
     return EXIT_SUCCESS;
 }

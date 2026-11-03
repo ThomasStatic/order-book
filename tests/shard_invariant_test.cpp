@@ -6,6 +6,7 @@
 #include <string_view>
 
 #include "order_book/order_book.hpp"
+#include "order_book/runtime/durable_position.hpp"
 #include "order_book/runtime/shard.hpp"
 
 namespace order_book {
@@ -95,12 +96,38 @@ void testALogPositionOutOfStepIsFound() {
     expectViolation(shard, ShardViolationKind::LOG_POSITION, 0, "a next position behind them");
 }
 
+
+// The log writer publishes the durable position, and the shard holds it to what it has taken.
+void testADurablePositionOutOfStepIsFound() {
+    const InstrumentDirectory directory({on("AAPL", 0)}, 1);
+    Shard shard(directory, 0, defaultBookCapacity, 1000);
+    DurablePosition durable(1000);
+    shard.watchDurablePosition(durable);
+    expect(!shard.checkInvariants(), "nothing taken and nothing durable passes");
+    shard.process(replay::Command{sell(1, 100, 5)}, 0);
+    shard.process(replay::Command{replay::CancelCommand{1}}, 0);
+    expect(!shard.checkInvariants(), "taken past the durable position passes, since matching never waits");
+    durable.publish(1002);
+    expect(!shard.checkInvariants(), "and so does a durable position that has caught up");
+
+    durable.publish(1003);
+    expectViolation(shard, ShardViolationKind::DURABLE_POSITION, 0, "a durable position past the next position");
+    durable.publish(1001);
+    expectViolation(shard, ShardViolationKind::DURABLE_POSITION, 0, "a durable position that went back");
+
+    Shard fresh(directory, 0, defaultBookCapacity, 1000);
+    DurablePosition behind(999);
+    fresh.watchDurablePosition(behind);
+    expectViolation(fresh, ShardViolationKind::DURABLE_POSITION, 0, "a durable position behind the log's first position");
+}
+
 }  // namespace
 
 int main() {
     testABrokenBookIsFound();
     testASlotThatDoesNotMapBackIsFound();
     testALogPositionOutOfStepIsFound();
+    testADurablePositionOutOfStepIsFound();
     std::cout << "shard invariant tests passed" << std::endl;
     return EXIT_SUCCESS;
 }

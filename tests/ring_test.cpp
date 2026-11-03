@@ -136,6 +136,41 @@ void testBatchLimits() {
     expect(drained(ring, 100) == (Items{6, 7, 8, 9}), "a limit past what is there takes all of it");
 }
 
+// What a matching thread needs before a take: how many are waiting, up to a limit, each looked
+// at in place, and whether its log ring has room for them, with nothing taken or given back.
+void testLookingAhead() {
+    Ring<std::uint64_t> ring(4);
+    expect(ring.waiting(8) == 0, "an empty ring has nothing waiting");
+    expect(ring.hasRoomFor(4) && !ring.hasRoomFor(5), "and room for its capacity and no more");
+    for (std::uint64_t item = 1; item <= 3; ++item) {
+        ring.tryPush(item);
+    }
+    expect(ring.waiting(8) == 3 && ring.waiting(2) == 2, "waiting counts what is there, up to the limit");
+    expect(ring.peek(0) == 1 && ring.peek(2) == 3, "peek sees each in place, oldest first");
+    expect(ring.hasRoomFor(1) && !ring.hasRoomFor(2), "room for one more");
+    expect(drained(ring, 1) == std::vector<std::uint64_t>{1}, "looking took nothing");
+    expect(ring.hasRoomFor(2), "and a drain gives room back");
+    ring.tryPush(4);
+    ring.tryPush(5);
+    expect(ring.waiting(8) == 4 && ring.peek(3) == 5, "peek follows the ring round");
+}
+
+// A drain that stops takes the item it stopped on, and leaves the rest for later.
+void testADrainCanStop() {
+    Ring<std::uint64_t> ring(8);
+    for (std::uint64_t item = 1; item <= 5; ++item) {
+        ring.tryPush(item);
+    }
+    std::vector<std::uint64_t> taken;
+    const std::size_t count = ring.drainWhile(8, [&taken](std::uint64_t item) {
+        taken.push_back(item);
+        return item != 2;
+    });
+    expect(count == 2 && taken == std::vector<std::uint64_t>{1, 2}, "it stops after the item that said so");
+    expect(drained(ring, 8) == std::vector<std::uint64_t>{3, 4, 5}, "and the rest wait");
+    expect(ring.drainWhile(8, [](std::uint64_t) { return false; }) == 0, "an empty ring takes nothing");
+}
+
 void testNoAllocation() {
     Ring<std::uint64_t> ring(64);
     std::uint64_t sum = 0;
@@ -222,6 +257,8 @@ int main() {
     testAOneSlotRing();
     testWrapAround();
     testBatchLimits();
+    testLookingAhead();
+    testADrainCanStop();
     testNoAllocation();
     testElements();
     testOrderingAcrossThreads();

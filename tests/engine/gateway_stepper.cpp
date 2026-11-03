@@ -16,7 +16,10 @@
 #include "engine_harness.hpp"
 #include "gateway_frames.hpp"
 #include "gateway_rig.hpp"
+#include "order_book/command_log.hpp"
+#include "order_book/little_endian.hpp"
 #include "order_book/network/entry_check.hpp"
+#include "order_book/runtime/log_storage.hpp"
 
 namespace order_book::engine_testing {
 
@@ -71,6 +74,94 @@ namespace order_book::engine_testing {
             }
         }
 
+        // Follows each shard's log in the storage as it grows, decoding each record through the
+        // log's own reader functions, so what counts as logged comes from the bytes the storage
+        // holds, never from what the log writer reports.
+        class LogFollower {
+        public:
+            explicit LogFollower(Rig& rig) {
+                for (const std::unique_ptr<ShardActor>& shard : rig.shards) {
+                    const std::string& name = shard->writer->fileName();
+                    const std::vector<std::byte> header = rig.logStorage.read(name, 0);  // all it holds yet
+                    files.push_back(FileState{name, header.size(), replay::logChainSeed(header), 0});
+                }
+            }
+
+            void follow(Rig& rig) {
+                for (std::size_t shard = 0; shard < files.size(); ++shard) {
+                    FileState& file = files[shard];
+                    const std::vector<std::byte> bytes = rig.logStorage.read(file.name, file.offset);
+                    const std::size_t whole = bytes.size() / replay::logRecordBytes;
+                    for (std::size_t i = 0; i < whole; ++i) {
+                        const std::span<const std::byte> record = std::span<const std::byte>(bytes).subspan(i * replay::logRecordBytes, replay::logRecordBytes);
+                        const replay::ParseResult decoded = replay::decodeLogRecord(record, file.checksum, file.records, file.records);
+                        const auto* read = std::get_if<replay::ReplayRecord>(&decoded);
+                        check(read != nullptr, "shard " + std::to_string(shard) + "'s log reads back record by record");
+                        logged[read->symbol.text()].push_back(read->command);
+                        file.checksum = little_endian::load32(record, 0);
+                        ++file.records;
+                    }
+                    file.offset += whole * replay::logRecordBytes;
+                    check(rig.shards[shard]->durable.load() <= file.records, "the durable position never passes what the storage holds");
+                }
+            }
+
+            std::map<std::string, std::vector<replay::Command>> logged;
+
+        private:
+            struct FileState {
+                std::string name;
+                std::size_t offset;  // past what has been decoded
+                std::uint32_t checksum;
+                std::uint64_t records;
+            };
+            std::vector<FileState> files;
+        };
+
+        // Where each command that passed entry stands in its instrument's log: one connection owns
+        // each instrument and sends in order, so its k-th such command that runs is its
+        // instrument's k-th record.
+        std::map<Correlation, std::pair<std::string, std::size_t>> logPlaces(const ConnectionStreams& stream) {
+            std::map<std::string, std::size_t> counts;
+            std::map<Correlation, std::pair<std::string, std::size_t>> places;
+            for (const StreamCommand& command : stream.commands) {
+                const std::string symbol = command.accepted.symbol.text();
+                places[command.correlation] = {symbol, counts[symbol]++};
+            }
+            return places;
+        }
+
+        // No client holds an answer to a command whose record the storage doesn't hold yet.
+        void checkReleasedAreLogged(const std::map<Correlation, std::pair<std::string, std::size_t>>& places, const LogFollower& follower,
+                                    std::vector<Client>& clients, std::vector<std::size_t>& checked) {
+            for (std::size_t i = 0; i < clients.size(); ++i) {
+                const std::vector<Received>& frames = clients[i].frames();
+                for (; checked[i] < frames.size(); ++checked[i]) {
+                    const Received& frame = frames[checked[i]];
+                    const auto place = places.find(frame.correlation);
+                    if (!frame.event || place == places.end()) {
+                        continue;  // answered by entry or refused, so never logged
+                    }
+                    const auto logged = follower.logged.find(place->second.first);
+                    const std::size_t records = logged == follower.logged.end() ? 0 : logged->second.size();
+                    check(place->second.second < records, "a response to " + place->second.first + "'s command " +
+                                                              std::to_string(place->second.second) + " was released with only " +
+                                                              std::to_string(records) + " of its records in the log");
+                }
+            }
+        }
+
+        // Each instrument's log holds exactly these commands, in order.
+        void checkLogHolds(const LogFollower& follower, const std::map<std::string, std::vector<replay::Command>>& ran) {
+            for (const auto& [symbol, commands] : ran) {
+                const auto logged = follower.logged.find(symbol);
+                check(logged != follower.logged.end() && logged->second == commands, symbol + "'s log holds exactly the commands that ran, in order");
+            }
+            for (const auto& [symbol, commands] : follower.logged) {
+                check(ran.contains(symbol), symbol + " is logged but nothing of it ran");
+            }
+        }
+
         void checkUnstopped(const ConnectionStreams& stream, std::vector<Client>& clients) {
             std::vector<std::vector<Received>> received;
             for (Client& client : clients) {
@@ -82,7 +173,8 @@ namespace order_book::engine_testing {
         }
 
         void checkStopped(const StepperConfig& config, const ConnectionStreams& stream, Rig& rig, std::vector<Client>& clients,
-                          StepperResult& result) {
+                          StepperResult& result, const LogFollower* follower) {
+            std::map<std::string, std::vector<replay::Command>> ranCommands;
             std::map<std::string, std::vector<Line>> answered;
             std::set<Correlation> ran;
             std::set<Correlation> refusedByStop;
@@ -122,6 +214,7 @@ namespace order_book::engine_testing {
                 if (now == REFUSED) {
                     continue;
                 }
+                ranCommands[command.accepted.symbol.text()].push_back(command.accepted.command);
                 Shard& witness = *witnesses[command.accepted.location.shard];
                 witness.process(command.accepted.command, command.accepted.location.slot);
                 const std::span<const BookEvent> events = witness.result().events();
@@ -130,13 +223,24 @@ namespace order_book::engine_testing {
                 }
             }
             check(answered == expected, "what ran equals a single-threaded run of those commands");
+            if (follower != nullptr) {
+                checkLogHolds(*follower, ranCommands);
+            }
             result.commandsRun = ran.size();
             result.commandsRefused = refusedByStop.size();
         }
 
         void runSchedule(const StepperConfig& config, const std::vector<EngineCommand>& lines, StepperResult& result) {
             const ConnectionStreams stream = connectionStreams(shapeOf(config), lines);
-            Rig rig(stream.instruments, config.shards, 2, {}, config.gatewayThreads);
+            Rig rig(stream.instruments, config.shards, 2, {}, config.gatewayThreads,
+                    config.log ? std::optional<Durability>(Durability::MACHINE) : std::nullopt);
+            std::optional<LogFollower> follower;
+            std::map<Correlation, std::pair<std::string, std::size_t>> places;
+            std::vector<std::size_t> checkedFrames(config.connections, 0);
+            if (config.log) {
+                follower.emplace(rig);
+                places = logPlaces(stream);
+            }
             std::mt19937_64 random(config.seed);
             std::vector<Client> clients;
             clients.reserve(config.connections);
@@ -170,7 +274,10 @@ namespace order_book::engine_testing {
                 check(++steps < 40'000'000, "the stepped run stopped making progress");
                 stopRequested = stopRequested || steps == stopAt;
                 const std::uint64_t choice = random();
-                if (choice % 3 == 0) {
+                // A log writer is a fourth actor. Without a log the schedules stay what they were.
+                if (config.log && choice % 4 == 3) {
+                    rig.writeLog(static_cast<std::uint32_t>((choice >> 8) % config.shards));
+                } else if (choice % 3 == 0) {
                     const std::size_t connection = (choice >> 8) % config.connections;
                     const Bytes& bytes = stream.bytes[connection];
                     const std::size_t chunk = std::min<std::size_t>(bytes.size() - sent[connection], 1 + (choice >> 16) % 150);
@@ -187,11 +294,37 @@ namespace order_book::engine_testing {
                 } else {
                     rig.match(static_cast<std::uint32_t>((choice >> 8) % config.shards));
                 }
+                if (follower) {
+                    follower->follow(rig);
+                    checkReleasedAreLogged(places, *follower, clients, checkedFrames);
+                }
             }
             if (config.stop) {
-                checkStopped(config, stream, rig, clients, result);
+                if (follower) {
+                    // Every shard has stopped, so each log writer has its STOP, and finishes.
+                    for (std::uint32_t shard = 0; shard < config.shards; ++shard) {
+                        rig.writeLog(shard);
+                        const ShardActor& actor = *rig.shards[shard];
+                        check(actor.writer->stopped(), "a stopped shard's log writer finishes");
+                        const std::optional<InMemoryLogStorage::File> file = rig.logStorage.file(actor.writer->fileName());
+                        check(file && file->closed && file->flushes == 1, "flushing and closing its file");
+                        check(!actor.shard.checkInvariants(), "and the shard, durable position included, is sound");
+                    }
+                    follower->follow(rig);
+                }
+                checkStopped(config, stream, rig, clients, result, follower ? &*follower : nullptr);
             } else {
                 checkUnstopped(stream, clients);
+                if (follower) {
+                    std::map<std::string, std::vector<replay::Command>> everything;
+                    for (const StreamCommand& command : stream.commands) {
+                        everything[command.accepted.symbol.text()].push_back(command.accepted.command);
+                    }
+                    checkLogHolds(*follower, everything);
+                    for (const std::unique_ptr<ShardActor>& shard : rig.shards) {
+                        check(!shard->shard.checkInvariants(), "every shard, durable position included, is sound");
+                    }
+                }
             }
             for (std::size_t i = 0; i < clients.size(); ++i) {
                 const std::optional<std::size_t> holder = rig.sockets.holder(clients[i].socket);
@@ -212,6 +345,7 @@ namespace order_book::engine_testing {
         generation.instruments = config.instruments;
         generation.shards = config.shards;
         generation.commands = config.commands;
+        generation.logWritePercent = 0;  // its log writers are actors of their own
         return runStepperSchedule(config, generateEngineStream(generation));
     }
 

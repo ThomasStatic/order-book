@@ -27,19 +27,56 @@ namespace order_book::runtime {
     }  // namespace
 
     MatchingLoop::MatchingLoop(Shard& matchingShard, Doorbell& bell, std::vector<RingPair> pairs, std::chrono::nanoseconds spin,
-                               std::function<void()> whileFull)
-        : shard(matchingShard), doorbell(bell), rings(std::move(pairs)), spinWindow(spin), waitInPlace(std::move(whileFull)) {}
+                               std::function<void()> whileFull, std::optional<LogLink> logLink)
+        : shard(matchingShard),
+          doorbell(bell),
+          rings(std::move(pairs)),
+          spinWindow(spin),
+          waitInPlace(std::move(whileFull)),
+          log(logLink) {}
+
+    void MatchingLoop::waitAWhile() {
+        if (waitInPlace) {
+            waitInPlace();
+        } else {
+            std::this_thread::yield();
+        }
+    }
 
     void MatchingLoop::push(Ring<ResponseRecord>& responses, const ResponseRecord& record) {
         // Mid-command, so this waits in place. It can't deadlock: a gateway thread facing a full
-        // command ring parks that connection and keeps draining.
+        // command ring parks that connection and keeps draining, and one held at a marker is
+        // released once the log writer, which already has every command of this take, catches up.
         while (!responses.tryPush(record)) {
-            if (waitInPlace) {
-                waitInPlace();
-            } else {
-                std::this_thread::yield();
+            waitAWhile();
+        }
+    }
+
+    std::size_t MatchingLoop::takeLogged(const RingPair& pair) {
+        Ring<LogEntry>& logRing = *log->ring;
+        const std::size_t limit = takeBatch < logRing.capacity() ? takeBatch : logRing.capacity();
+        const std::size_t count = pair.commands->waiting(limit);
+        std::size_t commands = 0;
+        for (std::size_t i = 0; i < count; ++i) {
+            if (pair.commands->peek(i).control == ControlKind::COMMAND) {
+                ++commands;
             }
         }
+        if (commands != 0) {
+            // Before the take, never in the middle of one.
+            while (!logRing.hasRoomFor(commands)) {
+                waitAWhile();
+            }
+            for (std::size_t i = 0; i < count; ++i) {
+                const CommandElement& element = pair.commands->peek(i);
+                if (element.control == ControlKind::COMMAND) {
+                    logRing.tryPush(LogEntry{element.command, element.slot, ControlKind::COMMAND});
+                }
+            }
+            log->writerBell->ring();
+            push(*pair.responses, ResponseRecord::hold(shard.nextPosition() + commands));
+        }
+        return pair.commands->drain(count, [this, &pair](const CommandElement& element) { take(element, *pair.responses); });
     }
 
     void MatchingLoop::take(const CommandElement& element, Ring<ResponseRecord>& responses) {
@@ -65,7 +102,11 @@ namespace order_book::runtime {
     std::size_t MatchingLoop::pass() {
         std::size_t taken = 0;
         for (const RingPair& pair : rings) {
-            taken += pair.commands->drain(takeBatch, [this, &pair](const CommandElement& element) { take(element, *pair.responses); });
+            if (log) {
+                taken += takeLogged(pair);
+            } else {
+                taken += pair.commands->drain(takeBatch, [this, &pair](const CommandElement& element) { take(element, *pair.responses); });
+            }
         }
         return taken;
     }
@@ -108,6 +149,12 @@ namespace order_book::runtime {
             }
             sleepUntilRung();
             idle = false;
+        }
+        if (log) {
+            while (!log->ring->tryPush(LogEntry::stop())) {
+                waitAWhile();
+            }
+            log->writerBell->ring();
         }
         for (const RingPair& pair : rings) {
             push(*pair.responses, ResponseRecord{0, 0, 0, BookEvent{}, ResponseKind::SHARD_STOPPED});

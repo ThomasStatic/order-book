@@ -11,6 +11,7 @@
 #include <variant>
 #include <vector>
 
+#include "order_book/runtime/durability.hpp"
 #include "order_book/runtime/thread_placement.hpp"
 
 // order_book_engine's settings: its whole command line, since it has no config file and reads
@@ -42,9 +43,15 @@ namespace order_book::runtime {
         std::size_t highWaterMark = 1024 * 1024;
         std::size_t hardLimit = 16 * 1024 * 1024;
         std::chrono::nanoseconds stopGrace = std::chrono::seconds(5);
-        std::vector<std::uint32_t> pinMatching;  // a core per shard, in shard order; empty is off
-        std::vector<std::uint32_t> pinGateway;   // a core per gateway thread; empty is off
-        ThreadPriority threadPriority = ThreadPriority::NORMAL;  // matching and gateway threads
+        // Where each shard's log goes. Empty runs with no log, so a response waits for nothing
+        // and a restart loses every book.
+        std::string logDir;
+        Durability durability = Durability::MACHINE;
+        std::size_t logRing = defaultLogRingRecords;  // records per shard
+        std::vector<std::uint32_t> pinMatching;    // a core per shard, in shard order; empty is off
+        std::vector<std::uint32_t> pinGateway;     // a core per gateway thread; empty is off
+        std::vector<std::uint32_t> pinLogWriters;  // a core per shard's log writer; empty is off
+        ThreadPriority threadPriority = ThreadPriority::NORMAL;  // matching and gateway threads, and log writers
         bool stopOnStdinClose = false;
 
         bool operator==(const EngineSettings&) const = default;

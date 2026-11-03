@@ -273,12 +273,38 @@ namespace order_book::network {
 
     void GatewayThread::drainResponses() {
         for (std::uint32_t shard = 0; shard < shards.size(); ++shard) {
+            ShardState& state = shardStates[shard];
+            const runtime::DurablePosition* durable = shards[shard].durable;
+            // The durable position is read only when a marker needs more than was last seen.
+            std::uint64_t known = 0;
+            const auto reached = [durable, &known](std::uint64_t position) {
+                if (durable == nullptr) {
+                    return true;
+                }
+                if (known < position) {
+                    known = durable->load();
+                }
+                return known >= position;
+            };
+            if (state.heldUntil != 0) {
+                if (!reached(state.heldUntil)) {
+                    continue;  // without blocking, so this thread serves its other rings
+                }
+                state.heldUntil = 0;
+            }
             runtime::Ring<runtime::ResponseRecord>& responses = *shards[shard].responses;
-            responses.drain(responses.capacity(), [this, shard](const runtime::ResponseRecord& record) {
+            responses.drainWhile(responses.capacity(), [this, shard, &state, &reached](const runtime::ResponseRecord& record) {
+                if (record.kind == runtime::ResponseKind::HOLD) {
+                    if (!reached(record.correlation)) {
+                        state.heldUntil = record.correlation;
+                        return false;
+                    }
+                    return true;
+                }
                 moved = true;
                 if (record.kind == runtime::ResponseKind::SHARD_STOPPED) {
                     ++shardsStopped;
-                    return;
+                    return true;
                 }
                 const bool last = record.kind == runtime::ResponseKind::LAST_EVENT;
                 if (last) {
@@ -287,7 +313,7 @@ namespace order_book::network {
                 const std::uint32_t index = connectionIndex(record.connection);
                 Connection& connection = connections[index];
                 if (!connection.open || handleOf(index) != record.connection) {
-                    return;
+                    return true;
                 }
                 if (last) {
                     --connection.inFlight;
@@ -295,6 +321,7 @@ namespace order_book::network {
                 const Symbol symbol = directory.onShard(shard)[record.slot].symbol;
                 appendFrame(connection.unsent,
                             [&](std::span<std::byte> out) { return encodeEvent(record.correlation, symbol, record.event, last, out); });
+                return true;
             });
         }
     }
