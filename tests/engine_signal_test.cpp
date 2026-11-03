@@ -5,7 +5,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -15,6 +14,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -35,11 +35,7 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <winsock2.h>
 #include <windows.h>
-#else
-#include <netinet/in.h>
-#include <sys/socket.h>
 #endif
 
 // Real signals sent to a real order_book_engine, and the abort handler apps/ installs, in a child
@@ -250,42 +246,36 @@ void testEachStopSignalStopsCleanly() {
     std::filesystem::remove(list);
 }
 
-// A blocking connection to the engine whose receive buffer is set small before it connects, which
-// also turns off Windows' receive-window autotuning: on Windows CI the system otherwise took
-// 19.5 MB of answers for a client that never read, and a stop held by them flushed at once.
-TcpSocket connectWithASmallReceiveBuffer(std::uint16_t port) {
-#ifdef _WIN32
-    WSADATA started{};
-    expect(WSAStartup(MAKEWORD(2, 2), &started) == 0, "Winsock starts");
-    const SOCKET native = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-#else
-    const int native = ::socket(AF_INET, SOCK_STREAM, 0);
-#endif
-    TcpSocket socket(static_cast<NativeSocket>(native));
-    expect(socket.valid(), "the client has a socket");
-    const int bytes = 16 * 1024;
-    expect(::setsockopt(native, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&bytes), sizeof(bytes)) == 0,
-           "and a small receive buffer");
-    // In network byte order by hand, since htons can be a macro that trips -Wconversion.
-    sockaddr_in address{};
-    address.sin_family = AF_INET;
-    const std::array<std::uint8_t, 2> portBytes{static_cast<std::uint8_t>(port >> 8), static_cast<std::uint8_t>(port & 0xFF)};
-    const std::array<std::uint8_t, 4> loopback{127, 0, 0, 1};
-    std::memcpy(&address.sin_port, portBytes.data(), portBytes.size());
-    std::memcpy(&address.sin_addr, loopback.data(), loopback.size());
-    expect(::connect(native, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0, "the client connects");
-    return socket;
+// Reads to the end of the stream: how many commands were answered, counting each response's
+// last frame, and whether the stream ended rather than failed.
+std::pair<std::uint64_t, bool> answersUntilTheEnd(const TcpSocket& client) {
+    FrameReader reader(FrameSource::ENGINE);
+    std::uint64_t answered = 0;
+    std::vector<std::byte> buffer(64 * 1024);
+    ReadResult read = client.receive(buffer);
+    for (; read.status == ReadStatus::OPEN; read = client.receive(buffer)) {
+        reader.feed(std::span<const std::byte>(buffer).first(read.bytes));
+        for (FrameResult result = reader.next(); std::holds_alternative<Frame>(result); result = reader.next()) {
+            const Frame& frame = std::get<Frame>(result);
+            answered += frame.last && frame.type != FrameType::WELCOME ? 1 : 0;
+        }
+    }
+    return {answered, read.status == ReadStatus::ENDED};
 }
 
 // A client that sends and never reads, so the engine has answers it can't deliver and its stop
 // waits out the grace, 60 s here: the second stop must end it long before. The engine never
-// stops reading, so 32 MiB of commands leave it owing about 19.5 MB of answers, and the client's
-// small receive buffer keeps the system from taking them off the engine's hands.
+// stops reading, so 32 MiB of commands leave it owing about 19.5 MB of answers.
+//
+// Linux holds them. Windows can take them all into the system, even with the client's receive
+// buffer set small, and then the first stop rightly flushes and exits 0: on Windows CI, Release
+// did so every time and Debug never did. So there a stop that isn't held must be that clean stop,
+// with every command answered once the engine has gone, and the second stop goes untested.
 void testASecondStopForcesIt() {
     const std::filesystem::path list = writeList("forced");
     ChildProcess child(engine, startArguments(list, {"--stop-grace", "60s", "--high-water-mark", "1G", "--hard-limit", "1G"}),
                        ChildOptions{true});
-    const TcpSocket client = connectWithASmallReceiveBuffer(listeningPort(child));
+    const TcpSocket client = TcpSocket::connectLoopback(listeningPort(child));
     constexpr std::size_t chunks = 512;  // of 64 KiB each
 
     std::vector<std::byte> chunk = gateway_testing::helloFrame();
@@ -316,30 +306,31 @@ void testASecondStopForcesIt() {
         }
     }
 
-    // What the engine did, for a failure to report.
-    const auto whatHappened = [&] {
-        const bool running = child.stillRunningAfter(0ms);
-        std::string ending = running ? std::string("still runs") : described(child.wait(1s));
-        if (!running) {
-            // What reached the client: every answer, then the end, or a reset part way.
-            std::uint64_t answered = 0;
-            std::vector<std::byte> buffer(64 * 1024);
-            ReadResult read = client.receive(buffer);
-            for (; read.status == ReadStatus::OPEN; read = client.receive(buffer)) {
-                answered += read.bytes;
-            }
-            ending += ", and the client then read " + std::to_string(answered) + " bytes of answers before the connection " +
-                      (read.status == ReadStatus::ENDED ? "ended" : "failed");
-        }
-        return "the client sent " + std::to_string(sent) + " bytes" + (lost ? " and lost its connection" : "") +
-               ", and the engine " + ending + ", with stdout:\n" + child.standardOutput() + "\nand stderr:\n" + child.standardError();
-    };
+    const std::uint64_t commands = chunks * (rest.size() / commandFrameBytes);
+
     // Each check is taken before its message is built, since argument order is unspecified.
     const bool holding = !lost && child.stillRunningAfter(0ms);
-    expect(holding, "the engine took everything the client sent: " + whatHappened());
+    expect(holding, "the engine took everything the client sent, not " + std::to_string(sent) + " bytes, with stderr:\n" +
+                        child.standardError());
     sendStop(child, stopSignals[0]);
-    const bool waiting = child.stillRunningAfter(2s);
-    expect(waiting, "the first stop waits for the answers it owes: " + whatHappened());
+    const bool held = child.stillRunningAfter(2s);
+    if (!held) {
+        const ExitStatus clean = child.wait(1s);
+        const auto [answered, ended] = answersUntilTheEnd(client);
+        const std::string what = "the first stop ended the engine with " + described(clean) + ", and the client then read " +
+                                 std::to_string(answered) + " of " + std::to_string(commands) + " answers before its stream " +
+                                 (ended ? "ended" : "failed") + ", with stdout:\n" + child.standardOutput() + "\nand stderr:\n" +
+                                 child.standardError();
+#ifdef _WIN32
+        expect(clean.code == 0 && answered == commands && ended && plain(child.standardOutput()).ends_with("\ntotal: books=2 capacity-growths=0\n"),
+               "a stop not held must be a clean one that answered everything: " + what);
+        std::cout << "the system took every answer, so the clean stop wasn't held and a second stop wasn't tried" << std::endl;
+        std::filesystem::remove(list);
+        return;
+#else
+        expect(false, "the first stop waits for the answers it owes: " + what);
+#endif
+    }
     sendStop(child, stopSignals[stopSignals.size() - 1]);
     const ExitStatus status = child.wait(20s);
     expect(!status.killed && status.code == 8, "a second stop exits at once with 8, not " + described(status) + ", with stderr:\n" +
