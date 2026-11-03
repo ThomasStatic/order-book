@@ -246,11 +246,16 @@ void testEachStopSignalStopsCleanly() {
 }
 
 // A client that sends and never reads, so the engine has answers it can't deliver and its stop
-// waits out the grace, 60 s here: the second stop must end it long before.
+// waits out the grace, 60 s here: the second stop must end it long before. The engine never
+// stops reading, so 32 MiB of commands leave it owing up to 28 MB of answers: more than the
+// system buffers for a socket, which on Windows grew by megabytes once a client stopped reading,
+// letting a stop held by only a high-water mark's worth flush and end cleanly.
 void testASecondStopForcesIt() {
     const std::filesystem::path list = writeList("forced");
-    ChildProcess child(engine, startArguments(list, {"--stop-grace", "60s"}), ChildOptions{true});
+    ChildProcess child(engine, startArguments(list, {"--stop-grace", "60s", "--high-water-mark", "1G", "--hard-limit", "1G"}),
+                       ChildOptions{true});
     const TcpSocket client = TcpSocket::connectLoopback(listeningPort(child));
+    constexpr std::size_t chunks = 512;  // of 64 KiB each
 
     std::vector<std::byte> chunk = gateway_testing::helloFrame();
     std::vector<std::byte> rest;
@@ -259,47 +264,37 @@ void testASecondStopForcesIt() {
         const std::size_t size = encodeCommand(id, *Symbol::parse(id % 2 == 0 ? "AAPL" : "MSFT"), cancel(id), frame);
         rest.insert(rest.end(), frame.begin(), frame.begin() + static_cast<std::ptrdiff_t>(size));
     }
-    std::atomic<std::uint64_t> sent{0};
-    std::atomic<bool> lost{false};
-    std::thread sender([&] {
-        std::span<const std::byte> left(chunk);
-        for (;;) {
-            if (left.empty()) {
-                left = rest;
+    std::uint64_t sent = 0;
+    bool lost = false;
+    // The engine reads all of it, so these sends finish; a CTest timeout catches one that doesn't.
+    std::span<const std::byte> left(chunk);
+    for (std::size_t sentChunks = 0; !lost;) {
+        if (left.empty()) {
+            if (sentChunks == chunks) {
+                break;
             }
-            const std::optional<std::size_t> taken = client.send(left);
-            if (!taken) {
-                lost.store(true);  // the engine closed the connection, or is gone
-                return;
-            }
-            left = left.subspan(*taken);
-            sent.fetch_add(*taken);
+            left = rest;
+            ++sentChunks;
         }
-    });
-
-    // Once the engine stops reading, the client's sends stall.
-    std::uint64_t last = 0;
-    auto unchangedSince = std::chrono::steady_clock::now();
-    const auto giveUp = unchangedSince + 60s;
-    while (std::chrono::steady_clock::now() - unchangedSince < 1500ms) {
-        expect(std::chrono::steady_clock::now() < giveUp, "the engine stopped reading a client that never reads");
-        std::this_thread::sleep_for(100ms);
-        if (const std::uint64_t now = sent.load(); now != last) {
-            last = now;
-            unchangedSince = std::chrono::steady_clock::now();
+        const std::optional<std::size_t> taken = client.send(left);
+        if (!taken) {
+            lost = true;  // the engine closed the connection, or is gone
+        } else {
+            left = left.subspan(*taken);
+            sent += *taken;
         }
     }
 
-    // What the stall was, for a failure to report.
+    // What the engine did, for a failure to report.
     const auto whatHappened = [&] {
         const bool running = child.stillRunningAfter(0ms);
         const std::string ending = running ? std::string("still runs") : described(child.wait(1s));
-        return "the client sent " + std::to_string(sent.load()) + " bytes" + (lost.load() ? " and lost its connection" : "") +
+        return "the client sent " + std::to_string(sent) + " bytes" + (lost ? " and lost its connection" : "") +
                ", and the engine " + ending + ", with stdout:\n" + child.standardOutput() + "\nand stderr:\n" + child.standardError();
     };
     // Each check is taken before its message is built, since argument order is unspecified.
-    const bool holding = !lost.load() && child.stillRunningAfter(0ms);
-    expect(holding, "the engine holds the client that stopped sending: " + whatHappened());
+    const bool holding = !lost && child.stillRunningAfter(0ms);
+    expect(holding, "the engine took everything the client sent: " + whatHappened());
     sendStop(child, stopSignals[0]);
     const bool waiting = child.stillRunningAfter(2s);
     expect(waiting, "the first stop waits for the answers it owes: " + whatHappened());
@@ -309,7 +304,6 @@ void testASecondStopForcesIt() {
                                                    child.standardError());
     expect(plain(child.standardError()).ends_with("order_book_engine: forced stop\n"), "saying so:\n" + child.standardError());
     expect(plain(child.standardOutput()).find("stopped") == std::string::npos, "with no stop report:\n" + child.standardOutput());
-    sender.join();
     std::filesystem::remove(list);
 }
 
