@@ -255,6 +255,9 @@ void testRefusals() {
     expect(refusedWith(settings, "--max-connections must be from 1 to 65536, not 0") == EngineExit::START_REFUSED, "a connection limit");
     settings = settingsFor(good, 0);
     expect(refusedWith(settings, "--shards must be at least 1") == EngineExit::START_REFUSED, "no shards");
+    settings = settingsFor(good, 1);
+    settings.gatewayThreads = 0;
+    expect(refusedWith(settings, "--gateway-threads must be at least 1") == EngineExit::START_REFUSED, "no gateway thread");
 
     const TcpSocket taken = TcpSocket::listenLoopback(0);
     settings = settingsFor(good, 1);
@@ -312,11 +315,22 @@ void testPinningAndPriority() {
     settings.pinGateway = {4'000'000'000u};
     expect(refusedWith(settings, "cannot pin the gateway thread to core 4000000000: " + past) == EngineExit::START_REFUSED,
            "and the gateway's");
+    settings = settingsFor(list, 2);
+    settings.gatewayThreads = 3;
+    settings.pinGateway = {core};
+    expect(refusedWith(settings, "--pin-gateway needs 3 cores, one per gateway thread, not 1") == EngineExit::START_REFUSED,
+           "a core for each of several gateway threads");
+    settings.pinGateway = {core, core, 4'000'000'000u};
+    expect(refusedWith(settings, "cannot pin gateway thread 2 to core 4000000000: " + past) == EngineExit::START_REFUSED,
+           "naming the one that couldn't take it");
 
     settings = settingsFor(list, 2);
     settings.pinMatching = {core, core};
     settings.pinGateway = {core};
     expectACleanRun(settings, "a run pinned where it may run starts and stops cleanly");
+    settings.gatewayThreads = 2;
+    settings.pinGateway = {core, core};
+    expectACleanRun(settings, "and so does one with two gateway threads, each pinned");
 
     // Whether this process may raise a thread is the system's to say, so a scratch thread asks it.
     std::optional<std::string> denied;
@@ -359,6 +373,59 @@ void testTheConnectionLimitIsASetting() {
     std::filesystem::remove(list);
 }
 
+// Thread 0 deals connections in turn, so with two gateway threads and a limit of one each, the
+// first two are taken on, one per thread, and the third is one too many on thread 0. Each thread
+// answers its own connection's commands.
+void testSeveralGatewayThreads() {
+    const std::filesystem::path list = writeList("threads", "symbol,shard,orders,stops,levels\nAAPL,0,,,\nMSFT,1,,,\n");
+    runtime::EngineSettings settings = settingsFor(list, 2);
+    settings.gatewayThreads = 2;
+    settings.maxConnections = 1;
+    Run run(settings);
+    const std::uint16_t port = run.port();
+
+    std::vector<TcpSocket> held;
+    for (const char* symbol : {"AAPL", "MSFT"}) {
+        held.push_back(TcpSocket::connectLoopback(port));
+        Bytes stream = helloFrame();
+        Bytes frame(64);
+        frame.resize(encodeCommand(1, *Symbol::parse(symbol), limit(1, Side::BUY, 100), frame));
+        stream.insert(stream.end(), frame.begin(), frame.end());
+        expect(held.back().send(stream) == stream.size(), "each sends Hello and a command");
+
+        FrameReader reader(FrameSource::ENGINE);
+        std::array<std::byte, 256> buffer{};
+        std::optional<EventFrame> answer;
+        while (!answer) {
+            const ReadResult read = held.back().receive(buffer);
+            expect(read.status == ReadStatus::OPEN, std::string("the connection stays open until answered: ") + symbol);
+            reader.feed(std::span<const std::byte>(buffer).first(read.bytes));
+            for (FrameResult result = reader.next(); std::holds_alternative<Frame>(result) && !answer; result = reader.next()) {
+                answer = decodeEvent(std::get<Frame>(result));
+            }
+        }
+        expect(answer->symbol == *Symbol::parse(symbol) && std::holds_alternative<OrderAccepted>(answer->event),
+               std::string("and is answered by its own thread: ") + symbol);
+    }
+
+    const TcpSocket third = TcpSocket::connectLoopback(port);
+    FrameReader reader(FrameSource::ENGINE);
+    std::array<std::byte, 64> buffer{};
+    for (ReadResult read = third.receive(buffer); read.status == ReadStatus::OPEN; read = third.receive(buffer)) {
+        reader.feed(std::span<const std::byte>(buffer).first(read.bytes));
+    }
+    const FrameResult refused = reader.next();
+    expect(std::holds_alternative<Frame>(refused) &&
+               decodeProtocolError(std::get<Frame>(refused)).code == static_cast<std::uint16_t>(ProtocolError::TOO_MANY_CONNECTIONS),
+           "the third is thread 0's second, one too many, though thread 1 has room");
+
+    held.clear();
+    run.stop.request();
+    expect(run.finish() == EngineExit::CLEAN_STOP, "and every gateway thread stops cleanly");
+    expect(run.report.text().ends_with("total: books=2 capacity-growths=0\n"), "with the stop report:\n" + run.report.text());
+    std::filesystem::remove(list);
+}
+
 }  // namespace
 
 int main() {
@@ -367,6 +434,7 @@ int main() {
     testRefusals();
     testPinningAndPriority();
     testTheConnectionLimitIsASetting();
+    testSeveralGatewayThreads();
     std::cout << "engine tests passed" << std::endl;
     return EXIT_SUCCESS;
 }

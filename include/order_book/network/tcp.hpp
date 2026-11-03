@@ -6,6 +6,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <utility>
 
 #include "order_book/network/socket_set.hpp"
 
@@ -57,6 +58,8 @@ namespace order_book::network {
         std::optional<std::size_t> send(std::span<const std::byte> bytes) const noexcept;
         void shutdownSend() const noexcept;
         void close() noexcept;
+        // Gives the handle up, open, so another TcpSocket can take it on.
+        NativeSocket release() noexcept { return std::exchange(held, invalidSocket); }
 
         bool valid() const noexcept { return held != invalidSocket; }
         NativeSocket handle() const noexcept { return held; }

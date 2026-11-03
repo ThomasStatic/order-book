@@ -32,7 +32,6 @@ namespace order_book::network {
     namespace {
 
         constexpr std::string_view prefix = "order_book_engine: ";
-        constexpr std::size_t gatewayThreads = 1;  // until --gateway-threads
 
         // What a start refusal names, rather than a usage error, since the command line parsed.
         struct Refusal {
@@ -46,13 +45,26 @@ namespace order_book::network {
             std::uint64_t growths;  // since ready
         };
 
-        // One shard: its rings, its matching thread, and what that thread reports once it stops.
-        struct ShardRuntime {
-            ShardRuntime(std::size_t commandSlots, std::size_t responseSlots) : commands(commandSlots), responses(responseSlots) {}
+        // One gateway thread's two rings to one shard.
+        struct GatewayRings {
+            GatewayRings(std::size_t commandSlots, std::size_t responseSlots) : commands(commandSlots), responses(responseSlots) {}
 
-            runtime::Doorbell doorbell;
             runtime::Ring<runtime::CommandElement> commands;
             runtime::Ring<runtime::ResponseRecord> responses;
+        };
+
+        // One shard: a pair of rings per gateway thread, its matching thread, and what that thread
+        // reports once it stops.
+        struct ShardRuntime {
+            ShardRuntime(std::size_t commandSlots, std::size_t responseSlots, std::size_t gatewayThreads) {
+                rings.reserve(gatewayThreads);
+                for (std::size_t gateway = 0; gateway < gatewayThreads; ++gateway) {
+                    rings.push_back(std::make_unique<GatewayRings>(commandSlots, responseSlots));
+                }
+            }
+
+            runtime::Doorbell doorbell;
+            std::vector<std::unique_ptr<GatewayRings>> rings;
             // Here, not on the starting thread's stack, since the matching thread may still be
             // inside set_value when get returns, and must find it alive until it is joined.
             std::promise<void> ready;
@@ -61,9 +73,25 @@ namespace order_book::network {
             std::uint64_t resultGrowths = 0;
         };
 
+        // One gateway thread, its sockets, and how its start and its end went.
+        struct GatewayRuntime {
+            std::unique_ptr<PollSocketSet> sockets;
+            std::thread thread;
+            // Here, not on the starting thread's stack, since the gateway thread may still be
+            // inside set_value when get returns.
+            std::promise<void> ready;
+            std::exception_ptr failure;  // written by its thread, read once that thread says so
+            bool startFailed = false;    // the starting thread's: it never ran, nor sent a marker
+        };
+
+        constexpr std::size_t noGateway = static_cast<std::size_t>(-1);
+
         std::optional<Refusal> refusedValue(const runtime::EngineSettings& settings) {
             if (settings.shards == 0) {
                 return Refusal{"--shards must be at least 1"};
+            }
+            if (settings.gatewayThreads == 0) {
+                return Refusal{"--gateway-threads must be at least 1"};
             }
             for (const auto& [flag, slots] : {std::pair{"--command-ring", settings.commandRing}, std::pair{"--response-ring", settings.responseRing}}) {
                 if (!std::has_single_bit(slots)) {
@@ -78,8 +106,9 @@ namespace order_book::network {
                 return Refusal{"--pin-matching needs " + std::to_string(settings.shards) + (settings.shards == 1 ? " core" : " cores") +
                                ", one per shard, not " + std::to_string(settings.pinMatching.size())};
             }
-            if (!settings.pinGateway.empty() && settings.pinGateway.size() != gatewayThreads) {
-                return Refusal{"--pin-gateway needs " + std::to_string(gatewayThreads) + " core, one per gateway thread, not " +
+            if (!settings.pinGateway.empty() && settings.pinGateway.size() != settings.gatewayThreads) {
+                return Refusal{"--pin-gateway needs " + std::to_string(settings.gatewayThreads) +
+                               (settings.gatewayThreads == 1 ? " core" : " cores") + ", one per gateway thread, not " +
                                std::to_string(settings.pinGateway.size())};
             }
             return std::nullopt;
@@ -115,16 +144,20 @@ namespace order_book::network {
             // reached after a forced stop, whose engine is left to the process's exit.
             ~Engine() {
                 stop.onRequest({});
-                if (gateway.joinable()) {
-                    stopRequested.store(true, std::memory_order_seq_cst);
-                    releaseGateway();
-                    sockets->wake();
-                    gateway.join();
-                    if (gatewayFailure) {
-                        sendStopMarkers();
+                // First, since a gateway thread that is ready waits for every shard to stop, and a
+                // shard for a marker from every gateway thread. Nothing else writes these rings.
+                for (std::size_t thread = 0; thread < gateways.size(); ++thread) {
+                    if (!gateways[thread]->thread.joinable() || gateways[thread]->startFailed) {
+                        sendStopMarkers(thread);
                     }
-                } else {
-                    sendStopMarkers();
+                }
+                stopRequested.store(true, std::memory_order_seq_cst);
+                releaseGateways();
+                wakeGateways();
+                for (const std::unique_ptr<GatewayRuntime>& gateway : gateways) {
+                    if (gateway->thread.joinable()) {
+                        gateway->thread.join();
+                    }
                 }
                 for (const std::unique_ptr<ShardRuntime>& shard : shards) {
                     if (shard->thread.joinable()) {
@@ -139,13 +172,22 @@ namespace order_book::network {
         private:
             void startShards();
             void runShard(std::uint32_t number);
-            void sendStopMarkers();
+            void startGateways();
+            void runGatewayThread(std::size_t thread, const GatewaySettings& gatewaySettings);
+            void sendStopMarkers(std::size_t thread);
             EngineExit waitForStop();
             void writeStopReport();
             EngineExit forceStop(const std::string& why);
-            void releaseGateway() {
-                gatewayReleased.store(true, std::memory_order_seq_cst);
-                gatewayReleased.notify_all();
+            void releaseGateways() {
+                gatewaysReleased.store(true, std::memory_order_seq_cst);
+                gatewaysReleased.notify_all();
+            }
+            void wakeGateways() {
+                for (const std::unique_ptr<GatewayRuntime>& gateway : gateways) {
+                    if (gateway->sockets) {
+                        gateway->sockets->wake();
+                    }
+                }
             }
 
             const runtime::EngineSettings& settings;
@@ -153,25 +195,23 @@ namespace order_book::network {
             std::ostream& report;
             std::ostream& diagnostics;
             std::unique_ptr<runtime::InstrumentDirectory> directory;
-            std::unique_ptr<PollSocketSet> sockets;
             std::vector<std::unique_ptr<ShardRuntime>> shards;
-            std::thread gateway;
-            // A member, as each shard's ready is, since the gateway thread may still be inside
-            // set_value when get returns.
-            std::promise<void> gatewayListening;
-            std::atomic<bool> gatewayReleased{false};  // once listening is printed, or to stop
-            std::exception_ptr gatewayFailure;
+            std::vector<std::unique_ptr<GatewayRuntime>> gateways;  // thread 0's sockets listen
+            std::unique_ptr<ConnectionHandOff> handOff;
+            std::atomic<bool> gatewaysReleased{false};  // once listening is printed, or to stop
             std::atomic<bool> stopRequested{false};
-            std::atomic<bool> gatewayDone{false};
-            std::atomic<std::uint32_t> happenings{0};  // a request or the gateway ending, for waitForStop
+            std::atomic<std::uint32_t> gatewaysDone{0};
+            std::atomic<std::size_t> failedGateway{noGateway};  // the first to fail once running
+            std::atomic<std::uint32_t> happenings{0};  // a request or a gateway thread ending, for waitForStop
             bool forced = false;
         };
 
-        void Engine::sendStopMarkers() {
-            // Only while no gateway thread writes these rings: before it starts, or after it failed.
+        void Engine::sendStopMarkers(std::size_t thread) {
+            // Only for a gateway thread that never started, or failed before it was ready, so it
+            // never wrote these rings and never will, and sent no marker of its own.
             for (const std::unique_ptr<ShardRuntime>& shard : shards) {
                 if (shard->thread.joinable()) {
-                    while (!shard->commands.tryPush(runtime::CommandElement::stopMarker())) {
+                    while (!shard->rings[thread]->commands.tryPush(runtime::CommandElement::stopMarker())) {
                         std::this_thread::yield();
                     }
                     shard->doorbell.ring();
@@ -190,8 +230,11 @@ namespace order_book::network {
                 placeThisThread(settings.pinMatching, number, settings.threadPriority, "matching thread " + std::to_string(number));
                 const BookCapacity defaults{settings.capacityOrders, settings.capacityStops, settings.capacityLevels};
                 shard.emplace(*directory, number, defaults);
-                loop.emplace(*shard, own.doorbell, std::vector<runtime::RingPair>{runtime::RingPair{&own.commands, &own.responses}},
-                             spinWindowOf(settings));
+                std::vector<runtime::RingPair> rings;
+                for (const std::unique_ptr<GatewayRings>& pair : own.rings) {
+                    rings.push_back(runtime::RingPair{&pair->commands, &pair->responses});
+                }
+                loop.emplace(*shard, own.doorbell, std::move(rings), spinWindowOf(settings));
                 const std::span<const runtime::Instrument> instruments = directory->onShard(number);
                 own.books.reserve(instruments.size());
                 growthsAtReady.reserve(instruments.size());
@@ -217,7 +260,7 @@ namespace order_book::network {
             std::vector<std::future<void>> started;
             started.reserve(settings.shards);
             for (std::uint32_t number = 0; number < settings.shards; ++number) {
-                shards.push_back(std::make_unique<ShardRuntime>(settings.commandRing, settings.responseRing));
+                shards.push_back(std::make_unique<ShardRuntime>(settings.commandRing, settings.responseRing, settings.gatewayThreads));
                 started.push_back(shards.back()->ready.get_future());
             }
             std::exception_ptr failure;
@@ -260,16 +303,26 @@ namespace order_book::network {
             }
             directory = std::make_unique<runtime::InstrumentDirectory>(std::get<std::vector<runtime::Instrument>>(std::move(list)), settings.shards);
 
-            try {
-                sockets = std::make_unique<PollSocketSet>(settings.listen.host, settings.listen.port);
-            } catch (const std::system_error& error) {
-                throw Refusal{"cannot listen on " + runtime::formatListenAddress(settings.listen) + ": " + error.what()};
+            std::vector<SocketSet*> threadSockets;
+            for (std::size_t thread = 0; thread < settings.gatewayThreads; ++thread) {
+                gateways.push_back(std::make_unique<GatewayRuntime>());
+                if (thread == 0) {
+                    try {
+                        gateways[0]->sockets = std::make_unique<PollSocketSet>(settings.listen.host, settings.listen.port);
+                    } catch (const std::system_error& error) {
+                        throw Refusal{"cannot listen on " + runtime::formatListenAddress(settings.listen) + ": " + error.what()};
+                    }
+                } else {
+                    gateways[thread]->sockets = std::make_unique<PollSocketSet>(PollSocketSet::NoListener{});
+                }
+                threadSockets.push_back(gateways[thread]->sockets.get());
             }
+            handOff = std::make_unique<ConnectionHandOff>(std::move(threadSockets));
             stop.onRequest([this] {
                 stopRequested.store(true, std::memory_order_seq_cst);
                 happenings.fetch_add(1, std::memory_order_seq_cst);
                 happenings.notify_all();
-                sockets->wake();
+                wakeGateways();
             });
 
             startShards();
@@ -278,49 +331,75 @@ namespace order_book::network {
                 return EngineExit::STOPPED_BEFORE_READY;
             }
 
+            startGateways();
+            if (stop.requests() != 0) {
+                diagnostics << prefix << "stopped before ready" << std::endl;
+                return EngineExit::STOPPED_BEFORE_READY;
+            }
+            report << "listening "
+                   << runtime::formatListenAddress(runtime::ListenAddress{settings.listen.host, gateways[0]->sockets->port()}) << std::endl;
+            releaseGateways();
+            return waitForStop();
+        }
+
+        // Each gateway thread places itself and is built before anything is printed, so a refused
+        // pin or priority, or a failed allocation, refuses the start. Thread 0 starts last and
+        // listens only once every other is ready, so no client connects to a start that fails.
+        // Each runs only once listening is printed.
+        void Engine::startGateways() {
             GatewaySettings gatewaySettings;
             gatewaySettings.maxConnections = settings.maxConnections;
             gatewaySettings.highWaterMark = settings.highWaterMark;
             gatewaySettings.hardLimit = settings.hardLimit;
             gatewaySettings.stopGrace = settings.stopGrace;
             gatewaySettings.spinWindow = spinWindowOf(settings);
-            std::vector<ShardLink> links;
-            for (const std::unique_ptr<ShardRuntime>& shard : shards) {
-                links.push_back(ShardLink{&shard->commands, &shard->responses, &shard->doorbell});
+            std::vector<std::future<void>> started;
+            for (const std::unique_ptr<GatewayRuntime>& gateway : gateways) {
+                started.push_back(gateway->ready.get_future());
             }
-            // The gateway thread places itself, is built, and starts listening before anything
-            // is printed, so a refused pin or priority, or a failed allocation, refuses the start,
-            // and no client connects too early. It runs only once listening is printed.
-            gateway = std::thread([this, links = std::move(links), gatewaySettings = std::move(gatewaySettings)] {
-                bool listening = false;
+            for (std::size_t step = 0; step < gateways.size(); ++step) {
+                const std::size_t thread = (step + 1) % gateways.size();  // thread 0 last
+                gateways[thread]->thread = std::thread([this, thread, gatewaySettings] { runGatewayThread(thread, gatewaySettings); });
                 try {
-                    placeThisThread(settings.pinGateway, 0, settings.threadPriority, "the gateway thread");
-                    GatewayThread gatewayThread(*directory, links, *sockets, gatewaySettings);
-                    sockets->startListening();
-                    listening = true;
-                    gatewayListening.set_value();
-                    gatewayReleased.wait(false, std::memory_order_seq_cst);
-                    runGateway(gatewayThread, stopRequested);
+                    started[thread].get();
                 } catch (...) {
-                    gatewayFailure = std::current_exception();
-                    if (!listening) {
-                        gatewayListening.set_exception(gatewayFailure);
-                    }
+                    // The destructor sends the markers this thread never will, then joins it.
+                    gateways[thread]->startFailed = true;
+                    throw;
                 }
-                gatewayDone.store(true, std::memory_order_seq_cst);
-                happenings.fetch_add(1, std::memory_order_seq_cst);
-                happenings.notify_all();
-            });
-            // A failure here leaves the destructor to join the gateway thread and, since it never
-            // ran, send the shards their markers itself.
-            gatewayListening.get_future().get();
-            if (stop.requests() != 0) {
-                diagnostics << prefix << "stopped before ready" << std::endl;
-                return EngineExit::STOPPED_BEFORE_READY;
             }
-            report << "listening " << runtime::formatListenAddress(runtime::ListenAddress{settings.listen.host, sockets->port()}) << std::endl;
-            releaseGateway();
-            return waitForStop();
+        }
+
+        void Engine::runGatewayThread(std::size_t thread, const GatewaySettings& gatewaySettings) {
+            GatewayRuntime& own = *gateways[thread];
+            bool ready = false;
+            try {
+                placeThisThread(settings.pinGateway, thread, settings.threadPriority,
+                                gateways.size() == 1 ? "the gateway thread" : "gateway thread " + std::to_string(thread));
+                std::vector<ShardLink> links;
+                for (const std::unique_ptr<ShardRuntime>& shard : shards) {
+                    links.push_back(ShardLink{&shard->rings[thread]->commands, &shard->rings[thread]->responses, &shard->doorbell});
+                }
+                GatewayThread gateway(*directory, std::move(links), *own.sockets, gatewaySettings, handOff.get(), thread);
+                if (thread == 0) {
+                    own.sockets->startListening();
+                }
+                ready = true;
+                own.ready.set_value();
+                gatewaysReleased.wait(false, std::memory_order_seq_cst);
+                runGateway(gateway, stopRequested);
+            } catch (...) {
+                own.failure = std::current_exception();
+                if (!ready) {
+                    own.ready.set_exception(own.failure);
+                } else {
+                    std::size_t none = noGateway;
+                    failedGateway.compare_exchange_strong(none, thread, std::memory_order_seq_cst);
+                }
+            }
+            gatewaysDone.fetch_add(1, std::memory_order_seq_cst);
+            happenings.fetch_add(1, std::memory_order_seq_cst);
+            happenings.notify_all();
         }
 
         EngineExit Engine::waitForStop() {
@@ -329,22 +408,26 @@ namespace order_book::network {
                 if (stop.requests() >= 2) {
                     return forceStop("forced stop");
                 }
-                if (gatewayDone.load(std::memory_order_seq_cst)) {
+                if (const std::size_t failed = failedGateway.load(std::memory_order_seq_cst); failed != noGateway) {
+                    // The others may wait for ever on its markers, so nothing here waits for them.
+                    std::string what = "unknown";
+                    try {
+                        std::rethrow_exception(gateways[failed]->failure);
+                    } catch (const std::exception& error) {
+                        what = error.what();
+                    } catch (...) {
+                    }
+                    return forceStop((gateways.size() == 1 ? std::string("gateway thread failed: ")
+                                                           : "gateway thread " + std::to_string(failed) + " failed: ") +
+                                     what);
+                }
+                if (gatewaysDone.load(std::memory_order_seq_cst) == gateways.size()) {
                     break;
                 }
                 happenings.wait(seen, std::memory_order_seq_cst);
             }
-            gateway.join();
-            if (gatewayFailure) {
-                std::string what = "unknown";
-                try {
-                    std::rethrow_exception(gatewayFailure);
-                } catch (const std::exception& error) {
-                    what = error.what();
-                } catch (...) {
-                }
-                sendStopMarkers();
-                return forceStop("gateway thread failed: " + what);
+            for (const std::unique_ptr<GatewayRuntime>& gateway : gateways) {
+                gateway->thread.join();
             }
             for (const std::unique_ptr<ShardRuntime>& shard : shards) {
                 shard->thread.join();
@@ -358,8 +441,10 @@ namespace order_book::network {
             // Whatever is still running is left to the process's exit: nothing here waits for it.
             forced = true;
             stop.onRequest({});
-            if (gateway.joinable()) {
-                gateway.detach();
+            for (const std::unique_ptr<GatewayRuntime>& gateway : gateways) {
+                if (gateway->thread.joinable()) {
+                    gateway->thread.detach();
+                }
             }
             for (const std::unique_ptr<ShardRuntime>& shard : shards) {
                 if (shard->thread.joinable()) {

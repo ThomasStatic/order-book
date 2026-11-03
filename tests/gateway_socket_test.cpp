@@ -202,6 +202,45 @@ void testLoopbackSocketsWork() {
     expect(client.receive(into).status == ReadStatus::ENDED, "and the client reads to the end of its stream");
 }
 
+// A connection released by the listening set is the same connection in a set with no listener,
+// which is woken from another thread to take it, as gateway thread 0 hands one on.
+void testAConnectionMovesBetweenSets() {
+    PollSocketSet listening;
+    PollSocketSet other{PollSocketSet::NoListener{}};
+    const TcpSocket client = TcpSocket::connectLoopback(listening.port());
+    std::optional<SocketId> accepted;
+    while (!accepted) {
+        listening.wait({}, WaitMode::SLEEP);
+        accepted = listening.accept();
+    }
+    expect(!other.accept().has_value(), "a set with no listener accepts nothing");
+
+    std::atomic<HandedSocket> handed{0};
+    std::thread dealer([&] {
+        handed.store(listening.release(*accepted), std::memory_order_seq_cst);
+        other.wake();
+    });
+    other.wait({}, WaitMode::SLEEP);  // hangs if the wake is lost, and the CTest timeout fails it
+    dealer.join();
+    const SocketId adopted = other.adopt(handed.load(std::memory_order_seq_cst));
+    expect(other.noDelay(adopted), "it keeps its TCP_NODELAY");
+
+    const std::array<std::byte, 2> bytes{std::byte{7}, std::byte{8}};
+    expect(client.send(bytes) == bytes.size(), "the client sends");
+    std::array<std::byte, 16> into{};
+    std::size_t got = 0;
+    while (got == 0) {
+        const std::array<SocketInterest, 1> interest{SocketInterest{adopted, true, false}};
+        other.wait(interest, WaitMode::SLEEP);
+        got = other.read(adopted, into).bytes;
+    }
+    expect(got == 2 && into[1] == std::byte{8}, "and the adopting set reads it");
+    expect(other.write(adopted, std::span<const std::byte>(bytes).first(1)) == std::optional<std::size_t>(1), "and writes");
+    expect(client.receive(into).bytes == 1, "to the same client");
+    other.close(adopted);
+    expect(client.receive(into).status != ReadStatus::OPEN, "and closing it there closes the client's connection");
+}
+
 void testAWakeEndsASleep() {
     PollSocketSet sockets;
     for (int round = 0; round < 3; ++round) {
@@ -346,6 +385,7 @@ void testAStopWakesASleepingGateway() {
 
 int main() {
     testLoopbackSocketsWork();
+    testAConnectionMovesBetweenSets();
     testAWakeEndsASleep();
     testTheEngineOverLoopback();
     testPastTheLimitOverLoopback();

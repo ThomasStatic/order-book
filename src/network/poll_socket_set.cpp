@@ -14,8 +14,15 @@ namespace order_book::network {
     PollSocketSet::PollSocketSet(const std::array<std::uint8_t, 4>& host, std::uint16_t port, Clock lingerClock)
         : listener(TcpSocket::bindIpv4(host, port)), clock(std::move(lingerClock)) {
         listeningPort = listener.localPort();
+        connectWakePair();
+    }
 
-        // The wake pair: a connection to a listener of its own, made before anything can race it.
+    PollSocketSet::PollSocketSet(NoListener, Clock lingerClock) : clock(std::move(lingerClock)) {
+        connectWakePair();
+    }
+
+    // A connection to a listener of its own, made before anything can race it.
+    void PollSocketSet::connectWakePair() {
         const TcpSocket wakeListener = TcpSocket::listenLoopback(0);
         wakeSender = TcpSocket::connectLoopback(wakeListener.localPort());
         std::optional<TcpSocket> accepted;
@@ -113,7 +120,7 @@ namespace order_book::network {
                 }
             }
             if (done) {
-                release(socket);
+                forget(socket);
             } else {
                 lingering[kept++] = socket;
             }
@@ -121,22 +128,14 @@ namespace order_book::network {
         lingering.resize(kept);
     }
 
-    void PollSocketSet::release(SocketId socket) {
+    void PollSocketSet::forget(SocketId socket) {
         slots[socket].reset();
         freeSlots.push_back(socket);
     }
 
-    std::optional<SocketId> PollSocketSet::accept() {
-        if (!listening || !listenerReadable) {
-            return std::nullopt;
-        }
-        std::optional<TcpSocket> accepted = listener.accept();
-        if (!accepted) {
-            listenerReadable = false;
-            return std::nullopt;
-        }
+    SocketId PollSocketSet::hold(TcpSocket socket) {
         Slot slot;
-        slot.socket = std::move(*accepted);
+        slot.socket = std::move(socket);
         slot.readable = true;  // it may have sent already, and a read will say
         SocketId id;
         if (freeSlots.empty()) {
@@ -148,6 +147,31 @@ namespace order_book::network {
             slots[id].emplace(std::move(slot));
         }
         return id;
+    }
+
+    HandedSocket PollSocketSet::release(SocketId socket) {
+        if (slots.at(socket)->shutDown) {
+            throw std::logic_error("a connection whose sending has ended can't be handed on");
+        }
+        const HandedSocket handed = slots.at(socket)->socket.release();
+        forget(socket);
+        return handed;
+    }
+
+    SocketId PollSocketSet::adopt(HandedSocket socket) {
+        return hold(TcpSocket(static_cast<NativeSocket>(socket)));
+    }
+
+    std::optional<SocketId> PollSocketSet::accept() {
+        if (!listening || !listenerReadable) {
+            return std::nullopt;
+        }
+        std::optional<TcpSocket> accepted = listener.accept();
+        if (!accepted) {
+            listenerReadable = false;
+            return std::nullopt;
+        }
+        return hold(std::move(*accepted));
     }
 
     ReadResult PollSocketSet::read(SocketId socket, std::span<std::byte> into) {
@@ -175,7 +199,7 @@ namespace order_book::network {
     void PollSocketSet::close(SocketId socket) {
         Slot& slot = *slots.at(socket);
         if (!slot.shutDown) {
-            release(socket);
+            forget(socket);
             return;
         }
         slot.readable = true;  // whatever is already waiting goes at the next wait

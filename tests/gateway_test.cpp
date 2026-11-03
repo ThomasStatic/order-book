@@ -660,6 +660,129 @@ void testPastTheLimitAConnectionIsTurnedAway() {
     expect(!rig.sockets.closed(lastInside.socket), "the one before it was taken on");
 }
 
+// Thread 0 accepts and deals: connection i lands on thread i mod M, itself included, and stays.
+void testConnectionsAreDealtRoundRobinForLife() {
+    Rig rig({on("AAPL", 0)}, 1, 16, {}, 3);
+    std::vector<Client> clients;
+    clients.reserve(7);
+    for (int i = 0; i < 7; ++i) {
+        clients.emplace_back(rig.sockets);
+    }
+    rig.gateways[0]->pass();
+    for (std::size_t i = 0; i < clients.size(); ++i) {
+        const std::optional<std::size_t> holder = rig.sockets.holder(clients[i].socket);
+        expect(i % 3 == 0 ? holder == 0U : !holder.has_value(), "thread 0 keeps its own and hands on the rest: " + std::to_string(i));
+    }
+    expect(rig.socketsOf(1).wakePending() && rig.socketsOf(2).wakePending(), "and wakes each thread it hands to");
+
+    for (Client& client : clients) {
+        client.send(joined({helloFrame(), commandFrame(1, "AAPL", limit(1 + client.socket, Side::BUY, 100))}));
+    }
+    rig.settle();
+    for (std::size_t i = 0; i < clients.size(); ++i) {
+        expect(rig.sockets.holder(clients[i].socket) == i % 3, "each lands on the next thread in turn: " + std::to_string(i));
+        expect(clients[i].answered() == 1, "and is answered there: " + std::to_string(i));
+    }
+}
+
+// The limit is each thread's, and dealing doesn't skip a full thread.
+void testEachGatewayThreadHasItsOwnLimit() {
+    GatewaySettings settings;
+    settings.maxConnections = 1;
+    Rig rig({on("AAPL", 0)}, 1, 16, settings, 2);
+    std::vector<Client> clients;
+    clients.reserve(4);
+    for (int i = 0; i < 4; ++i) {
+        clients.emplace_back(rig.sockets);
+    }
+    for (std::size_t i = 0; i < 2; ++i) {
+        clients[i].send(helloFrame());
+    }
+    rig.settle();
+    for (std::size_t i = 0; i < 2; ++i) {
+        expect(clients[i].frames().size() == 1 && clients[i].frames()[0].type == FrameType::WELCOME, "one per thread is taken on: " + std::to_string(i));
+        expect(!rig.sockets.closed(clients[i].socket) && rig.sockets.holder(clients[i].socket) == i, "and kept, on its own thread");
+    }
+    for (std::size_t i = 2; i < 4; ++i) {
+        const std::vector<Received>& frames = clients[i].frames();
+        expect(frames.size() == 1 && frames[0].error && frames[0].error->code == static_cast<std::uint16_t>(ProtocolError::TOO_MANY_CONNECTIONS),
+               "the next on each thread hears it is one too many: " + std::to_string(i));
+        expect(rig.sockets.closed(clients[i].socket) && rig.sockets.holder(clients[i].socket) == i % 2, "from its own thread");
+    }
+}
+
+// A connection handed on but not yet taken when the stop comes is closed, as one waiting on a
+// listener would be, and its thread still finishes.
+void testAStopClosesAConnectionMidHandOff() {
+    Rig rig({on("AAPL", 0)}, 1, 16, {}, 2);
+    Client kept(rig.sockets);
+    Client handed(rig.sockets);
+    kept.send(helloFrame());
+    handed.send(helloFrame());
+    rig.gateways[0]->pass();
+    expect(!rig.sockets.holder(handed.socket).has_value(), "handed on, and not yet taken");
+
+    for (const std::unique_ptr<GatewayThread>& gateway : rig.gateways) {
+        gateway->beginStop();
+    }
+    rig.settle();
+    expect(rig.gateways[0]->finished() && rig.gateways[1]->finished(), "both threads finish");
+    expect(rig.sockets.closed(handed.socket) && rig.sockets.holder(handed.socket) == 1U, "the handed one is closed by its thread");
+    expect(rig.sockets.bytesRead(handed.socket) == 0 && handed.frames().empty(), "having read nothing and said nothing");
+    expect(kept.frames().size() == 1 && rig.sockets.closed(kept.socket), "while thread 0's own is welcomed, then closed");
+}
+
+// A thread whose hand-off ring is full keeps the next connection back, and stays awake for it.
+void testAFullHandOffRingHoldsTheListenerBack() {
+    Rig rig({on("AAPL", 0)}, 1, 16, {}, 2);
+    std::vector<Client> clients;
+    const std::size_t count = 2 * ConnectionHandOff::ringSlots + 4;
+    clients.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        clients.emplace_back(rig.sockets);
+    }
+    rig.gateways[0]->pass();
+    const auto waitingToBeAccepted = [&] {
+        return std::count_if(clients.begin(), clients.end(), [&](const Client& client) { return !rig.sockets.accepted(client.socket); });
+    };
+    expect(waitingToBeAccepted() > 0, "thread 1's ring filled, so the listener still holds some");
+    expect(!rig.gateways[0]->mayWait(), "and thread 0 won't sleep on the one it is holding");
+
+    rig.settle();
+    expect(waitingToBeAccepted() == 0, "once thread 1 takes its share, the rest come");
+    for (std::size_t i = 0; i < count; ++i) {
+        expect(rig.sockets.holder(clients[i].socket) == i % 2, "still in turn: " + std::to_string(i));
+    }
+}
+
+// The stop takes back the one thread 0 was holding for a full ring, and closes it.
+void testAStopClosesTheConnectionHeldForAFullRing() {
+    Rig rig({on("AAPL", 0)}, 1, 16, {}, 2);
+    std::vector<Client> clients;
+    const std::size_t count = 2 * ConnectionHandOff::ringSlots + 4;
+    clients.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        clients.emplace_back(rig.sockets);
+    }
+    rig.gateways[0]->pass();
+    const std::size_t heldBack = 2 * ConnectionHandOff::ringSlots + 1;  // thread 1's after its ring of 64 filled
+    expect(rig.sockets.accepted(clients[heldBack].socket) && !rig.sockets.accepted(clients[heldBack + 1].socket),
+           "thread 0 accepted one more than its ring could take, and stopped there");
+    expect(!rig.sockets.holder(clients[heldBack].socket).has_value(), "and holds it released, for thread 1");
+
+    rig.gateways[0]->beginStop();
+    expect(rig.sockets.closed(clients[heldBack].socket),
+           "thread 0's stop closes it at once, since its markers may let thread 1 finish before the ring has room");
+    for (const std::unique_ptr<GatewayThread>& gateway : rig.gateways) {
+        gateway->beginStop();
+    }
+    rig.settle();
+    expect(rig.gateways[0]->finished() && rig.gateways[1]->finished(), "both threads finish");
+    for (const Client& client : clients) {
+        expect(rig.sockets.closed(client.socket), "every connection is closed, held, handed, or never accepted");
+    }
+}
+
 void testABackloggedConnectionIsNotRead() {
     GatewaySettings settings;
     settings.highWaterMark = 100;
@@ -915,23 +1038,33 @@ void testAShardStopsOnceEveryGatewayThreadHasSaidSo() {
     expect(first.finished() && second.finished(), "and both heard, on their own rings");
 }
 
-// 100 seeded schedules each way, through the harness's stepper, which engine_randomized_tests
-// --stepper also runs, so a failing seed here reproduces there.
+void runSteppedSchedules(std::size_t gatewayThreads, bool stop, order_book::engine_testing::StepperResult& totals) {
+    for (std::uint64_t seed = 1; seed <= (gatewayThreads == 1 ? 100U : 50U); ++seed) {
+        order_book::engine_testing::StepperConfig config;
+        config.seed = seed;
+        config.stop = stop;
+        config.gatewayThreads = gatewayThreads;
+        config.connections = gatewayThreads == 1 ? config.connections : config.instruments;
+        const order_book::engine_testing::StepperResult result = order_book::engine_testing::runStepperSchedule(config);
+        expect(result.passed(), (stop ? "stopped" : "unstopped") + std::string(" schedule, seed ") + std::to_string(seed) + ": " +
+                                    result.failure.value_or("") + "\nreproduce with: engine_randomized_tests --stepper " +
+                                    (stop ? "stop" : "run") + " --seed " + std::to_string(seed) + " --gateway-threads " +
+                                    std::to_string(gatewayThreads) + " --connections " + std::to_string(config.connections));
+        totals.sleeps += result.sleeps;
+        totals.waitsInPlace += result.waitsInPlace;
+        totals.commandsRun += result.commandsRun;
+        totals.commandsRefused += result.commandsRefused;
+    }
+}
+
+// 100 seeded schedules each way on one gateway thread, and 50 each way on two with a connection
+// per instrument, through the harness's stepper, which engine_randomized_tests --stepper also
+// runs, so a failing seed here reproduces there.
 void testSteppedSchedules() {
     order_book::engine_testing::StepperResult totals;
-    for (const bool stop : {false, true}) {
-        for (std::uint64_t seed = 1; seed <= 100; ++seed) {
-            order_book::engine_testing::StepperConfig config;
-            config.seed = seed;
-            config.stop = stop;
-            const order_book::engine_testing::StepperResult result = order_book::engine_testing::runStepperSchedule(config);
-            expect(result.passed(), (stop ? "stopped" : "unstopped") + std::string(" schedule, seed ") + std::to_string(seed) + ": " +
-                                        result.failure.value_or("") + "\nreproduce with: engine_randomized_tests --stepper " +
-                                        (stop ? "stop" : "run") + " --seed " + std::to_string(seed));
-            totals.sleeps += result.sleeps;
-            totals.waitsInPlace += result.waitsInPlace;
-            totals.commandsRun += result.commandsRun;
-            totals.commandsRefused += result.commandsRefused;
+    for (const std::size_t gatewayThreads : {std::size_t{1}, std::size_t{2}}) {
+        for (const bool stop : {false, true}) {
+            runSteppedSchedules(gatewayThreads, stop, totals);
         }
     }
     expect(totals.sleeps > 0, "the gateway slept, or the check of each sleep checked nothing");
@@ -966,6 +1099,11 @@ int main() {
     testAProtocolErrorWaitsForWhatIsInFlight();
     testAHalfCloseIsAnsweredInFull();
     testPastTheLimitAConnectionIsTurnedAway();
+    testConnectionsAreDealtRoundRobinForLife();
+    testEachGatewayThreadHasItsOwnLimit();
+    testAStopClosesAConnectionMidHandOff();
+    testAFullHandOffRingHoldsTheListenerBack();
+    testAStopClosesTheConnectionHeldForAFullRing();
     testABackloggedConnectionIsNotRead();
     testAtTheHighWaterMarkAConnectionIsStillRead();
     testPastTheHardLimitAConnectionCloses();

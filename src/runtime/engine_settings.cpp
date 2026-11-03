@@ -12,7 +12,7 @@ namespace order_book::runtime {
             "usage: order_book_engine --instruments FILE --shards N --listen ADDR:PORT\n"
             "                         [--command-ring SLOTS] [--response-ring SLOTS] [--spin-window TIME|unlimited]\n"
             "                         [--capacity-orders N] [--capacity-stops N] [--capacity-levels N]\n"
-            "                         [--max-connections N] [--high-water-mark SIZE] [--hard-limit SIZE]\n"
+            "                         [--max-connections N] [--gateway-threads M] [--high-water-mark SIZE] [--hard-limit SIZE]\n"
             "                         [--stop-grace TIME] [--stop-on-stdin-close]\n"
             "                         [--pin-matching CORES] [--pin-gateway CORES] [--thread-priority normal|high]\n"
             "       order_book_engine --help\n";
@@ -149,7 +149,7 @@ namespace order_book::runtime {
                                 : flag == "--high-water-mark" ? sizeFlag(settings.highWaterMark)
                                 : flag == "--hard-limit"      ? sizeFlag(settings.hardLimit)
                                                               : nullptr;
-            const bool known = size != nullptr || flag == "--instruments" || flag == "--shards" || flag == "--listen" ||
+            const bool known = size != nullptr || flag == "--instruments" || flag == "--shards" || flag == "--gateway-threads" || flag == "--listen" ||
                                flag == "--spin-window" || flag == "--stop-grace" || flag == "--pin-matching" || flag == "--pin-gateway" ||
                                flag == "--thread-priority";
             if (!known) {
@@ -167,12 +167,12 @@ namespace order_book::runtime {
                 *size = *parsed;
             } else if (flag == "--instruments") {
                 settings.instruments = std::string(value);
-            } else if (flag == "--shards") {
-                const std::optional<std::uint64_t> shards = parseDigits(value);
-                if (!shards || *shards > std::numeric_limits<std::uint32_t>::max()) {
+            } else if (flag == "--shards" || flag == "--gateway-threads") {
+                const std::optional<std::uint64_t> count = parseDigits(value);
+                if (!count || *count > std::numeric_limits<std::uint32_t>::max()) {
                     return needs(flag, "a number", value);
                 }
-                settings.shards = static_cast<std::uint32_t>(*shards);
+                (flag == "--shards" ? settings.shards : settings.gatewayThreads) = static_cast<std::uint32_t>(*count);
             } else if (flag == "--listen") {
                 const std::optional<ListenAddress> address = parseListenAddress(value);
                 if (!address) {
@@ -246,6 +246,7 @@ namespace order_book::runtime {
                            " --capacity-orders " + std::to_string(settings.capacityOrders) + " --capacity-stops " +
                            std::to_string(settings.capacityStops) + " --capacity-levels " + std::to_string(settings.capacityLevels) +
                            " --max-connections " + std::to_string(settings.maxConnections) +
+                           " --gateway-threads " + std::to_string(settings.gatewayThreads) +
                            " --high-water-mark " + formatSize(settings.highWaterMark) + " --hard-limit " + formatSize(settings.hardLimit) +
                            " --stop-grace " + formatTime(settings.stopGrace);
         if (!settings.pinMatching.empty()) {

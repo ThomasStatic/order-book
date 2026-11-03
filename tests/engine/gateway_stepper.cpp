@@ -12,6 +12,7 @@
 #include <variant>
 #include <vector>
 
+#include "connection_streams.hpp"
 #include "engine_harness.hpp"
 #include "gateway_frames.hpp"
 #include "gateway_rig.hpp"
@@ -25,7 +26,6 @@ namespace order_book::engine_testing {
         using namespace order_book::runtime;
         using order_book::gateway_testing::Bytes;
         using order_book::gateway_testing::helloFrame;
-        using order_book::gateway_testing::rawCommandFrame;
 
         void check(bool condition, const std::string& message) {
             if (!condition) {
@@ -33,97 +33,21 @@ namespace order_book::engine_testing {
             }
         }
 
-        struct Line {
-            Correlation correlation;
-            BookEvent event;
-            bool last;
-
-            bool operator==(const Line&) const = default;
-        };
-
-        // A command the entry check passed, and where its frame ends in its connection's stream.
-        struct StreamCommand {
-            Correlation correlation;
-            std::size_t connection;
-            std::size_t frameEnd;
-            EntryAccepted accepted;
-        };
-
-        struct SteppedStream {
-            std::vector<Instrument> instruments;
-            std::vector<Bytes> bytes;                           // per connection
-            std::vector<std::size_t> frames;                    // the frames expected back, per connection
-            std::map<std::string, std::vector<Line>> expected;  // from the books, per instrument
-            std::map<Correlation, BookEvent> refusedAsMalformed;
-            std::set<Correlation> refusedAtEntry;               // with a Refused frame
-            std::vector<StreamCommand> commands;
-        };
-
-        SteppedStream steppedStream(const StepperConfig& config) {
-            EngineSeedConfig generation;
-            generation.seed = config.seed;
-            generation.instruments = config.instruments;
-            generation.shards = config.shards;
-            generation.commands = config.commands;
-
-            SteppedStream stream;
-            std::vector<Symbol> symbols;
-            for (std::size_t i = 0; i < config.instruments; ++i) {
-                symbols.push_back(*Symbol::parse("SYM" + std::to_string(i)));
-                stream.instruments.push_back(Instrument{symbols.back(), std::nullopt, std::nullopt, std::nullopt, std::nullopt});
-            }
-            const InstrumentDirectory directory(stream.instruments, config.shards);
-            std::vector<std::unique_ptr<Shard>> witnesses;
-            for (std::uint32_t shard = 0; shard < config.shards; ++shard) {
-                witnesses.push_back(std::make_unique<Shard>(directory, shard));
-            }
-
-            stream.bytes.assign(config.connections, helloFrame());
-            stream.frames.assign(config.connections, 1);  // each gets a Welcome
-            const std::vector<EngineCommand> lines = generateEngineStream(generation);
-            for (std::size_t index = 0; index < lines.size(); ++index) {
-                const EngineCommand& line = lines[index];
-                if (!line.converted) {
-                    continue;
-                }
-                const Correlation correlation = index + 1;
-                const std::array<char, Symbol::size> stored =
-                    line.fault == SymbolFault::NONE ? symbols[line.instrument].bytes() : Symbol::parse("ZZZZ")->bytes();
-                const replay::RawCommand raw = rawCommandOf(*line.converted, stored);
-                const std::size_t connection = line.instrument % config.connections;
-                const Bytes frame = rawCommandFrame(correlation, raw);
-                check(order_book::gateway_testing::roundTrips(frame, raw), "the stepper's frame is the command");
-                stream.bytes[connection].insert(stream.bytes[connection].end(), frame.begin(), frame.end());
-
-                const EntryDecision decision = checkEntry(CommandFrame{correlation, raw}, directory, false);
-                if (std::holds_alternative<EntryRefused>(decision)) {
-                    stream.refusedAtEntry.insert(correlation);
-                    ++stream.frames[connection];
-                } else if (const EntryMalformed* malformed = std::get_if<EntryMalformed>(&decision)) {
-                    stream.refusedAsMalformed.insert({correlation, malformed->event});
-                    ++stream.frames[connection];
-                } else {
-                    const EntryAccepted& accepted = std::get<EntryAccepted>(decision);
-                    stream.commands.push_back(StreamCommand{correlation, connection, stream.bytes[connection].size(), accepted});
-                    Shard& witness = *witnesses[accepted.location.shard];
-                    witness.process(accepted.command, accepted.location.slot);
-                    const std::span<const BookEvent> events = witness.result().events();
-                    for (std::size_t i = 0; i < events.size(); ++i) {
-                        stream.expected[symbols[line.instrument].text()].push_back(Line{correlation, events[i], i + 1 == events.size()});
-                        ++stream.frames[connection];
-                    }
-                }
-            }
-            return stream;
+        StreamShape shapeOf(const StepperConfig& config) {
+            return StreamShape{config.instruments, config.shards, config.connections, config.pinned, config.plantExtraAnswer};
         }
 
         // Sleeping is only safe with nothing in a ring, and with the wait watching every connection
         // that still has bytes to move: written to, if it is owed answers, counted here from the
         // bytes the gateway took and the frames the client holds, and read from, if it sent bytes
         // not yet taken. None of it comes from what the gateway says about itself.
-        void checkNothingInFlight(Rig& rig, std::vector<Client>& clients, std::span<const SocketInterest> interest) {
+        void checkNothingInFlight(Rig& rig, std::size_t thread, std::vector<Client>& clients, std::span<const SocketInterest> interest) {
             for (const std::unique_ptr<ShardActor>& shard : rig.shards) {
-                check(!shard->commands.hasItems() && !shard->responses.hasItems(), "a gateway slept with a command in flight");
+                const RingLink& link = *shard->links[thread];
+                check(!link.commands.hasItems() && !link.responses.hasItems(), "a gateway slept with a command in flight");
+            }
+            if (thread != 0 && rig.handOff->ringOf(thread).hasItems()) {
+                check(rig.socketsOf(thread).wakePending(), "a gateway slept on a connection handed to it, unwoken");
             }
             const auto watched = [&interest](SocketId socket, bool forWriting) {
                 return std::any_of(interest.begin(), interest.end(), [&](const SocketInterest& wanted) {
@@ -131,8 +55,10 @@ namespace order_book::engine_testing {
                 });
             };
             for (Client& client : clients) {
-                if (!rig.sockets.accepted(client.socket) || rig.sockets.closed(client.socket)) {
-                    continue;  // a connection not yet accepted wakes a real wait through the listener
+                if (rig.sockets.holder(client.socket) != thread || rig.sockets.closed(client.socket)) {
+                    // Another thread's, or not yet accepted, which wakes a real wait through the
+                    // listener, or handed on, which the wake checked above covers.
+                    continue;
                 }
                 const std::size_t taken = rig.sockets.bytesRead(client.socket);
                 const std::size_t commandsRead = taken < helloFrame().size() ? 0 : (taken - helloFrame().size()) / 48;
@@ -145,28 +71,17 @@ namespace order_book::engine_testing {
             }
         }
 
-        void checkUnstopped(const SteppedStream& stream, std::vector<Client>& clients) {
-            std::map<std::string, std::vector<Line>> answered;
-            std::map<Correlation, BookEvent> malformed;
-            std::set<Correlation> refused;
+        void checkUnstopped(const ConnectionStreams& stream, std::vector<Client>& clients) {
+            std::vector<std::vector<Received>> received;
             for (Client& client : clients) {
-                for (const Received& frame : client.frames()) {
-                    if (frame.type == FrameType::REFUSED) {
-                        refused.insert(frame.correlation);
-                    } else if (frame.event && stream.refusedAsMalformed.contains(frame.correlation)) {
-                        check(frame.last, "a malformed command's refusal is one whole answer");
-                        malformed.insert({frame.correlation, frame.event->event});
-                    } else if (frame.event) {
-                        answered[frame.event->symbol.text()].push_back(Line{frame.correlation, frame.event->event, frame.last});
-                    }
-                }
+                received.push_back(client.frames());
             }
-            check(answered == stream.expected, "every instrument's answers equal the single-threaded run's");
-            check(malformed == stream.refusedAsMalformed, "and so do the malformed commands' refusals");
-            check(refused == stream.refusedAtEntry, "and the Refused frames");
+            const std::vector<std::string> differences = differencesFromSingleThreaded(stream, received);
+            check(differences.empty(), "every instrument's answers equal the single-threaded run's, but " +
+                                           (differences.empty() ? std::string() : differences.front()));
         }
 
-        void checkStopped(const StepperConfig& config, const SteppedStream& stream, Rig& rig, std::vector<Client>& clients,
+        void checkStopped(const StepperConfig& config, const ConnectionStreams& stream, Rig& rig, std::vector<Client>& clients,
                           StepperResult& result) {
             std::map<std::string, std::vector<Line>> answered;
             std::set<Correlation> ran;
@@ -219,19 +134,25 @@ namespace order_book::engine_testing {
             result.commandsRefused = refusedByStop.size();
         }
 
-        void runSchedule(const StepperConfig& config, StepperResult& result) {
-            const SteppedStream stream = steppedStream(config);
-            Rig rig(stream.instruments, config.shards, 2);
+        void runSchedule(const StepperConfig& config, const std::vector<EngineCommand>& lines, StepperResult& result) {
+            const ConnectionStreams stream = connectionStreams(shapeOf(config), lines);
+            Rig rig(stream.instruments, config.shards, 2, {}, config.gatewayThreads);
             std::mt19937_64 random(config.seed);
             std::vector<Client> clients;
             clients.reserve(config.connections);
             for (std::size_t i = 0; i < config.connections; ++i) {
                 clients.emplace_back(rig.sockets);
             }
-            rig.sockets.onWait([&](std::span<const SocketInterest> interest) {
-                checkNothingInFlight(rig, clients, interest);
-                ++result.sleeps;
-            });
+            for (std::size_t thread = 0; thread < config.gatewayThreads; ++thread) {
+                rig.socketsOf(thread).onWait([&, thread](std::span<const SocketInterest> interest) {
+                    checkNothingInFlight(rig, thread, clients, interest);
+                    ++result.sleeps;
+                });
+            }
+            const auto everyGatewayFinished = [&rig] {
+                return std::all_of(rig.gateways.begin(), rig.gateways.end(),
+                                   [](const std::unique_ptr<GatewayThread>& gateway) { return gateway->finished(); });
+            };
 
             const auto answeredInFull = [&] {
                 for (std::size_t i = 0; i < config.connections; ++i) {
@@ -244,11 +165,10 @@ namespace order_book::engine_testing {
             const std::uint64_t stopAt = config.stop ? 1 + random() % 3000 : 0;
             std::vector<std::size_t> sent(config.connections, 0);
             std::size_t steps = 0;
-            while (config.stop ? !rig.gateway->finished() : !answeredInFull()) {
+            bool stopRequested = false;
+            while (config.stop ? !everyGatewayFinished() : !answeredInFull()) {
                 check(++steps < 40'000'000, "the stepped run stopped making progress");
-                if (steps == stopAt) {
-                    rig.gateway->beginStop();
-                }
+                stopRequested = stopRequested || steps == stopAt;
                 const std::uint64_t choice = random();
                 if (choice % 3 == 0) {
                     const std::size_t connection = (choice >> 8) % config.connections;
@@ -259,7 +179,11 @@ namespace order_book::engine_testing {
                 } else if (choice % 3 == 1) {
                     rig.sockets.limitRead(1 + (choice >> 8) % 200);
                     rig.sockets.limitWrite(1 + (choice >> 16) % 200);
-                    rig.gateway->pass();
+                    GatewayThread& gateway = *rig.gateways[(choice >> 40) % config.gatewayThreads];
+                    if (stopRequested) {
+                        gateway.beginStop();
+                    }
+                    gateway.pass();
                 } else {
                     rig.match(static_cast<std::uint32_t>((choice >> 8) % config.shards));
                 }
@@ -269,15 +193,32 @@ namespace order_book::engine_testing {
             } else {
                 checkUnstopped(stream, clients);
             }
+            for (std::size_t i = 0; i < clients.size(); ++i) {
+                const std::optional<std::size_t> holder = rig.sockets.holder(clients[i].socket);
+                // A stop can close a connection unread anywhere: never accepted, held back for a
+                // full ring, or mid-hand-off.
+                const bool closedUnread = rig.sockets.closed(clients[i].socket) && rig.sockets.bytesRead(clients[i].socket) == 0;
+                check(holder == i % config.gatewayThreads || (config.stop && closedUnread),
+                      "connection " + std::to_string(i) + " ended on the wrong gateway thread");
+            }
             result.waitsInPlace = rig.waitsInPlace;
         }
 
     }  // namespace
 
     StepperResult runStepperSchedule(const StepperConfig& config) {
+        EngineSeedConfig generation;
+        generation.seed = config.streamSeed.value_or(config.seed);
+        generation.instruments = config.instruments;
+        generation.shards = config.shards;
+        generation.commands = config.commands;
+        return runStepperSchedule(config, generateEngineStream(generation));
+    }
+
+    StepperResult runStepperSchedule(const StepperConfig& config, const std::vector<EngineCommand>& lines) {
         StepperResult result;
         try {
-            runSchedule(config, result);
+            runSchedule(config, lines, result);
         } catch (const std::exception& failure) {
             result.failure = failure.what();
         }

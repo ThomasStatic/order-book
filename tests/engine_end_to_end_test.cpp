@@ -84,7 +84,7 @@ std::string describe(const std::vector<std::string>& arguments, const Run& resul
 // One engine on port 0 with these instruments, stopped by closing its stdin.
 class Engine {
 public:
-    Engine(std::string named, const std::set<std::string>& symbols, std::uint32_t shards)
+    Engine(std::string named, const std::set<std::string>& symbols, std::uint32_t shards, std::uint32_t gatewayThreads = 1)
         : name(std::move(named)), list(fs::temp_directory_path() / ("order_book_end_to_end_" + std::to_string(++started) + ".csv")) {
         {
             std::ofstream out(list, std::ios::binary);
@@ -94,7 +94,8 @@ public:
             }
         }
         child.emplace(engine, std::vector<std::string>{"--instruments", list.string(), "--shards", std::to_string(shards), "--listen",
-                                                       "127.0.0.1:0", "--stop-on-stdin-close"});
+                                                       "127.0.0.1:0", "--gateway-threads", std::to_string(gatewayThreads),
+                                                       "--stop-on-stdin-close"});
         const std::optional<std::string> line = child->readLine(30s);
         expect(line && line->starts_with("listening 127.0.0.1:"),
                name + ": the engine said where it listens, with stderr:\n" + child->standardError());
@@ -147,7 +148,8 @@ void expectSendMatchesReplay(const Engine& running, const fs::path& file, const 
 }
 
 // Every valid sample. A v1 or v2 file stands in for one instrument, each its own, so they share
-// an engine; a v3 file names its own, which may collide, so each has one.
+// an engine, with two gateway threads, so thread 0 hands every other send's connection on; a v3
+// file names its own, which may collide, so each has one.
 void testEveryValidSample() {
     std::vector<fs::path> standIns;
     std::vector<fs::path> named;
@@ -163,7 +165,7 @@ void testEveryValidSample() {
     for (std::size_t i = 0; i < standIns.size(); ++i) {
         symbols.insert("S" + std::to_string(i));
     }
-    Engine shared("stand-ins", symbols, 3);
+    Engine shared("stand-ins", symbols, 3, 2);
     for (std::size_t i = 0; i < standIns.size(); ++i) {
         expectSendMatchesReplay(shared, standIns[i], "S" + std::to_string(i));
     }
@@ -180,7 +182,8 @@ void testEveryValidSample() {
 }
 
 // Seven instruments interleaved, on one shard and across three, where answers from different
-// shards overtake each other on the wire.
+// shards overtake each other on the wire, and across three with two gateway threads, where an idle
+// connection made first takes thread 0, so send's is handed to thread 1.
 void testManyInstrumentsAtOneAndThreeShards() {
     const fs::path file = engineSamples / "seven_instruments.csv";
     expect(symbolsIn(file).size() == 7, "the sample names seven instruments");
@@ -189,6 +192,13 @@ void testManyInstrumentsAtOneAndThreeShards() {
         expectSendMatchesReplay(running, file, std::nullopt);
         running.stop();
     }
+    Engine running("seven instruments on 3 shards and 2 gateway threads", symbolsIn(file), 3, 2);
+    {
+        const std::uint16_t port = static_cast<std::uint16_t>(std::stoul(running.address.substr(running.address.rfind(':') + 1)));
+        const network::TcpSocket idle = network::TcpSocket::connectLoopback(port);
+        expectSendMatchesReplay(running, file, std::nullopt);
+    }
+    running.stop();
 }
 
 // A good prefix still runs, then the file's diagnostic, and exit 1.

@@ -9,25 +9,55 @@ namespace order_book::engine_testing {
     using namespace order_book::network;
     using namespace order_book::runtime;
 
-    ShardActor::ShardActor(const InstrumentDirectory& directory, std::uint32_t number, std::size_t ringSlots)
-        : shard(directory, number), commands(ringSlots), responses(ringSlots) {}
+    namespace {
+        std::vector<std::unique_ptr<RingLink>> ringLinks(std::size_t ringSlots, std::size_t gatewayThreads) {
+            std::vector<std::unique_ptr<RingLink>> links;
+            for (std::size_t thread = 0; thread < gatewayThreads; ++thread) {
+                links.push_back(std::make_unique<RingLink>(ringSlots));
+            }
+            return links;
+        }
+    }  // namespace
 
-    Rig::Rig(std::vector<Instrument> instruments, std::uint32_t shardCount, std::size_t ringSlots, GatewaySettings settings)
+    ShardActor::ShardActor(const InstrumentDirectory& directory, std::uint32_t number, std::size_t ringSlots, std::size_t gatewayThreads)
+        : shard(directory, number),
+          links(ringLinks(ringSlots, gatewayThreads)),
+          commands(links.front()->commands),
+          responses(links.front()->responses) {}
+
+    Rig::Rig(std::vector<Instrument> instruments, std::uint32_t shardCount, std::size_t ringSlots, GatewaySettings settings,
+             std::size_t gatewayThreads)
         : directory(std::move(instruments), shardCount) {
         settings.clock = [this] { return now; };
         settings.spinWindow = std::chrono::nanoseconds::zero();
-        std::vector<ShardLink> links;
-        for (std::uint32_t number = 0; number < shardCount; ++number) {
-            shards.push_back(std::make_unique<ShardActor>(directory, number, ringSlots));
-            ShardActor& actor = *shards.back();
-            links.push_back(ShardLink{&actor.commands, &actor.responses, &actor.doorbell});
-            actor.loop.emplace(actor.shard, actor.doorbell, std::vector<RingPair>{RingPair{&actor.commands, &actor.responses}},
-                               std::chrono::nanoseconds::zero(), [this] {
-                                   ++waitsInPlace;
-                                   gateway->pass();
-                               });
+        std::vector<SocketSet*> threadSockets{&sockets};
+        for (std::size_t thread = 1; thread < gatewayThreads; ++thread) {
+            memberSockets.push_back(std::make_unique<InMemorySocketSet>(InMemorySocketSet::MemberOf{}, sockets));
+            threadSockets.push_back(memberSockets.back().get());
         }
-        gateway.emplace(directory, std::move(links), sockets, std::move(settings));
+        handOff = std::make_unique<ConnectionHandOff>(std::move(threadSockets));
+        for (std::uint32_t number = 0; number < shardCount; ++number) {
+            shards.push_back(std::make_unique<ShardActor>(directory, number, ringSlots, gatewayThreads));
+            ShardActor& actor = *shards.back();
+            std::vector<RingPair> rings;
+            for (const std::unique_ptr<RingLink>& link : actor.links) {
+                rings.push_back(RingPair{&link->commands, &link->responses});
+            }
+            actor.loop.emplace(actor.shard, actor.doorbell, std::move(rings), std::chrono::nanoseconds::zero(), [this] {
+                ++waitsInPlace;
+                for (const std::unique_ptr<GatewayThread>& each : gateways) {
+                    each->pass();
+                }
+            });
+        }
+        for (std::size_t thread = 0; thread < gatewayThreads; ++thread) {
+            std::vector<ShardLink> links;
+            for (const std::unique_ptr<ShardActor>& actor : shards) {
+                links.push_back(ShardLink{&actor->links[thread]->commands, &actor->links[thread]->responses, &actor->doorbell});
+            }
+            gateways.push_back(std::make_unique<GatewayThread>(directory, std::move(links), socketsOf(thread), settings, handOff.get(), thread));
+        }
+        gateway = gateways.front().get();
     }
 
     std::size_t Rig::match(std::uint32_t shard) {
@@ -42,7 +72,9 @@ namespace order_book::engine_testing {
 
     void Rig::settle() {
         for (int round = 0; round < 512; ++round) {
-            gateway->pass();
+            for (const std::unique_ptr<GatewayThread>& each : gateways) {
+                each->pass();
+            }
             for (std::uint32_t shard = 0; shard < shards.size(); ++shard) {
                 match(shard);
             }
@@ -52,7 +84,14 @@ namespace order_book::engine_testing {
     Client::Client(InMemorySocketSet& socketSet) : sockets(socketSet), socket(socketSet.connect()), reader(FrameSource::ENGINE) {}
 
     const std::vector<Received>& Client::frames() {
-        const std::vector<std::byte> bytes = sockets.clientReceive(socket);
+        return take(sockets.clientReceive(socket));
+    }
+
+    const std::vector<Received>& Client::framesWaiting() {
+        return take(sockets.clientReceiveWaiting(socket));
+    }
+
+    const std::vector<Received>& Client::take(const std::vector<std::byte>& bytes) {
         reader.feed(bytes);
         for (;;) {
             const FrameResult result = reader.next();

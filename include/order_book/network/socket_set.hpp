@@ -8,6 +8,9 @@
 namespace order_book::network {
 
     using SocketId = std::uint32_t;
+    // A connection on its way from one gateway thread's set to another's: what release gives up
+    // and adopt takes on. Trivially copyable, so it can cross threads on a ring.
+    using HandedSocket = std::uint64_t;
 
     enum class ReadStatus {
         OPEN,
@@ -33,8 +36,8 @@ namespace order_book::network {
     };
 
     // What a gateway thread does to its sockets. Virtual, since each call wraps a system call of
-    // 2 µs or more and no per-frame work crosses it. It belongs to one gateway thread, and never
-    // blocks except in wait.
+    // 2 µs or more and no per-frame work crosses it. It belongs to one gateway thread, except
+    // wake, and never blocks except in wait.
     class SocketSet {
     public:
         virtual ~SocketSet() = default;
@@ -53,8 +56,14 @@ namespace order_book::network {
         // Ends what this side sends, so the client reads to the end of its stream.
         virtual void shutdownSend(SocketId socket) = 0;
         virtual void close(SocketId socket) = 0;
-        // From now on accept finds nothing.
+        // From now on accept finds nothing. A set with no listener has nothing to close.
         virtual void closeListener() = 0;
+        // Ends a sleeping wait, now or the next one, from any thread.
+        virtual void wake() noexcept = 0;
+        // Gives a connection up without closing it, for another gateway thread's set to adopt.
+        virtual HandedSocket release(SocketId socket) = 0;
+        // Takes on a connection another set released, as if just accepted.
+        virtual SocketId adopt(HandedSocket socket) = 0;
     };
 
 }  // namespace order_book::network

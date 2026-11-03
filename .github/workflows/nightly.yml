@@ -11,6 +11,9 @@ on:
       seeds:
         description: Fresh seeds to explore per profile
         default: "2000"
+      thread_runs:
+        description: Fresh real-thread runs per shape (24 shapes; 100 is 100 times what CI runs)
+        default: "100"
 
 permissions:
   contents: read
@@ -27,11 +30,15 @@ jobs:
           - { name: "Explore Linux Clang ASan+UBSan", os: ubuntu-24.04, cxx: clang++, config: RelWithDebInfo, sanitizers: true }
           - { name: "Explore Linux GCC Release",      os: ubuntu-24.04, cxx: g++,     config: Release }
           - { name: "Explore Windows MSVC Release",   os: windows-2022,               config: Release }
+          # Real threads alone, where a race or a reordering shows.
+          - { name: "Real threads Linux Clang TSan",  os: ubuntu-24.04, cxx: clang++, config: RelWithDebInfo, tsan: true, threads_only: true }
+          - { name: "Real threads Linux Arm Clang",   os: ubuntu-24.04-arm, cxx: clang++, config: Release, threads_only: true }
 
     env:
       ASAN_OPTIONS: ${{ startsWith(matrix.os, 'ubuntu') && 'detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1' || '' }}
       UBSAN_OPTIONS: print_stacktrace=1
       SEEDS: ${{ inputs.seeds || '2000' }}
+      THREAD_RUNS: ${{ inputs.thread_runs || '100' }}
 
     defaults:
       run:
@@ -44,6 +51,10 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ninja-build
 
+      - name: Make room for ThreadSanitizer
+        if: matrix.tsan
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+
       # Invariant checks stay on in every configuration: exploring is for finding what breaks.
       - name: Configure
         run: |
@@ -54,12 +65,16 @@ jobs:
           if [ "${{ matrix.sanitizers }}" = "true" ]; then
             args+=(-DORDER_BOOK_ENABLE_ASAN=ON -DORDER_BOOK_ENABLE_UBSAN=ON)
           fi
+          if [ "${{ matrix.tsan }}" = "true" ]; then
+            args+=(-DORDER_BOOK_ENABLE_TSAN=ON)
+          fi
           cmake -S . -B build "${args[@]}"
 
       - name: Build
         run: cmake --build build --config ${{ matrix.config }} --target randomized_tests engine_randomized_tests --parallel
 
       - name: Explore
+        if: ${{ !matrix.threads_only }}
         run: |
           if [ "${{ runner.os }}" = "Windows" ]; then
             programs=./build/${{ matrix.config }}
@@ -72,6 +87,28 @@ jobs:
           "$programs/engine_randomized_tests$suffix" --explore "$SEEDS"
           "$programs/engine_randomized_tests$suffix" --stepper run --explore "$SEEDS"
           "$programs/engine_randomized_tests$suffix" --stepper stop --explore "$SEEDS"
+
+      # CI's 24 real-thread shapes, each THREAD_RUNS times on fresh seeds, under ThreadSanitizer
+      # and on Arm. A failure is triaged, and its report saved, before the job fails.
+      - name: Real threads
+        if: ${{ matrix.threads_only }}
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            program=./build/${{ matrix.config }}/engine_randomized_tests.exe
+          else
+            program=./build/engine_randomized_tests
+          fi
+          for shards in 1 2 4; do
+            for threads in 1 2; do
+              for rings in 2 0; do
+                for spin in 0 100000; do
+                  echo "real threads: --shards $shards --gateway-threads $threads --ring-slots $rings --spin-window-ns $spin"
+                  "$program" --threads run --explore "$THREAD_RUNS" --shards "$shards" --gateway-threads "$threads" \
+                    --ring-slots "$rings" --spin-window-ns "$spin" --out-dir explore-failures
+                done
+              done
+            done
+          done
 
       - name: Keep any failure
         if: failure()

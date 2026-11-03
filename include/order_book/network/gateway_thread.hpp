@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <vector>
@@ -63,18 +64,46 @@ namespace order_book::network {
         runtime::Doorbell* doorbell;
     };
 
+    // How an engine's gateway threads share its connections. Thread 0 owns the listener and hands
+    // each connection it accepts to the next thread round-robin, itself included, and a connection
+    // stays where it lands for life. A hand-off is one small ring per other thread, which thread 0
+    // alone writes and that thread alone reads, then a wake of that thread's SocketSet, so it
+    // needs no lock and no shared counter. Built before any gateway thread, which it must outlive,
+    // with every thread's sockets in thread order.
+    class ConnectionHandOff {
+    public:
+        static constexpr std::size_t ringSlots = 64;
+
+        explicit ConnectionHandOff(std::vector<SocketSet*> sockets);
+
+        std::size_t threads() const noexcept { return sockets.size(); }
+        SocketSet& socketsOf(std::size_t thread) const { return *sockets.at(thread); }
+        // Thread 0's: puts the connection on that thread's ring, then wakes its set, in that
+        // order, so a thread that drained its wake sees the connection. False, with nothing done,
+        // if the ring is full.
+        bool tryHandTo(std::size_t thread, HandedSocket socket) const;
+        // Every other thread reads its own ring. Thread 0's is never used.
+        runtime::Ring<HandedSocket>& ringOf(std::size_t thread) const { return *rings.at(thread); }
+
+    private:
+        std::vector<SocketSet*> sockets;
+        std::vector<std::unique_ptr<runtime::Ring<HandedSocket>>> rings;
+    };
+
     // What a gateway thread does, as a plain object, the way Shard is, so a test can step it on one
     // thread and the thread itself is a thin loop around pass. The directory, rings, doorbells, and
-    // sockets must outlive it.
+    // sockets must outlive it, and so must handOff, which is for an engine with several gateway
+    // threads, of which this is number thread. With none, it is the only one.
     class GatewayThread {
     public:
         GatewayThread(const runtime::InstrumentDirectory& directory, std::vector<ShardLink> shards, SocketSet& sockets,
-                      GatewaySettings settings = {});
+                      GatewaySettings settings = {}, ConnectionHandOff* handOff = nullptr, std::size_t thread = 0);
 
         // One pass: waits, unless a connection's reader still holds frames and the last
         // mostWaitsSkipped passes didn't wait either, sleeping only if mayWait has held for the
-        // spin window; accepts, drains every response ring into
-        // per-connection buffers, retries parked connections oldest first, reads and answers up
+        // spin window; drains every response ring into per-connection buffers, accepts (thread
+        // 0, handing on what isn't its own) or takes what was handed to it (any other), retries
+        // parked connections oldest first, reads and answers up
         // to framesPerPass frames from each connection that is neither parked nor backlogged,
         // rings the doorbells, then makes one write per connection with bytes to send, closing
         // those that are done. Returns whether it moved anything.
@@ -88,9 +117,10 @@ namespace order_book::network {
         // Whether a stop has run its course: every shard stopped, and every connection closed.
         bool finished() const noexcept;
 
-        // Whether nothing is in flight, parked, or read and waiting, and no stop has begun, so no
-        // response can arrive during a sleep, and a matching thread never makes a system call on
-        // the way back. Unsent bytes don't keep it awake, since a wait watches for room.
+        // Whether nothing is in flight, parked, read and waiting, or waiting to be handed on, and
+        // no stop has begun, so no response can arrive during a sleep, and a matching thread never
+        // makes a system call on the way back. Unsent bytes don't keep it awake, since a wait
+        // watches for room.
         bool mayWait() const noexcept;
 
     private:
@@ -121,6 +151,9 @@ namespace order_book::network {
         WaitMode waitMode();
         void listInterest();
         void acceptConnections();
+        void takeHandedConnections();
+        bool tryHandOnHeld();
+        void takeOn(SocketId socket);
         void refuseConnection(SocketId socket);
         void closeConnection(std::uint32_t index);
         void drainResponses();
@@ -144,6 +177,14 @@ namespace order_book::network {
         std::vector<ShardLink> shards;
         SocketSet& sockets;
         GatewaySettings settings;
+        ConnectionHandOff* handOff;
+        std::size_t thread;
+        std::size_t nextThread = 0;               // thread 0's: where the next connection goes
+        struct HandingOn {
+            std::size_t thread;
+            HandedSocket socket;
+        };
+        std::optional<HandingOn> handingOn;       // thread 0's: released, its thread's ring full
         std::vector<Connection> connections;
         // What this thread knows of each shard.
         struct ShardState {

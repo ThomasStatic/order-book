@@ -37,7 +37,8 @@ namespace order_book::runtime {
         std::size_t capacityOrders = 4096;
         std::size_t capacityStops = 1024;
         std::size_t capacityLevels = 256;
-        std::size_t maxConnections = 64;
+        std::size_t maxConnections = 64;  // per gateway thread
+        std::uint32_t gatewayThreads = 1;  // never derived from the machine
         std::size_t highWaterMark = 1024 * 1024;
         std::size_t hardLimit = 16 * 1024 * 1024;
         std::chrono::nanoseconds stopGrace = std::chrono::seconds(5);

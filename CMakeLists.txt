@@ -903,9 +903,11 @@ if(BUILD_TESTING)
     # The engine's harness: the real entry check and Shard beside a model and a witness per
     # instrument, in one thread (docs/internals/randomized-tests.md).
     add_library(order_book_engine_testing STATIC
+        tests/engine/connection_streams.cpp
         tests/engine/engine_harness.cpp
         tests/engine/gateway_rig.cpp
         tests/engine/gateway_stepper.cpp
+        tests/engine/threaded_run.cpp
     )
 
     target_compile_features(order_book_engine_testing PUBLIC cxx_std_20)
@@ -924,6 +926,13 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(engine_randomized_tests)
     add_test(NAME engine_randomized_seeds COMMAND engine_randomized_tests)
     add_test(NAME engine_stepper_cli COMMAND engine_randomized_tests --stepper stop --seed 7 --commands 200)
+    # A shrunk reproduction's form: a schedule on chosen lines of another seed's stream.
+    add_test(NAME engine_stepper_lines_cli
+        COMMAND engine_randomized_tests --stepper run --seed 3 --stream-seed 9 --commands 200 --instruments 8 --shards 2
+                --gateway-threads 2 --connections 8 --placement pinned --lines 0,5,17,40,41,42,150)
+    add_test(NAME engine_threads_cli
+        COMMAND engine_randomized_tests --threads run --seed 3 --commands 300 --shards 2 --gateway-threads 2 --ring-slots 2)
+    set_tests_properties(engine_threads_cli PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
 
     add_executable(engine_harness_tests
         tests/engine/harness_test.cpp
@@ -945,6 +954,18 @@ if(BUILD_TESTING)
     order_book_enable_sanitizers(gateway_tests)
     add_test(NAME gateway_tests COMMAND gateway_tests)
     set_tests_properties(gateway_tests PROPERTIES TIMEOUT 240)
+
+    # Layer 3: real gateway and matching threads. A lost wake-up hangs, so the timeout fails it.
+    add_executable(engine_thread_tests
+        tests/engine_thread_test.cpp
+    )
+
+    target_compile_features(engine_thread_tests PRIVATE cxx_std_20)
+    target_link_libraries(engine_thread_tests PRIVATE order_book_engine_testing)
+    order_book_enable_warnings(engine_thread_tests)
+    order_book_enable_sanitizers(engine_thread_tests)
+    add_test(NAME engine_thread_tests COMMAND engine_thread_tests)
+    set_tests_properties(engine_thread_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 600)
 
     add_executable(gateway_socket_tests
         tests/gateway_socket_test.cpp

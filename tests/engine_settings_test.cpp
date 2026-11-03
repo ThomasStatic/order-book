@@ -68,6 +68,7 @@ void testTheRequiredFlagsAndTheDefaults() {
     expect(settings.stopGrace == 5s && !settings.stopOnStdinClose, "the stop defaults");
     expect(settings.pinMatching.empty() && settings.pinGateway.empty() && settings.threadPriority == ThreadPriority::NORMAL,
            "no pinning, at normal priority");
+    expect(settings.gatewayThreads == 1, "one gateway thread, never derived from the machine");
 
     for (const std::string_view missing : {"--instruments", "--shards", "--listen"}) {
         std::vector<std::string_view> args;
@@ -85,13 +86,14 @@ void testEveryFlag() {
     const EngineSettings settings =
         parsed(required({"--command-ring", "8", "--response-ring", "2K", "--spin-window", "unlimited", "--capacity-orders", "1M",
                          "--capacity-stops", "3", "--capacity-levels", "1G", "--max-connections", "2", "--high-water-mark", "64K",
-                         "--hard-limit", "2M", "--stop-grace", "250ms", "--stop-on-stdin-close"}));
+                         "--hard-limit", "2M", "--stop-grace", "250ms", "--stop-on-stdin-close", "--gateway-threads", "3"}));
     expect(settings.commandRing == 8 && settings.responseRing == 2048, "the rings, with a binary K");
     expect(settings.spinWindow == unlimitedSpinSetting, "an unlimited spin window");
     expect(settings.capacityOrders == 1024 * 1024 && settings.capacityStops == 3 && settings.capacityLevels == 1024 * 1024 * 1024,
            "the capacities, with M and G");
     expect(settings.maxConnections == 2 && settings.highWaterMark == 64 * 1024 && settings.hardLimit == 2 * 1024 * 1024, "the connection limits");
     expect(settings.stopGrace == 250ms && settings.stopOnStdinClose, "the stop grace, and the one flag with no value");
+    expect(settings.gatewayThreads == 3, "the gateway threads");
 
     const EngineSettings placed = parsed(required({"--pin-matching", "3,0", "--pin-gateway", "7", "--thread-priority", "high"}));
     expect(placed.pinMatching == std::vector<std::uint32_t>{3, 0} && placed.pinGateway == std::vector<std::uint32_t>{7},
@@ -152,6 +154,9 @@ void testTheCommandLinesShape() {
     expect(usage(required({"--stop-grace"})) == "--stop-grace needs a value", "a flag with nothing after it");
     expect(usage(required({"--shards=2"})) == "unknown option '--shards=2'", "--flag value only");
     expect(usage({"--instruments", "l", "--shards", "two", "--listen", "1.2.3.4:5"}) == "--shards needs a number, not 'two'", "a shard count");
+    expect(usage(required({"--gateway-threads", "2K"})) == "--gateway-threads needs a number, not '2K'", "a thread count is no size");
+    expect(usage(required({"--gateway-threads", "4294967296"})) == "--gateway-threads needs a number, not '4294967296'", "nor past 32 bits");
+    expect(parsed(required({"--gateway-threads", "0"})).gatewayThreads == 0, "0 is the start's to refuse, as --shards 0 is");
 }
 
 // The record each run prints first: every flag with its value, so that it would give the same run.
@@ -161,7 +166,7 @@ void testTheRunsRecordGivesTheSameRun() {
     const std::string line = formatEngineSettings(settings);
     expect(line ==
                "--instruments list.csv --shards 2 --listen 127.0.0.1:0 --command-ring 4096 --response-ring 16384 --spin-window unlimited "
-               "--capacity-orders 4096 --capacity-stops 1024 --capacity-levels 256 --max-connections 64 --high-water-mark 64K "
+               "--capacity-orders 4096 --capacity-stops 1024 --capacity-levels 256 --max-connections 64 --gateway-threads 1 --high-water-mark 64K "
                "--hard-limit 16M --stop-grace 1500ms --thread-priority normal --stop-on-stdin-close",
            "the record names every flag:\n" + line);
 
@@ -169,9 +174,11 @@ void testTheRunsRecordGivesTheSameRun() {
     const std::vector<std::string_view> again(words.begin(), words.end());
     expect(parsed(again) == settings, "and parses back to the same settings");
 
-    const EngineSettings placed = parsed(required({"--pin-matching", "2,0", "--pin-gateway", "1", "--thread-priority", "high"}));
+    const EngineSettings placed =
+        parsed(required({"--pin-matching", "2,0", "--pin-gateway", "1,3", "--thread-priority", "high", "--gateway-threads", "2"}));
     const std::string placedLine = formatEngineSettings(placed);
-    expect(placedLine.ends_with("--stop-grace 5s --pin-matching 2,0 --pin-gateway 1 --thread-priority high"),
+    expect(placedLine.find(" --max-connections 64 --gateway-threads 2 ") != std::string::npos, "the gateway threads print:\n" + placedLine);
+    expect(placedLine.ends_with("--stop-grace 5s --pin-matching 2,0 --pin-gateway 1,3 --thread-priority high"),
            "pins print only when set, and the priority always:\n" + placedLine);
     expect(line.find("--pin-") == std::string::npos && line.find("--thread-priority normal") != std::string::npos,
            "an unpinned run names its priority and no cores");

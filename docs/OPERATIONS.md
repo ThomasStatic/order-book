@@ -14,18 +14,22 @@ listening 127.0.0.1:9000
 - **stdout** is for a machine: one flushed `listening ADDR:PORT` once every shard is ready, then the stop report after a clean stop.
 - **stderr** is for a person, one line each, prefixed `order_book_engine:`, with no timestamps, which journald or a terminal can add. The first line is the run's record: every flag with its value, defaults included, so it would give the same run.
 
+### Gateway threads
+
+`--gateway-threads M`, 1 by default and never worked out from the machine, sets how many threads serve connections. Gateway thread 0 owns the listener and hands each new connection to the next thread in turn, itself included, and a connection stays on its thread until it closes. `--max-connections` is per thread: past it, the thread a connection was handed to accepts it only to send `TOO_MANY_CONNECTIONS` and close, even if another thread has room. Since connections are handed out in turn and closed ones aren't, a thread can end up with more of the long-lived ones than another.
+
 ### Pinning and priority
 
 Off by default.
 
-- `--pin-matching CORES` pins each shard's matching thread to a core, given as a comma list with exactly one core per shard, in shard order. `--pin-gateway CORES` does the same for the gateway thread, with one core. A core may repeat. Cores are the system's logical processor numbers. On Windows only the first 64 can be named.
+- `--pin-matching CORES` pins each shard's matching thread to a core, given as a comma list with exactly one core per shard, in shard order. `--pin-gateway CORES` does the same for the gateway threads, with exactly one core per gateway thread. A core may repeat. Cores are the system's logical processor numbers. On Windows only the first 64 can be named.
 - `--thread-priority high` raises the matching and gateway threads: `THREAD_PRIORITY_HIGHEST` on Windows, a nice value of -10 on Linux, never a real-time policy, since a thread spinning under one can starve everything else on its core. Windows lets any user do this. Linux needs root, `CAP_SYS_NICE`, or an `RLIMIT_NICE` of at least 30 (`ulimit -e`, or `LimitNICE=` under systemd).
 
-Each thread pins and raises itself before the engine is ready. If the system refuses either, the start is refused with exit 1 and the system's reason, naming the thread and core for a pin (`cannot pin matching thread 1 to core 5: ...`) or the setting for a priority (`--thread-priority high was denied: ...`), so a run's record never claims a setting that didn't apply.
+Each thread pins and raises itself before the engine is ready. If the system refuses either, the start is refused with exit 1 and the system's reason, naming the thread and core for a pin (`cannot pin matching thread 1 to core 5: ...`, or `gateway thread 1` with several) or the setting for a priority (`--thread-priority high was denied: ...`), so a run's record never claims a setting that didn't apply.
 
 ## Stopping
 
-A **first stop** starts the clean stop: the listener closes, every command already queued is answered, commands arriving after it are refused with `ENGINE_STOPPING`, and the gateway flushes what it owes for at most `--stop-grace` (5 s by default) before closing what's left. Then the stop report prints and the engine exits 0.
+A **first stop** starts the clean stop: the listener closes, along with any connection not yet taken on by its gateway thread, every command already queued is answered, commands arriving after it are refused with `ENGINE_STOPPING`, and each gateway thread flushes what it owes for at most `--stop-grace` (5 s by default) before closing what's left. Then the stop report prints and the engine exits 0.
 
 A **second stop** exits at once with 8 and prints `order_book_engine: forced stop`. What was still queued gets no answer, and no stop report prints. Use it when a client that never reads holds the clean stop for the whole grace.
 

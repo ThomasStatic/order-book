@@ -30,15 +30,38 @@ namespace order_book::network {
         }
     }  // namespace
 
+    ConnectionHandOff::ConnectionHandOff(std::vector<SocketSet*> threadSockets) : sockets(std::move(threadSockets)) {
+        if (sockets.empty()) {
+            throw std::invalid_argument("an engine has at least one gateway thread");
+        }
+        rings.reserve(sockets.size());
+        for (std::size_t thread = 0; thread < sockets.size(); ++thread) {
+            rings.push_back(std::make_unique<runtime::Ring<HandedSocket>>(thread == 0 ? 1 : ringSlots));
+        }
+    }
+
+    bool ConnectionHandOff::tryHandTo(std::size_t thread, HandedSocket socket) const {
+        if (!ringOf(thread).tryPush(socket)) {
+            return false;
+        }
+        socketsOf(thread).wake();
+        return true;
+    }
+
     GatewayThread::GatewayThread(const runtime::InstrumentDirectory& instruments, std::vector<ShardLink> links, SocketSet& socketSet,
-                                 GatewaySettings gatewaySettings)
+                                 GatewaySettings gatewaySettings, ConnectionHandOff* connectionHandOff, std::size_t threadNumber)
         : directory(instruments),
           shards(std::move(links)),
           sockets(socketSet),
           settings(std::move(gatewaySettings)),
+          handOff(connectionHandOff),
+          thread(threadNumber),
           connections(checkedConnections(settings.maxConnections)),
           shardStates(shards.size()),
           readBuffer(readBufferBytes) {
+        if (handOff == nullptr ? thread != 0 : thread >= handOff->threads()) {
+            throw std::invalid_argument("gateway thread " + std::to_string(thread) + " isn't one of the engine's");
+        }
         parkedOldestFirst.reserve(connections.size());
         interest.reserve(connections.size());
     }
@@ -53,7 +76,7 @@ namespace order_book::network {
     }
 
     bool GatewayThread::mayWait() const noexcept {
-        return !stopBegun && inFlight == 0 && parkedOldestFirst.empty() && !framesInAReader();
+        return !stopBegun && inFlight == 0 && parkedOldestFirst.empty() && !handingOn && !framesInAReader();
     }
 
     WaitMode GatewayThread::waitMode() {
@@ -104,11 +127,14 @@ namespace order_book::network {
                 idle = false;
             }
         }
-        acceptConnections();
         drainResponses();
         if (!flushing && shardsStopped == shards.size()) {
             beginFlush();
         }
+        // After the drain, so a connection handed on before thread 0's stop markers is seen by
+        // the pass that sees the last shard stop, at the latest, and closed. Taken any earlier,
+        // a thread with nothing open could finish without it.
+        acceptConnections();
         retryParked();
         for (std::uint32_t index = 0; index < connections.size(); ++index) {
             if (readable(connections[index])) {
@@ -145,6 +171,10 @@ namespace order_book::network {
         }
         stopBegun = true;
         sockets.closeListener();
+        if (handingOn) {  // waiting, as if still on the listener, which resets it
+            sockets.close(sockets.adopt(handingOn->socket));
+            handingOn.reset();
+        }
         refuseParked();
         for (ShardState& state : shardStates) {
             state.markerOwed = true;
@@ -156,28 +186,67 @@ namespace order_book::network {
     }
 
     void GatewayThread::acceptConnections() {
+        if (thread != 0) {
+            takeHandedConnections();
+            return;
+        }
         for (;;) {
+            if (handingOn && !tryHandOnHeld()) {
+                return;  // the listener holds the rest until that thread's ring has room
+            }
             const std::optional<SocketId> socket = sockets.accept();
             if (!socket) {
                 return;
             }
-            const auto vacant = std::find_if(connections.begin(), connections.end(), [](const Connection& held) { return !held.open; });
-            if (vacant == connections.end()) {
-                refuseConnection(*socket);
-                moved = true;
-                continue;
+            const std::size_t to = nextThread;
+            if (handOff != nullptr) {
+                nextThread = (nextThread + 1) % handOff->threads();
             }
-            vacant->reader = FrameReader(FrameSource::CLIENT);
-            vacant->unsent.clear();
-            vacant->error.reset();
-            vacant->inFlight = 0;
-            vacant->socket = *socket;
-            vacant->open = true;
-            vacant->reading = true;
-            vacant->framesWaiting = false;
-            vacant->finishing = false;
-            moved = true;
+            if (to == thread) {
+                takeOn(*socket);
+            } else {
+                handingOn = HandingOn{to, sockets.release(*socket)};
+            }
         }
+    }
+
+    bool GatewayThread::tryHandOnHeld() {
+        if (!handOff->tryHandTo(handingOn->thread, handingOn->socket)) {
+            return false;
+        }
+        handingOn.reset();
+        moved = true;
+        return true;
+    }
+
+    void GatewayThread::takeHandedConnections() {
+        handOff->ringOf(thread).drain(ConnectionHandOff::ringSlots, [this](HandedSocket handed) {
+            const SocketId socket = sockets.adopt(handed);
+            if (stopBegun) {
+                sockets.close(socket);  // as closing a listener resets what waited on it
+                moved = true;
+            } else {
+                takeOn(socket);
+            }
+        });
+    }
+
+    void GatewayThread::takeOn(SocketId socket) {
+        moved = true;
+        const auto vacant = std::find_if(connections.begin(), connections.end(), [](const Connection& held) { return !held.open; });
+        if (vacant == connections.end()) {
+            refuseConnection(socket);
+            return;
+        }
+        vacant->reader = FrameReader(FrameSource::CLIENT);
+        vacant->unsent.clear();
+        vacant->error.reset();
+        vacant->inFlight = 0;
+        vacant->socket = socket;
+        vacant->open = true;
+        vacant->reading = true;
+        vacant->framesWaiting = false;
+        vacant->finishing = false;
     }
 
     // Only a client that was never taken on hears this, so nothing is owed but this one frame.
