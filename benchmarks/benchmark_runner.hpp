@@ -4,15 +4,21 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <vector>
 
+#include "order_book/book_event.hpp"
+#include "order_book/command_log.hpp"
 #include "order_book/network/poll_socket_set.hpp"
+#include "order_book/network/tcp.hpp"
+#include "order_book/network/wire_codec.hpp"
 #include "order_book/order_book.hpp"
 #include "order_book/replay_parser.hpp"
 #include "order_book/runtime/matching_loop.hpp"
@@ -35,15 +41,23 @@ namespace order_book::benchmark {
 // from CORE is Command decoding, BookSet, and result reuse.
 // QUEUE puts real rings and a real matching thread between a producer thread and that shard, so
 // its difference from SHARD is the hand-off.
-enum class BenchmarkKind { CORE, REPLAY, REPLAY_LOG, SHARD, QUEUE, GATEWAY };
+// GATEWAY puts real loopback sockets, framing, and the entry check in front of QUEUE's matching
+// thread, all in this process.
+// ENGINE sends GATEWAY's frames to the shipped order_book_engine as a child process, so the two
+// agreeing is what lets GATEWAY stand for what ships.
+enum class BenchmarkKind { CORE, REPLAY, REPLAY_LOG, SHARD, QUEUE, GATEWAY, ENGINE };
 
 // How many commands each gateway connection may have sent and not yet had answered, unless a run
 // says otherwise: what #33's connection sweep runs at.
 inline constexpr std::size_t defaultGatewayWindow = 256;
 
 const char* benchmarkKindName(BenchmarkKind kind);
-// Throws std::invalid_argument on a name other than core, replay, replay-log, shard, queue, or gateway.
+// Throws std::invalid_argument on a name other than core, replay, replay-log, shard, queue, gateway,
+// or engine.
 BenchmarkKind parseBenchmarkKind(std::string_view name);
+
+// The symbol of a run's instrument: B0, B1, and so on.
+order_book::replay::Symbol instrumentSymbol(std::size_t instrument);
 
 // One timed run of a workload's timed commands on a freshly preloaded book.
 struct Measurement {
@@ -54,8 +68,9 @@ struct Measurement {
     // A warm-up's time is kept with the rest but left out of every summary.
     bool warmup = false;
     std::size_t commands = 0;
-    std::size_t instruments = 1;  // 1 but for a SHARD run of several
-    std::size_t window = 0;       // a GATEWAY run's, and 0 for every other kind
+    std::size_t instruments = 1;  // 1 but for a run of several
+    std::size_t window = 0;       // a GATEWAY or ENGINE run's, and 0 for every other kind
+    std::size_t shards = 1;       // an ENGINE run's, and 1 for every other kind
     std::int64_t elapsedNanoseconds = 0;
     // What the book did, counted from its results; it always equals the workload's expected
     // outcome, or the run throws instead of returning a measurement.
@@ -71,7 +86,9 @@ double operationsPerSecond(std::size_t commands, std::int64_t elapsedNanoseconds
 struct RunSettings {
     std::size_t warmups = 1;
     std::size_t repetitions = 5;
-    std::size_t window = defaultGatewayWindow;  // for GATEWAY
+    std::size_t window = defaultGatewayWindow;  // for GATEWAY and ENGINE
+    std::size_t shards = 1;                     // for ENGINE
+    std::filesystem::path engine;               // for ENGINE: the order_book_engine to run
 };
 
 // The capacity each run reserves before its preload, untimed: the most the book holds at any
@@ -219,10 +236,75 @@ private:
     MatchingThread matching;
 };
 
+// A nonblocking client connection over loopback that has sent its Hello and read its Welcome. The
+// reader holds whatever came after the Welcome.
+struct LoopbackConnection {
+    network::TcpSocket socket;
+    network::FrameReader reader{network::FrameSource::ENGINE};
+};
+
+// Connects to port, sends a Hello, and waits for the Welcome, which must be the first frame.
+// failed, if given, is asked while waiting, and true ends the wait with std::runtime_error.
+LoopbackConnection connectLoopback(std::uint16_t port, const std::function<bool()>& failed = {});
+
+// Sends every byte on a nonblocking socket, spinning while it is full. Throws std::runtime_error if
+// it closes.
+void sendAll(const network::TcpSocket& socket, std::span<const std::byte> bytes);
+
+inline constexpr std::size_t commandFrameBytes = 12 + replay::commandBodyBytes;
+
+// Each record as a command frame, commandFrameBytes each, whose correlation is its index.
+std::vector<std::byte> commandFrames(const std::vector<replay::ReplayRecord>& records, replay::Symbol symbol);
+
+// One command's part of a WorkloadOutcome, from its kind and its events alone.
+void countCommand(const replay::Command& command, std::span<const BookEvent> events, WorkloadOutcome& outcome);
+// One event's part.
+void countResponse(const BookEvent& event, WorkloadOutcome& outcome);
+
+// The client side of the gateway and engine kinds: one connection per workload, on the calling
+// thread, each sending its book's commands as frames built in advance while it reads, never more
+// than window commands ahead of its answers. What a book did is counted from its event frames
+// alone, and any other frame fails the run. The workloads must outlive this.
+class LoopbackClients {
+public:
+    // Builds every timed frame, untimed, and counts each command there, since every frame built is
+    // sent or run throws. failed is asked as the clients wait, and true ends a wait with an error.
+    LoopbackClients(const std::vector<Workload>& workloads, std::function<bool()> failed);
+    ~LoopbackClients();
+    LoopbackClients(LoopbackClients&&) noexcept;
+    LoopbackClients& operator=(LoopbackClients&&) noexcept;
+
+    // Each connection's Hello and Welcome, untimed.
+    void connect(std::uint16_t port);
+    // Each book's preload, sent and answered, untimed. Throws std::runtime_error if a book refused
+    // or traded any of it.
+    void preload(std::size_t window);
+    // Every timed command sent and every answer read: what a timed region holds.
+    void run(std::size_t window);
+    // Half-closes each connection and reads it to its end.
+    void finish();
+    // What each book did, from its frames.
+    const std::vector<WorkloadOutcome>& counted() const noexcept { return tallies; }
+    // The connection for a book, taken from this, for a client of its own.
+    LoopbackConnection take(std::size_t book);
+
+private:
+    struct Connection;
+
+    void pump(std::size_t window);
+    void receive(Connection& connection);
+
+    const std::vector<Workload>* workloads;
+    std::function<bool()> failed;
+    std::vector<Connection> connections;
+    std::vector<WorkloadOutcome> tallies;
+    std::size_t answered = 0;
+    std::size_t total = 0;
+};
+
 // Every command over real loopback sockets, one connection per workload, through a
 // GatewayThread and a PollSocketSet on a thread of their own and a matching thread, with the
-// client on the calling thread, sending while it reads and never more than window commands ahead
-// of its answers. Connecting and each Hello happen in the constructor, untimed.
+// client on the calling thread. Connecting and each Hello happen in the constructor, untimed.
 class GatewayRun {
 public:
     GatewayRun(const std::vector<Workload>& workloads, std::size_t window);
@@ -239,10 +321,6 @@ public:
     std::vector<WorkloadOutcome> outcomes() const;
 
 private:
-    struct Connection;
-
-    void connect(std::uint32_t book);
-    void receive(std::size_t index);
     // Stops the gateway thread, then the matching thread, sending its stop marker if the gateway
     // thread failed before it could, and rethrows what either threw, the gateway's first.
     void stopThreads();
@@ -253,27 +331,64 @@ private:
     runtime::Ring<runtime::CommandElement> commands;
     runtime::Ring<runtime::ResponseRecord> responses;
     std::unique_ptr<network::PollSocketSet> sockets;
-    std::vector<Connection> connections;
-    std::vector<WorkloadOutcome> counted;
-    std::size_t answered = 0;
-    std::size_t total = 0;
     std::atomic<bool> stopRequested{false};
     std::atomic<bool> gatewayFailed{false};
     std::exception_ptr gatewayFailure;
+    // Built before the matching thread starts, since nothing here could stop it if this threw.
+    LoopbackClients clients;
     MatchingThread matching;
     std::thread gateway;
     bool finished = false;
 };
 
+class EngineProcess;
+
+// counted with the final orders, levels, and pending stops the workload predicted, for a run that
+// can't see its book's shape: an engine's stop report carries none. Its CSV and JSON rows then
+// repeat the prediction there, and nothing checks the shape.
+WorkloadOutcome withPredictedShape(WorkloadOutcome counted, const Workload& workload);
+
+// GATEWAY's client against the shipped order_book_engine as a child process, on port 0, with one
+// book per workload on shard i modulo shards. Each book's preload goes over the wire, untimed, as
+// the engine has no other way in. The engine doesn't report its books' shapes, so a run checks
+// every counter from the frames, and capacity and growth from the stop report, but takes each
+// final shape from the prediction. The workloads must outlive this.
+class EngineRun {
+public:
+    EngineRun(const std::vector<Workload>& workloads, std::size_t window, const std::filesystem::path& engine,
+              std::size_t shards);
+    // Kills the engine if finish has not stopped it.
+    ~EngineRun();
+
+    // Every command sent and every answer read: what a timed region holds.
+    void run();
+    // Half-closes each connection and reads it to its end, then stops the engine. Throws
+    // std::runtime_error if it doesn't stop cleanly, or a book's capacity was wrong or it grew.
+    void finish();
+    // After finish. Throws std::runtime_error if a book did other than its workload predicted.
+    void check() const;
+    std::vector<WorkloadOutcome> outcomes() const;
+
+private:
+    const std::vector<Workload>* workloads;
+    std::size_t window;
+    std::unique_ptr<EngineProcess> engine;
+    LoopbackClients clients;
+    bool finished = false;
+};
+
 // Whether a kind runs several instruments, through runInstrumentsOnce.
 constexpr bool sharesInstruments(BenchmarkKind kind) noexcept {
-    return kind == BenchmarkKind::SHARD || kind == BenchmarkKind::QUEUE || kind == BenchmarkKind::GATEWAY;
+    return kind == BenchmarkKind::SHARD || kind == BenchmarkKind::QUEUE || kind == BenchmarkKind::GATEWAY ||
+           kind == BenchmarkKind::ENGINE;
 }
 
-// runOnce for a SHARD, QUEUE, or GATEWAY run of several instruments, whose outcome is the run's
-// total. window is used only by GATEWAY.
+// runOnce for a SHARD, QUEUE, GATEWAY, or ENGINE run of several instruments, whose outcome is the
+// run's total. window is used only by GATEWAY and ENGINE.
 Measurement runInstrumentsOnce(const std::vector<Workload>& workloads, BenchmarkKind kind,
                                std::size_t window = defaultGatewayWindow);
+// The same with every setting, which ENGINE needs for its engine and shards.
+Measurement runInstrumentsOnce(const std::vector<Workload>& workloads, BenchmarkKind kind, const RunSettings& settings);
 // runRepeated for the same.
 std::vector<Measurement> runInstrumentsRepeated(const std::vector<Workload>& workloads, BenchmarkKind kind,
                                                 const RunSettings& settings);

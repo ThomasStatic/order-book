@@ -13,8 +13,11 @@ With the Visual Studio generator, build and run the Release configuration: `cmak
 
 | Option | Effect |
 |---|---|
-| `--interval command\|hand-off` | the interval to time: one book call (default), or into the command ring and back out of the response ring, through a real matching thread |
-| `--matching-core N` | for hand-off, pin the matching thread to this core; needed with `--pin-core` |
+| `--interval command\|hand-off\|round-trip` | the interval to time: one book call (default); into the command ring and back out of the response ring, through a real matching thread; or from the send over loopback through the shipped engine to the frame flagged last |
+| `--matching-core N` | for hand-off and round-trip, pin the matching thread to this core; needed with `--pin-core` |
+| `--gateway-core N`, `--receiver-core N` | for round-trip, pin the engine's gateway thread and the timetable's receiving thread; both needed with `--pin-core` |
+| `--engine PATH` | for round-trip, the `order_book_engine` to run (default: the one beside the program) |
+| `--discard-seconds N` | for round-trip, commands sent in each run's first N seconds are sent and checked but not recorded (default 2) |
 | `--time service\|response` | closed-loop service time (default), or response time on a timetable |
 | `--workload NAME` | run this workload; repeat for several (default: all eleven) |
 | `--size smoke\|standard\|extended` | 10,000, 100,000, or 1,000,000 (default) commands per run |
@@ -23,7 +26,7 @@ With the Visual Studio generator, build and run the Release configuration: `cmak
 | `--warmup N` | runs before those, discarded (default 1) |
 | `--seed N` | workload and timetable seed (default 42) |
 | `--noise-seconds N` | seconds of noise floor before and after the session (default 10; 0 skips them, and leaves every row unquotable) |
-| `--pin-core N`, `--priority normal\|high` | where the measuring thread runs; a refusal fails the session |
+| `--pin-core N`, `--priority normal\|high` | where the measuring thread runs, and the priority of every pinned thread, the engine's included; a refusal fails the session |
 | `--machine-record FILE` | the hand-written machine record, copied into the run record |
 | `--out-dir DIR` | write `report.txt`, `runs.csv`, and every run's raw counts under `counts/` |
 | `--allow-unoptimized` | run in a build that is not optimized; every row is then unquotable |
@@ -33,6 +36,10 @@ Exit statuses: `0` every run completed; `1` a run did not do what its workload p
 ## What is timed
 
 **Command**: one `submitOrder`, `cancelOrder`, or `replaceOrder`, from just before the call to just after it returns, on a freshly preloaded book. Loading the command and building its `Order` come before the opening reading, and counting the result and destroying it after the closing one. Every run's outcome is still checked against the workload's prediction, so a run never stands for work the book did not do.
+
+**Hand-off**: from just before a command goes into the command ring until its last event comes back out of the response ring, on the sending thread, through a real matching thread and a real book.
+
+**Round trip**: from a command's send, over loopback through the shipped `order_book_engine`'s gateway and matching thread, to the frame flagged last in its response. The engine runs as a child process on port 0, a fresh one for every run, with one book at the workload's capacity and one connection, so it measures what ships and shares no heap with the client. It has no log until the log writer lands, so every row says durability `none`, and the record's book capacity is what the engine was given, each part at least 1. The preload goes over the wire before anything is timed. A valid run has every command answered, nothing `Refused`, counts from the frames matching the prediction, and no growth in the stop report. Closed-loop, one thread sends and waits for the last frame. On a timetable, one thread sends and another stamps each read as it arrives: one thread can't both keep a timetable and read. A command's correlation is its index in the timetable, so its response time is the arrival minus its own scheduled send, and no timestamp travels in a frame. A response's first frame gets its own row, since a cascade can put it well before the last. Commands sent in each run's first `--discard-seconds`, by the schedule on a timetable and from the run's start closed-loop, are sent and checked but not recorded, on top of the discarded warm-up run: a placeholder until a round trip's warm-up is measured. The first frame has a row of its own on a timetable only, since a closed-loop row is service time, which no claim about a cascade's first frame rests on.
 
 **Service time** runs from when the command actually started. **Response time** runs from when it was scheduled, so it includes any wait behind earlier commands or a stall.
 
@@ -48,9 +55,9 @@ Every command is timed and nothing is subtracted, since a percentile minus a con
 
 Closed-loop only for service time and capacity. A closed-loop client stops sending during a stall, so the commands the stall would have delayed are never measured, and the stall all but vanishes: this is coordinated omission, and `latency_harness_tests` holds Tene's worked example against it.
 
-Everything else runs on a timetable: 10, 25, 50, 75, and 90% of the capacity measured that session, then a seeded Poisson row at 50%, because a fixed timetable hides the queues that bursts build. Capacity is the median of three closed-loop runs with no per-command stamps. A command is timed from its scheduled send, and a late one goes straight out with nothing skipped. Each timetable row is followed by one of the driver's own lateness, so a stalled driver is not blamed on the book.
+Everything else runs on a timetable: 10, 25, 50, 75, and 90% of the capacity measured that session, then a seeded Poisson row at 50%, because a fixed timetable hides the queues that bursts build. Capacity is the median of three closed-loop runs with no per-command stamps: of `core` for the command interval, and of the target itself, one command at a time, for hand-off and round trip, since each waits for its answer. A command is timed from its scheduled send, and a late one goes straight out with nothing skipped. Each timetable row is followed by one of the driver's own lateness, so a stalled driver is not blamed on the book.
 
-A rate prints `not sustained`, in place of any percentile, if the backlog was still growing at the end. A backlog that drains leaves a send on time now and then, however bad the bursts, so the least lateness in a tenth of the run says how far behind the timetable it has fallen for good. If that rose by more than one mean gap across the final two tenths, the run was not sustained, and if any run of a row was not, the row is not.
+A rate prints `not sustained`, in place of any percentile, if the backlog was still growing at the end. A backlog that drains leaves a send on time now and then, however bad the bursts, so the least lateness in a tenth of the run says how far behind the timetable it has fallen for good. If that rose by more than one mean gap across the final two tenths, the run was not sustained, and if any run of a row was not, the row is not. A round trip's sender never waits for an answer, so there the least response time in each tenth stands in for the least lateness.
 
 ## Histograms and what is reported
 

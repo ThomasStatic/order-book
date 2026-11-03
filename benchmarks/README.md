@@ -18,10 +18,12 @@ With the Visual Studio generator, build and run the Release configuration: `cmak
 | `--workload NAME` | run this workload; repeat for several (default: all eleven, the five v1 workloads then the six behavior workloads) |
 | `--size smoke\|standard\|extended` | 10,000, 100,000 (default), or 1,000,000 timed commands per run |
 | `--commands N` | exactly N timed commands, instead of a size (recorded as size `custom`) |
-| `--kind core\|replay\|replay-log\|shard\|queue\|gateway\|both` | which path to time (default `core`, see below); `both` is `core` and `replay` |
-| `--instruments N` | for `shard`, `queue`, and `gateway`: share the commands between N instruments on one shard (default 1) |
-| `--window N` | for `gateway`: commands each connection may have sent and not had answered (default 256) |
-| `--tamper-prediction` | for `shard`, `queue`, and `gateway`: predict one trade too many, so the run must fail |
+| `--kind core\|replay\|replay-log\|shard\|queue\|gateway\|engine\|both` | which path to time (default `core`, see below); `both` is `core` and `replay` |
+| `--instruments N` | for `shard`, `queue`, `gateway`, and `engine`: share the commands between N instruments, on one shard but for `engine` (default 1) |
+| `--window N` | for `gateway` and `engine`: commands each connection may have sent and not had answered (default 256) |
+| `--shards N` | for `engine`: the engine's shard count, with instrument i pinned to shard i modulo N (default 1) |
+| `--engine PATH` | for `engine`: the `order_book_engine` to run (default: the one beside the program) |
+| `--tamper-prediction` | for `shard`, `queue`, `gateway`, and `engine`: predict one trade too many, so the run must fail |
 | `--repetitions N` | measured runs per workload and kind (default 5) |
 | `--warmup N` | runs before those, recorded but left out of summaries (default 1) |
 | `--seed N` | generator seed (default 42) |
@@ -53,6 +55,7 @@ The two kinds differ only in what sits between the commands and the book:
 - **`shard`** runs the same commands through `Shard::process` on one thread, with no rings, so its difference from `core` is `Command` decoding, `BookSet`, and result reuse. `--instruments N` shares the commands between N instruments, each its own unchanged stream.
 - **`queue`** puts real rings and a real matching thread between this thread and that shard, so its difference from `shard` is the hand-off.
 - **`gateway`** sends every command over real loopback sockets, one connection per instrument, to a `GatewayThread` on its own thread in front of the matching thread, so its difference from `queue` is sockets, framing, and the entry check. This thread is the client: it sends while it reads, never more than `--window` commands ahead of its answers, and counts what the books did from the event frames. Connecting and each `Hello` are untimed. The CSV and JSON record the window, and 0 for every other kind.
+- **`engine`** runs `gateway`'s client against the shipped `order_book_engine` as a child process on port 0, so `gateway` against `engine` within the A/A floor is what lets the in-process kinds stand for what ships. It writes an instrument list of one book per instrument at its workload's capacity, reads the port from the `listening` line, sends each book's preload over the wire (untimed, since the engine has no other way in), and stops the engine by closing its stdin. The counters come from the frames, and each book's capacity and growth from the stop report, but the engine doesn't report a book's shape, so final orders, levels, and pending stops are the prediction's own. It runs with no log until the log writer lands. The CSV and JSON record the shard count, and 1 for every other kind.
 
 - **`replay-log`** is `replay` with the same commands as a binary command log in memory instead of CSV text, which is what a `--kind` of its own keeps apart from `replay`'s unchanged path.
 

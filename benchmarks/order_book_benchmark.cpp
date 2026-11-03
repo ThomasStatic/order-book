@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -21,6 +22,7 @@
 
 #include "benchmark_report.hpp"
 #include "benchmark_runner.hpp"
+#include "engine_process.hpp"
 #include "workload.hpp"
 
 namespace {
@@ -32,7 +34,8 @@ namespace {
 
     constexpr std::string_view usageText =
         "usage: order_book_benchmarks [--workload NAME]... [--size smoke|standard|extended | --commands N]\n"
-        "                             [--kind core|replay|replay-log|shard|queue|gateway|both] [--instruments N] [--window N] [--repetitions N] [--warmup N] [--seed N]\n"
+        "                             [--kind core|replay|replay-log|shard|queue|gateway|engine|both] [--instruments N]\n"
+        "                             [--window N] [--shards N] [--engine PATH] [--repetitions N] [--warmup N] [--seed N]\n"
         "                             [--csv FILE] [--json FILE] [--allow-unoptimized]\n"
         "       order_book_benchmarks --list\n"
         "       order_book_benchmarks --help\n";
@@ -53,13 +56,19 @@ namespace {
         "                       replaying the same commands as CSV text in memory; replay-log the\n"
         "                       same as a binary command log; shard through Shard::process on one\n"
         "                       thread; queue with real rings and a matching thread; gateway over\n"
-        "                       real loopback sockets, one connection per instrument; both runs core\n"
-        "                       and replay\n"
-        "  --instruments N      for shard, queue, and gateway: share the commands between N instruments\n"
-        "                       (default 1)\n"
-        "  --window N           for gateway: commands each connection may have unanswered (default 256)\n"
-        "  --tamper-prediction  for shard, queue, and gateway: predict one trade too many, so the run\n"
-        "                       must fail\n"
+        "                       real loopback sockets, one connection per instrument; engine the\n"
+        "                       same client against the shipped order_book_engine as a child\n"
+        "                       process, with no log; both runs core and replay\n"
+        "  --instruments N      for shard, queue, gateway, and engine: share the commands between N\n"
+        "                       instruments (default 1)\n"
+        "  --window N           for gateway and engine: commands each connection may have unanswered\n"
+        "                       (default 256)\n"
+        "  --shards N           for engine: the engine's shard count, with instrument i on shard i\n"
+        "                       modulo N (default 1)\n"
+        "  --engine PATH        for engine: the order_book_engine to run (default: the one beside\n"
+        "                       this program)\n"
+        "  --tamper-prediction  for shard, queue, gateway, and engine: predict one trade too many, so\n"
+        "                       the run must fail\n"
         "  --repetitions N      measured runs per workload and kind (default 5)\n"
         "  --warmup N           runs before those, recorded but left out of summaries (default 1)\n"
         "  --seed N             generator seed (default 42); the same seed, configuration, and\n"
@@ -130,7 +139,7 @@ namespace {
             const bool takesValue = arg == "--workload" || arg == "--size" || arg == "--commands" ||
                                     arg == "--kind" || arg == "--repetitions" || arg == "--warmup" ||
                                     arg == "--seed" || arg == "--csv" || arg == "--json" || arg == "--instruments" ||
-                                    arg == "--window";
+                                    arg == "--window" || arg == "--shards" || arg == "--engine";
             if (!takesValue) {
                 return "unknown option '" + std::string(arg) + "'";
             }
@@ -155,6 +164,8 @@ namespace {
                     settings.csvPath = std::string(value);
                 } else if (arg == "--json") {
                     settings.jsonPath = std::string(value);
+                } else if (arg == "--engine") {
+                    settings.run.engine = std::filesystem::path(value);
                 } else {
                     const std::optional<std::uint64_t> number = parseNumber(value);
                     if (!number) {
@@ -175,6 +186,8 @@ namespace {
                         settings.run.repetitions = static_cast<std::size_t>(*number);
                     } else if (arg == "--window") {
                         settings.run.window = static_cast<std::size_t>(*number);
+                    } else if (arg == "--shards") {
+                        settings.run.shards = static_cast<std::size_t>(*number);
                     } else {
                         settings.size = "custom";
                         settings.timedCommands = static_cast<std::size_t>(*number);
@@ -347,6 +360,7 @@ int main(int argc, char** argv) {
 
     const std::vector<std::string_view> args(argv + 1, argv + argc);
     Settings settings;
+    settings.run.engine = bench::engineBesideProgram(argc > 0 ? argv[0] : "");
     if (const std::optional<std::string> problem = parseArguments(args, settings)) {
         return usage(*problem);
     }

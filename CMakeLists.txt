@@ -253,6 +253,19 @@ if(BUILD_TESTING OR ORDER_BOOK_BUILD_BENCHMARKS)
     target_link_libraries(order_book_reference PUBLIC order_book)
     order_book_enable_warnings(order_book_reference)
     order_book_enable_sanitizers(order_book_reference)
+
+    # A real child process, with a limit on every wait that kills it. The engine's process tests
+    # and the engine benchmark kind and round-trip interval share it.
+    find_package(Threads REQUIRED)
+    add_library(order_book_process_testing STATIC
+        tests/process/child_process.cpp
+    )
+
+    target_compile_features(order_book_process_testing PUBLIC cxx_std_20)
+    target_include_directories(order_book_process_testing PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/process)
+    target_link_libraries(order_book_process_testing PUBLIC Threads::Threads)
+    order_book_enable_warnings(order_book_process_testing)
+    order_book_enable_sanitizers(order_book_process_testing)
 endif()
 
 if(BUILD_TESTING)
@@ -988,16 +1001,6 @@ if(BUILD_TESTING)
     add_test(NAME engine_start_allocation_tests COMMAND engine_start_allocation_tests)
     set_tests_properties(engine_start_allocation_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
 
-    # A real child process, with a limit on every wait that kills it.
-    add_library(order_book_process_testing STATIC
-        tests/process/child_process.cpp
-    )
-
-    target_compile_features(order_book_process_testing PUBLIC cxx_std_20)
-    target_include_directories(order_book_process_testing PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/process)
-    order_book_enable_warnings(order_book_process_testing)
-    order_book_enable_sanitizers(order_book_process_testing)
-
     add_executable(engine_process_tests
         tests/engine_process_test.cpp
     )
@@ -1083,12 +1086,14 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         benchmarks/benchmark_runner.cpp
         benchmarks/benchmark_report.cpp
         benchmarks/component_benchmark.cpp
+        benchmarks/engine_process.cpp
     )
 
     find_package(Threads REQUIRED)
     target_compile_features(order_book_benchmarking PUBLIC cxx_std_20)
     target_include_directories(order_book_benchmarking PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks)
-    target_link_libraries(order_book_benchmarking PUBLIC order_book_network order_book_reference Threads::Threads)
+    target_link_libraries(order_book_benchmarking PUBLIC order_book_network order_book_reference order_book_process_testing
+                                                         Threads::Threads)
     # Recorded with every result, so a report says which configuration produced it.
     target_compile_definitions(order_book_benchmarking PRIVATE ORDER_BOOK_BUILD_CONFIG="$<CONFIG>")
     # GCC defines no macro under UBSan, so say whether order_book_enable_sanitizers applies it.
@@ -1106,11 +1111,14 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
     target_link_libraries(order_book_benchmarks PRIVATE order_book_benchmarking)
     order_book_enable_warnings(order_book_benchmarks)
     order_book_enable_sanitizers(order_book_benchmarks)
+    # The engine kind runs the order_book_engine beside it.
+    add_dependencies(order_book_benchmarks order_book_engine)
 
     # The latency harness (benchmarks/latency/README.md): clock, histogram, timetable driver,
     # and report. A library so latency_harness_tests can drive it with a fake clock and target.
     add_library(order_book_latency STATIC
         benchmarks/latency/handoff_target.cpp
+        benchmarks/latency/round_trip_target.cpp
         benchmarks/latency/clock.cpp
         benchmarks/latency/command_target.cpp
         benchmarks/latency/histogram.cpp
@@ -1131,6 +1139,7 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
 
     target_compile_features(order_book_latency_benchmarks PRIVATE cxx_std_20)
     target_link_libraries(order_book_latency_benchmarks PRIVATE order_book_latency)
+    add_dependencies(order_book_latency_benchmarks order_book_engine)  # the round trip runs the engine beside it
     order_book_enable_warnings(order_book_latency_benchmarks)
     order_book_enable_sanitizers(order_book_latency_benchmarks)
 
@@ -1166,6 +1175,18 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
             COMMAND order_book_latency_benchmarks --interval hand-off --workload small-book --commands 500 --runs 2 --warmup 1
                     --noise-seconds 0 --allow-unoptimized --out-dir ${CMAKE_CURRENT_BINARY_DIR}/latency-smoke-handoff)
         set_tests_properties(latency_cli_smoke_handoff PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
+        # The shipped engine as a child on port 0: closed-loop, then the open-loop ladder with its
+        # two driver threads. Each run is shorter than a discard, so both keep every command.
+        add_test(NAME latency_cli_smoke_round_trip
+            COMMAND order_book_latency_benchmarks --interval round-trip --engine $<TARGET_FILE:order_book_engine>
+                    --workload small-book --commands 500 --runs 2 --warmup 1 --discard-seconds 0 --noise-seconds 0
+                    --allow-unoptimized --out-dir ${CMAKE_CURRENT_BINARY_DIR}/latency-smoke-round-trip)
+        add_test(NAME latency_cli_smoke_round_trip_response
+            COMMAND order_book_latency_benchmarks --interval round-trip --engine $<TARGET_FILE:order_book_engine>
+                    --workload small-book --commands 500 --runs 2 --warmup 1 --time response --discard-seconds 0
+                    --noise-seconds 0 --allow-unoptimized --out-dir ${CMAKE_CURRENT_BINARY_DIR}/latency-smoke-round-trip-response)
+        set_tests_properties(latency_cli_smoke_round_trip latency_cli_smoke_round_trip_response PROPERTIES
+            LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
         add_test(NAME latency_cli_smoke_response
             COMMAND order_book_latency_benchmarks --workload small-book --commands 500 --runs 2 --warmup 1
                     --time response --noise-seconds 0 --allow-unoptimized
@@ -1208,6 +1229,18 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         add_test(NAME benchmark_gateway_tests COMMAND benchmark_gateway_tests)
         set_tests_properties(benchmark_gateway_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
 
+        add_executable(benchmark_engine_tests
+            tests/benchmark_engine_test.cpp
+        )
+
+        target_compile_features(benchmark_engine_tests PRIVATE cxx_std_20)
+        target_link_libraries(benchmark_engine_tests PRIVATE order_book_benchmarking)
+        order_book_enable_warnings(benchmark_engine_tests)
+        order_book_enable_sanitizers(benchmark_engine_tests)
+        add_dependencies(benchmark_engine_tests order_book_engine)
+        add_test(NAME benchmark_engine_tests COMMAND benchmark_engine_tests $<TARGET_FILE:order_book_engine>)
+        set_tests_properties(benchmark_engine_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
+
         # Exactly zero heap calls on every workload, where only a checked build's own checks
         # could allocate.
         add_executable(matching_path_allocation_tests
@@ -1240,6 +1273,16 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
                     "-DARGS=--workload|small-book|--commands|2000|--kind|gateway|--tamper-prediction|--repetitions|1|--warmup|0|--allow-unoptimized"
                     "-DOUTPUT_REGEX=but the workload predicted" -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
         set_tests_properties(benchmark_gateway_smoke benchmark_gateway_tampered PROPERTIES
+            LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
+        # The shipped engine as a child on port 0, with no log until the log writer lands.
+        add_test(NAME benchmark_engine_smoke
+            COMMAND order_book_benchmarks --workload small-book --commands 2000 --kind engine --instruments 4 --shards 2
+                    --engine $<TARGET_FILE:order_book_engine> --repetitions 1 --warmup 0 --allow-unoptimized)
+        add_test(NAME benchmark_engine_tampered
+            COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:order_book_benchmarks> -DEXPECTED_EXIT=1
+                    "-DARGS=--workload|small-book|--commands|2000|--kind|engine|--engine|$<TARGET_FILE:order_book_engine>|--tamper-prediction|--repetitions|1|--warmup|0|--allow-unoptimized"
+                    "-DOUTPUT_REGEX=but the workload predicted" -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
+        set_tests_properties(benchmark_engine_smoke benchmark_engine_tampered PROPERTIES
             LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
         add_test(NAME benchmark_shard_smoke
             COMMAND order_book_benchmarks --workload small-book --commands 2000 --kind shard --instruments 4

@@ -261,6 +261,52 @@ void testCoordinatedOmissionWorkedExample() {
     expect(closed.maximum() == 100 * second, "closed loop: only the maximum shows it");
 }
 
+// The round trip's receiving half: a response runs from its scheduled send to the frame flagged
+// last, and its first frame from the same send, each in its own histogram.
+void testArrivalsAreTimedFromTheSchedule() {
+    const std::vector<Ticks> schedule{0, 100, 200};
+    ArrivalTally tally(schedule, 1000, 0);
+    tally.arrived(0, 1030, false);
+    tally.arrived(0, 1050, true);
+    expect(!tally.complete(), "one answer of three is not complete");
+    tally.arrived(1, 1120, true);
+    tally.arrived(2, 1400, false);
+    tally.arrived(2, 1410, false);
+    tally.arrived(2, 1500, true);
+    expect(tally.complete(), "every command answered");
+    expect(tally.response().count() == 3 && tally.first().count() == 3, "one sample per command in each");
+    // Responses of 50, 20, and 300; first frames of 30, 20, and 200.
+    expect(tally.response().maximum() == 300 && tally.response().valueAt(p50) == 50, "a response runs from its own schedule to its last frame");
+    expect(tally.first().maximum() == 200 && tally.first().valueAt(p50) == 30, "a first frame from the same schedule, once per command");
+    expect(tally.lastArrival() == 1500, "the run ends at the last frame");
+}
+
+void testEarlyCommandsAreAnsweredButNotRecorded() {
+    const std::vector<Ticks> schedule{0, 100, 200, 300};
+    ArrivalTally tally(schedule, 0, 150);
+    for (std::size_t index = 0; index < 4; ++index) {
+        tally.arrived(index, static_cast<Ticks>(index) * 100 + 10, true);
+    }
+    expect(tally.complete(), "a discarded command still has to be answered");
+    expect(tally.response().count() == 2 && tally.first().count() == 2, "only commands scheduled from the discard on are recorded");
+}
+
+void testArrivalsThatFallBehindAreNotSustained() {
+    const std::vector<Ticks> schedule = fixedSchedule(1000, 100);
+    ArrivalTally slow(schedule, 0, 0);
+    ArrivalTally keepsUp(schedule, 0, 0);
+    ArrivalTally drained(schedule, 0, 0);
+    for (std::size_t index = 0; index < 1000; ++index) {
+        slow.arrived(index, static_cast<Ticks>(index) * 200 + 50, true);  // half the rate: the backlog grows
+        keepsUp.arrived(index, static_cast<Ticks>(index) * 100 + 50, true);
+        // One stall early on, drained well before the end.
+        drained.arrived(index, static_cast<Ticks>(index) * 100 + (index >= 100 && index < 150 ? 5000 : 50), true);
+    }
+    expect(!slow.sustained(), "an engine slower than the timetable falls further behind");
+    expect(keepsUp.sustained(), "one that keeps up is sustained");
+    expect(drained.sustained(), "a stall that drains is sustained");
+}
+
 void testPoissonScheduleIsSeededAndKeepsItsRate() {
     const std::vector<Ticks> first = poissonSchedule(100000, 100.0, 7);
     expect(first == poissonSchedule(100000, 100.0, 7), "the same seed gives the same timetable");
@@ -474,6 +520,9 @@ int main(int argc, char** argv) {
     testSendsWaitForTheirTimeAndLateOnesGoStraightOut();
     testGettingReadyIsOutsideTheInterval();
     testScheduleIsRelativeToTheStart();
+    testArrivalsAreTimedFromTheSchedule();
+    testEarlyCommandsAreAnsweredButNotRecorded();
+    testArrivalsThatFallBehindAreNotSustained();
     testBacklogStillGrowingIsNotSustained();
     testCoordinatedOmissionWorkedExample();
     testPoissonScheduleIsSeededAndKeepsItsRate();

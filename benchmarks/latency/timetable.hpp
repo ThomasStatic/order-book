@@ -87,6 +87,43 @@ Histogram runClosedLoop(std::size_t commands, DriverClock& clock, Target& target
     return service;
 }
 
+// The receiving half of the round trip's open-loop driver. One thread can't both keep a timetable
+// and read, so one thread sends on the timetable while another stamps each frame as it arrives. A command's correlation is its index in the timetable, so its response time is the
+// arrival minus its own scheduled send, and no timestamp travels in a frame. This is the receiving
+// thread's bookkeeping, apart from the threads so tests can drive it.
+class ArrivalTally {
+public:
+    // schedule as runTimetable takes it, and start the reading the run's schedule counts from. A
+    // command scheduled before discard ticks from the start must still be answered, but goes in
+    // no histogram. The schedule must outlive the tally.
+    ArrivalTally(const std::vector<Ticks>& schedule, Ticks start, Ticks discard);
+
+    // A frame of command index's response arrived at tick at; last if it is flagged last.
+    void arrived(std::size_t index, Ticks at, bool last);
+    bool complete() const noexcept { return answered_ == schedule_->size(); }
+
+    // From the scheduled send to the response's first frame, which a cascade can put well before
+    // its last.
+    const Histogram& first() const noexcept { return first_; }
+    // From the scheduled send to the frame flagged last: the round trip.
+    const Histogram& response() const noexcept { return response_; }
+    Ticks lastArrival() const noexcept { return lastArrival_; }
+    // False if the backlog was still growing at the end, judged as runTimetable judges lateness,
+    // by the least response time in each of the final two tenths of the commands.
+    bool sustained() const;
+
+private:
+    const std::vector<Ticks>* schedule_;
+    Ticks start_;
+    Ticks discard_;
+    std::vector<bool> firstSeen_;
+    std::size_t answered_ = 0;
+    Histogram first_;
+    Histogram response_;
+    Ticks lastArrival_ = 0;
+    Ticks leastResponse_[2] = {std::numeric_limits<Ticks>::max(), std::numeric_limits<Ticks>::max()};
+};
+
 // count send times gapTicks apart, rounded down from the exact time so nothing accumulates.
 std::vector<Ticks> fixedRateSchedule(std::size_t count, double gapTicks);
 

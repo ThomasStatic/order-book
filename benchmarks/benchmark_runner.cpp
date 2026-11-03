@@ -23,6 +23,7 @@
 #include <future>
 #include <optional>
 
+#include "engine_process.hpp"
 #include "interleaver.hpp"
 #include "order_book/replay_summary.hpp"
 #include "order_book/submission_result.hpp"
@@ -74,29 +75,6 @@ std::vector<replay::ReplayRecord> recordsOf(const std::vector<BenchmarkCommand>&
     return records;
 }
 
-// One event's part of a WorkloadOutcome.
-void countResponse(const BookEvent& event, WorkloadOutcome& outcome) {
-    if (std::holds_alternative<OrderRejected>(event) || std::holds_alternative<CancelRejected>(event) ||
-        std::holds_alternative<ReplaceRejected>(event)) {
-        ++outcome.rejections;
-    }
-    countEvents(std::span<const BookEvent>(&event, 1), outcome);
-}
-
-// One command's part of a WorkloadOutcome, from its events alone.
-void countCommand(const replay::Command& command, std::span<const BookEvent> events, WorkloadOutcome& outcome) {
-    if (std::holds_alternative<replay::AddCommand>(command)) {
-        ++outcome.submits;
-    } else if (std::holds_alternative<replay::CancelCommand>(command)) {
-        ++outcome.cancels;
-    } else {
-        ++outcome.replaces;
-    }
-    for (const BookEvent& event : events) {
-        countResponse(event, outcome);
-    }
-}
-
 void addOutcome(WorkloadOutcome& total, const WorkloadOutcome& outcome) {
     total.submits += outcome.submits;
     total.cancels += outcome.cancels;
@@ -124,10 +102,6 @@ std::vector<Measurement> repeated(const RunSettings& settings, Run run) {
         measurements.push_back(std::move(measurement));
     }
     return measurements;
-}
-
-replay::Symbol instrumentSymbol(std::size_t instrument) {
-    return *replay::Symbol::parse("B" + std::to_string(instrument));
 }
 
 // Sends one command to the book and counts what it did. The sequence number passed to Order
@@ -256,6 +230,33 @@ Measurement runReplay(const Workload& workload, bool fromLog) {
 
 }  // namespace
 
+// One event's part of a WorkloadOutcome.
+void countResponse(const BookEvent& event, WorkloadOutcome& outcome) {
+    if (std::holds_alternative<OrderRejected>(event) || std::holds_alternative<CancelRejected>(event) ||
+        std::holds_alternative<ReplaceRejected>(event)) {
+        ++outcome.rejections;
+    }
+    countEvents(std::span<const BookEvent>(&event, 1), outcome);
+}
+
+// One command's part of a WorkloadOutcome, from its events alone.
+void countCommand(const replay::Command& command, std::span<const BookEvent> events, WorkloadOutcome& outcome) {
+    if (std::holds_alternative<replay::AddCommand>(command)) {
+        ++outcome.submits;
+    } else if (std::holds_alternative<replay::CancelCommand>(command)) {
+        ++outcome.cancels;
+    } else {
+        ++outcome.replaces;
+    }
+    for (const BookEvent& event : events) {
+        countResponse(event, outcome);
+    }
+}
+
+replay::Symbol instrumentSymbol(std::size_t instrument) {
+    return *replay::Symbol::parse("B" + std::to_string(instrument));
+}
+
 BookCapacity expectedBookSize(const Workload& workload) {
     return BookCapacity{workload.peak.orders, workload.peak.stops, workload.peak.levels + 1};
 }
@@ -306,18 +307,19 @@ const char* benchmarkKindName(BenchmarkKind kind) {
         case BenchmarkKind::SHARD: return "shard";
         case BenchmarkKind::QUEUE: return "queue";
         case BenchmarkKind::GATEWAY: return "gateway";
+        case BenchmarkKind::ENGINE: return "engine";
     }
     return "unknown";
 }
 
 BenchmarkKind parseBenchmarkKind(std::string_view name) {
     for (const BenchmarkKind kind : {BenchmarkKind::CORE, BenchmarkKind::REPLAY, BenchmarkKind::REPLAY_LOG, BenchmarkKind::SHARD,
-                                     BenchmarkKind::QUEUE, BenchmarkKind::GATEWAY}) {
+                                     BenchmarkKind::QUEUE, BenchmarkKind::GATEWAY, BenchmarkKind::ENGINE}) {
         if (name == benchmarkKindName(kind)) {
             return kind;
         }
     }
-    throw std::invalid_argument("unknown kind '" + std::string(name) + "' (known: core, replay, replay-log, shard, queue)");
+    throw std::invalid_argument("unknown kind '" + std::string(name) + "' (known: core, replay, replay-log, shard, queue, gateway, engine)");
 }
 
 double operationsPerSecond(std::size_t commands, std::int64_t elapsedNanoseconds) {
@@ -611,30 +613,180 @@ void QueueRun::check() const {
     requireOutcomes(outcomes(), *workloads, BenchmarkKind::QUEUE);
 }
 
-struct GatewayRun::Connection {
-    Connection() : reader(network::FrameSource::ENGINE) {}
 
-    network::TcpSocket socket;
-    network::FrameReader reader;
-    std::vector<std::byte> bytes;  // every command frame, built before the timed region
+void sendAll(const network::TcpSocket& socket, std::span<const std::byte> bytes) {
+    while (!bytes.empty()) {
+        const std::optional<std::size_t> taken = socket.send(bytes);
+        if (!taken) {
+            throw std::runtime_error("loopback: a connection closed while it was being sent to");
+        }
+        bytes = bytes.subspan(*taken);
+    }
+}
+
+std::vector<std::byte> commandFrames(const std::vector<replay::ReplayRecord>& records, replay::Symbol symbol) {
+    std::vector<std::byte> bytes(records.size() * commandFrameBytes);
+    for (std::size_t i = 0; i < records.size(); ++i) {
+        network::encodeCommand(i, symbol, records[i].command, std::span<std::byte>(bytes).subspan(i * commandFrameBytes, commandFrameBytes));
+    }
+    return bytes;
+}
+
+LoopbackConnection connectLoopback(std::uint16_t port, const std::function<bool()>& failed) {
+    LoopbackConnection connection;
+    connection.socket = network::TcpSocket::connectLoopback(port);
+    connection.socket.setNonBlocking();
+    std::array<std::byte, 64> hello{};
+    sendAll(connection.socket, std::span<const std::byte>(hello).first(network::encodeHello(0, network::wireVersion, hello)));
+    for (;;) {  // the Welcome, so the connection has been taken on before anything is timed
+        if (failed && failed()) {
+            throw std::runtime_error("loopback: the engine failed before a Welcome");
+        }
+        std::array<std::byte, 64> into{};
+        const network::ReadResult read = connection.socket.receive(into);
+        if (read.status != network::ReadStatus::OPEN) {
+            throw std::runtime_error("loopback: a connection closed before its Welcome");
+        }
+        connection.reader.feed(std::span<const std::byte>(into).first(read.bytes));
+        const network::FrameResult result = connection.reader.next();
+        if (const network::Frame* frame = std::get_if<network::Frame>(&result)) {
+            if (frame->type != network::FrameType::WELCOME) {
+                throw std::runtime_error("loopback: a Hello was not answered with a Welcome");
+            }
+            return connection;
+        }
+    }
+}
+
+struct LoopbackClients::Connection {
+    LoopbackConnection link;
+    std::vector<std::byte> timed;  // every timed command's frame, built before the timed region
+    std::vector<std::byte> bytes;  // what pump sends: the preload's frames, then timed's
     std::size_t sentBytes = 0;
     std::size_t commands = 0;
     std::size_t answered = 0;
+    WorkloadOutcome* tally = nullptr;  // where pump counts what comes back
 };
 
-namespace {
-    constexpr std::size_t commandFrameBytes = 12 + replay::commandBodyBytes;
+LoopbackClients::~LoopbackClients() = default;
+LoopbackClients::LoopbackClients(LoopbackClients&&) noexcept = default;
+LoopbackClients& LoopbackClients::operator=(LoopbackClients&&) noexcept = default;
 
-    void sendAll(const network::TcpSocket& socket, std::span<const std::byte> bytes) {
-        while (!bytes.empty()) {
-            const std::optional<std::size_t> taken = socket.send(bytes);
-            if (!taken) {
-                throw std::runtime_error("gateway: a connection closed while it was being sent to");
-            }
-            bytes = bytes.subspan(*taken);
+LoopbackClients::LoopbackClients(const std::vector<Workload>& runWorkloads, std::function<bool()> hasFailed)
+    : workloads(&runWorkloads), failed(std::move(hasFailed)), connections(runWorkloads.size()), tallies(runWorkloads.size()) {
+    for (std::size_t book = 0; book < connections.size(); ++book) {
+        const std::vector<replay::ReplayRecord> records = workloadRecords(runWorkloads[book], instrumentSymbol(book));
+        connections[book].timed = commandFrames(records, instrumentSymbol(book));
+        // Every frame built is sent, or run throws, so it is counted here, untimed.
+        for (const replay::ReplayRecord& record : records) {
+            countCommand(record.command, {}, tallies[book]);
         }
     }
-}  // namespace
+}
+
+void LoopbackClients::connect(std::uint16_t port) {
+    for (Connection& connection : connections) {
+        connection.link = connectLoopback(port, failed);
+    }
+}
+
+void LoopbackClients::preload(std::size_t window) {
+    std::vector<WorkloadOutcome> preloaded(connections.size());
+    answered = 0;
+    total = 0;
+    for (std::size_t book = 0; book < connections.size(); ++book) {
+        Connection& connection = connections[book];
+        const std::vector<replay::ReplayRecord> records = preloadRecords((*workloads)[book], instrumentSymbol(book));
+        connection.bytes = commandFrames(records, instrumentSymbol(book));
+        connection.sentBytes = 0;
+        connection.commands = records.size();
+        connection.answered = 0;
+        connection.tally = &preloaded[book];
+        total += records.size();
+    }
+    pump(window);
+    for (std::size_t book = 0; book < connections.size(); ++book) {
+        if (preloaded[book].rejections != 0 || preloaded[book].trades != 0) {
+            throw std::runtime_error("workload " + (*workloads)[book].config.name + ": the book refused or traded its preload");
+        }
+    }
+}
+
+void LoopbackClients::run(std::size_t window) {
+    answered = 0;
+    total = 0;
+    for (std::size_t book = 0; book < connections.size(); ++book) {
+        Connection& connection = connections[book];
+        connection.bytes.swap(connection.timed);
+        connection.sentBytes = 0;
+        connection.commands = connection.bytes.size() / commandFrameBytes;
+        connection.answered = 0;
+        connection.tally = &tallies[book];
+        total += connection.commands;
+    }
+    pump(window);
+}
+
+void LoopbackClients::pump(std::size_t window) {
+    while (answered < total) {
+        if (failed && failed()) {
+            throw std::runtime_error("loopback: the engine failed");
+        }
+        for (Connection& connection : connections) {
+            const std::size_t allowed = std::min(connection.commands, connection.answered + window) * commandFrameBytes;
+            if (connection.sentBytes < allowed) {
+                const std::optional<std::size_t> taken = connection.link.socket.send(
+                    std::span<const std::byte>(connection.bytes).subspan(connection.sentBytes, allowed - connection.sentBytes));
+                if (!taken) {
+                    throw std::runtime_error("loopback: a connection closed while it was being sent to");
+                }
+                connection.sentBytes += *taken;
+            }
+            receive(connection);
+        }
+    }
+}
+
+void LoopbackClients::receive(Connection& connection) {
+    std::array<std::byte, 64 * 1024> into;
+    const network::ReadResult read = connection.link.socket.receive(into);
+    if (read.status != network::ReadStatus::OPEN) {
+        throw std::runtime_error("loopback: a connection closed with commands unanswered");
+    }
+    if (read.bytes != 0) {
+        connection.link.reader.feed(std::span<const std::byte>(into).first(read.bytes));
+    }
+    for (network::FrameResult result = connection.link.reader.next(); std::holds_alternative<network::Frame>(result);
+         result = connection.link.reader.next()) {
+        const network::Frame& frame = std::get<network::Frame>(result);
+        const std::optional<network::EventFrame> event = network::decodeEvent(frame);
+        if (!event) {
+            throw std::runtime_error("loopback: an answer was not an event");
+        }
+        countResponse(event->event, *connection.tally);
+        if (frame.last) {
+            ++connection.answered;
+            ++answered;
+        }
+    }
+}
+
+void LoopbackClients::finish() {
+    // Each connection half-closes and reads to its end, so every answer is in before a stop.
+    for (Connection& connection : connections) {
+        if (!connection.link.socket.valid()) {
+            continue;  // taken
+        }
+        connection.link.socket.shutdownSend();
+        std::array<std::byte, 1024> into;
+        while (!(failed && failed()) && connection.link.socket.receive(into).status == network::ReadStatus::OPEN) {
+        }
+    }
+}
+
+LoopbackConnection LoopbackClients::take(std::size_t book) {
+    return std::move(connections[book].link);
+}
 
 GatewayRun::GatewayRun(const std::vector<Workload>& runWorkloads, std::size_t commandWindow)
     : workloads(&runWorkloads),
@@ -642,8 +794,7 @@ GatewayRun::GatewayRun(const std::vector<Workload>& runWorkloads, std::size_t co
       commands(runtime::defaultCommandRingSlots),
       responses(runtime::defaultResponseRingSlots),
       sockets(std::make_unique<network::PollSocketSet>()),
-      connections(runWorkloads.size()),
-      counted(runWorkloads.size()),
+      clients(runWorkloads, [this] { return gatewayFailed.load(std::memory_order_seq_cst); }),
       matching((commandWindow == 0 ? throw std::invalid_argument("a gateway run needs a window of at least 1") : runWorkloads), doorbell,
                {runtime::RingPair{&commands, &responses}}) {
     gateway = std::thread([this] {
@@ -657,9 +808,7 @@ GatewayRun::GatewayRun(const std::vector<Workload>& runWorkloads, std::size_t co
         }
     });
     try {
-        for (std::uint32_t book = 0; book < connections.size(); ++book) {
-            connect(book);
-        }
+        clients.connect(sockets->port());
     } catch (...) {
         try {
             stopThreads();
@@ -667,44 +816,6 @@ GatewayRun::GatewayRun(const std::vector<Workload>& runWorkloads, std::size_t co
         }
         finished = true;
         throw;
-    }
-}
-
-void GatewayRun::connect(std::uint32_t book) {
-    Connection& connection = connections[book];
-    const replay::Symbol symbol = instrumentSymbol(book);
-    const std::size_t count = (*workloads)[book].timedCount();
-    connection.commands = count;
-    total += count;
-    connection.bytes.resize(count * commandFrameBytes);
-    for (std::size_t i = 0; i < count; ++i) {
-        const std::span<std::byte> frame = std::span<std::byte>(connection.bytes).subspan(i * commandFrameBytes, commandFrameBytes);
-        network::encodeCommand(i, symbol, matching.books().commandOf(book, i), frame);
-        // Every frame built is sent, or run throws, so it is counted here, untimed.
-        countCommand(matching.books().commandOf(book, i), {}, counted[book]);
-    }
-
-    connection.socket = network::TcpSocket::connectLoopback(sockets->port());
-    connection.socket.setNonBlocking();
-    std::array<std::byte, 64> hello{};
-    sendAll(connection.socket, std::span<const std::byte>(hello).first(network::encodeHello(0, network::wireVersion, hello)));
-    for (;;) {  // the Welcome, so the connection has been taken on before anything is timed
-        if (gatewayFailed.load(std::memory_order_seq_cst)) {
-            throw std::runtime_error("gateway: the gateway thread failed before a Welcome");
-        }
-        std::array<std::byte, 64> into{};
-        const network::ReadResult read = connection.socket.receive(into);
-        if (read.status != network::ReadStatus::OPEN) {
-            throw std::runtime_error("gateway: a connection closed before its Welcome");
-        }
-        connection.reader.feed(std::span<const std::byte>(into).first(read.bytes));
-        const network::FrameResult result = connection.reader.next();
-        if (const network::Frame* frame = std::get_if<network::Frame>(&result)) {
-            if (frame->type != network::FrameType::WELCOME) {
-                throw std::runtime_error("gateway: a Hello was not answered with a Welcome");
-            }
-            return;
-        }
     }
 }
 
@@ -740,51 +851,8 @@ GatewayRun::~GatewayRun() {
     }
 }
 
-void GatewayRun::receive(std::size_t index) {
-    Connection& connection = connections[index];
-    std::array<std::byte, 64 * 1024> into;
-    const network::ReadResult read = connection.socket.receive(into);
-    if (read.status != network::ReadStatus::OPEN) {
-        throw std::runtime_error("gateway: a connection closed with commands unanswered");
-    }
-    if (read.bytes == 0) {
-        return;
-    }
-    connection.reader.feed(std::span<const std::byte>(into).first(read.bytes));
-    for (network::FrameResult result = connection.reader.next(); std::holds_alternative<network::Frame>(result);
-         result = connection.reader.next()) {
-        const network::Frame& frame = std::get<network::Frame>(result);
-        const std::optional<network::EventFrame> event = network::decodeEvent(frame);
-        if (!event) {
-            throw std::runtime_error("gateway: an answer was not an event");
-        }
-        countResponse(event->event, counted[index]);
-        if (frame.last) {
-            ++connection.answered;
-            ++answered;
-        }
-    }
-}
-
 void GatewayRun::run() {
-    while (answered < total) {
-        if (gatewayFailed.load(std::memory_order_seq_cst)) {
-            throw std::runtime_error("gateway: the gateway thread failed");
-        }
-        for (std::size_t index = 0; index < connections.size(); ++index) {
-            Connection& connection = connections[index];
-            const std::size_t allowed = std::min(connection.commands, connection.answered + window) * commandFrameBytes;
-            if (connection.sentBytes < allowed) {
-                const std::optional<std::size_t> taken =
-                    connection.socket.send(std::span<const std::byte>(connection.bytes).subspan(connection.sentBytes, allowed - connection.sentBytes));
-                if (!taken) {
-                    throw std::runtime_error("gateway: a connection closed while it was being sent to");
-                }
-                connection.sentBytes += *taken;
-            }
-            receive(index);
-        }
-    }
+    clients.run(window);
 }
 
 void GatewayRun::finish() {
@@ -792,36 +860,90 @@ void GatewayRun::finish() {
         return;
     }
     finished = true;
-    // Each connection half-closes and reads to its end, so every answer is in before the stop.
-    for (Connection& connection : connections) {
-        connection.socket.shutdownSend();
-        std::array<std::byte, 1024> into;
-        while (!gatewayFailed.load(std::memory_order_seq_cst) && connection.socket.receive(into).status == network::ReadStatus::OPEN) {
-        }
-    }
+    clients.finish();
     stopThreads();
 }
 
 std::vector<WorkloadOutcome> GatewayRun::outcomes() const {
-    return matching.withFinalShapes(counted);
+    return matching.withFinalShapes(clients.counted());
 }
 
 void GatewayRun::check() const {
     requireOutcomes(outcomes(), *workloads, BenchmarkKind::GATEWAY);
 }
 
+EngineRun::EngineRun(const std::vector<Workload>& runWorkloads, std::size_t commandWindow, const std::filesystem::path& enginePath,
+                     std::size_t shards)
+    : workloads(&runWorkloads),
+      window(commandWindow == 0 ? throw std::invalid_argument("an engine run needs a window of at least 1") : commandWindow),
+      engine(std::make_unique<EngineProcess>(enginePath, runWorkloads, EngineOptions{shards, {}})),
+      clients(runWorkloads, {}) {
+    clients.connect(engine->port());
+    clients.preload(window);
+}
+
+EngineRun::~EngineRun() = default;
+
+void EngineRun::run() {
+    clients.run(window);
+}
+
+void EngineRun::finish() {
+    if (finished) {
+        return;
+    }
+    finished = true;
+    clients.finish();
+    engine->stop();
+}
+
+WorkloadOutcome withPredictedShape(WorkloadOutcome counted, const Workload& workload) {
+    counted.finalActiveOrders = workload.expected.finalActiveOrders;
+    counted.finalPriceLevels = workload.expected.finalPriceLevels;
+    counted.finalPendingStops = workload.expected.finalPendingStops;
+    return counted;
+}
+
+std::vector<WorkloadOutcome> EngineRun::outcomes() const {
+    std::vector<WorkloadOutcome> counted = clients.counted();
+    for (std::size_t i = 0; i < counted.size(); ++i) {
+        counted[i] = withPredictedShape(counted[i], (*workloads)[i]);
+    }
+    return counted;
+}
+
+void EngineRun::check() const {
+    requireOutcomes(outcomes(), *workloads, BenchmarkKind::ENGINE);
+}
+
 Measurement runInstrumentsOnce(const std::vector<Workload>& workloads, BenchmarkKind kind, std::size_t window) {
+    RunSettings settings;
+    settings.window = window;
+    return runInstrumentsOnce(workloads, kind, settings);
+}
+
+Measurement runInstrumentsOnce(const std::vector<Workload>& workloads, BenchmarkKind kind, const RunSettings& settings) {
     Measurement measurement;
     std::vector<WorkloadOutcome> outcomes;
-    if (kind == BenchmarkKind::GATEWAY) {
-        GatewayRun run(workloads, window);
+    if (kind == BenchmarkKind::ENGINE) {
+        EngineRun run(workloads, settings.window, settings.engine, settings.shards);
         const Clock::time_point start = Clock::now();
         run.run();
         measurement.elapsedNanoseconds = nanosecondsBetween(start, Clock::now());
         run.finish();
         run.check();
         outcomes = run.outcomes();
-        measurement.window = window;
+        measurement.window = settings.window;
+        measurement.shards = settings.shards;
+    } else if (kind == BenchmarkKind::GATEWAY) {
+        GatewayRun run(workloads, settings.window);
+        const Clock::time_point start = Clock::now();
+        run.run();
+        measurement.elapsedNanoseconds = nanosecondsBetween(start, Clock::now());
+        run.finish();
+        run.check();
+        outcomes = run.outcomes();
+        measurement.window = settings.window;
     } else if (kind == BenchmarkKind::SHARD) {
         ShardRun run(workloads);
         const Clock::time_point start = Clock::now();
@@ -852,7 +974,7 @@ Measurement runInstrumentsOnce(const std::vector<Workload>& workloads, Benchmark
 
 std::vector<Measurement> runInstrumentsRepeated(const std::vector<Workload>& workloads, BenchmarkKind kind,
                                                 const RunSettings& settings) {
-    return repeated(settings, [&workloads, kind, &settings] { return runInstrumentsOnce(workloads, kind, settings.window); });
+    return repeated(settings, [&workloads, kind, &settings] { return runInstrumentsOnce(workloads, kind, settings); });
 }
 
 Measurement runOnce(const Workload& workload, BenchmarkKind kind) {
