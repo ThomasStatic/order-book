@@ -288,7 +288,18 @@ void testASecondStopForcesIt() {
     // What the engine did, for a failure to report.
     const auto whatHappened = [&] {
         const bool running = child.stillRunningAfter(0ms);
-        const std::string ending = running ? std::string("still runs") : described(child.wait(1s));
+        std::string ending = running ? std::string("still runs") : described(child.wait(1s));
+        if (!running) {
+            // What reached the client: every answer, then the end, or a reset part way.
+            std::uint64_t answered = 0;
+            std::vector<std::byte> buffer(64 * 1024);
+            ReadResult read = client.receive(buffer);
+            for (; read.status == ReadStatus::OPEN; read = client.receive(buffer)) {
+                answered += read.bytes;
+            }
+            ending += ", and the client then read " + std::to_string(answered) + " bytes of answers before the connection " +
+                      (read.status == ReadStatus::ENDED ? "ended" : "failed");
+        }
         return "the client sent " + std::to_string(sent) + " bytes" + (lost ? " and lost its connection" : "") +
                ", and the engine " + ending + ", with stdout:\n" + child.standardOutput() + "\nand stderr:\n" + child.standardError();
     };
