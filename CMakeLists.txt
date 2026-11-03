@@ -1176,14 +1176,16 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
                     --noise-seconds 0 --allow-unoptimized --out-dir ${CMAKE_CURRENT_BINARY_DIR}/latency-smoke-handoff)
         set_tests_properties(latency_cli_smoke_handoff PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
         # The shipped engine as a child on port 0: closed-loop, then the open-loop ladder with its
-        # two driver threads. Each run is shorter than a discard, so both keep every command.
+        # two driver threads, with every command kept. The ladder's rates come from the capacity
+        # its own build measures, so a sanitizer build's 10% row is slow: it is kept small, with
+        # no warm-up, since GCC ASan+UBSan Debug took 190 s of 300 at 500 commands and one.
         add_test(NAME latency_cli_smoke_round_trip
             COMMAND order_book_latency_benchmarks --interval round-trip --engine $<TARGET_FILE:order_book_engine>
                     --workload small-book --commands 500 --runs 2 --warmup 1 --discard-seconds 0 --noise-seconds 0
                     --allow-unoptimized --out-dir ${CMAKE_CURRENT_BINARY_DIR}/latency-smoke-round-trip)
         add_test(NAME latency_cli_smoke_round_trip_response
             COMMAND order_book_latency_benchmarks --interval round-trip --engine $<TARGET_FILE:order_book_engine>
-                    --workload small-book --commands 500 --runs 2 --warmup 1 --time response --discard-seconds 0
+                    --workload small-book --commands 300 --runs 2 --warmup 0 --time response --discard-seconds 0
                     --noise-seconds 0 --allow-unoptimized --out-dir ${CMAKE_CURRENT_BINARY_DIR}/latency-smoke-round-trip-response)
         set_tests_properties(latency_cli_smoke_round_trip latency_cli_smoke_round_trip_response PROPERTIES
             LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
