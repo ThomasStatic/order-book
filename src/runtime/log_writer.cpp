@@ -1,5 +1,6 @@
 #include "order_book/runtime/log_writer.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -8,47 +9,24 @@
 
 namespace order_book::runtime {
 
-    namespace {
-        replay::LogHeader headerOf(const InstrumentDirectory& directory, std::uint32_t shard, std::uint64_t firstPosition) {
-            replay::LogHeader header;
-            header.engineMajor = ORDER_BOOK_VERSION_MAJOR;
-            header.engineMinor = ORDER_BOOK_VERSION_MINOR;
-            header.enginePatch = ORDER_BOOK_VERSION_PATCH;
-            header.firstPosition = firstPosition;
-            header.shardCount = directory.shardCount();
-            header.shardIndex = shard;
-            for (const Instrument& instrument : directory.onShard(shard)) {
-                header.symbols.push_back(instrument.symbol);  // a shard's slots are in symbol order
-            }
-            return header;
-        }
-    }  // namespace
-
-    LogWriter::LogWriter(LogStorage& storage, const InstrumentDirectory& directory, std::uint32_t shardNumber, Durability durability,
-                         Ring<LogEntry>& logRing, DurablePosition& durablePosition, std::uint64_t firstPosition)
-        : ring(logRing),
+    LogWriter::LogWriter(Housekeeping& maker, std::uint32_t shardNumber, Ring<LogEntry>& logRing, DurablePosition& durablePosition,
+                         std::uint64_t firstPosition)
+        : housekeeping(maker),
+          ring(logRing),
           durable(durablePosition),
           shard(shardNumber),
-          name(logFileName(shardNumber, firstPosition)),
+          symbols(maker.shape(shardNumber).header.symbols),
           buffer(mostRecordsPerWrite * replay::logRecordBytes),
           next(firstPosition) {
-        const replay::LogHeader header = headerOf(directory, shard, firstPosition);
-        symbols = header.symbols;
-        const std::vector<std::byte> encoded = replay::encodeLogHeader(header);
-        checksum = replay::logChainSeed(encoded);
-        file = storage.create(name, durability);
-        try {
-            file->write(0, encoded);
-        } catch (...) {
-            // A writer that never started leaves no file, so the next start isn't refused on it.
-            file.reset();
-            try {
-                storage.remove(name);
-            } catch (...) {
-            }
-            throw;
-        }
-        offset = encoded.size();
+        begin(maker.first(shardNumber, firstPosition));
+    }
+
+    void LogWriter::begin(MadeLogFile&& made) {
+        name = std::move(made.name);
+        file = std::move(made.file);
+        room = made.records;
+        offset = made.headerBytes;
+        checksum = made.chainSeed;  // each file's records chain from its own header
     }
 
     // Writes with fixed buffers only, as the matching thread's abort does.
@@ -62,9 +40,29 @@ namespace order_book::runtime {
         if (finished) {
             return 0;
         }
+        if (!file) {
+            // The last file is full and closed, so a STOP has nothing left to finish, and a
+            // record needs the next file.
+            if (ring.waiting(1) == 0) {
+                return 0;
+            }
+            if (ring.peek(0).control == ControlKind::STOP) {
+                ring.drain(1, [](const LogEntry&) {});
+                finished = true;
+                return 0;
+            }
+            std::optional<MadeLogFile> taken = housekeeping.takeNext(shard);
+            if (!taken) {
+                waiting = true;  // the drive is slow: the ring fills, and connections park
+                return 0;
+            }
+            waiting = false;
+            begin(std::move(*taken));
+        }
         std::size_t records = 0;
         bool stopping = false;
-        ring.drain(mostRecordsPerWrite, [&](const LogEntry& entry) {
+        const std::size_t limit = static_cast<std::size_t>(std::min<std::uint64_t>(mostRecordsPerWrite, room));
+        ring.drain(limit, [&](const LogEntry& entry) {
             if (entry.control == ControlKind::STOP) {
                 stopping = true;  // the matching thread's last
                 return;
@@ -79,13 +77,24 @@ namespace order_book::runtime {
                 const std::size_t bytes = records * replay::logRecordBytes;
                 file->write(offset, std::span<const std::byte>(buffer).first(bytes));
                 offset += bytes;
+                room -= records;
                 next += records;
                 durable.publish(next);
             }
-            if (stopping) {
+            if (room == 0) {
+                // Before any write to the next, so only the last file can have an unsynced tail.
                 file->flush();
-                file->cut(offset);
                 file->close();
+                file.reset();
+            }
+            if (stopping) {
+                if (file) {
+                    // A clean stop leaves no zero tail, which would read as a crash.
+                    file->cut(offset);
+                    file->flush();
+                    file->close();
+                    file.reset();
+                }
                 finished = true;
             }
         } catch (const std::exception& failure) {
@@ -102,6 +111,15 @@ namespace order_book::runtime {
         Clock::time_point idleSince;
         while (!finished) {
             if (pass() != 0 || finished) {
+                idle = false;
+                continue;
+            }
+            if (waiting) {
+                if (!housekeeping.waitForNext(shard)) {
+                    // Housekeeping stopped first, which only an engine abandoning its threads
+                    // does: nothing can come, so yield rather than spin.
+                    std::this_thread::yield();
+                }
                 idle = false;
                 continue;
             }

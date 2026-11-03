@@ -307,7 +307,7 @@ namespace order_book::engine_testing {
                         const ShardActor& actor = *rig.shards[shard];
                         check(actor.writer->stopped(), "a stopped shard's log writer finishes");
                         const std::optional<InMemoryLogStorage::File> file = rig.logStorage.file(actor.writer->fileName());
-                        check(file && file->closed && file->flushes == 1, "flushing and closing its file");
+                        check(file && file->closed && file->flushes == 2, "flushing and closing its file, flushed once already when it was made");
                         check(!actor.shard.checkInvariants(), "and the shard, durable position included, is sound");
                     }
                     follower->follow(rig);

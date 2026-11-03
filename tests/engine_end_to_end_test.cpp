@@ -83,11 +83,11 @@ std::string describe(const std::vector<std::string>& arguments, const Run& resul
 }
 
 // One engine on port 0 with these instruments, stopped by closing its stdin, logging to a log
-// directory of its own at process durability unless told otherwise.
+// directory of its own at process durability and in 1 MiB files unless told otherwise.
 class Engine {
 public:
     Engine(std::string named, const std::set<std::string>& symbols, std::uint32_t shards, std::uint32_t gatewayThreads = 1,
-           const std::string& durability = "process")
+           const std::string& durability = "process", const std::string& logFileSize = "1M")
         : name(std::move(named)), list(fs::temp_directory_path() / ("order_book_end_to_end_" + std::to_string(++started) + ".csv")) {
         logs = fs::temp_directory_path() / ("order_book_end_to_end_logs_" + std::to_string(started));
         {
@@ -101,7 +101,8 @@ public:
         fs::create_directories(logs);
         child.emplace(engine, std::vector<std::string>{"--instruments", list.string(), "--shards", std::to_string(shards), "--listen",
                                                        "127.0.0.1:0", "--gateway-threads", std::to_string(gatewayThreads), "--log-dir",
-                                                       logs.string(), "--durability", durability, "--stop-on-stdin-close"});
+                                                       logs.string(), "--durability", durability, "--log-file-size", logFileSize,
+                                                       "--stop-on-stdin-close"});
         const std::optional<std::string> line = child->readLine(30s);
         expect(line && line->starts_with("listening 127.0.0.1:"),
                name + ": the engine said where it listens, with stderr:\n" + child->standardError());
@@ -235,6 +236,23 @@ void testManyInstrumentsAtOneAndThreeShards() {
         expectSendMatchesReplay(running, file, std::nullopt);
         running.stop();
         expectLogReplaysTo(running, {"replay", file.string(), "--book"});
+    }
+    // On files of 1 KiB, about 20 records each, so a shard's log is many files, which replay of
+    // the directory reads in order, and the clean stop leaves no unused or temporary file.
+    {
+        Engine running("seven instruments on 2 shards, in 1 KiB files", symbolsIn(file), 2, 1, "process", "1K");
+        expectSendMatchesReplay(running, file, std::nullopt);
+        running.stop();
+        expectLogReplaysTo(running, {"replay", file.string(), "--book"});
+        std::size_t files = 0;
+        for (const fs::directory_entry& entry : fs::directory_iterator(running.logs)) {
+            const std::string logName = entry.path().filename().string();
+            expect(logName.ends_with(".oblog"), running.name + ": only log files are left, not " + logName);
+            const std::uintmax_t size = fs::file_size(entry.path());
+            expect(size <= 1024, running.name + ": " + logName + " is no larger than its file size, at " + std::to_string(size));
+            ++files;
+        }
+        expect(files > 20, running.name + ": the log rolled across many files, " + std::to_string(files));
     }
     // The one run at machine durability, every write through to the drive.
     Engine running("seven instruments on 3 shards and 2 gateway threads", symbolsIn(file), 3, 2, "machine");

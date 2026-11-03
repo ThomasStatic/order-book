@@ -197,6 +197,10 @@ _Avoid_: truncated log, corrupt tail
 One piece of a shard's command log, of a fixed size. Once closed it is complete and safe on disk, and it is what a checkpoint is rolled forward from.
 _Avoid_: segment, journal file
 
+**Housekeeping thread**:
+The engine's one thread that makes each shard's next log file before it is needed, so no matching thread ever waits for one, and a log writer only when the drive is slow.
+_Avoid_: file manager, allocator thread
+
 **Clean stop**:
 A stop that answers everything queued, ends the log, and leaves every book's checkpoint at its log's end, so recovery has nothing to replay. It is the only stop after which placement may change.
 _Avoid_: graceful shutdown, drain

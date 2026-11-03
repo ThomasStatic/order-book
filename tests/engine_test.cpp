@@ -29,6 +29,7 @@
 #include "order_book/order_book.hpp"
 #include "order_book/runtime/engine_settings.hpp"
 #include "order_book/runtime/instruments.hpp"
+#include "order_book/runtime/log_files.hpp"
 #include "order_book/runtime/thread_placement.hpp"
 
 // runEngine in this process, on a thread of its own, with a test's StopSource and real loopback
@@ -438,6 +439,51 @@ void testALoggedRun() {
     std::filesystem::remove(list);
 }
 
+// A shard's log rolls across files of --log-file-size, each starting where the last ended, every
+// one but the last full, and a clean stop leaves no unused next file and no temporary one.
+void testALoggedRunAcrossFiles() {
+    const std::filesystem::path list = writeList("logged_files", "symbol,shard,orders,stops,levels\nAAPL,0,,,\nMSFT,1,,,\n");
+    const std::filesystem::path logs = logDirectory("logged_files");
+    runtime::EngineSettings settings = settingsFor(list, 2);
+    settings.logDir = logs.string();
+    const runtime::InstrumentDirectory directory(
+        {runtime::Instrument{*Symbol::parse("AAPL"), 0, std::nullopt, std::nullopt, std::nullopt},
+         runtime::Instrument{*Symbol::parse("MSFT"), 1, std::nullopt, std::nullopt, std::nullopt}},
+        2);
+    settings.logFileSize = static_cast<std::size_t>(runtime::leastLogFileBytes(directory)) + replay::logRecordBytes;  // two records
+    {
+        Run run(settings);
+        Bytes stream = helloFrame();
+        for (const Bytes& more : {commandsFor("MSFT", 5), commandsFor("AAPL", 4)}) {
+            stream.insert(stream.end(), more.begin(), more.end());
+        }
+        expect(talk(run.port(), stream).size() == 9, "every command was answered");
+        run.stop.request();
+        expect(run.finish() == EngineExit::CLEAN_STOP, "a run across files stops cleanly");
+        const std::string report = run.report.text();
+        expect(report.find("shard 0: log-end=4 result-growths=0\nshard 1: log-end=5 result-growths=0\n") != std::string::npos,
+               "each shard's line gives where its log ends:\n" + report);
+    }
+    const std::vector<std::string> expected{"log-0000-00000000000000000000.oblog", "log-0000-00000000000000000002.oblog",
+                                            "log-0001-00000000000000000000.oblog", "log-0001-00000000000000000002.oblog",
+                                            "log-0001-00000000000000000004.oblog"};
+    expect(filesIn(logs) == expected, "files of two records, and no unused next file, which shard 0's full last file had");
+    for (const auto& [name, symbol, first, count] :
+         {std::tuple{expected[0], "AAPL", 0U, 2U}, std::tuple{expected[1], "AAPL", 2U, 2U}, std::tuple{expected[2], "MSFT", 0U, 2U},
+          std::tuple{expected[3], "MSFT", 2U, 2U}, std::tuple{expected[4], "MSFT", 4U, 1U}}) {
+        const replay::ReplayInput input = replay::readCommandLogFile(logs / name);
+        expect(!input.error, name + " reads to its end, with no torn tail");
+        expect(!input.records.empty() && input.records.front().sequence == first + 1, name + " starts where the last file ended");
+        expect(input.records.size() == count, name + " holds its share of its shard's commands");
+        for (const replay::ReplayRecord& record : input.records) {
+            expect(record.symbol == *Symbol::parse(symbol) && record.sequence > first && record.sequence <= first + count,
+                   name + " holds its own positions, of its shard's instruments");
+        }
+    }
+    std::filesystem::remove_all(logs);
+    std::filesystem::remove(list);
+}
+
 // Every log setting that can't run refuses the start, and a start refused or stopped after its
 // logs were made leaves the directory as it found it.
 void testLogRefusals() {
@@ -450,6 +496,25 @@ void testLogRefusals() {
     settings.logDir = logs.string();
     settings.logRing = 1000;
     expect(refusedWith(settings, "--log-ring must be a power of two, not 1000") == EngineExit::START_REFUSED, "the log ring is a ring");
+    settings.logRing = runtime::defaultLogRingRecords;
+    const runtime::InstrumentDirectory directory(
+        {runtime::Instrument{*Symbol::parse("AAPL"), 0, std::nullopt, std::nullopt, std::nullopt},
+         runtime::Instrument{*Symbol::parse("MSFT"), 1, std::nullopt, std::nullopt, std::nullopt}},
+        2);
+    const std::uint64_t least = runtime::leastLogFileBytes(directory);
+    settings.logFileSize = static_cast<std::size_t>(least - 1);
+    expect(refusedWith(settings, "--log-file-size must be at least " + std::to_string(least) +
+                                     " bytes, the largest shard's header and one record, not " + std::to_string(least - 1)) ==
+               EngineExit::START_REFUSED,
+           "a log file must hold a record");
+    expect(filesIn(logs).empty(), "and that refusal makes no file");
+    settings.logFileSize = runtime::defaultLogFileBytes;
+    // A file being made when an engine crashed is a log from an earlier run too.
+    std::ofstream(logs / "log-0000-00000000000000000002.oblog.tmp").put('x');
+    expect(refusedWith(settings, logs.string() + " holds log-0000-00000000000000000002.oblog.tmp, a log from an earlier run, which this "
+                                                 "build can't recover, so give a directory with no log in it") == EngineExit::START_REFUSED,
+           "a temporary log file refuses the start");
+    std::filesystem::remove(logs / "log-0000-00000000000000000002.oblog.tmp");
     settings = settingsFor(list, 2);
     settings.pinLogWriters = {0, 0};
     expect(refusedWith(settings, "--pin-log-writers needs --log-dir, since there are no log writers without a log") ==
@@ -561,6 +626,7 @@ void testSeveralGatewayThreads() {
 
 int main() {
     testALoggedRun();
+    testALoggedRunAcrossFiles();
     testLogRefusals();
     testACleanStop();
     testAStopBeforeReady();

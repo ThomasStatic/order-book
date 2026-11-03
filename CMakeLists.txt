@@ -188,6 +188,7 @@ add_library(order_book_runtime STATIC
     src/runtime/book_set.cpp
     src/runtime/engine_settings.cpp
     src/runtime/instruments.cpp
+    src/runtime/log_files.cpp
     src/runtime/log_storage.cpp
     src/runtime/log_writer.cpp
     src/runtime/matching_loop.cpp
@@ -578,6 +579,8 @@ if(BUILD_TESTING)
     order_book_enable_warnings(log_writer_tests)
     order_book_enable_sanitizers(log_writer_tests)
     add_test(NAME log_writer_tests COMMAND log_writer_tests)
+    # One case runs a log writer and housekeeping on threads of their own.
+    set_tests_properties(log_writer_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
     # A failed log write or flush must abort, naming the shard and file.
     foreach(failing write flush)
         add_test(NAME log_writer_abort_${failing}
@@ -585,6 +588,11 @@ if(BUILD_TESTING)
                     "-DOUTPUT_REGEX=order book runtime: shard 0 log writer: log-0000-0+[.]oblog: cannot ${failing} "
                     -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
     endforeach()
+    # So must a next log file that can't be made, while the current file still has room.
+    add_test(NAME log_writer_abort_next_file
+        COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:log_writer_tests> -DARGS=abort-next-file
+                "-DOUTPUT_REGEX=order book runtime: housekeeping: cannot make shard 0's next log file: cannot create log-0000-0+[1-9][0-9]*[.]oblog[.]tmp"
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
 
     add_executable(matching_abort_tests
         tests/matching_abort_test.cpp

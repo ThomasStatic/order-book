@@ -37,6 +37,8 @@ namespace order_book::engine_testing {
         constexpr std::uint64_t interleaverStream = 0x9E3779B97F4A7C15ULL;
         constexpr std::uint64_t faultStream = 0xC2B2AE3D27D4EB4FULL;
         constexpr std::uint64_t logStream = 0x165667B19E3779F9ULL;
+        // Records in the log file of the shard with the most symbols, so a run rolls across many.
+        constexpr std::uint64_t recordsPerSmallestFile = 25;
 
         Symbol symbolOf(std::size_t instrument) {
             return *Symbol::parse("I" + std::to_string(instrument));
@@ -97,8 +99,8 @@ namespace order_book::engine_testing {
         // One shard's log: its ring, as the matching thread fills it, its durable position, and
         // its log writer on the run's in-memory storage.
         struct ShardLog {
-            ShardLog(runtime::LogStorage& storage, const runtime::InstrumentDirectory& directory, std::uint32_t shard, std::size_t records)
-                : ring(records), writer(storage, directory, shard, runtime::Durability::MACHINE, ring, durable) {}
+            ShardLog(runtime::Housekeeping& housekeeping, std::uint32_t shard, std::size_t records)
+                : ring(records), writer(housekeeping, shard, ring, durable) {}
 
             runtime::Ring<runtime::LogEntry> ring;
             runtime::DurablePosition durable;
@@ -115,10 +117,14 @@ namespace order_book::engine_testing {
 
         class Run {
         public:
-            explicit Run(const EngineSeedConfig& seedConfig) : config(seedConfig), directory(listOf(seedConfig), seedConfig.shards) {
+            explicit Run(const EngineSeedConfig& seedConfig)
+                : config(seedConfig),
+                  directory(listOf(seedConfig), seedConfig.shards),
+                  housekeeping(storage, directory, runtime::Durability::MACHINE,
+                               runtime::leastLogFileBytes(directory) + (recordsPerSmallestFile - 1) * replay::logRecordBytes) {
                 for (std::uint32_t shard = 0; shard < config.shards; ++shard) {
                     shards.push_back(std::make_unique<runtime::Shard>(directory, shard, config.shardCapacity));
-                    logs.push_back(std::make_unique<ShardLog>(storage, directory, shard, config.logRingRecords));
+                    logs.push_back(std::make_unique<ShardLog>(housekeeping, shard, config.logRingRecords));
                     shards.back()->watchDurablePosition(logs.back()->durable);
                 }
                 instruments.reserve(config.instruments);
@@ -219,10 +225,21 @@ namespace order_book::engine_testing {
                 return runOnShard(*accepted, instrument, expected, index, stats);
             }
 
+            // One pass of a log writer, playing the housekeeping thread first if it waits for its
+            // next file.
+            std::size_t writeLog(ShardLog& shardLog) {
+                const std::size_t written = shardLog.writer.pass();
+                if (written != 0 || !shardLog.writer.waitingForFile()) {
+                    return written;
+                }
+                housekeeping.pass();
+                return shardLog.writer.pass();
+            }
+
             // A LOG line: each shard's log writer does one write.
             void writeLogs(EngineStats& stats) {
                 for (const std::unique_ptr<ShardLog>& shardLog : logs) {
-                    const std::size_t written = shardLog->writer.pass();
+                    const std::size_t written = writeLog(*shardLog);
                     stats.logWrites += written != 0 ? 1 : 0;
                     stats.recordsLogged += written;
                 }
@@ -237,7 +254,7 @@ namespace order_book::engine_testing {
                 }
                 ShardLog& shardLog = *logs[accepted.location.shard];
                 while (!shardLog.ring.tryPush(runtime::LogEntry{accepted.command, accepted.location.slot, runtime::ControlKind::COMMAND})) {
-                    const std::size_t written = shardLog.writer.pass();
+                    const std::size_t written = writeLog(shardLog);
                     ++stats.logWrites;
                     stats.recordsLogged += written;
                 }
@@ -303,29 +320,55 @@ namespace order_book::engine_testing {
                 for (std::size_t shard = 0; shard < logs.size(); ++shard) {
                     ShardLog& shardLog = *logs[shard];
                     while (!shardLog.ring.tryPush(runtime::LogEntry::stop())) {
-                        stats.recordsLogged += shardLog.writer.pass();
+                        stats.recordsLogged += writeLog(shardLog);
                     }
                     while (!shardLog.writer.stopped()) {
-                        stats.recordsLogged += shardLog.writer.pass();
+                        stats.recordsLogged += writeLog(shardLog);
                     }
                     if (const std::optional<runtime::ShardViolation> violation = shards[shard]->checkInvariants()) {
                         return EngineFailure{index, "", "shard " + std::to_string(shard) + " after its log closed: " + violation->message};
                     }
                 }
+                // The next files no writer took, as a clean stop removes them.
+                housekeeping.removeUnused();
                 std::vector<replay::ReplayRecord> records;
-                for (std::size_t shard = 0; shard < logs.size(); ++shard) {
-                    const std::vector<std::byte> bytes = storage.read(logs[shard]->writer.fileName(), 0);
-                    std::istringstream input(std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()), std::ios::binary);
-                    replay::CommandLogReader reader(input);
-                    for (;;) {
-                        const replay::ReadResult read = reader.next();
-                        if (const auto* record = std::get_if<replay::ReplayRecord>(&read)) {
-                            records.push_back(*record);
-                        } else if (const auto* error = std::get_if<replay::ParseError>(&read)) {
-                            return EngineFailure{index, "", "shard " + std::to_string(shard) + "'s log doesn't read back: " + error->message};
-                        } else {
-                            break;
+                for (std::uint32_t shard = 0; shard < logs.size(); ++shard) {
+                    // Named for their first positions, 20 digits each, so they sort in order.
+                    const std::string prefix = runtime::logFileName(shard, 0).substr(0, 9);
+                    std::uint64_t position = 0;
+                    for (const std::string& name : storage.names()) {
+                        if (!name.starts_with(prefix)) {
+                            continue;
                         }
+                        ++stats.logFiles;
+                        const std::optional<runtime::InMemoryLogStorage::File> file = storage.file(name);
+                        if (!file->closed || file->bytes.size() != file->size) {
+                            return EngineFailure{index, "", name + " wasn't closed whole: " + std::to_string(file->bytes.size()) + " of " +
+                                                                std::to_string(file->size) + " bytes written"};
+                        }
+                        std::istringstream input(std::string(reinterpret_cast<const char*>(file->bytes.data()), file->bytes.size()),
+                                                 std::ios::binary);
+                        replay::CommandLogReader reader(input);
+                        std::uint64_t read = 0;
+                        for (;;) {
+                            const replay::ReadResult next = reader.next();
+                            if (const auto* record = std::get_if<replay::ReplayRecord>(&next)) {
+                                records.push_back(*record);
+                                ++read;
+                            } else if (const auto* error = std::get_if<replay::ParseError>(&next)) {
+                                return EngineFailure{index, "", name + " doesn't read back: " + error->message};
+                            } else {
+                                break;
+                            }
+                        }
+                        if (reader.header() == nullptr || reader.header()->firstPosition != position) {
+                            return EngineFailure{index, "", name + " doesn't start where the last file ended, " + std::to_string(position)};
+                        }
+                        position += read;
+                    }
+                    if (position != logs[shard]->writer.nextPosition()) {
+                        return EngineFailure{index, "", "shard " + std::to_string(shard) + "'s files end at " + std::to_string(position) +
+                                                            ", not its log's end, " + std::to_string(logs[shard]->writer.nextPosition())};
                     }
                 }
                 const std::vector<replay::InstrumentRecords> grouped = replay::groupBySymbol(records);
@@ -349,6 +392,7 @@ namespace order_book::engine_testing {
             EngineSeedConfig config;
             runtime::InstrumentDirectory directory;
             runtime::InMemoryLogStorage storage;
+            runtime::Housekeeping housekeeping;
             std::vector<std::unique_ptr<runtime::Shard>> shards;
             std::vector<std::unique_ptr<ShardLog>> logs;
             std::vector<Instrument> instruments;

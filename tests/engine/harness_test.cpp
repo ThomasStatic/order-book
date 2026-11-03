@@ -150,6 +150,7 @@ void testARunPassesAndExercisesEverything() {
     expect(result.stats.recordsLogged == result.stats.queued, "every queued command reached its shard's log");
     expect(result.stats.logWrites > 2 * smallRun().commands * smallRun().logWritePercent / 100 / 3,
            "in many writes, on LOG lines and full log rings");
+    expect(result.stats.logFiles > 4 * smallRun().shards, "across many log files on each shard, each starting where the last ended");
 }
 
 void testEverySpreadAndShardCountPasses() {

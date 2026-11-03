@@ -15,4 +15,8 @@ namespace order_book::runtime {
     // that can be unsafe at once.
     inline constexpr std::size_t defaultLogRingRecords = 65536;
 
+    // The most bytes one log file may take: its header and as many whole records as fit after
+    // it, 6.7M with a few symbols.
+    inline constexpr std::size_t defaultLogFileBytes = std::size_t{256} << 20;
+
 }  // namespace order_book::runtime

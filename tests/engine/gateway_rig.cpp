@@ -37,6 +37,9 @@ namespace order_book::engine_testing {
             threadSockets.push_back(memberSockets.back().get());
         }
         handOff = std::make_unique<ConnectionHandOff>(std::move(threadSockets));
+        if (log) {
+            housekeeping = std::make_unique<Housekeeping>(logStorage, directory, *log, defaultLogFileBytes);
+        }
         for (std::uint32_t number = 0; number < shardCount; ++number) {
             shards.push_back(std::make_unique<ShardActor>(directory, number, ringSlots, gatewayThreads));
             ShardActor& actor = *shards.back();
@@ -46,7 +49,7 @@ namespace order_book::engine_testing {
             }
             std::optional<LogLink> logLink;
             if (log) {
-                actor.writer.emplace(logStorage, directory, number, *log, actor.logRing, actor.durable);
+                actor.writer.emplace(*housekeeping, number, actor.logRing, actor.durable);
                 actor.shard.watchDurablePosition(actor.durable);
                 logLink = LogLink{&actor.logRing, &actor.writerBell};
             }
@@ -87,7 +90,15 @@ namespace order_book::engine_testing {
 
     std::size_t Rig::writeLog(std::uint32_t shard) {
         ShardActor& actor = *shards[shard];
-        return actor.writer ? actor.writer->pass() : 0;
+        if (!actor.writer) {
+            return 0;
+        }
+        const std::size_t written = actor.writer->pass();
+        if (written == 0 && actor.writer->waitingForFile()) {
+            housekeeping->pass();  // the housekeeping thread, played here
+            return actor.writer->pass();
+        }
+        return written;
     }
 
     void Rig::settle() {

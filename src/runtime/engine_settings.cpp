@@ -14,7 +14,7 @@ namespace order_book::runtime {
             "                         [--capacity-orders N] [--capacity-stops N] [--capacity-levels N]\n"
             "                         [--max-connections N] [--gateway-threads M] [--high-water-mark SIZE] [--hard-limit SIZE]\n"
             "                         [--stop-grace TIME] [--stop-on-stdin-close]\n"
-            "                         [--log-dir DIR] [--durability machine|process] [--log-ring RECORDS]\n"
+            "                         [--log-dir DIR] [--durability machine|process] [--log-file-size SIZE] [--log-ring RECORDS]\n"
             "                         [--pin-matching CORES] [--pin-gateway CORES] [--pin-log-writers CORES]\n"
             "                         [--thread-priority normal|high]\n"
             "       order_book_engine --help\n";
@@ -150,6 +150,7 @@ namespace order_book::runtime {
                                 : flag == "--max-connections" ? sizeFlag(settings.maxConnections)
                                 : flag == "--high-water-mark" ? sizeFlag(settings.highWaterMark)
                                 : flag == "--hard-limit"      ? sizeFlag(settings.hardLimit)
+                                : flag == "--log-file-size"   ? sizeFlag(settings.logFileSize)
                                 : flag == "--log-ring"        ? sizeFlag(settings.logRing)
                                                               : nullptr;
             const bool known = size != nullptr || flag == "--instruments" || flag == "--shards" || flag == "--gateway-threads" || flag == "--listen" ||
@@ -264,6 +265,7 @@ namespace order_book::runtime {
             line += " --log-dir " + settings.logDir;
         }
         line += settings.durability == Durability::MACHINE ? " --durability machine" : " --durability process";
+        line += " --log-file-size " + formatSize(settings.logFileSize);
         line += " --log-ring " + std::to_string(settings.logRing);
         if (!settings.pinMatching.empty()) {
             line += " --pin-matching " + formatCores(settings.pinMatching);

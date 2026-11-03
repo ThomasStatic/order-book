@@ -73,6 +73,7 @@ namespace order_book::engine_testing {
 
         runtime::InstrumentDirectory directory;
         runtime::InMemoryLogStorage logStorage;
+        std::unique_ptr<runtime::Housekeeping> housekeeping;  // with a log, on files of the default size
         network::InMemorySocketSet sockets;
         std::vector<std::unique_ptr<network::InMemorySocketSet>> memberSockets;
         std::vector<std::unique_ptr<ShardActor>> shards;

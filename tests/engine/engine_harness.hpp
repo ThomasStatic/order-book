@@ -91,6 +91,7 @@ namespace order_book::engine_testing {
         std::uint64_t witnessGrowths = 0;
         std::size_t logWrites = 0;         // LOG lines and full log rings that wrote anything
         std::size_t recordsLogged = 0;
+        std::size_t logFiles = 0;          // every shard's, the first included
     };
 
     struct EngineRunResult {
@@ -101,9 +102,12 @@ namespace order_book::engine_testing {
     };
 
     // Every queued command goes to its shard's log ring, as the matching thread sends it, and its
-    // log writer writes on LOG lines and whenever that ring is full. The run ends by stopping
-    // each log writer, then replaying each shard's log per instrument through ReplayEngine, which
-    // must give a book equal to the witness, and checking each Shard, durable position included.
+    // log writer writes on LOG lines and whenever that ring is full, on log files of 25 records
+    // for the shard with the most symbols, so each run rolls across many. The housekeeping thread
+    // is played whenever a writer waits for its next file. The run ends by stopping each log
+    // writer, then replaying each shard's files in order, each starting where the last ended, per
+    // instrument through ReplayEngine, which must give a book equal to the witness, and checking
+    // each Shard, durable position included.
     EngineRunResult runEngineSeed(const EngineSeedConfig& config);
 
 }  // namespace order_book::engine_testing

@@ -23,6 +23,7 @@
 #include "order_book/network/poll_socket_set.hpp"
 #include "order_book/runtime/abort_report.hpp"
 #include "order_book/runtime/instruments.hpp"
+#include "order_book/runtime/log_files.hpp"
 #include "order_book/runtime/log_storage.hpp"
 #include "order_book/runtime/log_writer.hpp"
 #include "order_book/runtime/matching_loop.hpp"
@@ -173,6 +174,11 @@ namespace order_book::network {
             // after a forced stop, whose engine is left to the process's exit.
             ~Engine() {
                 stop.onRequest({});
+                if (housekeeping && !listening) {
+                    // Before the release below, so a start that never became ready makes no next
+                    // file: nothing ran, so no log writer waits for one.
+                    housekeeping->stop();
+                }
                 // First, since a gateway thread that is ready waits for every shard to stop, and a
                 // shard for a marker from every gateway thread. Nothing else writes these rings.
                 for (std::size_t thread = 0; thread < gateways.size(); ++thread) {
@@ -194,6 +200,7 @@ namespace order_book::network {
                     }
                 }
                 joinLogWriters();
+                finishHousekeeping();
                 if (!listening && logStorage) {
                     for (const std::unique_ptr<ShardRuntime>& shard : shards) {
                         if (shard->logMade) {
@@ -215,6 +222,7 @@ namespace order_book::network {
             void runShard(std::uint32_t number);
             void runLogWriter(std::uint32_t number);
             void joinLogWriters();
+            void finishHousekeeping();
             void startGateways();
             void runGatewayThread(std::size_t thread, const GatewaySettings& gatewaySettings);
             void sendStopMarkers(std::size_t thread);
@@ -239,6 +247,8 @@ namespace order_book::network {
             std::ostream& diagnostics;
             std::unique_ptr<runtime::InstrumentDirectory> directory;
             std::unique_ptr<runtime::LogStorage> logStorage;  // with --log-dir
+            std::unique_ptr<runtime::Housekeeping> housekeeping;  // with --log-dir
+            std::thread housekeeper;  // once every shard is ready, unpinned, and running once released
             std::vector<std::unique_ptr<ShardRuntime>> shards;
             std::vector<std::unique_ptr<GatewayRuntime>> gateways;  // thread 0's sockets listen
             std::unique_ptr<ConnectionHandOff> handOff;
@@ -314,7 +324,7 @@ namespace order_book::network {
             std::optional<runtime::LogWriter> writer;
             try {
                 placeThisThread(settings.pinLogWriters, number, settings.threadPriority, "log writer " + std::to_string(number));
-                writer.emplace(*logStorage, *directory, number, settings.durability, *own.logRing, own.durable);
+                writer.emplace(*housekeeping, number, *own.logRing, own.durable);
                 own.logMade = true;
             } catch (const runtime::LogStorageError& error) {
                 own.writerReady.set_exception(std::make_exception_ptr(
@@ -348,6 +358,22 @@ namespace order_book::network {
                     shard->writerBell.ring();
                 }
                 shard->writerThread.join();
+            }
+        }
+
+        // Once every log writer has been joined, since one may wait for its next file. A clean
+        // stop deletes each next file no writer took, which a failure to delete only reports.
+        void Engine::finishHousekeeping() {
+            if (housekeeper.joinable()) {
+                housekeeping->stop();
+                housekeeper.join();
+            }
+            if (housekeeping) {
+                try {
+                    housekeeping->removeUnused();
+                } catch (const runtime::LogStorageError& error) {
+                    diagnostics << prefix << error.what() << std::endl;
+                }
             }
         }
 
@@ -421,7 +447,7 @@ namespace order_book::network {
                 std::vector<std::string> earlier;
                 for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(settings.logDir)) {
                     const std::string name = entry.path().filename().string();
-                    if (name.starts_with("log-") && name.ends_with(".oblog")) {
+                    if (name.starts_with("log-") && (name.ends_with(".oblog") || name.ends_with(".oblog.tmp"))) {
                         earlier.push_back(name);
                     }
                 }
@@ -430,7 +456,13 @@ namespace order_book::network {
                     throw Refusal{settings.logDir + " holds " + earlier.front() +
                                   ", a log from an earlier run, which this build can't recover, so give a directory with no log in it"};
                 }
+                if (const std::uint64_t least = runtime::leastLogFileBytes(*directory); settings.logFileSize < least) {
+                    throw Refusal{"--log-file-size must be at least " + std::to_string(least) +
+                                  " bytes, the largest shard's header and one record, not " + std::to_string(settings.logFileSize)};
+                }
                 logStorage = std::make_unique<runtime::FileLogStorage>(settings.logDir);
+                housekeeping =
+                    std::make_unique<runtime::Housekeeping>(*logStorage, *directory, settings.durability, settings.logFileSize);
             }
 
             std::vector<SocketSet*> threadSockets;
@@ -456,6 +488,16 @@ namespace order_book::network {
             });
 
             startShards();
+            if (housekeeping) {
+                // Made before ready, so a thread that can't start refuses it, but making nothing
+                // until listening is printed, as the gateway threads wait: before ready nothing
+                // needs a next file, and a start that ends first stops it before releasing it, so
+                // a refused start makes none.
+                housekeeper = std::thread([this] {
+                    gatewaysReleased.wait(false, std::memory_order_seq_cst);
+                    housekeeping->run();
+                });
+            }
             if (stop.requests() != 0) {
                 diagnostics << prefix << "stopped before ready" << std::endl;
                 return EngineExit::STOPPED_BEFORE_READY;
@@ -564,8 +606,9 @@ namespace order_book::network {
             for (const std::unique_ptr<ShardRuntime>& shard : shards) {
                 shard->thread.join();
             }
-            // Each has written the rest, flushed, cut, and closed its file by now, or is about to.
+            // Each has written the rest, cut, flushed, and closed its file by now, or is about to.
             joinLogWriters();
+            finishHousekeeping();
             writeStopReport();
             return EngineExit::CLEAN_STOP;
         }
@@ -587,6 +630,9 @@ namespace order_book::network {
                 if (shard->writerThread.joinable()) {
                     shard->writerThread.detach();
                 }
+            }
+            if (housekeeper.joinable()) {
+                housekeeper.detach();  // its next files stay, headers with no records, for recovery
             }
             return EngineExit::FORCED_STOP;
         }

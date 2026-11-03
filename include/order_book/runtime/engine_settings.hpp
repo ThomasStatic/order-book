@@ -47,6 +47,7 @@ namespace order_book::runtime {
         // and a restart loses every book.
         std::string logDir;
         Durability durability = Durability::MACHINE;
+        std::size_t logFileSize = defaultLogFileBytes;  // the most bytes per log file
         std::size_t logRing = defaultLogRingRecords;  // records per shard
         std::vector<std::uint32_t> pinMatching;    // a core per shard, in shard order; empty is off
         std::vector<std::uint32_t> pinGateway;     // a core per gateway thread; empty is off

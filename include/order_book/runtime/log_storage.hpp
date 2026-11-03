@@ -41,9 +41,16 @@ namespace order_book::runtime {
         virtual void write(std::uint64_t offset, std::span<const std::byte> bytes) = 0;
         // Everything written so far, onto the drive.
         virtual void flush() = 0;
+        // Makes the file size bytes long without writing them, so that what lies past the written
+        // part reads as zeros, which TORN_TAIL needs. Never shortens it.
+        virtual void extend(std::uint64_t size) = 0;
         // Drops everything from size on: a clean stop cuts the zero tail an extended file has.
         virtual void cut(std::uint64_t size) = 0;
         virtual void close() = 0;
+        // Gives the file a new name in its directory, never over an existing file, which throws
+        // with Kind::EXISTS, and returns once the new name survives a machine crash. Its
+        // messages name it by its new name from then on.
+        virtual void rename(const std::string& name) = 0;
     };
 
     class LogStorage {
@@ -51,7 +58,8 @@ namespace order_book::runtime {
         virtual ~LogStorage() = default;
 
         // A new file, never an existing one, which throws with Kind::EXISTS: old files are never
-        // reused, since their stale records still chain.
+        // reused, since their stale records still chain. Its name may not survive a machine
+        // crash until it is renamed.
         virtual std::unique_ptr<LogFile> create(const std::string& name, Durability durability) = 0;
         virtual void remove(const std::string& name) = 0;
         // Where a file is, for a message.
@@ -75,14 +83,18 @@ namespace order_book::runtime {
     };
 
     // Files held in memory, for tests, under one lock, so a test's thread may read them while a
-    // log writer's writes. It can fail a chosen write or flush, as a full or broken drive would.
+    // log writer's writes. It can fail a chosen create, write, or flush, as a full or broken
+    // drive would. An extended file costs nothing past what was written.
     class InMemoryLogStorage final : public LogStorage {
     public:
         struct File {
-            std::vector<std::byte> bytes;
+            std::vector<std::byte> bytes;  // up to the end of the last write; zeros follow, to size
+            std::uint64_t size = 0;
             Durability durability = Durability::MACHINE;
             std::size_t writes = 0;
             std::size_t flushes = 0;
+            std::size_t extends = 0;
+            std::size_t renames = 0;
             std::size_t cuts = 0;
             bool closed = false;
         };
@@ -93,12 +105,14 @@ namespace order_book::runtime {
 
         // A copy, or nothing for a file that isn't there.
         std::optional<File> file(const std::string& name) const;
-        // A file's bytes from offset on, which is how a test follows a file as it grows; empty
-        // for a file that isn't there or is no longer than that.
+        // The bytes written from offset on, which is how a test follows a file as it grows,
+        // leaving out an extended file's zeros; empty for a file that isn't there or holds no
+        // more than that.
         std::vector<std::byte> read(const std::string& name, std::size_t offset) const;
         std::vector<std::string> names() const;
-        // The next write, from now on, after this many succeed, throws. So does every flush once
-        // failFlushes is set.
+        // From now on, the next create or write after this many succeed throws. So does every
+        // flush once failFlushes is set.
+        void failCreateAfter(std::size_t creates);
         void failWriteAfter(std::size_t writes);
         void failFlushes();
 
@@ -106,7 +120,9 @@ namespace order_book::runtime {
         class OpenFile;
 
         mutable std::mutex lock;
-        std::map<std::string, File> files;
+        // Shared with each open file, so a remove leaves it writing where it was.
+        std::map<std::string, std::shared_ptr<File>> files;
+        std::optional<std::size_t> createsBeforeFailure;
         std::optional<std::size_t> writesBeforeFailure;
         bool flushesFail = false;
     };
