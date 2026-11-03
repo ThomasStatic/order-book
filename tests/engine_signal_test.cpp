@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -34,7 +35,11 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#include <winsock2.h>
 #include <windows.h>
+#else
+#include <netinet/in.h>
+#include <sys/socket.h>
 #endif
 
 // Real signals sent to a real order_book_engine, and the abort handler apps/ installs, in a child
@@ -245,16 +250,42 @@ void testEachStopSignalStopsCleanly() {
     std::filesystem::remove(list);
 }
 
+// A blocking connection to the engine whose receive buffer is set small before it connects, which
+// also turns off Windows' receive-window autotuning: on Windows CI the system otherwise took
+// 19.5 MB of answers for a client that never read, and a stop held by them flushed at once.
+TcpSocket connectWithASmallReceiveBuffer(std::uint16_t port) {
+#ifdef _WIN32
+    WSADATA started{};
+    expect(WSAStartup(MAKEWORD(2, 2), &started) == 0, "Winsock starts");
+    const SOCKET native = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+#else
+    const int native = ::socket(AF_INET, SOCK_STREAM, 0);
+#endif
+    TcpSocket socket(static_cast<NativeSocket>(native));
+    expect(socket.valid(), "the client has a socket");
+    const int bytes = 16 * 1024;
+    expect(::setsockopt(native, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&bytes), sizeof(bytes)) == 0,
+           "and a small receive buffer");
+    // In network byte order by hand, since htons can be a macro that trips -Wconversion.
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    const std::array<std::uint8_t, 2> portBytes{static_cast<std::uint8_t>(port >> 8), static_cast<std::uint8_t>(port & 0xFF)};
+    const std::array<std::uint8_t, 4> loopback{127, 0, 0, 1};
+    std::memcpy(&address.sin_port, portBytes.data(), portBytes.size());
+    std::memcpy(&address.sin_addr, loopback.data(), loopback.size());
+    expect(::connect(native, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0, "the client connects");
+    return socket;
+}
+
 // A client that sends and never reads, so the engine has answers it can't deliver and its stop
 // waits out the grace, 60 s here: the second stop must end it long before. The engine never
-// stops reading, so 32 MiB of commands leave it owing up to 28 MB of answers: more than the
-// system buffers for a socket, which on Windows grew by megabytes once a client stopped reading,
-// letting a stop held by only a high-water mark's worth flush and end cleanly.
+// stops reading, so 32 MiB of commands leave it owing about 19.5 MB of answers, and the client's
+// small receive buffer keeps the system from taking them off the engine's hands.
 void testASecondStopForcesIt() {
     const std::filesystem::path list = writeList("forced");
     ChildProcess child(engine, startArguments(list, {"--stop-grace", "60s", "--high-water-mark", "1G", "--hard-limit", "1G"}),
                        ChildOptions{true});
-    const TcpSocket client = TcpSocket::connectLoopback(listeningPort(child));
+    const TcpSocket client = connectWithASmallReceiveBuffer(listeningPort(child));
     constexpr std::size_t chunks = 512;  // of 64 KiB each
 
     std::vector<std::byte> chunk = gateway_testing::helloFrame();
