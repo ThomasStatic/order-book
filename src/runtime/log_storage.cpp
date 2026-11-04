@@ -16,6 +16,7 @@
 #include <windows.h>
 #else
 #include <cerrno>
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/file.h>
@@ -444,8 +445,7 @@ namespace order_book::runtime {
 
     std::vector<std::string> FileLogStorage::names() const {
         std::vector<std::string> all;
-        // The throwing iterator, not the error_code one, which some standard libraries still mark
-        // noexcept though it allocates (LWG 3013), so a failed allocation there would terminate.
+#ifdef _WIN32
         try {
             for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(directory)) {
                 all.push_back(entry.path().filename().string());
@@ -453,6 +453,32 @@ namespace order_book::runtime {
         } catch (const std::filesystem::filesystem_error& error) {
             throw LogStorageError(LogStorageError::Kind::FAILED, "cannot list " + directory.string() + ": " + error.code().message());
         }
+#else
+        // Not directory_iterator: libstdc++ builds its entries inside noexcept code, so an
+        // allocation failing there terminates, as a CI backtrace showed. Here one only throws.
+        DIR* const listing = ::opendir(directory.c_str());
+        if (listing == nullptr) {
+            throw failure("list", directory.string(), lastError());
+        }
+        struct Closer {
+            DIR* closing;
+            ~Closer() { ::closedir(closing); }
+        } closer{listing};
+        for (;;) {
+            errno = 0;
+            const dirent* entry = ::readdir(listing);
+            if (entry == nullptr) {
+                if (errno != 0) {
+                    throw failure("list", directory.string(), lastError());
+                }
+                break;
+            }
+            const std::string_view name(entry->d_name);
+            if (name != "." && name != "..") {
+                all.emplace_back(name);
+            }
+        }
+#endif
         std::sort(all.begin(), all.end());
         return all;
     }
