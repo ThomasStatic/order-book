@@ -1,4 +1,5 @@
 #include <atomic>
+#include <exception>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -24,6 +25,11 @@
 #include "order_book/runtime/log_storage.hpp"
 #include "order_book/runtime/log_writer.hpp"
 #include "order_book/symbol.hpp"
+
+#if defined(__linux__)
+#include <execinfo.h>
+#include <unistd.h>
+#endif
 
 // Each allocation runEngine makes before it is ready fails in turn, on whichever thread makes it,
 // and each must refuse the start cleanly: no crash, no hang, and a message. Under MSVC's checked
@@ -267,7 +273,25 @@ int failEachStartAllocation() {
 
 }  // namespace
 
+#if defined(__linux__)
+// A failed allocation where nothing can catch it, inside a noexcept function or past the top of a
+// thread, terminates: this prints where, so a CI log names the frame. Reached only once the one
+// allocation meant to fail has failed, so nothing here fails.
+[[noreturn]] void printWhereThenAbort() {
+    static const char said[] = "FAILED: terminate, from:\n";
+    const ssize_t written = ::write(STDERR_FILENO, said, sizeof said - 1);
+    static_cast<void>(written);
+    void* frames[64];
+    const int count = ::backtrace(frames, 64);
+    ::backtrace_symbols_fd(frames, count, STDERR_FILENO);
+    std::abort();
+}
+#endif
+
 int main() {
+#if defined(__linux__)
+    std::set_terminate(printWhereThenAbort);
+#endif
     // Discarded rather than skipped over, so MSVC sees no unreachable code.
     if constexpr (iteratorDebugging) {
         std::cout << "SKIPPED: MSVC iterator debugging is on" << std::endl;

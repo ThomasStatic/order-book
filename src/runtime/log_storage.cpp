@@ -444,12 +444,14 @@ namespace order_book::runtime {
 
     std::vector<std::string> FileLogStorage::names() const {
         std::vector<std::string> all;
-        std::error_code error;
-        for (std::filesystem::directory_iterator entry(directory, error), end; !error && entry != end; entry.increment(error)) {
-            all.push_back(entry->path().filename().string());
-        }
-        if (error) {
-            throw LogStorageError(LogStorageError::Kind::FAILED, "cannot list " + directory.string() + ": " + error.message());
+        // The throwing iterator, not the error_code one, which some standard libraries still mark
+        // noexcept though it allocates (LWG 3013), so a failed allocation there would terminate.
+        try {
+            for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(directory)) {
+                all.push_back(entry.path().filename().string());
+            }
+        } catch (const std::filesystem::filesystem_error& error) {
+            throw LogStorageError(LogStorageError::Kind::FAILED, "cannot list " + directory.string() + ": " + error.code().message());
         }
         std::sort(all.begin(), all.end());
         return all;

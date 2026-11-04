@@ -1068,6 +1068,10 @@ if(BUILD_TESTING)
     target_link_libraries(engine_start_allocation_tests PRIVATE order_book_network)
     order_book_enable_warnings(engine_start_allocation_tests)
     order_book_enable_sanitizers(engine_start_allocation_tests)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # Names in the backtrace a terminate prints.
+        target_link_options(engine_start_allocation_tests PRIVATE -rdynamic)
+    endif()
     add_test(NAME engine_start_allocation_tests COMMAND engine_start_allocation_tests)
     set_tests_properties(engine_start_allocation_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
 
