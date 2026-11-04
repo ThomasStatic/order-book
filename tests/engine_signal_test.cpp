@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -8,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <new>
 #include <optional>
 #include <span>
@@ -268,24 +270,65 @@ void testEachStopSignalStopsCleanly() {
 
 // Reads to the end of the stream: how many commands were answered, counting each response's
 // last frame, and whether the stream ended rather than failed.
-// The records the engine's log files hold so far, read through the log's own reader while the
-// engine writes them: each stops at its first record not yet written whole, so a file's zero tail
-// or a half-written record ends its count. A file renamed or made meanwhile is read next time.
-std::uint64_t recordsLogged(const std::filesystem::path& logs) {
-    std::uint64_t records = 0;
-    std::error_code error;
-    for (std::filesystem::directory_iterator entry(logs, error), end; !error && entry != end; entry.increment(error)) {
-        if (entry->path().extension() != ".oblog") {
-            continue;
+// How far the engine's log files have got, while it writes them: each file is its header, then
+// records, then the zeros it was extended with, so its records end at the first 40 bytes that are
+// all zero. Only bytes not looked at before are read, so following a growing log costs its length
+// once. This is a progress signal only: what the records hold is the log tests' to check.
+class LogProgress {
+public:
+    explicit LogProgress(std::filesystem::path directory) : logs(std::move(directory)) {}
+
+    std::uint64_t records() {
+        std::uint64_t total = 0;
+        std::error_code error;
+        for (std::filesystem::directory_iterator entry(logs, error), end; !error && entry != end; entry.increment(error)) {
+            if (entry->path().extension() != ".oblog") {
+                continue;
+            }
+            File& file = files[entry->path().filename().string()];
+            std::ifstream input(entry->path(), std::ios::binary);
+            if (file.offset == 0) {
+                const std::optional<std::size_t> header = headerBytes(input);
+                if (!header) {
+                    continue;  // not whole yet
+                }
+                file.offset = *header;
+            }
+            input.clear();
+            input.seekg(static_cast<std::streamoff>(file.offset));
+            std::array<char, replay::logRecordBytes> record{};
+            while (!file.ended && input.read(record.data(), static_cast<std::streamsize>(record.size()))) {
+                if (std::all_of(record.begin(), record.end(), [](char byte) { return byte == 0; })) {
+                    break;  // the zero tail, so far
+                }
+                file.offset += record.size();
+                ++file.records;
+            }
+            total += file.records;
         }
-        std::ifstream input(entry->path(), std::ios::binary);
-        replay::CommandLogReader reader(input);
-        while (std::holds_alternative<replay::ReplayRecord>(reader.next())) {
-            ++records;
-        }
+        return total;
     }
-    return records;
-}
+
+private:
+    struct File {
+        std::uint64_t offset = 0;  // past the header and every record counted
+        std::uint64_t records = 0;
+        bool ended = false;
+    };
+
+    // The header's length, through the log's own reader, once it has been written whole.
+    static std::optional<std::size_t> headerBytes(std::ifstream& input) {
+        replay::CommandLogReader reader(input);
+        static_cast<void>(reader.next());
+        if (reader.header() == nullptr) {
+            return std::nullopt;
+        }
+        return replay::encodeLogHeader(*reader.header()).size();
+    }
+
+    std::filesystem::path logs;
+    std::map<std::string, File> files;
+};
 
 std::pair<std::uint64_t, bool> answersUntilTheEnd(const TcpSocket& client) {
     FrameReader reader(FrameSource::ENGINE);
@@ -350,19 +393,29 @@ void testASecondStopForcesIt() {
     const std::uint64_t commands = chunks * (rest.size() / commandFrameBytes);
 
     // Every command is a cancel entry passes, so each the engine reads reaches its log. Waiting
-    // until the log holds them all is the signal the engine has read every byte: a stop landing
-    // with client bytes still unread would close the connection with a reset, which on Windows
-    // throws away the answers the client hasn't read yet (#104).
+    // until the log holds them all is the signal the engine has read every byte: a stop that isn't
+    // held, landing with client bytes still unread, closes the connection with a reset, which on
+    // Windows throws away the answers the client hasn't read yet (#104). Only an optimized Windows
+    // build has ever taken that path; the others hold the stop, so unread bytes cost nothing, and
+    // an unoptimized engine reads only as fast as its matching thread runs, a minute or more here.
+#if defined(_WIN32) && defined(NDEBUG)
+    constexpr bool waitForTheLog = true;
+#else
+    constexpr bool waitForTheLog = false;
+#endif
     std::uint64_t logged = 0;
-    for (const auto deadline = std::chrono::steady_clock::now() + 60s; !lost && std::chrono::steady_clock::now() < deadline;) {
-        logged = recordsLogged(logs);
-        if (logged == commands || !child.stillRunningAfter(50ms)) {
-            break;
+    if (waitForTheLog) {
+        LogProgress progress(logs);
+        for (const auto deadline = std::chrono::steady_clock::now() + 60s; !lost && std::chrono::steady_clock::now() < deadline;) {
+            logged = progress.records();
+            if (logged == commands || !child.stillRunningAfter(50ms)) {
+                break;
+            }
         }
     }
 
     // Each check is taken before its message is built, since argument order is unspecified.
-    const bool holding = !lost && logged == commands && child.stillRunningAfter(0ms);
+    const bool holding = !lost && (!waitForTheLog || logged == commands) && child.stillRunningAfter(0ms);
     expect(holding, "the engine read everything the client sent, not " + std::to_string(sent) + " bytes, " + std::to_string(logged) +
                         " of " + std::to_string(commands) + " commands logged, with stderr:\n" + child.standardError());
     sendStop(child, stopSignals[0]);
