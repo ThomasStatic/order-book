@@ -32,6 +32,11 @@ namespace order_book::runtime {
         Kind errorKind;
     };
 
+    // How far back from the end of what the last file holds a hole that valid records follow is
+    // a write torn as a machine crash met it, cut at the hole: one write's most. Further back,
+    // no crash explains it, and recovery stops.
+    inline constexpr std::uint64_t tornWriteReach = std::uint64_t{1} << 20;
+
     // A stop requested while a shard replays, which ends the start: nothing is harmed.
     struct RecoveryInterrupted {};
 
@@ -65,9 +70,11 @@ namespace order_book::runtime {
     // same directory: removes trailing files with no records, replays the rest through
     // Shard::process, discarding events, runs checkInvariants on every book, warms each book to
     // the larger of what it declares and 1.5 times what it holds, each number apart, then cuts a
-    // torn tail off the last file and flushes it. Opening the next file is the log writer's. A
-    // TORN_TAIL in an earlier file, a gap, any other finding, or a broken book throws
-    // RecoveryError; a request in stopping, read between records, throws RecoveryInterrupted.
+    // torn tail off the last file, or a hole valid records follow within tornWriteReach of its
+    // end, and flushes it, removing it if nothing is left in it. Opening the next file is the log
+    // writer's. A TORN_TAIL or CORRUPT_RECORD in an earlier file, one further back, a gap, any
+    // other finding, or a broken book throws RecoveryError; a request in stopping, read between
+    // records, throws RecoveryInterrupted.
     RecoveredShard recoverShard(LogStorage& storage, const InstrumentDirectory& directory, const std::vector<LogFileEntry>& files,
                                 Shard& shard, const BookCapacity& defaults, const std::atomic<bool>& stopping);
 

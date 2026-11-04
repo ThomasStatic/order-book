@@ -44,6 +44,7 @@ namespace order_book::engine_testing {
             generation.shards = config.shards;
             generation.commands = config.commands;
             generation.logWritePercent = 0;  // commands alone, as connections send them
+            generation.crashes = false;
             return generation;
         }
 

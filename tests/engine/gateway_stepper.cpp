@@ -346,6 +346,7 @@ namespace order_book::engine_testing {
         generation.shards = config.shards;
         generation.commands = config.commands;
         generation.logWritePercent = 0;  // its log writers are actors of their own
+        generation.crashes = false;
         return runStepperSchedule(config, generateEngineStream(generation));
     }
 

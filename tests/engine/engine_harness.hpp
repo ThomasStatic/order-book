@@ -11,6 +11,7 @@
 #include "interleaver.hpp"
 #include "order_book/command_log.hpp"
 #include "order_book/order_book.hpp"
+#include "order_book/runtime/durability.hpp"
 #include "order_book/runtime/log_storage.hpp"
 #include "order_book/symbol.hpp"
 
@@ -47,21 +48,32 @@ namespace order_book::engine_testing {
         // For testing the harness: the first command queued at or after this one runs on its book
         // and its witness, but never reaches the log.
         std::optional<std::size_t> leaveUnloggedFrom;
+        // Every shard's log, which the crashes are measured against.
+        runtime::Durability durability = runtime::Durability::MACHINE;
+        // One or two CRASH lines, each after a command, from a source of their own, so the other
+        // lines are the same whatever this is.
+        bool crashes = true;
+        // For testing the harness: the first crash also loses every file of shard 0's log but
+        // its oldest, as a drive that lied about a flush would, and meets no write on its way.
+        bool loseLogFilesAtFirstCrash = false;
     };
 
     enum class SymbolFault { NONE, UNKNOWN, MALFORMED };
 
     // A line is a command, or an engine action. LOG: each shard's log writer does one write
-    // through the in-memory LogStorage, so until then commands are unwritten.
-    enum class EngineAction { COMMAND, LOG };
+    // through the in-memory LogStorage, so until then commands are unwritten. CRASH_ENGINE and
+    // CRASH_MACHINE <seed>: the in-memory LogStorage models that crash, then every shard
+    // recovers and the run goes on.
+    enum class EngineAction { COMMAND, LOG, CRASH_ENGINE, CRASH_MACHINE };
 
-    // One line of a stream. An action's other fields mean nothing.
+    // One line of a stream. An action's other fields mean nothing, but a machine crash's seed.
     struct EngineCommand {
         std::size_t instrument;
         randomized::Command generated;  // as the generator made it
         std::optional<randomized::Command> converted;  // what reaches the engine, if anything
         SymbolFault fault = SymbolFault::NONE;
         EngineAction action = EngineAction::COMMAND;
+        std::uint64_t crashSeed = 0;
     };
 
     // What the seed produces, generated ahead of the run on the models alone, so nothing in the
@@ -93,6 +105,9 @@ namespace order_book::engine_testing {
         std::size_t logWrites = 0;         // LOG lines and full log rings that wrote anything
         std::size_t recordsLogged = 0;
         std::size_t logFiles = 0;          // every shard's, the first included
+        std::size_t crashes = 0;
+        std::size_t lostToCrashes = 0;     // queued commands no recovery found
+        std::uint64_t tailCutBytes = 0;    // what every recovery cut
     };
 
     struct EngineRunResult {
@@ -109,6 +124,16 @@ namespace order_book::engine_testing {
     // writer, then replaying each shard's files in order, each starting where the last ended, per
     // instrument through ReplayEngine, which must give a book equal to the witness, and checking
     // each Shard, durable position included.
+    //
+    // A CRASH line first notes, per shard, the durable position its responses were released up to.
+    // A machine crash then has every shard's log writer meet it in one more write.
+    // The storage crashes, every shard, log writer, and the housekeeping are dropped, and the
+    // start runs as the engine's does: the lock, surveyLog, the temporaries removed, and
+    // recoverShard into new shards, whose log writers go on where each log ended. The model and
+    // witness are rebuilt from the commands that survived, and every book must equal both. At
+    // machine durability, and at process for an engine crash, each shard must keep every
+    // command it had released. Every file is far below 1 MiB, so recovery cuts every hole a
+    // crash leaves, and any stop fails the run.
     EngineRunResult runEngineSeed(const EngineSeedConfig& config);
 
     struct ShardLogRecords {

@@ -39,6 +39,7 @@ EngineSeedConfig smallRun() {
     config.seed = 7;
     config.instruments = 4;
     config.commands = 2000;
+    config.crashes = false;  // the crash tests ask for them
     return config;
 }
 
@@ -112,6 +113,84 @@ void testLogLinesChangeNoCommand() {
                    commands[i]->fault == without[i].fault,
                "and they are the same commands in the same order");
     }
+}
+
+bool isCrash(const EngineCommand& line) {
+    return line.action == EngineAction::CRASH_ENGINE || line.action == EngineAction::CRASH_MACHINE;
+}
+
+// CRASH lines come from a source of their own too: one or two a stream, after a command, and
+// the commands and LOG lines are the same with or without them.
+void testCrashLinesChangeNoCommand() {
+    EngineSeedConfig plain = smallRun();
+    const std::vector<EngineCommand> without = generateEngineStream(plain);
+    expect(std::none_of(without.begin(), without.end(), isCrash), "with none asked for, there are none");
+    bool sawEngine = false;
+    bool sawMachine = false;
+    for (std::uint64_t seed = 1; seed <= 10; ++seed) {
+        EngineSeedConfig withCrashes = smallRun();
+        withCrashes.crashes = true;
+        withCrashes.seed = seed;
+        plain.seed = seed;
+        const std::vector<EngineCommand> with = generateEngineStream(withCrashes);
+        const std::vector<EngineCommand> alone = generateEngineStream(plain);
+        std::vector<const EngineCommand*> rest;
+        std::size_t crashes = 0;
+        for (std::size_t i = 0; i < with.size(); ++i) {
+            if (!isCrash(with[i])) {
+                rest.push_back(&with[i]);
+                continue;
+            }
+            ++crashes;
+            expect(i > 0, "a crash only ever follows a line");
+            sawEngine = sawEngine || with[i].action == EngineAction::CRASH_ENGINE;
+            sawMachine = sawMachine || with[i].action == EngineAction::CRASH_MACHINE;
+        }
+        expect(crashes == 1 || crashes == 2, "one or two crashes a seed, not " + std::to_string(crashes));
+        expect(rest.size() == alone.size(), "every other line is still there");
+        for (std::size_t i = 0; i < alone.size(); ++i) {
+            expect(rest[i]->action == alone[i].action && rest[i]->instrument == alone[i].instrument &&
+                       rest[i]->generated == alone[i].generated && rest[i]->fault == alone[i].fault,
+                   "and the same, in the same order");
+        }
+    }
+    expect(sawEngine && sawMachine, "over ten seeds, both kinds of crash");
+}
+
+// Crashes at either durability: every run passes, so the books always equal the witness at
+// the surviving position and, where the promise holds, every released response's command
+// survived. Over the seeds, crashes lose unwritten commands and recovery cuts torn tails.
+void testRunsSurviveTheirCrashes() {
+    for (const order_book::runtime::Durability durability :
+         {order_book::runtime::Durability::MACHINE, order_book::runtime::Durability::PROCESS}) {
+        const std::string level = durability == order_book::runtime::Durability::MACHINE ? "machine" : "process";
+        std::size_t lost = 0;
+        std::uint64_t cut = 0;
+        for (std::uint64_t seed = 1; seed <= 24; ++seed) {
+            EngineSeedConfig config = smallRun();
+            config.seed = seed;
+            config.crashes = true;
+            config.durability = durability;
+            const EngineRunResult result = runEngineSeed(config);
+            expect(result.passed(), "seed " + std::to_string(seed) + " at " + level + " failed: " +
+                                        (result.failure ? result.failure->reason : std::string()));
+            expect(result.stats.crashes >= 1, "seed " + std::to_string(seed) + " at " + level + " crashed");
+            lost += result.stats.lostToCrashes;
+            cut += result.stats.tailCutBytes;
+        }
+        expect(lost > 0, level + ": crashes lost commands nobody was told of");
+        expect(cut > 0, level + ": and recovery cut torn tails, " + std::to_string(cut) + " bytes");
+    }
+}
+
+// The harness has to be able to fail: a log that loses records it had confirmed is caught.
+void testALostReleasedCommandIsCaught() {
+    EngineSeedConfig config = smallRun();
+    config.crashes = true;
+    config.loseLogFilesAtFirstCrash = true;
+    const EngineRunResult result = runEngineSeed(config);
+    expect(!result.passed(), "a crash that loses written records fails the run");
+    expect(result.failure->reason.find("released") != std::string::npos, "and the promise caught it: " + result.failure->reason);
 }
 
 void testConversion() {
@@ -202,12 +281,15 @@ int main() {
     testAnInstrumentsCommandsDependOnNoOther();
     testASeedFixesItsStream();
     testLogLinesChangeNoCommand();
+    testCrashLinesChangeNoCommand();
     testConversion();
     testARunPassesAndExercisesEverything();
     testEverySpreadAndShardCountPasses();
     testADriftingBookIsCaught();
     testAnInvisibleDriftIsCaught();
     testACommandMissingFromTheLogIsCaught();
+    testRunsSurviveTheirCrashes();
+    testALostReleasedCommandIsCaught();
     std::cout << "engine harness tests passed" << std::endl;
     return EXIT_SUCCESS;
 }

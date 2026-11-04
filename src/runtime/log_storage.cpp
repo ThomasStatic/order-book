@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cstdio>
+#include <random>
 #include <system_error>
 #include <utility>
 
@@ -516,19 +517,23 @@ namespace order_book::runtime {
             : storage(owner), file(std::move(opened)), name(std::move(named)) {}
 
         void write(std::uint64_t offset, std::span<const std::byte> bytes) override {
-            const std::lock_guard<std::mutex> held(storage.guard);
+            std::unique_lock<std::mutex> held(storage.guard);
             if (storage.writesBeforeFailure) {
                 if (*storage.writesBeforeFailure == 0) {
                     throw LogStorageError(LogStorageError::Kind::FAILED, "cannot write " + name + ": a failure the test asked for");
                 }
                 --*storage.writesBeforeFailure;
             }
-            if (file->bytes.size() < offset + bytes.size()) {
-                file->bytes.resize(static_cast<std::size_t>(offset + bytes.size()));
-            }
-            std::copy(bytes.begin(), bytes.end(), file->bytes.begin() + static_cast<std::ptrdiff_t>(offset));
+            place(file->bytes, offset, bytes);
             file->size = std::max<std::uint64_t>(file->size, offset + bytes.size());
+            if (file->durability == Durability::MACHINE && !storage.interrupted) {
+                // Write-through: it returns once the drive holds it.
+                place(file->onDrive, offset, bytes);
+                file->sizeOnDrive = std::max<std::uint64_t>(file->sizeOnDrive, offset + bytes.size());
+            }
             ++file->writes;
+            file->closed = false;
+            storage.changed(held);
         }
 
         std::size_t read(std::uint64_t offset, std::span<std::byte> out) override {
@@ -550,26 +555,35 @@ namespace order_book::runtime {
         }
 
         void flush() override {
-            const std::lock_guard<std::mutex> held(storage.guard);
+            std::unique_lock<std::mutex> held(storage.guard);
             if (storage.flushesFail) {
                 throw LogStorageError(LogStorageError::Kind::FAILED, "cannot flush " + name + ": a failure the test asked for");
             }
+            if (!storage.interrupted) {
+                file->onDrive = file->bytes;
+                file->sizeOnDrive = file->size;
+            }
             ++file->flushes;
+            storage.changed(held);
         }
 
         void extend(std::uint64_t size) override {
-            const std::lock_guard<std::mutex> held(storage.guard);
+            std::unique_lock<std::mutex> held(storage.guard);
             file->size = std::max(file->size, size);
             ++file->extends;
+            file->closed = false;
+            storage.changed(held);
         }
 
         void cut(std::uint64_t size) override {
-            const std::lock_guard<std::mutex> held(storage.guard);
+            std::unique_lock<std::mutex> held(storage.guard);
             if (file->bytes.size() > size) {
                 file->bytes.resize(static_cast<std::size_t>(size));
             }
             file->size = size;
             ++file->cuts;
+            file->closed = false;
+            storage.changed(held);
         }
 
         void close() override {
@@ -578,18 +592,30 @@ namespace order_book::runtime {
         }
 
         void rename(const std::string& to) override {
-            const std::lock_guard<std::mutex> held(storage.guard);
+            std::unique_lock<std::mutex> held(storage.guard);
             if (storage.files.contains(to)) {
                 throw LogStorageError(LogStorageError::Kind::EXISTS, to + " already exists");
             }
             std::string moved = to;
             storage.files.erase(name);  // a removed file renames into view again, as on Linux
             storage.files.emplace(to, file);
+            if (!storage.interrupted) {
+                file->nameOnDrive = true;  // the directory is flushed, its removes with it
+                storage.removed.clear();
+            }
             ++file->renames;
             name = std::move(moved);
+            storage.changed(held);
         }
 
     private:
+        static void place(std::vector<std::byte>& into, std::uint64_t offset, std::span<const std::byte> bytes) {
+            if (into.size() < offset + bytes.size()) {
+                into.resize(static_cast<std::size_t>(offset + bytes.size()));
+            }
+            std::copy(bytes.begin(), bytes.end(), into.begin() + static_cast<std::ptrdiff_t>(offset));
+        }
+
         InMemoryLogStorage& storage;
         std::shared_ptr<File> file;
         std::string name;
@@ -597,22 +623,31 @@ namespace order_book::runtime {
 
     class InMemoryLogStorage::HeldLock final : public StorageLock {
     public:
-        explicit HeldLock(InMemoryLogStorage& owner) noexcept : storage(owner) {}
+        HeldLock(InMemoryLogStorage& owner, std::uint64_t generation) noexcept : storage(owner), takenIn(generation) {}
         ~HeldLock() override {
             if (owns) {
                 const std::lock_guard<std::mutex> held(storage.guard);
-                storage.locked = false;
+                if (storage.lockGeneration == takenIn) {
+                    storage.locked = false;
+                }
             }
         }
         bool owns = false;  // once it took the lock
 
     private:
         InMemoryLogStorage& storage;
+        std::uint64_t takenIn;
     };
 
+    InMemoryLogStorage::InMemoryLogStorage(const Contents& from) : removed(from.removed) {
+        for (const auto& [name, file] : from.files) {
+            files.emplace(name, std::make_shared<File>(file));
+        }
+    }
+
     std::unique_ptr<StorageLock> InMemoryLogStorage::lock() {
-        auto held = std::make_unique<HeldLock>(*this);
         const std::lock_guard<std::mutex> taken(guard);
+        auto held = std::make_unique<HeldLock>(*this, lockGeneration);
         if (locked) {
             throw LogStorageError(LogStorageError::Kind::LOCKED, "the storage is locked: another engine is using it");
         }
@@ -627,12 +662,11 @@ namespace order_book::runtime {
         if (found == files.end()) {
             throw LogStorageError(LogStorageError::Kind::FAILED, "cannot open " + name + ": no such file");
         }
-        found->second->closed = false;
         return std::make_unique<OpenFile>(*this, found->second, name);
     }
 
     std::unique_ptr<LogFile> InMemoryLogStorage::create(const std::string& name, Durability durability) {
-        const std::lock_guard<std::mutex> held(guard);
+        std::unique_lock<std::mutex> held(guard);
         if (files.contains(name)) {
             throw LogStorageError(LogStorageError::Kind::EXISTS, name + " already exists");
         }
@@ -645,12 +679,20 @@ namespace order_book::runtime {
         auto file = std::make_shared<File>();
         file->durability = durability;
         files.emplace(name, file);
+        changed(held);
         return std::make_unique<OpenFile>(*this, std::move(file), name);
     }
 
     void InMemoryLogStorage::remove(const std::string& name) {
-        const std::lock_guard<std::mutex> held(guard);
-        files.erase(name);
+        std::unique_lock<std::mutex> held(guard);
+        const auto found = files.find(name);
+        if (found != files.end()) {
+            if (found->second->nameOnDrive) {
+                removed.insert_or_assign(name, *found->second);  // the drive still names it
+            }
+            files.erase(found);
+        }
+        changed(held);
     }
 
     std::string InMemoryLogStorage::describe(const std::string& name) const {
@@ -698,6 +740,114 @@ namespace order_book::runtime {
     void InMemoryLogStorage::failFlushes() {
         const std::lock_guard<std::mutex> held(guard);
         flushesFail = true;
+    }
+
+    InMemoryLogStorage::Contents InMemoryLogStorage::contentsHeld() const {
+        Contents now;
+        for (const auto& [name, file] : files) {
+            now.files.emplace(name, *file);
+        }
+        now.removed = removed;
+        return now;
+    }
+
+    InMemoryLogStorage::Contents InMemoryLogStorage::contents() const {
+        const std::lock_guard<std::mutex> held(guard);
+        return contentsHeld();
+    }
+
+    void InMemoryLogStorage::changed(std::unique_lock<std::mutex>& held) {
+        if (!watcher) {
+            return;
+        }
+        const Contents now = contentsHeld();
+        const std::function<void(const Contents&)> told = watcher;
+        held.unlock();
+        told(now);
+    }
+
+    void InMemoryLogStorage::watch(std::function<void(const Contents&)> afterEachChange) {
+        const std::lock_guard<std::mutex> held(guard);
+        watcher = std::move(afterEachChange);
+    }
+
+    void InMemoryLogStorage::interruptWrites() {
+        const std::lock_guard<std::mutex> held(guard);
+        interrupted = true;
+    }
+
+    namespace {
+
+        // What a machine crash leaves of a file: the drive's bytes, and of each page where the OS
+        // holds others, all of the OS's, none, or its first sectors; and its size, the drive's or
+        // the OS's, whole. A cut writes nothing, so past what the OS holds the drive's bytes stay
+        // unless the cut's size lands.
+        InMemoryLogStorage::File afterAMachineCrash(const InMemoryLogStorage::File& file, std::mt19937_64& random) {
+            constexpr std::size_t pageBytes = InMemoryLogStorage::pageBytes;
+            constexpr std::size_t sectorBytes = InMemoryLogStorage::sectorBytes;
+            const std::size_t length = std::max(file.bytes.size(), file.onDrive.size());
+            std::vector<std::byte> kept(length, std::byte{0});
+            std::copy(file.onDrive.begin(), file.onDrive.end(), kept.begin());
+            std::vector<std::byte> now = kept;
+            std::copy(file.bytes.begin(), file.bytes.end(), now.begin());
+            for (std::size_t start = 0; start < length; start += pageBytes) {
+                const std::size_t end = std::min(start + pageBytes, length);
+                const auto from = static_cast<std::ptrdiff_t>(start);
+                const auto to = static_cast<std::ptrdiff_t>(end);
+                if (std::equal(now.begin() + from, now.begin() + to, kept.begin() + from)) {
+                    continue;
+                }
+                const std::uint64_t roll = random() % 4;
+                std::size_t reached = start;
+                if (roll < 2) {
+                    reached = end;  // the page was written
+                } else if (roll == 3) {
+                    // Torn: of the sectors it holds, the first, at least one and never all. A
+                    // sector is written whole or not at all, so a page of one can't tear.
+                    const std::size_t sectors = (end - start + sectorBytes - 1) / sectorBytes;
+                    if (sectors > 1) {
+                        reached = start + sectorBytes * static_cast<std::size_t>(1 + random() % (sectors - 1));
+                    }
+                }
+                std::copy(now.begin() + from, now.begin() + static_cast<std::ptrdiff_t>(reached), kept.begin() + from);
+            }
+            InMemoryLogStorage::File after = file;
+            after.size = file.size == file.sizeOnDrive || random() % 2 == 0 ? file.size : file.sizeOnDrive;
+            kept.resize(static_cast<std::size_t>(std::min<std::uint64_t>(kept.size(), after.size)));
+            after.bytes = kept;
+            after.onDrive = std::move(kept);
+            after.sizeOnDrive = after.size;
+            return after;
+        }
+
+    }  // namespace
+
+    void InMemoryLogStorage::crash(Crash kind, std::uint64_t seed) {
+        const std::lock_guard<std::mutex> held(guard);
+        std::mt19937_64 random(seed);
+        std::map<std::string, std::shared_ptr<File>> survivors;
+        for (const auto& [name, file] : files) {
+            if (kind == Crash::MACHINE && !file->nameOnDrive) {
+                continue;
+            }
+            File after = kind == Crash::MACHINE ? afterAMachineCrash(*file, random) : *file;
+            after.closed = true;  // every handle belonged to the engine that died
+            survivors.emplace(name, std::make_shared<File>(std::move(after)));
+        }
+        if (kind == Crash::MACHINE) {
+            for (const auto& [name, file] : removed) {
+                if (random() % 2 == 0 && !survivors.contains(name)) {
+                    File back = afterAMachineCrash(file, random);
+                    back.closed = true;
+                    survivors.emplace(name, std::make_shared<File>(std::move(back)));
+                }
+            }
+            removed.clear();
+        }
+        files = std::move(survivors);
+        locked = false;
+        ++lockGeneration;
+        interrupted = false;
     }
 
 }  // namespace order_book::runtime

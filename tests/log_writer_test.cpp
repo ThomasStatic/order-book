@@ -669,6 +669,181 @@ void testRealLogFiles() {
     fs::remove_all(path);
 }
 
+// A file's content to its size, zeros past what was written included.
+std::vector<std::byte> contentOf(const InMemoryLogStorage& storage, const std::string& name) {
+    const InMemoryLogStorage::File file = fileOf(storage, name);
+    std::vector<std::byte> content(static_cast<std::size_t>(file.size), std::byte{0});
+    std::copy(file.bytes.begin(), file.bytes.begin() + static_cast<std::ptrdiff_t>(std::min<std::uint64_t>(file.bytes.size(), file.size)),
+              content.begin());
+    return content;
+}
+
+// A file of 4 pages: a first sector flushed, then 3.5 pages written to the OS alone, at
+// process durability; and one at machine durability, written through.
+void writeCrashFiles(InMemoryLogStorage& storage) {
+    const std::unique_ptr<LogFile> process = storage.create("process", Durability::PROCESS);
+    process->extend(4 * InMemoryLogStorage::pageBytes);
+    process->write(0, std::vector<std::byte>(InMemoryLogStorage::sectorBytes, std::byte{0x11}));
+    process->flush();
+    process->rename("process.named");
+    process->write(InMemoryLogStorage::sectorBytes, std::vector<std::byte>(4 * InMemoryLogStorage::pageBytes - InMemoryLogStorage::sectorBytes,
+                                                                           std::byte{0x22}));
+    const std::unique_ptr<LogFile> machine = storage.create("machine", Durability::MACHINE);
+    machine->write(0, std::vector<std::byte>(3000, std::byte{0x33}));
+    machine->rename("machine.named");
+    storage.create("unnamed", Durability::MACHINE)->write(0, std::vector<std::byte>(10, std::byte{0x44}));
+}
+
+// An engine crash keeps everything written; a machine crash keeps what reached the drive, and of
+// each page written since, all, none, or its first sectors, chosen by the seed; and every crash
+// lets go of the lock.
+void testTheModelledCrashes() {
+    {
+        InMemoryLogStorage storage;
+        writeCrashFiles(storage);
+        const std::vector<std::byte> before = contentOf(storage, "process.named");
+        std::unique_ptr<StorageLock> held = storage.lock();
+        storage.crash(InMemoryLogStorage::Crash::ENGINE, 1);
+        expect(contentOf(storage, "process.named") == before, "an engine crash keeps what the OS was given");
+        expect(storage.names() == std::vector<std::string>{"machine.named", "process.named", "unnamed"},
+               "and every name, a file never renamed included");
+        const std::unique_ptr<StorageLock> again = storage.lock();
+        held.reset();
+        bool locked = false;
+        try {
+            storage.lock();
+        } catch (const LogStorageError& error) {
+            locked = error.kind() == LogStorageError::Kind::LOCKED;
+        }
+        expect(locked, "the crash let go of the lock, and the dead engine's handle letting go later frees nothing");
+    }
+    bool kept = false;
+    bool lost = false;
+    bool torn = false;
+    for (std::uint64_t seed = 1; seed <= 20; ++seed) {
+        InMemoryLogStorage storage;
+        writeCrashFiles(storage);
+        storage.crash(InMemoryLogStorage::Crash::MACHINE, seed);
+        expect(storage.names() == std::vector<std::string>{"machine.named", "process.named"},
+               "a machine crash loses the name of a file never renamed");
+        expect(contentOf(storage, "machine.named") == std::vector<std::byte>(3000, std::byte{0x33}),
+               "and keeps every byte written through");
+        const std::vector<std::byte> content = contentOf(storage, "process.named");
+        expect(content.size() == 4 * InMemoryLogStorage::pageBytes, "the size it was flushed at");
+        expect(std::all_of(content.begin(), content.begin() + static_cast<std::ptrdiff_t>(InMemoryLogStorage::sectorBytes), [](std::byte b) { return b == std::byte{0x11}; }),
+               "what was flushed survives");
+        for (std::size_t page = 0; page < 4; ++page) {
+            const std::size_t from = page == 0 ? InMemoryLogStorage::sectorBytes : page * InMemoryLogStorage::pageBytes;
+            const std::size_t to = (page + 1) * InMemoryLogStorage::pageBytes;
+            std::size_t written = from;
+            while (written < to && content[written] == std::byte{0x22}) {
+                ++written;
+            }
+            expect(std::all_of(content.begin() + static_cast<std::ptrdiff_t>(written), content.begin() + static_cast<std::ptrdiff_t>(to),
+                               [](std::byte b) { return b == std::byte{0}; }),
+                   "a page holds what was written up to a point, then what the drive held");
+            expect(written % InMemoryLogStorage::sectorBytes == 0, "and that point is a sector's end");
+            kept = kept || written == to;
+            lost = lost || written == from;
+            torn = torn || (written != from && written != to);
+        }
+        InMemoryLogStorage same;
+        writeCrashFiles(same);
+        same.crash(InMemoryLogStorage::Crash::MACHINE, seed);
+        expect(contentOf(same, "process.named") == content, "a seed fixes what a machine crash keeps");
+    }
+    expect(kept && lost && torn, "over 20 seeds, some page is kept, some lost, and some torn");
+}
+
+// An interrupted write lands as a crash met it: on its way, at machine durability too.
+void testAnInterruptedWrite() {
+    for (std::uint64_t seed = 1; seed <= 20; ++seed) {
+        InMemoryLogStorage storage;
+        const std::unique_ptr<LogFile> file = storage.create("log", Durability::MACHINE);
+        file->extend(2 * InMemoryLogStorage::pageBytes);
+        file->write(0, std::vector<std::byte>(100, std::byte{0x55}));
+        file->flush();
+        file->rename("log.named");
+        storage.interruptWrites();
+        file->write(100, std::vector<std::byte>(2 * InMemoryLogStorage::pageBytes - 100, std::byte{0x66}));
+        file->flush();
+        expect(contentOf(storage, "log.named")[5000] == std::byte{0x66}, "the OS holds it");
+        storage.crash(InMemoryLogStorage::Crash::MACHINE, seed);
+        const std::vector<std::byte> content = contentOf(storage, "log.named");
+        expect(std::all_of(content.begin(), content.begin() + 100, [](std::byte b) { return b == std::byte{0x55}; }),
+               "what was written before survives");
+        if (content[InMemoryLogStorage::pageBytes] == std::byte{0}) {
+            return;  // a page of it was lost, as the write never returned
+        }
+    }
+    expect(false, "over 20 seeds, an interrupted write's page is never lost");
+}
+
+// A cut not yet flushed writes nothing, so a machine crash leaves the file at its old size or
+// its new one, never a mix; and a remove reaches the drive with the directory, at the next
+// rename, so until then a machine crash may bring the file back, as it was.
+void testCutsAndRemovesLandWhole() {
+    bool oldSize = false;
+    bool newSize = false;
+    bool back = false;
+    bool gone = false;
+    for (std::uint64_t seed = 1; seed <= 20; ++seed) {
+        InMemoryLogStorage storage;
+        const std::unique_ptr<LogFile> file = storage.create("log.tmp", Durability::MACHINE);
+        file->write(0, std::vector<std::byte>(3 * InMemoryLogStorage::pageBytes, std::byte{0x77}));
+        file->rename("log");
+        file->cut(100);
+        storage.create("other.tmp", Durability::MACHINE)->rename("other");
+        storage.remove("other");
+        storage.crash(InMemoryLogStorage::Crash::MACHINE, seed);
+        const std::vector<std::byte> content = contentOf(storage, "log");
+        expect(std::all_of(content.begin(), content.end(), [](std::byte b) { return b == std::byte{0x77}; }), "a cut writes no zeros");
+        expect(content.size() == 100 || content.size() == 3 * InMemoryLogStorage::pageBytes, "and lands whole or not at all");
+        oldSize = oldSize || content.size() != 100;
+        newSize = newSize || content.size() == 100;
+        const bool returned = storage.file("other").has_value();
+        back = back || returned;
+        gone = gone || !returned;
+    }
+    expect(oldSize && newSize && back && gone, "over 20 seeds, both sizes, and a removed file both back and gone");
+
+    InMemoryLogStorage storage;
+    storage.create("a.tmp", Durability::MACHINE)->rename("a");
+    storage.remove("a");
+    storage.create("b.tmp", Durability::MACHINE)->rename("b");
+    storage.crash(InMemoryLogStorage::Crash::ENGINE, 1);
+    for (std::uint64_t seed = 1; seed <= 10; ++seed) {
+        InMemoryLogStorage again(storage.contents());
+        again.crash(InMemoryLogStorage::Crash::MACHINE, seed);
+        expect(again.names() == std::vector<std::string>{"b"}, "a rename after it flushed the directory, so the remove holds");
+    }
+}
+
+// A watcher sees what the storage holds after each change, which is how a test crashes at
+// every step: a storage made from one holds just that.
+void testWatchingEachChange() {
+    InMemoryLogStorage storage;
+    std::vector<InMemoryLogStorage::Contents> seen;
+    storage.watch([&seen](const InMemoryLogStorage::Contents& now) { seen.push_back(now); });
+    const std::unique_ptr<LogFile> file = storage.create("a.tmp", Durability::MACHINE);
+    file->write(0, std::vector<std::byte>(4, std::byte{1}));
+    file->extend(64);
+    file->flush();
+    file->rename("a");
+    std::vector<std::byte> back(4);
+    file->read(0, back);
+    storage.remove("a");
+    expect(seen.size() == 6, "create, write, extend, flush, rename, and remove are each a change, a read none, not " +
+                                 std::to_string(seen.size()));
+    expect(seen[1].files.at("a.tmp").bytes.size() == 4 && seen[2].files.at("a.tmp").size == 64 && seen[4].files.contains("a") &&
+               seen[5].files.empty() && seen[5].removed.contains("a"),
+           "each as it stood then");
+    InMemoryLogStorage restarted(seen[4]);
+    expect(restarted.names() == std::vector<std::string>{"a"} && contentOf(restarted, "a").size() == 64, "a storage made from one");
+    restarted.crash(InMemoryLogStorage::Crash::MACHINE, 1);
+    expect(contentOf(restarted, "a")[0] == std::byte{1}, "keeps what had reached the drive then");
+}
+
 [[noreturn]] void runFailingWriter(std::string_view what) {
 #ifdef _MSC_VER
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
@@ -717,6 +892,10 @@ int main(int argc, char** argv) {
     testRealFiles();
     testRecoveryCalls();
     testRealLogFiles();
+    testTheModelledCrashes();
+    testAnInterruptedWrite();
+    testCutsAndRemovesLandWhole();
+    testWatchingEachChange();
     std::cout << "log writer tests passed" << std::endl;
     return EXIT_SUCCESS;
 }

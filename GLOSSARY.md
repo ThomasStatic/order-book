@@ -191,8 +191,12 @@ How far a shard's command log is safe at its durability level. A command may alr
 _Avoid_: commit position, safe position, synced position
 
 **Torn tail**:
-The incomplete end a crash can leave on a command log: a record cut short, or anything else with no valid record after it. It is expected after a crash, unlike damage with valid records following.
+The incomplete end a crash can leave on a command log: a record cut short, or anything else with no valid record after it. It is expected after a crash, unlike damage with valid records following, which is expected only as a torn write.
 _Avoid_: truncated log, corrupt tail
+
+**Torn write**:
+A log write a machine crash met on its way, of which some pages or sectors reached the drive and others did not, so it can leave a hole that valid records follow. Recovery cuts one at the hole if it lies within 1 MiB, the most one write holds, of the end of the last file; further back, no crash explains it.
+_Avoid_: partial write
 
 **Log file**:
 One piece of a shard's command log, of a fixed size. Once closed it is complete and safe on disk, and it is what a checkpoint is rolled forward from.

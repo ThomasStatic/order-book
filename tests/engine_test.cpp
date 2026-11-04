@@ -31,6 +31,7 @@
 #include "order_book/runtime/instruments.hpp"
 #include "order_book/runtime/log_files.hpp"
 #include "order_book/runtime/thread_placement.hpp"
+#include "order_book/xxh64.hpp"
 
 // runEngine in this process, on a thread of its own, with a test's StopSource and real loopback
 // sockets. Threaded, so ThreadSanitizer and Arm run it. See docs/internals/network.md.
@@ -523,13 +524,34 @@ void testRecoveryRefusals() {
            "a symbol off the list exits 1");
     expect(filesIn(logs) == before, "and none of them changes the directory");
 
-    std::string damaged = bytesOf(logs / "log-0000-00000000000000000000.oblog");
+    const std::string aapl = bytesOf(logs / "log-0000-00000000000000000000.oblog");
+    std::string damaged = aapl;
     damaged[9] = static_cast<char>(damaged[9] ^ 1);
     std::ofstream(logs / "log-0000-00000000000000000000.oblog", std::ios::binary | std::ios::trunc) << damaged;
     expect(exitsWith(settings, "recovery stopped: shard 0 position 0 file log-0000-00000000000000000000.oblog: CORRUPT_HEADER: the "
                                "header's checksum does not match") == EngineExit::RECOVERY_STOPPED,
            "a damaged log exits 5");
     expect(filesIn(logs) == before, "changing nothing");
+
+    // From a matching thread's replay too: MSFT's second record names no command, under a
+    // checksum that chains, so it is the record and not a tear that is found.
+    std::ofstream(logs / "log-0000-00000000000000000000.oblog", std::ios::binary | std::ios::trunc) << aapl;
+    std::string msft = bytesOf(logs / "log-0001-00000000000000000000.oblog");
+    const std::size_t second = msft.size() - replay::logRecordBytes;
+    msft[second + 4] = static_cast<char>(9);
+    std::uint32_t previous = 0;
+    for (std::size_t i = 4; i-- > 0;) {
+        previous = (previous << 8) | std::uint32_t{static_cast<unsigned char>(msft[second - replay::logRecordBytes + i])};
+    }
+    auto checksum = static_cast<std::uint32_t>(
+        replay::xxh64(std::as_bytes(std::span<const char>(msft.data() + second + 4, replay::logRecordBytes - 4)), previous) & 0xFFFFFFFFULL);
+    for (std::size_t i = 0; i < 4; ++i, checksum >>= 8) {
+        msft[second + i] = static_cast<char>(checksum & 0xFF);
+    }
+    std::ofstream(logs / "log-0001-00000000000000000000.oblog", std::ios::binary | std::ios::trunc) << msft;
+    expect(exitsWith(settings, "recovery stopped: shard 1 position 1 file log-0001-00000000000000000000.oblog: UNKNOWN_COMMAND: not a "
+                               "command") == EngineExit::RECOVERY_STOPPED,
+           "a record recovery can't replay exits 5 from its shard's thread");
     std::filesystem::remove_all(logs);
     for (const std::filesystem::path& path : {list, moved, off}) {
         std::filesystem::remove(path);

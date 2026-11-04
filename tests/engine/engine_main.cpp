@@ -4,7 +4,8 @@
 //   engine_randomized_tests --seed S [options]    run one seed
 //   engine_randomized_tests --explore R [options] run R fresh seeds, each printed first
 //
-// Options: --commands N, --instruments N, --shards N, --spread uniform|skewed|one-hot, and
+// Options: --commands N, --instruments N, --shards N, --spread uniform|skewed|one-hot,
+// --durability machine|process (by default, the committed seeds run both), --crashes on|off, and
 // --stepper run|stop, which runs the gateway stepper's schedule for each seed instead, with no
 // stop or with one, on its own default instruments and shards unless those are given too, and
 // with --gateway-threads M, --connections N, --placement hashed|pinned, --stream-seed S (the
@@ -53,6 +54,7 @@ struct Options {
     std::optional<bool> stepperStop;  // set by --stepper: whether its schedules land a stop
     bool threads = false;             // set by --threads run
     bool instrumentsGiven = false;
+    bool durabilityGiven = false;
     bool shardsGiven = false;
     std::size_t gatewayThreads = 1;
     std::optional<std::size_t> connections;
@@ -100,7 +102,9 @@ const char* spreadName(Spread spread) {
 std::string reproduction(const EngineSeedConfig& config) {
     return "engine_randomized_tests --seed " + std::to_string(config.seed) + " --commands " + std::to_string(config.commands) +
            " --instruments " + std::to_string(config.instruments) + " --shards " + std::to_string(config.shards) + " --spread " +
-           spreadName(config.spread);
+           spreadName(config.spread) + " --durability " +
+           (config.durability == order_book::runtime::Durability::MACHINE ? "machine" : "process") + " --crashes " +
+           (config.crashes ? "on" : "off");
 }
 
 StepperConfig stepperConfig(const Options& options, std::uint64_t seed) {
@@ -153,6 +157,7 @@ bool runSchedule(const StepperConfig& config, const std::optional<std::vector<st
         generation.shards = config.shards;
         generation.commands = config.commands;
         generation.logWritePercent = 0;  // its log writers are actors of their own
+        generation.crashes = false;
         const std::vector<EngineCommand> all = generateEngineStream(generation);
         std::vector<EngineCommand> kept;
         for (const std::size_t index : *lines) {
@@ -246,7 +251,7 @@ std::optional<std::vector<std::size_t>> parseLines(std::string_view text) {
     }
 }
 
-bool runSeed(const EngineSeedConfig& config) {
+bool runSeed(const EngineSeedConfig& config, bool report = false) {
     order_book::randomized::setAbortContext("seed " + std::to_string(config.seed), reproduction(config), false);
     const EngineRunResult result = runEngineSeed(config);
     order_book::randomized::clearAbortContext();
@@ -254,6 +259,11 @@ bool runSeed(const EngineSeedConfig& config) {
         std::cerr << "FAILED: command " << failure->commandIndex << " of instrument " << failure->instrument << ": "
                   << failure->reason << "\nreproduce with: " << reproduction(config) << std::endl;
         return false;
+    }
+    if (report) {
+        const EngineStats& stats = result.stats;
+        std::cout << "seed " << config.seed << ": queued=" << stats.queued << " crashes=" << stats.crashes
+                  << " lost=" << stats.lostToCrashes << " tail-cut-bytes=" << stats.tailCutBytes << std::endl;
     }
     return true;
 }
@@ -291,6 +301,22 @@ std::optional<std::string> parseArguments(int argc, char** argv, Options& option
                 return "--log takes on or off, not '" + std::string(value) + "'";
             }
             options.log = value == "on";
+            continue;
+        }
+        if (arg == "--durability") {
+            if (value != "machine" && value != "process") {
+                return "--durability takes machine or process, not '" + std::string(value) + "'";
+            }
+            options.config.durability =
+                value == "machine" ? order_book::runtime::Durability::MACHINE : order_book::runtime::Durability::PROCESS;
+            options.durabilityGiven = true;
+            continue;
+        }
+        if (arg == "--crashes") {
+            if (value != "on" && value != "off") {
+                return "--crashes takes on or off, not '" + std::string(value) + "'";
+            }
+            options.config.crashes = value == "on";
             continue;
         }
         if (arg == "--out-dir") {
@@ -383,7 +409,7 @@ int runAll(const Options& options) {
     if (options.seed) {
         EngineSeedConfig config = options.config;
         config.seed = *options.seed;
-        return runSeed(config) ? EXIT_SUCCESS : EXIT_FAILURE;
+        return runSeed(config, true) ? EXIT_SUCCESS : EXIT_FAILURE;
     }
     if (options.explore) {
         std::random_device device;
@@ -399,11 +425,16 @@ int runAll(const Options& options) {
         std::cout << "explored " << *options.explore << " fresh seeds without a failure" << std::endl;
         return EXIT_SUCCESS;
     }
+    // Each seed at both durabilities, one spread each, unless one was asked for.
     for (const std::uint64_t seed : committedSeeds) {
         for (const Spread spread : {Spread::UNIFORM, Spread::SKEWED}) {
             EngineSeedConfig config = options.config;
             config.seed = seed;
             config.spread = spread;
+            if (!options.durabilityGiven) {
+                config.durability = (spread == Spread::UNIFORM) == (seed % 2 == 0) ? order_book::runtime::Durability::MACHINE
+                                                                                    : order_book::runtime::Durability::PROCESS;
+            }
             if (!runSeed(config)) {
                 return EXIT_FAILURE;
             }

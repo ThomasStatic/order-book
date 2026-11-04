@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <memory>
 #include <random>
@@ -20,6 +21,7 @@
 #include "order_book/runtime/instruments.hpp"
 #include "order_book/runtime/log_storage.hpp"
 #include "order_book/runtime/log_writer.hpp"
+#include "order_book/runtime/recovery.hpp"
 #include "order_book/runtime/shard.hpp"
 
 namespace order_book::engine_testing {
@@ -37,8 +39,11 @@ namespace order_book::engine_testing {
         constexpr std::uint64_t interleaverStream = 0x9E3779B97F4A7C15ULL;
         constexpr std::uint64_t faultStream = 0xC2B2AE3D27D4EB4FULL;
         constexpr std::uint64_t logStream = 0x165667B19E3779F9ULL;
-        // Records in the log file of the shard with the most symbols, so a run rolls across many.
-        constexpr std::uint64_t recordsPerSmallestFile = 25;
+        constexpr std::uint64_t crashStream = 0x27D4EB2F165667C5ULL;
+        // Records in the log file of the shard with the most symbols, so a run rolls across many,
+        // and a file spans two of a drive's pages, so a machine crash can tear a record or leave a
+        // hole that valid records follow.
+        constexpr std::uint64_t recordsPerSmallestFile = 120;
 
         Symbol symbolOf(std::size_t instrument) {
             return *Symbol::parse("I" + std::to_string(instrument));
@@ -99,13 +104,23 @@ namespace order_book::engine_testing {
         // One shard's log: its ring, as the matching thread fills it, its durable position, and
         // its log writer on the run's in-memory storage.
         struct ShardLog {
-            ShardLog(runtime::Housekeeping& housekeeping, std::uint32_t shard, std::size_t records)
-                : ring(records), writer(housekeeping, shard, ring, durable) {}
+            ShardLog(runtime::Housekeeping& housekeeping, std::uint32_t shard, std::size_t records, std::uint64_t firstPosition = 0)
+                : ring(records), writer(housekeeping, shard, ring, durable, firstPosition) {}
 
             runtime::Ring<runtime::LogEntry> ring;
             runtime::DurablePosition durable;
             runtime::LogWriter writer;
         };
+
+        // A command as its shard's log holds it, in log order, so the model and witness can be
+        // rebuilt from what a crash left.
+        struct Logged {
+            std::size_t instrument;
+            Command command;
+            replay::Command bookCommand;
+        };
+
+        const std::atomic<bool> neverStopping{false};
 
         // Everything that runs one instrument, beside its shard's book.
         struct Instrument {
@@ -120,11 +135,13 @@ namespace order_book::engine_testing {
             explicit Run(const EngineSeedConfig& seedConfig)
                 : config(seedConfig),
                   directory(listOf(seedConfig), seedConfig.shards),
-                  housekeeping(storage, directory, runtime::Durability::MACHINE,
-                               runtime::leastLogFileBytes(directory) + (recordsPerSmallestFile - 1) * replay::logRecordBytes) {
+                  lock(storage.lock()),
+                  housekeeping(makeHousekeeping()),
+                  logged(seedConfig.shards),
+                  released(seedConfig.shards, 0) {
                 for (std::uint32_t shard = 0; shard < config.shards; ++shard) {
                     shards.push_back(std::make_unique<runtime::Shard>(directory, shard, config.shardCapacity));
-                    logs.push_back(std::make_unique<ShardLog>(housekeeping, shard, config.logRingRecords));
+                    logs.push_back(std::make_unique<ShardLog>(*housekeeping, shard, config.logRingRecords));
                     shards.back()->watchDurablePosition(logs.back()->durable);
                 }
                 instruments.reserve(config.instruments);
@@ -145,6 +162,10 @@ namespace order_book::engine_testing {
                         writeLogs(result.stats);
                         continue;
                     }
+                    if (stream[index].action == EngineAction::CRASH_ENGINE || stream[index].action == EngineAction::CRASH_MACHINE) {
+                        result.failure = crash(stream[index], index, result.stats);
+                        continue;
+                    }
                     result.failure = execute(stream[index], index, result.stats);
                 }
                 if (!result.failure) {
@@ -154,6 +175,9 @@ namespace order_book::engine_testing {
                     result.failure = finishLogs(stream.size(), result.stats);
                 }
                 for (const Instrument& instrument : instruments) {
+                    if (instrument.location.shard >= shards.size()) {
+                        continue;  // a recovery that stopped built only the shards before it
+                    }
                     result.stats.shardGrowths +=
                         shards[instrument.location.shard]->books().book(instrument.location.slot).capacityGrowths();
                     result.stats.witnessGrowths += instrument.witness.capacityGrowths();
@@ -168,6 +192,12 @@ namespace order_book::engine_testing {
                     list.push_back(runtime::Instrument{symbolOf(i), std::nullopt, std::nullopt, std::nullopt, std::nullopt});
                 }
                 return list;
+            }
+
+            std::unique_ptr<runtime::Housekeeping> makeHousekeeping() {
+                return std::make_unique<runtime::Housekeeping>(
+                    storage, directory, config.durability,
+                    runtime::leastLogFileBytes(directory) + (recordsPerSmallestFile - 1) * replay::logRecordBytes);
             }
 
             static EngineFailure failure(std::size_t index, const Instrument& instrument, std::string reason) {
@@ -222,7 +252,7 @@ namespace order_book::engine_testing {
                     return failure(index, instrument, "entry refused a command with a good symbol, with the engine running");
                 }
                 ++stats.queued;
-                return runOnShard(*accepted, instrument, expected, index, stats);
+                return runOnShard(*accepted, line, instrument, expected, index, stats);
             }
 
             // One pass of a log writer, playing the housekeeping thread first if it waits for its
@@ -232,7 +262,7 @@ namespace order_book::engine_testing {
                 if (written != 0 || !shardLog.writer.waitingForFile()) {
                     return written;
                 }
-                housekeeping.pass();
+                housekeeping->pass();
                 return shardLog.writer.pass();
             }
 
@@ -247,11 +277,12 @@ namespace order_book::engine_testing {
 
             // What the matching thread does before running a command: its place in the log is
             // fixed, waiting for the log writer first if the ring is full.
-            void logCommand(const network::EntryAccepted& accepted, std::size_t index, EngineStats& stats) {
+            void logCommand(const network::EntryAccepted& accepted, const EngineCommand& line, std::size_t index, EngineStats& stats) {
                 if (config.leaveUnloggedFrom && *config.leaveUnloggedFrom <= index && !leftUnlogged) {
                     leftUnlogged = true;
                     return;
                 }
+                logged[accepted.location.shard].push_back(Logged{line.instrument, *line.converted, accepted.command});
                 ShardLog& shardLog = *logs[accepted.location.shard];
                 while (!shardLog.ring.tryPush(runtime::LogEntry{accepted.command, accepted.location.slot, runtime::ControlKind::COMMAND})) {
                     const std::size_t written = writeLog(shardLog);
@@ -260,12 +291,13 @@ namespace order_book::engine_testing {
                 }
             }
 
-            std::optional<EngineFailure> runOnShard(const network::EntryAccepted& accepted, Instrument& instrument,
-                                                    const ExpectedOutcome& expected, std::size_t index, EngineStats& stats) {
+            std::optional<EngineFailure> runOnShard(const network::EntryAccepted& accepted, const EngineCommand& line,
+                                                    Instrument& instrument, const ExpectedOutcome& expected, std::size_t index,
+                                                    EngineStats& stats) {
                 if (accepted.symbol != instrument.symbol || accepted.location != instrument.location) {
                     return failure(index, instrument, "entry routed a command to the wrong book");
                 }
-                logCommand(accepted, index, stats);
+                logCommand(accepted, line, index, stats);
                 runtime::Shard& shard = *shards[accepted.location.shard];
                 shard.process(accepted.command, accepted.location.slot);
                 const std::span<const BookEvent> events = shard.result().events();
@@ -282,6 +314,119 @@ namespace order_book::engine_testing {
                     return failure(index, instrument, "the shard's book differs from the model: " + *difference);
                 }
                 return std::nullopt;
+            }
+
+            // A CRASH line, as runEngineSeed's comment in engine_harness.hpp says.
+            std::optional<EngineFailure> crash(const EngineCommand& line, std::size_t index, EngineStats& stats) {
+                const bool machine = line.action == EngineAction::CRASH_MACHINE;
+                ++stats.crashes;
+                for (std::size_t shard = 0; shard < logs.size(); ++shard) {
+                    released[shard] = std::max(released[shard], logs[shard]->durable.load());
+                }
+                const bool losing = config.loseLogFilesAtFirstCrash && !crashedOnce;
+                crashedOnce = true;
+                if (machine && !losing) {
+                    // The write each log writer was making, which the crash meets on its way: one
+                    // pass, in the file it has, so never one past a full file's flush.
+                    storage.interruptWrites();
+                    for (const std::unique_ptr<ShardLog>& shardLog : logs) {
+                        shardLog->writer.pass();
+                    }
+                }
+                storage.crash(machine ? runtime::InMemoryLogStorage::Crash::MACHINE : runtime::InMemoryLogStorage::Crash::ENGINE,
+                              line.crashSeed);
+                if (losing) {
+                    loseShardZerosNewerFiles();
+                }
+                // Everything the dead engine had, its log writers before the housekeeping they take
+                // files from.
+                logs.clear();
+                housekeeping.reset();
+                shards.clear();
+                lock.reset();
+
+                lock = storage.lock();
+                housekeeping = makeHousekeeping();
+                std::vector<runtime::RecoveredShard> recovered;
+                try {
+                    const runtime::LogSurvey survey = runtime::surveyLog(storage, directory);
+                    for (const std::string& temporary : survey.temporaries) {
+                        storage.remove(temporary);
+                    }
+                    for (std::uint32_t shard = 0; shard < config.shards; ++shard) {
+                        shards.push_back(std::make_unique<runtime::Shard>(directory, shard, config.shardCapacity));
+                        recovered.push_back(
+                            runtime::recoverShard(storage, directory, survey.shards[shard], *shards.back(), config.shardCapacity, neverStopping));
+                    }
+                } catch (const runtime::RecoveryError& error) {
+                    // Every file is far below 1 MiB, so every hole a crash leaves is cut: no
+                    // modelled crash can leave what recovery must stop on.
+                    return EngineFailure{index, "", std::string("recovery after a crash failed: ") + error.what()};
+                }
+
+                const bool promised = !machine || config.durability == runtime::Durability::MACHINE;
+                for (std::uint32_t shard = 0; shard < config.shards; ++shard) {
+                    const std::uint64_t survived = recovered[shard].replayed;
+                    stats.tailCutBytes += recovered[shard].tailCutBytes;
+                    if (survived > logged[shard].size()) {
+                        return EngineFailure{index, "", "shard " + std::to_string(shard) + " recovered " + std::to_string(survived) +
+                                                            " commands of the " + std::to_string(logged[shard].size()) + " it queued"};
+                    }
+                    if (promised && survived < released[shard]) {
+                        return EngineFailure{index, "", "shard " + std::to_string(shard) + " recovered " + std::to_string(survived) +
+                                                            " commands, but had released responses up to " +
+                                                            std::to_string(released[shard])};
+                    }
+                    stats.lostToCrashes += logged[shard].size() - survived;
+                    logged[shard].resize(static_cast<std::size_t>(survived));
+                }
+                rebuildFromTheLog();
+                for (const Instrument& instrument : instruments) {
+                    const OrderBook& book = shards[instrument.location.shard]->books().book(instrument.location.slot);
+                    if (const std::optional<std::string> difference = randomized::compareBookWithModel(book, instrument.model)) {
+                        return failure(index, instrument, "after the crash, the shard's book differs from the model: " + *difference);
+                    }
+                    if (const std::optional<std::string> difference = randomized::compareBooks(book, instrument.witness, instrument.model)) {
+                        return failure(index, instrument, "after the crash, the shard's book differs from the witness: " + *difference);
+                    }
+                }
+                for (std::uint32_t shard = 0; shard < config.shards; ++shard) {
+                    logs.push_back(std::make_unique<ShardLog>(*housekeeping, shard, config.logRingRecords, recovered[shard].replayed));
+                    shards[shard]->watchDurablePosition(logs.back()->durable);
+                }
+                return std::nullopt;
+            }
+
+            // A drive that lied: every file of shard 0's but its oldest gone.
+            void loseShardZerosNewerFiles() {
+                const std::string prefix = runtime::logFileName(0, 0).substr(0, 9);
+                bool oldest = true;
+                for (const std::string& name : storage.names()) {
+                    if (!name.starts_with(prefix)) {
+                        continue;
+                    }
+                    if (!oldest) {
+                        storage.remove(name);
+                    }
+                    oldest = false;
+                }
+            }
+
+            // Each model and witness from nothing, through the commands that survived in its
+            // shard's log, in log order.
+            void rebuildFromTheLog() {
+                for (Instrument& instrument : instruments) {
+                    instrument.model = ReferenceBook{};
+                    instrument.witness = OrderBook{};
+                    instrument.witness.reserve(config.witnessCapacity);
+                }
+                for (const std::vector<Logged>& shardLog : logged) {
+                    for (const Logged& entry : shardLog) {
+                        Instrument& instrument = instruments[entry.instrument];
+                        randomized::applyCommand(instrument.model, entry.command);
+                        static_cast<void>(replay::executeCommand(instrument.witness, entry.bookCommand));
+                    }
+                }
             }
 
             // What every run ends on: every shard sound, and every witness equal to the model
@@ -330,7 +475,7 @@ namespace order_book::engine_testing {
                     }
                 }
                 // The next files no writer took, as a clean stop removes them.
-                housekeeping.removeUnused();
+                housekeeping->removeUnused();
                 std::vector<replay::ReplayRecord> records;
                 for (std::uint32_t shard = 0; shard < logs.size(); ++shard) {
                     try {
@@ -367,11 +512,15 @@ namespace order_book::engine_testing {
             EngineSeedConfig config;
             runtime::InstrumentDirectory directory;
             runtime::InMemoryLogStorage storage;
-            runtime::Housekeeping housekeeping;
+            std::unique_ptr<runtime::StorageLock> lock;
+            std::unique_ptr<runtime::Housekeeping> housekeeping;
             std::vector<std::unique_ptr<runtime::Shard>> shards;
             std::vector<std::unique_ptr<ShardLog>> logs;
             std::vector<Instrument> instruments;
+            std::vector<std::vector<Logged>> logged;  // by shard, from position 0
+            std::vector<std::uint64_t> released;      // by shard: how far responses were released
             bool leftUnlogged = false;
+            bool crashedOnce = false;
         };
     }  // namespace
 
@@ -459,6 +608,21 @@ namespace order_book::engine_testing {
         reference::Interleaver interleaver(config.seed ^ interleaverStream, config.instruments, config.spread);
         std::mt19937_64 faults(config.seed ^ faultStream);
         std::mt19937_64 logWrites(config.seed ^ logStream);
+        // One or two crashes, each after a command picked from a source of their own.
+        std::mt19937_64 crashes(config.seed ^ crashStream);
+        std::vector<std::pair<std::size_t, EngineCommand>> crashAfter;
+        if (config.crashes && config.commands != 0) {
+            const std::size_t count = 1 + static_cast<std::size_t>(crashes() % 2);
+            for (std::size_t i = 0; i < count; ++i) {
+                const auto after = static_cast<std::size_t>(crashes() % config.commands);
+                const bool machine = crashes() % 2 == 0;
+                const std::uint64_t seed = crashes();
+                crashAfter.emplace_back(after, EngineCommand{0, Command{}, std::nullopt, SymbolFault::NONE,
+                                                             machine ? EngineAction::CRASH_MACHINE : EngineAction::CRASH_ENGINE, seed});
+            }
+            std::stable_sort(crashAfter.begin(), crashAfter.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        }
+        std::size_t nextCrash = 0;
         std::vector<EngineCommand> stream;
         stream.reserve(config.commands);
         for (std::size_t i = 0; i < config.commands; ++i) {
@@ -474,6 +638,9 @@ namespace order_book::engine_testing {
             stream.push_back(EngineCommand{instrument, generated, convertForEngine(generated), fault, EngineAction::COMMAND});
             if (config.logWritePercent != 0 && logWrites() % 100 < config.logWritePercent) {
                 stream.push_back(EngineCommand{0, generated, std::nullopt, SymbolFault::NONE, EngineAction::LOG});
+            }
+            while (nextCrash < crashAfter.size() && crashAfter[nextCrash].first == i) {
+                stream.push_back(crashAfter[nextCrash++].second);
             }
         }
         return stream;

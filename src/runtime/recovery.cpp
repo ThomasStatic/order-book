@@ -16,8 +16,11 @@
 
 #include "order_book/command_log.hpp"
 #include "order_book/replay_parser.hpp"
+#include "order_book/runtime/log_writer.hpp"
 
 namespace order_book::runtime {
+
+    static_assert(LogWriter::mostBytesPerWrite <= tornWriteReach, "one write must stay within what recovery cuts as torn");
 
     namespace {
 
@@ -151,28 +154,27 @@ namespace order_book::runtime {
         // byte, and neither does a first record torn as it was written.
         std::optional<std::uint64_t> droppedWithoutARecord(LogStorage& storage, const LogFileEntry& entry) {
             const FileHeader header = readHeader(storage, entry.name);
-            const auto* parsed = std::get_if<replay::LogHeader>(&header.parsed);
-            if (parsed == nullptr) {
+            if (!std::holds_alternative<replay::LogHeader>(header.parsed)) {
                 return std::nullopt;
             }
             // One handle at a time: a file opened to cut shares no writing with another handle.
-            bool zeros = false;
+            std::uint64_t written = 0;
             {
                 const std::unique_ptr<LogFile> file = storage.open(entry.name);
-                std::vector<std::byte> first(parsed->recordBytes);
-                const std::size_t got = file->read(header.bytes, first);
-                zeros = std::all_of(first.begin(), first.begin() + static_cast<std::ptrdiff_t>(got), [](std::byte b) { return b == std::byte{0}; });
+                written = writtenFrom(*file, header.bytes);
             }
-            if (!zeros) {
-                LogFileReader reader(storage, entry.name);
-                const replay::ReadResult result = reader.next();
-                const auto* error = std::get_if<replay::ParseError>(&result);
-                if (error == nullptr || error->code != replay::ParseErrorCode::TORN_TAIL) {
-                    return std::nullopt;
-                }
+            if (written == 0) {
+                return 0;  // all zeros: the next file made ahead, as it was made
             }
-            const std::unique_ptr<LogFile> file = storage.open(entry.name);
-            return writtenFrom(*file, header.bytes);
+            // A first record that is all zeros may still be a hole that valid records follow,
+            // which replay decides on.
+            LogFileReader reader(storage, entry.name);
+            const replay::ReadResult result = reader.next();
+            const auto* error = std::get_if<replay::ParseError>(&result);
+            if (error == nullptr || error->code != replay::ParseErrorCode::TORN_TAIL) {
+                return std::nullopt;
+            }
+            return written;
         }
 
     }  // namespace
@@ -264,7 +266,15 @@ namespace order_book::runtime {
         }
 
         constexpr std::uint64_t recordsBetweenLooks = 1024;
-        std::optional<std::pair<std::string, std::uint64_t>> cut;  // the last file, and where its torn tail starts
+        // Where the last file's tail is cut: a torn tail, or a hole valid records follow.
+        struct Cut {
+            std::string file;
+            std::uint64_t offset = 0;
+            std::uint64_t headerBytes = 0;
+            std::uint64_t recordBytes = 0;
+            std::optional<std::string> holeFinding;  // what the reader said, for a hole valid records follow
+        };
+        std::optional<Cut> cut;
         for (std::size_t i = 0; i < kept.size(); ++i) {
             const LogFileEntry& entry = kept[i];
             const std::uint64_t expected = shard.nextPosition();
@@ -299,12 +309,30 @@ namespace order_book::runtime {
                     stopRecovery(where(number, entry.firstPosition, entry.name) + ": " + finding(error));
                 }
                 const bool last = i + 1 == kept.size();
-                if (error.code == replay::ParseErrorCode::TORN_TAIL && last) {
-                    cut.emplace(entry.name, wholeHeaderBytes(*reader.header()) + inFile * reader.header()->recordBytes);
+                const bool tear = error.code == replay::ParseErrorCode::TORN_TAIL || error.code == replay::ParseErrorCode::CORRUPT_RECORD;
+                if (tear && last) {
+                    const std::uint64_t headerBytes = wholeHeaderBytes(*reader.header());
+                    cut = Cut{entry.name, headerBytes + inFile * reader.header()->recordBytes, headerBytes, reader.header()->recordBytes,
+                              std::nullopt};
+                    if (error.code == replay::ParseErrorCode::CORRUPT_RECORD) {
+                        cut->holeFinding = finding(error);
+                    }
                     break;
                 }
                 stopRecovery(where(number, shard.nextPosition(), entry.name) + ": " + finding(error) +
-                     (error.code == replay::ParseErrorCode::TORN_TAIL ? ", in a file before the last, which its log writer flushed whole" : ""));
+                     (tear ? ", in a file before the last, which its log writer flushed whole" : ""));
+            }
+        }
+
+        std::uint64_t cutBytes = 0;
+        if (cut) {
+            const std::unique_ptr<LogFile> file = storage.open(cut->file);
+            cutBytes = writtenFrom(*file, cut->offset);
+            // A whole number of records, since a write starts and ends on one.
+            const std::uint64_t reach = (cutBytes + cut->recordBytes - 1) / cut->recordBytes * cut->recordBytes;
+            if (cut->holeFinding && reach > tornWriteReach) {
+                stopRecovery(where(number, shard.nextPosition(), cut->file) + ": " + *cut->holeFinding + ", with " + std::to_string(reach) +
+                             " bytes of records from it to the end of what was written, more than one write's " + std::to_string(tornWriteReach));
             }
         }
 
@@ -325,11 +353,18 @@ namespace order_book::runtime {
         }
 
         if (cut) {
-            const std::unique_ptr<LogFile> file = storage.open(cut->first);
-            recovered.tailCutBytes += writtenFrom(*file, cut->second);
-            file->cut(cut->second);
-            file->flush();
-            file->close();
+            recovered.tailCutBytes += cutBytes;
+            if (cut->offset == cut->headerBytes) {
+                // Nothing is left in it, so it goes, as a trailing file with no records does, and
+                // the next file can start where it did.
+                storage.remove(cut->file);
+                ++recovered.filesRemoved;
+            } else {
+                const std::unique_ptr<LogFile> file = storage.open(cut->file);
+                file->cut(cut->offset);
+                file->flush();
+                file->close();
+            }
         }
         recovered.replayed = shard.nextPosition();
         return recovered;

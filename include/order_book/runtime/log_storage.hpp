@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -126,19 +127,48 @@ namespace order_book::runtime {
     // Files held in memory, for tests, under one lock, so a test's thread may read them while a
     // log writer's writes. It can fail a chosen create, write, or flush, as a full or broken
     // drive would. An extended file costs nothing past what was written.
+    //
+    // It models both crashes (spec #58's seam 5). Each file has what the OS holds, which every
+    // read sees, and what the drive holds: a write at machine durability reaches both, one at
+    // process durability only the OS, until a flush takes the whole file, its size included, to
+    // the drive. A directory reaches the drive when a rename flushes it, as makeLogFile's does:
+    // until then a created file's name and a remove are the OS's alone. An engine crash keeps
+    // what the OS holds. A machine crash keeps what the drive holds, and of each page the OS
+    // holds otherwise, a seeded choice of all of it, none, or its first sectors, which is a torn
+    // write; a size the OS holds otherwise, a cut's or an extend's, lands whole or not at all; and
+    // a removed file the directory still names comes back or not.
     class InMemoryLogStorage final : public LogStorage {
     public:
+        static constexpr std::size_t pageBytes = 4096;
+        static constexpr std::size_t sectorBytes = 512;
+
         struct File {
             std::vector<std::byte> bytes;  // up to the end of the last write; zeros follow, to size
             std::uint64_t size = 0;
+            std::vector<std::byte> onDrive;  // the same, as the drive holds them
+            std::uint64_t sizeOnDrive = 0;
+            bool nameOnDrive = false;
             Durability durability = Durability::MACHINE;
             std::size_t writes = 0;
             std::size_t flushes = 0;
             std::size_t extends = 0;
             std::size_t renames = 0;
             std::size_t cuts = 0;
-            bool closed = false;
+            bool closed = false;  // since its last write, extend, or cut, by a handle or a crash
         };
+
+        // Every file, by name, as it stands, and the files removed since the directory was last
+        // flushed, which a machine crash may bring back.
+        struct Contents {
+            std::map<std::string, File> files;
+            std::map<std::string, File> removed;
+        };
+
+        enum class Crash { ENGINE, MACHINE };
+
+        InMemoryLogStorage() = default;
+        // Holding just what one held, as a restart on its drive finds it.
+        explicit InMemoryLogStorage(const Contents& from);
 
         std::unique_ptr<StorageLock> lock() override;
         std::vector<std::string> names() const override;
@@ -159,17 +189,36 @@ namespace order_book::runtime {
         void failWriteAfter(std::size_t writes);
         void failFlushes();
 
+        Contents contents() const;
+        // Called after each create, write, extend, cut, flush, rename, and remove, with what the
+        // storage then holds, on the thread that made the change, outside the storage's lock.
+        void watch(std::function<void(const Contents&)> afterEachChange);
+        // From now until a crash, nothing reaches the drive: the writes a machine crash meets on
+        // their way, whatever their durability, and anything after them.
+        void interruptWrites();
+        // The crash, in place: every open file and the lock belong to the engine that died, so
+        // they reach nothing from now on, and the storage holds what a restart finds.
+        void crash(Crash kind, std::uint64_t seed);
+
     private:
         class OpenFile;
         class HeldLock;
 
+        Contents contentsHeld() const;
+        // After a change, with the guard taken: tells the watcher, which runs once it is let go.
+        void changed(std::unique_lock<std::mutex>& held);
+
         mutable std::mutex guard;
         // Shared with each open file, so a remove leaves it writing where it was.
         std::map<std::string, std::shared_ptr<File>> files;
+        std::map<std::string, File> removed;  // since the directory was last flushed
         std::optional<std::size_t> createsBeforeFailure;
         std::optional<std::size_t> writesBeforeFailure;
         bool flushesFail = false;
         bool locked = false;
+        std::uint64_t lockGeneration = 0;  // a crash moves it on, so a dead engine's lock lets go of nothing
+        bool interrupted = false;
+        std::function<void(const Contents&)> watcher;
     };
 
 }  // namespace order_book::runtime
