@@ -596,11 +596,11 @@ void testCsvExport() {
         "workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,"
         "elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,"
         "volume,final_active_orders,final_price_levels,replaces,expirations,preventions,stops_triggered,"
-        "final_pending_stops,instruments,window,shards\n"
+        "final_pending_stops,instruments,window,shards,durability\n"
         "small-book,core,custom,42,3,Release,true,1,true,600,1500000000,400.000,2500000.000,400,200,0.333333,0,50,"
-        "700,90,12,0,0,0,0,0,1,0,1\n"
+        "700,90,12,0,0,0,0,0,1,0,1,none\n"
         "small-book,core,custom,42,3,Release,true,1,false,600,3000000000,200.000,5000000.000,400,200,0.333333,0,50,"
-        "700,90,12,0,0,0,0,0,1,0,1\n";
+        "700,90,12,0,0,0,0,0,1,0,1,none\n";
     expect(csv == expected, "CSV export:\n" + csv);
 }
 
@@ -612,7 +612,7 @@ void testJsonExport() {
           "\"compiler\": \"Test \\\"compiler\\\"\"", "\"optimized\": true", "\"name\": \"small-book\"",
           "\"fingerprint\": \"0xabc\"", "\"target_levels\": 10", "\"marketable\": 25", "\"active_order_cap\": 200", "\"reserved_orders\": 173", "\"warmup\": true",
           "\"elapsed_ns\": 3000000000", "\"ops_per_second\": 200.000", "\"repetitions\": 1",
-          "\"median\": 200.000", "\"stops_triggered\": 0", "\"final_pending_stops\": 0", "\"window\": 0", "\"shards\": 1"}) {
+          "\"median\": 200.000", "\"stops_triggered\": 0", "\"final_pending_stops\": 0", "\"window\": 0", "\"shards\": 1", "\"durability\": \"none\""}) {
         expect(contains(json, part), "JSON export holds " + part + ":\n" + json);
     }
     expect(std::count(json.begin(), json.end(), '{') == std::count(json.begin(), json.end(), '}'), "balanced braces");

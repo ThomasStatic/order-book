@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <random>
@@ -12,6 +13,7 @@
 #include <vector>
 
 #include "clock.hpp"
+#include "durable_wait_target.hpp"
 #include "histogram.hpp"
 #include "latency_report.hpp"
 #include "noise_floor.hpp"
@@ -503,6 +505,43 @@ void testUnknownRecordFieldIsRefused() {
     expect(threw, "a misspelt field can't fill nothing and leave its real field missing unnoticed");
 }
 
+// A real log writer on real files: every record the target timed is in the log, read back from the
+// files, and the run's directory is gone afterwards, whether or not its outcome was checked.
+void testADurableWaitLogsEveryRecordItTimes() {
+    namespace bench = order_book::benchmark;
+    const std::filesystem::path parent = std::filesystem::temp_directory_path() / "order_book_latency_harness_tests_logs";
+    std::filesystem::remove_all(parent);
+    std::filesystem::create_directories(parent);
+    const bench::Workload workload = bench::generateWorkload(bench::findWorkload("small-book"), 300, 42);
+    for (const bench::RunDurability durability : {bench::RunDurability::PROCESS, bench::RunDurability::MACHINE}) {
+        FakeClock clock;
+        DurableWaitTarget target(workload, durability, parent);
+        for (std::size_t index = 0; index < 50; ++index) {
+            static_cast<void>(target(index, clock));
+            expect(target.durablePosition() >= index + 1, "a wait ends once the durable position covers its record");
+        }
+        target.checkOutcome();
+        DurableWaitTarget whole(workload, durability, parent);
+        const Histogram waits = runClosedLoop(workload.timedCount(), clock, whole);
+        expect(waits.count() == workload.timedCount(), "one wait per record");
+        whole.checkOutcome();
+    }
+    {
+        FakeClock clock;
+        DurableWaitTarget unchecked(workload, bench::RunDurability::PROCESS, parent);
+        static_cast<void>(unchecked(0, clock));
+    }
+    expect(std::filesystem::is_empty(parent), "every run's log directory is deleted");
+    bool refused = false;
+    try {
+        DurableWaitTarget none(workload, bench::RunDurability::NONE, parent);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    expect(refused, "a durable wait with no log is refused");
+    std::filesystem::remove_all(parent);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -535,6 +574,7 @@ int main(int argc, char** argv) {
     testNotSustainedReplacesThePercentiles(directory);
     testClosedLoopMayBeUnpinned();
     testUnknownRecordFieldIsRefused();
+    testADurableWaitLogsEveryRecordItTimes();
     std::cout << "latency_harness_tests passed\n";
     return EXIT_SUCCESS;
 }

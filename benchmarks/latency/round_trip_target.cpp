@@ -6,7 +6,8 @@ namespace order_book::latency {
 
 RoundTripTarget::RoundTripTarget(const benchmark::Workload& workload, const RoundTripSetup& setup)
     : workloads_{workload}, setUpReceiver_(setup.setUpReceiver) {
-    engine_ = std::make_unique<benchmark::EngineProcess>(setup.engine, workloads_, benchmark::EngineOptions{1, setup.engineArguments});
+    engine_ = std::make_unique<benchmark::EngineProcess>(setup.engine, workloads_,
+                                                         benchmark::EngineOptions{1, setup.engineArguments, setup.durability, setup.logParent});
     benchmark::LoopbackClients clients(workloads_, {});
     clients.connect(engine_->port());
     clients.preload(benchmark::defaultGatewayWindow);

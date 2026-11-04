@@ -12,9 +12,10 @@
 // of the stream, which is how a shrunk reproduction runs), and --log on|off (every shard logging,
 // with no response released before its command is in the log; off by default).
 //
-// --threads run runs real gateway and matching threads instead, a connection per instrument,
-// with --gateway-threads M, --ring-slots R (0 for the engine's sizes), --spin-window-ns W, and
-// --out-dir DIR, where a failure's triage is saved as well as printed.
+// --threads run runs real gateway, matching, and log writer threads instead, a connection per
+// instrument, with --gateway-threads M, --ring-slots R (0 for the engine's sizes), --spin-window-ns
+// W, --connections-per-instrument K (K connections on each instrument, held to its log's replay),
+// and --out-dir DIR, where a failure's triage is saved as well as printed.
 #include <charconv>
 #include <chrono>
 #include <cstdint>
@@ -60,6 +61,7 @@ struct Options {
     std::optional<std::uint64_t> streamSeed;
     std::optional<std::vector<std::size_t>> lines;
     std::size_t ringSlots = 0;
+    std::size_t connectionsPerInstrument = 1;
     std::chrono::nanoseconds spinWindow{0};
     std::optional<std::string> outDir;
 };
@@ -185,6 +187,7 @@ ThreadedConfig threadedConfig(const Options& options, std::uint64_t seed) {
     config.gatewayThreads = options.gatewayThreads;
     config.ringSlots = options.ringSlots;
     config.spinWindow = options.spinWindow;
+    config.connectionsPerInstrument = options.connectionsPerInstrument;
     return config;
 }
 
@@ -313,7 +316,9 @@ std::optional<std::string> parseArguments(int argc, char** argv, Options& option
         if (!number) {
             return std::string(arg) + " needs a number, not '" + std::string(value) + "'";
         }
-        if ((arg == "--gateway-threads" || arg == "--connections" || arg == "--shards" || arg == "--instruments") && *number == 0) {
+        if ((arg == "--gateway-threads" || arg == "--connections" || arg == "--shards" || arg == "--instruments" ||
+             arg == "--connections-per-instrument") &&
+            *number == 0) {
             return std::string(arg) + " must be at least 1";
         }
         if (arg == "--seed") {
@@ -334,6 +339,8 @@ std::optional<std::string> parseArguments(int argc, char** argv, Options& option
             options.connections = static_cast<std::size_t>(*number);
         } else if (arg == "--stream-seed") {
             options.streamSeed = *number;
+        } else if (arg == "--connections-per-instrument") {
+            options.connectionsPerInstrument = static_cast<std::size_t>(*number);
         } else if (arg == "--ring-slots") {
             options.ringSlots = static_cast<std::size_t>(*number);
         } else if (arg == "--spin-window-ns") {

@@ -35,7 +35,8 @@ namespace {
     constexpr std::string_view usageText =
         "usage: order_book_benchmarks [--workload NAME]... [--size smoke|standard|extended | --commands N]\n"
         "                             [--kind core|replay|replay-log|shard|queue|gateway|engine|both] [--instruments N]\n"
-        "                             [--window N] [--shards N] [--engine PATH] [--repetitions N] [--warmup N] [--seed N]\n"
+        "                             [--window N] [--shards N] [--engine PATH] [--durability none|process|machine]\n"
+        "                             [--log-dir DIR] [--repetitions N] [--warmup N] [--seed N]\n"
         "                             [--csv FILE] [--json FILE] [--allow-unoptimized]\n"
         "       order_book_benchmarks --list\n"
         "       order_book_benchmarks --help\n";
@@ -58,7 +59,7 @@ namespace {
         "                       thread; queue with real rings and a matching thread; gateway over\n"
         "                       real loopback sockets, one connection per instrument; engine the\n"
         "                       same client against the shipped order_book_engine as a child\n"
-        "                       process, with no log; both runs core and replay\n"
+        "                       process, at process durability; both runs core and replay\n"
         "  --instruments N      for shard, queue, gateway, and engine: share the commands between N\n"
         "                       instruments (default 1)\n"
         "  --window N           for gateway and engine: commands each connection may have unanswered\n"
@@ -67,6 +68,13 @@ namespace {
         "                       modulo N (default 1)\n"
         "  --engine PATH        for engine: the order_book_engine to run (default: the one beside\n"
         "                       this program)\n"
+        "  --durability LEVEL   for queue and gateway: none (the default), a shard with no log;\n"
+        "                       process, written to the system and flushed when a file closes; or\n"
+        "                       machine, written through to the drive. engine always runs at process,\n"
+        "                       and takes --durability process, so it pairs with gateway at that level\n"
+        "  --log-dir DIR        where each logged run, the engine's included, makes a fresh directory\n"
+        "                       for its log, deleted afterwards (default: the system's temporary\n"
+        "                       directory)\n"
         "  --tamper-prediction  for shard, queue, gateway, and engine: predict one trade too many, so\n"
         "                       the run must fail\n"
         "  --repetitions N      measured runs per workload and kind (default 5)\n"
@@ -139,7 +147,8 @@ namespace {
             const bool takesValue = arg == "--workload" || arg == "--size" || arg == "--commands" ||
                                     arg == "--kind" || arg == "--repetitions" || arg == "--warmup" ||
                                     arg == "--seed" || arg == "--csv" || arg == "--json" || arg == "--instruments" ||
-                                    arg == "--window" || arg == "--shards" || arg == "--engine";
+                                    arg == "--window" || arg == "--shards" || arg == "--engine" || arg == "--durability" ||
+                                    arg == "--log-dir";
             if (!takesValue) {
                 return "unknown option '" + std::string(arg) + "'";
             }
@@ -166,6 +175,10 @@ namespace {
                     settings.jsonPath = std::string(value);
                 } else if (arg == "--engine") {
                     settings.run.engine = std::filesystem::path(value);
+                } else if (arg == "--durability") {
+                    settings.run.durability = bench::parseDurability(value);
+                } else if (arg == "--log-dir") {
+                    settings.run.logParent = std::filesystem::path(value);
                 } else {
                     const std::optional<std::uint64_t> number = parseNumber(value);
                     if (!number) {
@@ -195,6 +208,15 @@ namespace {
                 }
             } catch (const std::invalid_argument& error) {
                 return std::string(error.what());
+            }
+        }
+        if (settings.run.durability != bench::RunDurability::NONE) {
+            for (const bench::BenchmarkKind kind : settings.kinds) {
+                // engine takes process, its one level, so it pairs with gateway at the same level.
+                const bool engineAtProcess = kind == bench::BenchmarkKind::ENGINE && settings.run.durability == bench::RunDurability::PROCESS;
+                if (kind != bench::BenchmarkKind::QUEUE && kind != bench::BenchmarkKind::GATEWAY && !engineAtProcess) {
+                    return "--durability is for queue and gateway, and engine always runs at process, so takes only that";
+                }
             }
         }
         if (settings.workloads.empty()) {

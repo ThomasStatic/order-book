@@ -225,6 +225,7 @@ std::string measurementJson(const Measurement& measurement) {
            ", \"warmup\": " + boolText(measurement.warmup) + ", \"commands\": " +
            std::to_string(measurement.commands) + ", \"instruments\": " + std::to_string(measurement.instruments) +
            ", \"window\": " + std::to_string(measurement.window) + ", \"shards\": " + std::to_string(measurement.shards) +
+           ", \"durability\": \"" + durabilityName(measurement.durability) + "\"" +
            ", \"elapsed_ns\": " +
            std::to_string(measurement.elapsedNanoseconds) + ", \"ops_per_second\": " +
            formatFixed(measurement.operationsPerSecond(), 3) + ", \"ns_per_command\": " +
@@ -299,7 +300,7 @@ std::string formatMeasurementsCsv(const BenchmarkReport& report) {
         "workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,"
         "elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,"
         "volume,final_active_orders,final_price_levels,replaces,expirations,preventions,stops_triggered,"
-        "final_pending_stops,instruments,window,shards\n";
+        "final_pending_stops,instruments,window,shards,durability\n";
     const std::string session = report.size + "," + std::to_string(report.seed) + "," +
                                 std::to_string(workloadGeneratorVersion) + "," + report.build.config + "," +
                                 boolText(report.build.optimized());
@@ -317,7 +318,7 @@ std::string formatMeasurementsCsv(const BenchmarkReport& report) {
                std::to_string(outcome.expirations) + "," + std::to_string(outcome.preventions) + "," +
                std::to_string(outcome.stopsTriggered) + "," + std::to_string(outcome.finalPendingStops) + "," +
                std::to_string(measurement.instruments) + "," + std::to_string(measurement.window) + "," +
-               std::to_string(measurement.shards) + "\n";
+               std::to_string(measurement.shards) + "," + durabilityName(measurement.durability) + "\n";
     }
     return csv;
 }

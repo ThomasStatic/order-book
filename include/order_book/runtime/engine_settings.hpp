@@ -43,8 +43,9 @@ namespace order_book::runtime {
         std::size_t highWaterMark = 1024 * 1024;
         std::size_t hardLimit = 16 * 1024 * 1024;
         std::chrono::nanoseconds stopGrace = std::chrono::seconds(5);
-        // Where each shard's log goes. Empty runs with no log, so a response waits for nothing
-        // and a restart loses every book.
+        // Where each shard's log goes, which the command line requires. Empty, which only a caller
+        // in process can give, runs with no log, so a response waits for nothing: the in-process
+        // tests that need no files.
         std::string logDir;
         Durability durability = Durability::MACHINE;
         std::size_t logFileSize = defaultLogFileBytes;  // the most bytes per log file

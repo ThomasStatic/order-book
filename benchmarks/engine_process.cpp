@@ -100,6 +100,15 @@ EngineProcess::EngineProcess(const std::filesystem::path& engine, const std::vec
     if (options.shards == 0) {
         throw std::invalid_argument("an engine run needs at least one shard");
     }
+    if (options.durability == RunDurability::NONE) {
+        throw std::invalid_argument("the engine always logs, so its durability is process or machine");
+    }
+    logDirectory = freshLogDirectory(options.logParent);
+    const auto removeFiles = [this] {
+        std::error_code ignored;
+        std::filesystem::remove(instrumentList, ignored);
+        std::filesystem::remove_all(logDirectory, ignored);
+    };
     {
         std::ofstream list(instrumentList, std::ios::binary);
         list << "symbol,shard,orders,stops,levels\n";
@@ -111,18 +120,20 @@ EngineProcess::EngineProcess(const std::filesystem::path& engine, const std::vec
         }
         list.close();
         if (!list) {
+            removeFiles();
             throw std::runtime_error("engine: could not write " + instrumentList.string());
         }
     }
 
-    std::vector<std::string> arguments{"--instruments", instrumentList.string(), "--shards", std::to_string(options.shards),
-                                       "--listen",      "127.0.0.1:0",           "--stop-on-stdin-close"};
+    std::vector<std::string> arguments{"--instruments",         instrumentList.string(), "--shards",     std::to_string(options.shards),
+                                       "--listen",              "127.0.0.1:0",           "--log-dir",    logDirectory.string(),
+                                       "--durability",          durabilityName(options.durability),
+                                       "--stop-on-stdin-close"};
     arguments.insert(arguments.end(), options.extraArguments.begin(), options.extraArguments.end());
     try {
         child = std::make_unique<process_testing::ChildProcess>(engine.string(), arguments);
     } catch (const std::exception& error) {
-        std::error_code ignored;
-        std::filesystem::remove(instrumentList, ignored);
+        removeFiles();
         throw std::runtime_error(std::string("engine: ") + error.what() + " (give its path with --engine)");
     }
     const std::optional<std::string> line = child->readLine(startLimit);
@@ -132,8 +143,7 @@ EngineProcess::EngineProcess(const std::filesystem::path& engine, const std::vec
     if (!port || *port == 0 || *port > 65535) {
         const process_testing::ExitStatus status = child->wait(std::chrono::milliseconds(10'000));
         stopped = true;
-        std::error_code ignored;
-        std::filesystem::remove(instrumentList, ignored);
+        removeFiles();
         throw std::runtime_error("engine: " + engine.string() + " did not start (exit " + std::to_string(status.code) +
                                  "; give its path with --engine): " + child->standardError());
     }
@@ -141,9 +151,10 @@ EngineProcess::EngineProcess(const std::filesystem::path& engine, const std::vec
 }
 
 EngineProcess::~EngineProcess() {
-    child.reset();  // kills the engine if it is still running
+    child.reset();  // kills the engine if it is still running, so its files are closed
     std::error_code ignored;
     std::filesystem::remove(instrumentList, ignored);
+    std::filesystem::remove_all(logDirectory, ignored);
 }
 
 void EngineProcess::stop() {

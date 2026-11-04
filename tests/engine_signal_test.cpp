@@ -12,6 +12,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <system_error>
 #include <string_view>
 #include <thread>
 #include <utility>
@@ -181,10 +182,28 @@ std::filesystem::path writeList(const std::string& name) {
     return path;
 }
 
+// Every engine's own log directory, removed once the tests are done.
+std::vector<std::filesystem::path> logDirectories;
+
+// Each start gets a new, empty log directory, at process durability, so the log adds no drive
+// flush to a stop's timing.
 std::vector<std::string> startArguments(const std::filesystem::path& list, std::vector<std::string> more = {}) {
-    std::vector<std::string> arguments{"--instruments", list.string(), "--shards", "2", "--listen", "127.0.0.1:0"};
+    const std::filesystem::path logs =
+        std::filesystem::temp_directory_path() / ("order_book_engine_signal_test_logs_" + std::to_string(logDirectories.size()));
+    std::filesystem::remove_all(logs);
+    std::filesystem::create_directories(logs);
+    logDirectories.push_back(logs);
+    std::vector<std::string> arguments{"--instruments", list.string(), "--shards",     "2",      "--listen",
+                                       "127.0.0.1:0",   "--log-dir",   logs.string(), "--durability", "process"};
     arguments.insert(arguments.end(), more.begin(), more.end());
     return arguments;
+}
+
+void removeLogDirectories() {
+    for (const std::filesystem::path& logs : logDirectories) {
+        std::error_code ignored;
+        std::filesystem::remove_all(logs, ignored);
+    }
 }
 
 std::uint16_t listeningPort(ChildProcess& child) {
@@ -368,11 +387,13 @@ int main(int argc, char** argv) {
     testTheAbortHandler();
     testTheEngineInstallsItsAbortHandler();
     if (!haveAConsole()) {
+        removeLogDirectories();
         std::cout << "SKIPPED: no console to send Ctrl-Break through" << std::endl;
         return skipped;
     }
     testEachStopSignalStopsCleanly();
     testASecondStopForcesIt();
+    removeLogDirectories();
     std::cout << "engine signal tests passed" << std::endl;
     return EXIT_SUCCESS;
 }

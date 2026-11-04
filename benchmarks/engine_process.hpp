@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "benchmark_log.hpp"
 #include "order_book/order_book.hpp"
 #include "workload.hpp"
 
@@ -18,8 +19,8 @@ class ChildProcess;
 // The shipped order_book_engine as a child process, for the engine benchmark kind and the
 // round-trip latency interval, so both measure what ships and share no heap with the client.
 // It writes an instrument list naming one book per workload, B0, B1, and so on, each at its
-// workload's expected capacity, starts the engine on port 0 with --stop-on-stdin-close, and
-// reads the port from its listening line. The engine has no log until the log writer lands.
+// workload's expected capacity, starts the engine on port 0 with --stop-on-stdin-close, logging
+// to a fresh directory it deletes afterwards, and reads the port from its listening line.
 namespace order_book::benchmark {
 
 // order_book_engine beside the running program, whose argv[0] this takes.
@@ -47,6 +48,9 @@ struct EngineOptions {
     // Passed to the engine as they are, for pinning and priority: --pin-matching, --pin-gateway,
     // and --thread-priority.
     std::vector<std::string> extraArguments;
+    // The engine's --durability, which can't be NONE: the engine always logs.
+    RunDurability durability = RunDurability::PROCESS;
+    std::filesystem::path logParent = defaultLogParent();  // where its log directory is made
 };
 
 class EngineProcess {
@@ -55,7 +59,7 @@ public:
     // std::runtime_error, with what the engine wrote to stderr, if it doesn't start. The
     // workloads are read here only.
     EngineProcess(const std::filesystem::path& engine, const std::vector<Workload>& workloads, const EngineOptions& options = {});
-    // Kills the engine if stop has not run, and removes the instrument list.
+    // Kills the engine if stop has not run, and removes the instrument list and the log.
     ~EngineProcess();
     EngineProcess(const EngineProcess&) = delete;
     EngineProcess& operator=(const EngineProcess&) = delete;
@@ -69,6 +73,7 @@ public:
 
 private:
     std::filesystem::path instrumentList;
+    std::filesystem::path logDirectory;
     std::unique_ptr<process_testing::ChildProcess> child;
     std::vector<BookCapacity> expected;
     std::uint16_t listeningPort = 0;

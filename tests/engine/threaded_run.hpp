@@ -33,6 +33,10 @@ namespace order_book::engine_testing {
         std::size_t ringSlots = 0;  // every ring's slots, or 0 for the engine's defaults
         std::chrono::nanoseconds spinWindow = std::chrono::nanoseconds::zero();  // for every thread
         ThreadedPlant plant = ThreadedPlant::NONE;
+        // Above 1, each instrument has this many connections, a command going to the one of its
+        // order ID mod this, so an instrument's connections land on different gateway threads.
+        // The take order then decides its answers, which are held to a replay of its own log.
+        std::size_t connectionsPerInstrument = 1;
     };
 
     struct ThreadedResult {
@@ -40,6 +44,7 @@ namespace order_book::engine_testing {
         std::vector<std::string> differences;  // the first differing answer per instrument
         std::string log;                       // the run's own, for a report
         std::size_t gatewaySleeps = 0;         // across the gateway threads' sets
+        bool logReplayDiverged = false;        // the log, replayed through a book and the model, disagreed
 
         bool passed() const { return !failure.has_value(); }
     };

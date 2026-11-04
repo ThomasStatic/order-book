@@ -27,8 +27,8 @@
 // The round-trip interval: from a command's send, over loopback, through the shipped
 // order_book_engine's gateway and matching thread, to the frame flagged last in its response. The
 // engine is a child process on port 0, so this measures what ships and shares no heap with the
-// client. It has no log until the log writer lands. Each target is one fresh engine with one book, preloaded over the
-// wire, untimed, and one connection.
+// client. The engine logs at the setup's durability, in a fresh directory for each target. Each
+// target is one fresh engine with one book, preloaded over the wire, untimed, and one connection.
 namespace order_book::latency {
 
 struct RoundTripSetup {
@@ -37,6 +37,9 @@ struct RoundTripSetup {
     std::vector<std::string> engineArguments;
     // Runs first on the open-loop driver's receiving thread, for pinning it.
     std::function<void()> setUpReceiver;
+    // The engine's --durability, and where its log directory is made.
+    benchmark::RunDurability durability = benchmark::RunDurability::MACHINE;
+    std::filesystem::path logParent = benchmark::defaultLogParent();
 };
 
 // What one open-loop run measured.

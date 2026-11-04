@@ -9,12 +9,12 @@ namespace order_book::runtime {
 
     namespace {
         constexpr std::string_view usageText =
-            "usage: order_book_engine --instruments FILE --shards N --listen ADDR:PORT\n"
+            "usage: order_book_engine --instruments FILE --shards N --listen ADDR:PORT --log-dir DIR\n"
             "                         [--command-ring SLOTS] [--response-ring SLOTS] [--spin-window TIME|unlimited]\n"
             "                         [--capacity-orders N] [--capacity-stops N] [--capacity-levels N]\n"
             "                         [--max-connections N] [--gateway-threads M] [--high-water-mark SIZE] [--hard-limit SIZE]\n"
             "                         [--stop-grace TIME] [--stop-on-stdin-close]\n"
-            "                         [--log-dir DIR] [--durability machine|process] [--log-file-size SIZE] [--log-ring RECORDS]\n"
+            "                         [--durability machine|process] [--log-file-size SIZE] [--log-ring RECORDS]\n"
             "                         [--pin-matching CORES] [--pin-gateway CORES] [--pin-log-writers CORES]\n"
             "                         [--thread-priority normal|high]\n"
             "       order_book_engine --help\n";
@@ -172,6 +172,9 @@ namespace order_book::runtime {
             } else if (flag == "--instruments") {
                 settings.instruments = std::string(value);
             } else if (flag == "--log-dir") {
+                if (value.empty()) {
+                    return needs(flag, "a directory", value);
+                }
                 settings.logDir = std::string(value);
             } else if (flag == "--durability") {
                 if (value != "machine" && value != "process") {
@@ -211,7 +214,7 @@ namespace order_book::runtime {
                 (spin ? settings.spinWindow : settings.stopGrace) = *time;
             }
         }
-        for (const std::string_view required : {"--instruments", "--shards", "--listen"}) {
+        for (const std::string_view required : {"--instruments", "--shards", "--listen", "--log-dir"}) {
             if (!seen.contains(required)) {
                 return UsageError{std::string(required) + " is required"};
             }

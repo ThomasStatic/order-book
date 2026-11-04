@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -79,6 +80,60 @@ void testASetUpFailureReachesTheCaller() {
                  "a matching thread that can't start says so");
 }
 
+// A directory of its own for this test's run directories, empty to start.
+std::filesystem::path logParent(const std::string& name) {
+    const std::filesystem::path parent = std::filesystem::temp_directory_path() / ("order_book_benchmark_queue_tests_" + name);
+    std::filesystem::remove_all(parent);
+    std::filesystem::create_directories(parent);
+    return parent;
+}
+
+// At process and machine, the shard logs every timed command to real files, which a run deletes,
+// and the producer waits at hold markers as a gateway thread does.
+void testADurableQueueRunDoesWhatACoreRunDoes() {
+    const Workload workload = generateWorkload(findWorkload("small-book"), 1000, 42);
+    const Measurement core = runOnce(workload, BenchmarkKind::CORE);
+    for (const RunDurability durability : {RunDurability::PROCESS, RunDurability::MACHINE}) {
+        const std::filesystem::path parent = logParent(durabilityName(durability));
+        RunSettings settings;
+        settings.durability = durability;
+        settings.logParent = parent;
+        const Measurement queue = runInstrumentsOnce({workload}, BenchmarkKind::QUEUE, settings);
+        expect(queue.outcome == core.outcome && queue.durability == durability, std::string("a queue run at ") +
+                                                                                    durabilityName(durability) + " does what the book does");
+        expect(std::filesystem::is_empty(parent), "and deletes its log directory");
+
+        const std::vector<Workload> one{workload};
+        QueueRun run(one, {}, durability, parent);
+        run.run();
+        run.finish();
+        run.check();
+        // Write-through takes long enough that responses always meet a hold; at process the
+        // writer can win every race, so only machine is asked.
+        expect(durability == RunDurability::PROCESS || run.holdsWaited() > 0, "its responses waited for the log");
+        std::filesystem::remove_all(parent);
+    }
+}
+
+void testANoLogRunNeverHolds() {
+    const std::vector<Workload> workloads = instrumentWorkloads(findWorkload("small-book"), 1000, 42, 1);
+    QueueRun run(workloads);
+    run.run();
+    run.finish();
+    expect(run.holdsWaited() == 0, "a shard with no log puts no hold markers out");
+}
+
+// Its directory can't be made, so the run fails before anything is timed, and the matching thread
+// it started is stopped, not left waiting.
+void testALogThatCantBeMadeFailsTheRun() {
+    const std::vector<Workload> workloads = instrumentWorkloads(findWorkload("small-book"), 100, 42, 1);
+    RunSettings settings;
+    settings.durability = RunDurability::PROCESS;
+    settings.logParent = std::filesystem::temp_directory_path() / "order_book_no_such_directory" / "deeper";
+    expectThrows([&] { static_cast<void>(runInstrumentsOnce(workloads, BenchmarkKind::QUEUE, settings)); },
+                 "a log directory that can't be made fails the run");
+}
+
 }  // namespace
 
 int main() {
@@ -87,6 +142,9 @@ int main() {
     testATamperedPredictionFails();
     testABookThatGrewFailsTheRun();
     testASetUpFailureReachesTheCaller();
+    testADurableQueueRunDoesWhatACoreRunDoes();
+    testANoLogRunNeverHolds();
+    testALogThatCantBeMadeFailsTheRun();
     std::cout << "benchmark queue tests passed" << std::endl;
     return EXIT_SUCCESS;
 }

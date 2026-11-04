@@ -392,6 +392,7 @@ ShardRun::ShardRun(const std::vector<Workload>& runWorkloads) : workloads(&runWo
         books.push_back(Book{location, workloadRecords(runWorkloads[i], symbol), 0, WorkloadOutcome{}});
         total += books.back().commands.size();
     }
+    timedFrom = shard->nextPosition();
 
     // Each book's commands stay in order, whichever it draws: only the sharing is random.
     std::vector<std::size_t> remaining;
@@ -455,11 +456,10 @@ void ShardRun::check() const {
 }
 
 MatchingThread::MatchingThread(const std::vector<Workload>& runWorkloads, runtime::Doorbell& doorbell,
-                               std::vector<runtime::RingPair> rings, std::function<void()> setUp)
+                               std::vector<runtime::RingPair> rings, std::function<void()> setUp, std::optional<runtime::LogLink> log)
     : workloads(&runWorkloads) {
-    std::promise<void> ready;
     std::future<void> started = ready.get_future();
-    thread = std::thread([this, &ready, &doorbell, rings = std::move(rings), setUp = std::move(setUp)] {
+    thread = std::thread([this, &doorbell, rings = std::move(rings), setUp = std::move(setUp), log] {
         // Everything a book's owner must do happens here, its build and destruction included.
         // Whatever can fail before the loop runs fails here, while the constructor is still
         // waiting to hear: once the loop runs, it always sends SHARD_STOPPED.
@@ -470,7 +470,7 @@ MatchingThread::MatchingThread(const std::vector<Workload>& runWorkloads, runtim
                 setUp();
             }
             built.emplace(*workloads);
-            loop.emplace(built->onThisThread(), doorbell, rings);
+            loop.emplace(built->onThisThread(), doorbell, rings, runtime::defaultSpinWindow, std::function<void()>{}, log);
         } catch (...) {
             ready.set_exception(std::current_exception());
             return;
@@ -517,13 +517,49 @@ std::vector<WorkloadOutcome> MatchingThread::withFinalShapes(std::vector<Workloa
     return counted;
 }
 
-QueueRun::QueueRun(const std::vector<Workload>& runWorkloads, std::function<void()> setUpMatchingThread)
+namespace {
+
+std::unique_ptr<LogRing> logRingFor(RunDurability durability) {
+    return durability == RunDurability::NONE ? nullptr : std::make_unique<LogRing>();
+}
+
+std::optional<runtime::LogLink> linkOf(const std::unique_ptr<LogRing>& logRing) {
+    return logRing ? std::optional<runtime::LogLink>(logRing->link()) : std::nullopt;
+}
+
+// Every timed command is in the log, and nothing else is: the preload ran before it was made.
+void requireLogged(std::uint64_t logEnd, std::uint64_t first, std::size_t commands, BenchmarkKind kind) {
+    if (logEnd - first != commands) {
+        throw std::runtime_error(std::string(benchmarkKindName(kind)) + ": the log holds " + std::to_string(logEnd - first) +
+                                 " records, not the run's " + std::to_string(commands) + " commands");
+    }
+}
+
+}  // namespace
+
+QueueRun::QueueRun(const std::vector<Workload>& runWorkloads, std::function<void()> setUpMatchingThread, RunDurability durability,
+                   const std::filesystem::path& logParent)
     : workloads(&runWorkloads),
       commands(runtime::defaultCommandRingSlots),
       responses(runtime::defaultResponseRingSlots),
       nextCommand(runWorkloads.size(), 0),
       counted(runWorkloads.size()),
-      matching(runWorkloads, doorbell, {runtime::RingPair{&commands, &responses}}, std::move(setUpMatchingThread)) {}
+      logRing(logRingFor(durability)),
+      matching(runWorkloads, doorbell, {runtime::RingPair{&commands, &responses}}, std::move(setUpMatchingThread), linkOf(logRing)) {
+    if (logRing) {
+        try {
+            logFirst = matching.books().firstTimedPosition();
+            logCommands = matching.books().sharing().size();
+            log = std::make_unique<RunLog>(logParent, durability, matching.books().instruments(), *logRing, logFirst);
+        } catch (...) {
+            try {
+                finish();
+            } catch (const std::exception&) {  // the first failure is the one to report
+            }
+            throw;
+        }
+    }
+}
 
 QueueRun::~QueueRun() {
     if (matching.joinable()) {
@@ -552,15 +588,31 @@ bool QueueRun::trySend(const runtime::CommandElement& element) {
 }
 
 void QueueRun::drainResponses() {
-    responses.drain(runtime::defaultResponseRingSlots, [this](const runtime::ResponseRecord& record) {
+    // As a gateway thread does: a hold marker's responses wait until the durable position reaches it.
+    if (heldUntil != 0) {
+        if (logRing->durable.load() < heldUntil) {
+            return;
+        }
+        heldUntil = 0;
+    }
+    responses.drainWhile(runtime::defaultResponseRingSlots, [this](const runtime::ResponseRecord& record) {
+        if (record.kind == runtime::ResponseKind::HOLD) {
+            if (logRing->durable.load() < record.correlation) {
+                heldUntil = record.correlation;
+                ++holds;
+                return false;
+            }
+            return true;
+        }
         if (record.kind == runtime::ResponseKind::SHARD_STOPPED) {
             stopReceived = true;
-            return;
+            return true;
         }
         countResponse(record.event, counted[static_cast<std::size_t>(record.correlation)]);
         if (record.kind == runtime::ResponseKind::LAST_EVENT) {
             ++answered;
         }
+        return true;
     });
 }
 
@@ -602,7 +654,19 @@ void QueueRun::finish() {
     while (!stopReceived) {
         drainResponses();
     }
-    matching.join();
+    // The matching thread's stop sent its writer the STOP, so the log finishes either way.
+    std::exception_ptr failure;
+    try {
+        matching.join();
+    } catch (...) {
+        failure = std::current_exception();
+    }
+    if (log) {
+        logEnd = log->finish();
+    }
+    if (failure) {
+        std::rethrow_exception(failure);
+    }
 }
 
 std::vector<WorkloadOutcome> QueueRun::outcomes() const {
@@ -611,6 +675,9 @@ std::vector<WorkloadOutcome> QueueRun::outcomes() const {
 
 void QueueRun::check() const {
     requireOutcomes(outcomes(), *workloads, BenchmarkKind::QUEUE);
+    if (log) {
+        requireLogged(logEnd, logFirst, logCommands, BenchmarkKind::QUEUE);
+    }
 }
 
 
@@ -788,18 +855,40 @@ LoopbackConnection LoopbackClients::take(std::size_t book) {
     return std::move(connections[book].link);
 }
 
-GatewayRun::GatewayRun(const std::vector<Workload>& runWorkloads, std::size_t commandWindow)
+GatewayRun::GatewayRun(const std::vector<Workload>& runWorkloads, std::size_t commandWindow, RunDurability durability,
+                       const std::filesystem::path& logParent)
     : workloads(&runWorkloads),
       window(commandWindow),
       commands(runtime::defaultCommandRingSlots),
       responses(runtime::defaultResponseRingSlots),
       sockets(std::make_unique<network::PollSocketSet>()),
       clients(runWorkloads, [this] { return gatewayFailed.load(std::memory_order_seq_cst); }),
+      logRing(logRingFor(durability)),
       matching((commandWindow == 0 ? throw std::invalid_argument("a gateway run needs a window of at least 1") : runWorkloads), doorbell,
-               {runtime::RingPair{&commands, &responses}}) {
+               {runtime::RingPair{&commands, &responses}}, std::function<void()>{}, linkOf(logRing)) {
+    if (logRing) {
+        try {
+            logFirst = matching.books().firstTimedPosition();
+            logCommands = matching.books().sharing().size();
+            log = std::make_unique<RunLog>(logParent, durability, matching.books().instruments(), *logRing, logFirst);
+        } catch (...) {
+            // No gateway thread yet, so this one may stop the shard.
+            while (!commands.tryPush(runtime::CommandElement::stopMarker())) {
+                std::this_thread::yield();
+            }
+            doorbell.ring();
+            try {
+                matching.join();
+            } catch (const std::exception&) {  // the first failure is the one to report
+            }
+            finished = true;
+            throw;
+        }
+    }
     gateway = std::thread([this] {
         try {
-            network::GatewayThread gatewayThread(matching.books().instruments(), {network::ShardLink{&commands, &responses, &doorbell, nullptr}},
+            network::GatewayThread gatewayThread(matching.books().instruments(),
+                                                 {network::ShardLink{&commands, &responses, &doorbell, logRing ? &logRing->durable : nullptr}},
                                                  *sockets);
             network::runGateway(gatewayThread, stopRequested);
         } catch (...) {
@@ -830,15 +919,21 @@ void GatewayRun::stopThreads() {
         }
         doorbell.ring();
     }
+    // The matching thread's stop sent its writer the STOP, so the log finishes either way.
+    std::exception_ptr matchingFailure;
     try {
         matching.join();
     } catch (...) {
-        if (!gatewayFailure) {
-            throw;
-        }
+        matchingFailure = std::current_exception();
+    }
+    if (log) {
+        logEnd = log->finish();
     }
     if (gatewayFailure) {
         std::rethrow_exception(gatewayFailure);
+    }
+    if (matchingFailure) {
+        std::rethrow_exception(matchingFailure);
     }
 }
 
@@ -870,13 +965,16 @@ std::vector<WorkloadOutcome> GatewayRun::outcomes() const {
 
 void GatewayRun::check() const {
     requireOutcomes(outcomes(), *workloads, BenchmarkKind::GATEWAY);
+    if (log) {
+        requireLogged(logEnd, logFirst, logCommands, BenchmarkKind::GATEWAY);
+    }
 }
 
 EngineRun::EngineRun(const std::vector<Workload>& runWorkloads, std::size_t commandWindow, const std::filesystem::path& enginePath,
-                     std::size_t shards)
+                     std::size_t shards, const std::filesystem::path& logParent)
     : workloads(&runWorkloads),
       window(commandWindow == 0 ? throw std::invalid_argument("an engine run needs a window of at least 1") : commandWindow),
-      engine(std::make_unique<EngineProcess>(enginePath, runWorkloads, EngineOptions{shards, {}})),
+      engine(std::make_unique<EngineProcess>(enginePath, runWorkloads, EngineOptions{shards, {}, RunDurability::PROCESS, logParent})),
       clients(runWorkloads, {}) {
     clients.connect(engine->port());
     clients.preload(window);
@@ -926,7 +1024,7 @@ Measurement runInstrumentsOnce(const std::vector<Workload>& workloads, Benchmark
     Measurement measurement;
     std::vector<WorkloadOutcome> outcomes;
     if (kind == BenchmarkKind::ENGINE) {
-        EngineRun run(workloads, settings.window, settings.engine, settings.shards);
+        EngineRun run(workloads, settings.window, settings.engine, settings.shards, settings.logParent);
         const Clock::time_point start = Clock::now();
         run.run();
         measurement.elapsedNanoseconds = nanosecondsBetween(start, Clock::now());
@@ -935,8 +1033,9 @@ Measurement runInstrumentsOnce(const std::vector<Workload>& workloads, Benchmark
         outcomes = run.outcomes();
         measurement.window = settings.window;
         measurement.shards = settings.shards;
+        measurement.durability = RunDurability::PROCESS;
     } else if (kind == BenchmarkKind::GATEWAY) {
-        GatewayRun run(workloads, settings.window);
+        GatewayRun run(workloads, settings.window, settings.durability, settings.logParent);
         const Clock::time_point start = Clock::now();
         run.run();
         measurement.elapsedNanoseconds = nanosecondsBetween(start, Clock::now());
@@ -944,6 +1043,7 @@ Measurement runInstrumentsOnce(const std::vector<Workload>& workloads, Benchmark
         run.check();
         outcomes = run.outcomes();
         measurement.window = settings.window;
+        measurement.durability = settings.durability;
     } else if (kind == BenchmarkKind::SHARD) {
         ShardRun run(workloads);
         const Clock::time_point start = Clock::now();
@@ -952,13 +1052,14 @@ Measurement runInstrumentsOnce(const std::vector<Workload>& workloads, Benchmark
         run.check();
         outcomes = run.outcomes();
     } else {
-        QueueRun run(workloads);
+        QueueRun run(workloads, {}, settings.durability, settings.logParent);
         const Clock::time_point start = Clock::now();
         run.run();
         measurement.elapsedNanoseconds = nanosecondsBetween(start, Clock::now());
         run.finish();
         run.check();
         outcomes = run.outcomes();
+        measurement.durability = settings.durability;
     }
     measurement.workload = workloads.front().config.name;
     measurement.kind = kind;

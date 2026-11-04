@@ -6,6 +6,7 @@
 #include <exception>
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <memory>
 #include <optional>
 #include <span>
@@ -23,6 +24,7 @@
 #include "order_book/replay_parser.hpp"
 #include "order_book/runtime/matching_loop.hpp"
 #include "order_book/runtime/shard.hpp"
+#include "benchmark_log.hpp"
 #include "workload.hpp"
 
 // Runs generated workloads against the book and times them. Only the timed commands are
@@ -71,6 +73,8 @@ struct Measurement {
     std::size_t instruments = 1;  // 1 but for a run of several
     std::size_t window = 0;       // a GATEWAY or ENGINE run's, and 0 for every other kind
     std::size_t shards = 1;       // an ENGINE run's, and 1 for every other kind
+    // A QUEUE or GATEWAY run's log, PROCESS for every ENGINE run, and NONE for every other kind.
+    RunDurability durability = RunDurability::NONE;
     std::int64_t elapsedNanoseconds = 0;
     // What the book did, counted from its results; it always equals the workload's expected
     // outcome, or the run throws instead of returning a measurement.
@@ -89,6 +93,8 @@ struct RunSettings {
     std::size_t window = defaultGatewayWindow;  // for GATEWAY and ENGINE
     std::size_t shards = 1;                     // for ENGINE
     std::filesystem::path engine;               // for ENGINE: the order_book_engine to run
+    RunDurability durability = RunDurability::NONE;  // for QUEUE and GATEWAY; ENGINE always runs at PROCESS
+    std::filesystem::path logParent = defaultLogParent();  // where each logged run makes its directory
 };
 
 // The capacity each run reserves before its preload, untimed: the most the book holds at any
@@ -147,6 +153,8 @@ public:
     const runtime::InstrumentDirectory& instruments() const noexcept { return *directory; }
     // The book that takes each command, in the order they go, and a book's slot and commands.
     const std::vector<std::uint32_t>& sharing() const noexcept { return order; }
+    // The log position of the first timed command: the preload's commands come before it.
+    std::uint64_t firstTimedPosition() const noexcept { return timedFrom; }
     std::uint32_t slotOf(std::uint32_t book) const;
     const replay::Command& commandOf(std::uint32_t book, std::size_t index) const;
 
@@ -163,6 +171,7 @@ private:
     std::unique_ptr<order_book::runtime::Shard> shard;
     std::vector<Book> books;
     std::vector<std::uint32_t> order;  // which book takes each command
+    std::uint64_t timedFrom = 0;
 };
 
 // A real matching thread, which builds and preloads a ShardRun's books and so owns them, with this
@@ -171,13 +180,14 @@ private:
 // The matching thread the queue and gateway kinds share. It builds and preloads a ShardRun, so it
 // owns the books, and destroys them, then runs a MatchingLoop on the given rings until every
 // producer has sent a stop marker, and checks no book grew. setUp, if given, runs first, for
-// pinning it. The doorbell and rings must outlive it, and it must be stopped before it is
-// destroyed.
+// pinning it. With a log, every take goes to its ring before it runs, as in the engine, and its
+// responses wait behind a hold marker. The doorbell, rings, and log must outlive it, and it must be
+// stopped before it is destroyed.
 class MatchingThread {
 public:
     // Returns once the books are built, or rethrows what stopped them.
     MatchingThread(const std::vector<Workload>& workloads, runtime::Doorbell& doorbell, std::vector<runtime::RingPair> rings,
-                   std::function<void()> setUp = {});
+                   std::function<void()> setUp = {}, std::optional<runtime::LogLink> log = std::nullopt);
     ~MatchingThread();
 
     // Built before the constructor returns and left alone until the thread stops.
@@ -193,13 +203,19 @@ private:
     const ShardRun* run = nullptr;
     std::vector<WorkloadOutcome> finalShapes;
     std::exception_ptr failure;
+    // A member, since the thread may still be inside set_value when the constructor's get returns.
+    std::promise<void> ready;
     std::thread thread;
 };
 
+// With a durability other than NONE, the shard logs to real files through RunLog, and this
+// thread, as a gateway thread does, holds each response until the durable position reaches its
+// marker.
 class QueueRun {
 public:
     // setUpMatchingThread, if given, runs first on the matching thread, for pinning it.
-    explicit QueueRun(const std::vector<Workload>& workloads, std::function<void()> setUpMatchingThread = {});
+    explicit QueueRun(const std::vector<Workload>& workloads, std::function<void()> setUpMatchingThread = {},
+                      RunDurability durability = RunDurability::NONE, const std::filesystem::path& logParent = defaultLogParent());
     // Stops the matching thread if finish has not.
     ~QueueRun();
 
@@ -214,9 +230,12 @@ public:
 
     // Stops the matching thread and collects the books' final shapes. Rethrows anything it threw.
     void finish();
-    // After finish. Throws std::runtime_error if a book did other than its workload predicted.
+    // After finish. Throws std::runtime_error if a book did other than its workload predicted, or,
+    // with a log, the log doesn't hold every timed command.
     void check() const;
     std::vector<WorkloadOutcome> outcomes() const;
+    // How many times a hold marker made the responses wait for the log.
+    std::size_t holdsWaited() const noexcept { return holds; }
 
 private:
     bool trySend(const runtime::CommandElement& element);
@@ -233,7 +252,15 @@ private:
     std::size_t sent = 0;
     std::size_t answered = 0;
     bool stopReceived = false;
+    std::uint64_t heldUntil = 0;  // the hold marker the responses wait at, or 0
+    std::size_t holds = 0;
+    std::unique_ptr<LogRing> logRing;  // with a log; built before the matching thread takes it
     MatchingThread matching;
+    std::unique_ptr<RunLog> log;
+    // What the log must hold, read while the books exist: the matching thread destroys them.
+    std::uint64_t logFirst = 0;
+    std::size_t logCommands = 0;
+    std::uint64_t logEnd = 0;
 };
 
 // A nonblocking client connection over loopback that has sent its Hello and read its Welcome. The
@@ -304,10 +331,13 @@ private:
 
 // Every command over real loopback sockets, one connection per workload, through a
 // GatewayThread and a PollSocketSet on a thread of their own and a matching thread, with the
-// client on the calling thread. Connecting and each Hello happen in the constructor, untimed.
+// client on the calling thread. Connecting and each Hello happen in the constructor, untimed. With
+// a durability other than NONE, the shard logs to real files through RunLog, and the gateway
+// thread holds responses as the engine's does.
 class GatewayRun {
 public:
-    GatewayRun(const std::vector<Workload>& workloads, std::size_t window);
+    GatewayRun(const std::vector<Workload>& workloads, std::size_t window, RunDurability durability = RunDurability::NONE,
+               const std::filesystem::path& logParent = defaultLogParent());
     // Stops both threads if finish has not.
     ~GatewayRun();
 
@@ -336,7 +366,13 @@ private:
     std::exception_ptr gatewayFailure;
     // Built before the matching thread starts, since nothing here could stop it if this threw.
     LoopbackClients clients;
+    std::unique_ptr<LogRing> logRing;  // with a log; built before the matching thread takes it
     MatchingThread matching;
+    std::unique_ptr<RunLog> log;
+    // What the log must hold, read while the books exist: the matching thread destroys them.
+    std::uint64_t logFirst = 0;
+    std::size_t logCommands = 0;
+    std::uint64_t logEnd = 0;
     std::thread gateway;
     bool finished = false;
 };
@@ -349,14 +385,14 @@ class EngineProcess;
 WorkloadOutcome withPredictedShape(WorkloadOutcome counted, const Workload& workload);
 
 // GATEWAY's client against the shipped order_book_engine as a child process, on port 0, with one
-// book per workload on shard i modulo shards. Each book's preload goes over the wire, untimed, as
+// book per workload on shard i modulo shards, at process durability in a fresh log directory. Each book's preload goes over the wire, untimed, as
 // the engine has no other way in. The engine doesn't report its books' shapes, so a run checks
 // every counter from the frames, and capacity and growth from the stop report, but takes each
 // final shape from the prediction. The workloads must outlive this.
 class EngineRun {
 public:
     EngineRun(const std::vector<Workload>& workloads, std::size_t window, const std::filesystem::path& engine,
-              std::size_t shards);
+              std::size_t shards, const std::filesystem::path& logParent = defaultLogParent());
     // Kills the engine if finish has not stopped it.
     ~EngineRun();
 

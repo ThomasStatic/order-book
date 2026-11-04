@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
@@ -25,8 +26,12 @@ std::variant<EngineSettings, UsageError> parse(std::vector<std::string_view> arg
     return parseEngineArguments(args);
 }
 
+// The required flags, the log directory left out if more gives its own.
 std::vector<std::string_view> required(std::vector<std::string_view> more = {}) {
     std::vector<std::string_view> args{"--instruments", "list.csv", "--shards", "2", "--listen", "127.0.0.1:0"};
+    if (std::find(more.begin(), more.end(), std::string_view("--log-dir")) == more.end()) {
+        args.insert(args.end(), {"--log-dir", "logs"});
+    }
     args.insert(args.end(), more.begin(), more.end());
     return args;
 }
@@ -69,12 +74,12 @@ void testTheRequiredFlagsAndTheDefaults() {
     expect(settings.pinMatching.empty() && settings.pinGateway.empty() && settings.threadPriority == ThreadPriority::NORMAL,
            "no pinning, at normal priority");
     expect(settings.gatewayThreads == 1, "one gateway thread, never derived from the machine");
-    expect(settings.logDir.empty(), "no log unless a directory is given");
+    expect(settings.logDir == "logs", "the log's directory, which is required");
     expect(settings.durability == Durability::MACHINE && settings.logRing == 65536 && settings.pinLogWriters.empty(),
            "written through to the drive, through a ring of 65,536 records, unpinned");
     expect(settings.logFileSize == 256 * 1024 * 1024, "in files of 256 MiB");
 
-    for (const std::string_view missing : {"--instruments", "--shards", "--listen"}) {
+    for (const std::string_view missing : {"--instruments", "--shards", "--listen", "--log-dir"}) {
         std::vector<std::string_view> args;
         const std::vector<std::string_view> all = required();
         for (std::size_t i = 0; i < all.size(); i += 2) {
@@ -102,6 +107,7 @@ void testEveryFlag() {
     const EngineSettings logged =
         parsed(required({"--log-dir", "logs here", "--durability", "process", "--log-ring", "1K", "--log-file-size", "3M"}));
     expect(logged.logDir == "logs here", "the log directory, as given");
+    expect(usage(required({"--log-dir", ""})) == "--log-dir needs a directory, not ''", "an empty one is none, which is refused");
     expect(logged.durability == Durability::PROCESS, "process durability");
     expect(logged.logRing == 1024, "the log ring, a size like any ring's");
     expect(logged.logFileSize == 3 * 1024 * 1024, "the log file size, a size");
@@ -156,7 +162,8 @@ void testSizes() {
 }
 
 void testTheAddress() {
-    expect(parsed({"--instruments", "l", "--shards", "1", "--listen", "0.0.0.0:5000"}).listen == ListenAddress{{0, 0, 0, 0}, 5000},
+    expect(parsed({"--instruments", "l", "--shards", "1", "--listen", "0.0.0.0:5000", "--log-dir", "logs"}).listen ==
+               ListenAddress{{0, 0, 0, 0}, 5000},
            "any IPv4 address and port");
     for (const std::string_view bad : {"localhost:5000", "127.0.0.1", "127.0.0.1:65536", "127.0.0.256:1", "1.2.3:4", "1.2.3.4.5:6", ":5"}) {
         expect(usage({"--instruments", "l", "--shards", "1", "--listen", bad}) ==
@@ -186,7 +193,8 @@ void testTheRunsRecordGivesTheSameRun() {
     expect(line ==
                "--instruments list.csv --shards 2 --listen 127.0.0.1:0 --command-ring 4096 --response-ring 16384 --spin-window unlimited "
                "--capacity-orders 4096 --capacity-stops 1024 --capacity-levels 256 --max-connections 64 --gateway-threads 1 --high-water-mark 64K "
-               "--hard-limit 16M --stop-grace 1500ms --durability machine --log-file-size 256M --log-ring 65536 --thread-priority normal "
+               "--hard-limit 16M --stop-grace 1500ms --log-dir logs --durability machine --log-file-size 256M --log-ring 65536 "
+               "--thread-priority normal "
                "--stop-on-stdin-close",
            "the record names every flag:\n" + line);
 
@@ -201,7 +209,7 @@ void testTheRunsRecordGivesTheSameRun() {
     expect(placedLine.find(" --max-connections 64 --gateway-threads 2 ") != std::string::npos, "the gateway threads print:\n" + placedLine);
     expect(placedLine.ends_with("--stop-grace 5s --log-dir logs --durability process --log-file-size 1000 --log-ring 256 --pin-matching 2,0 "
                                 "--pin-gateway 1,3 --pin-log-writers 4,4 --thread-priority high"),
-           "the log directory and pins print only when set, and the level, file size, ring, and priority always:\n" + placedLine);
+           "the pins print only when set, and the directory, level, file size, ring, and priority always:\n" + placedLine);
     expect(line.find("--pin-") == std::string::npos && line.find("--thread-priority normal") != std::string::npos,
            "an unpinned run names its priority and no cores");
     const std::vector<std::string> placedWords = wordsOf(placedLine);

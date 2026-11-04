@@ -1,33 +1,42 @@
 # Running order_book_engine
 
-What an operator needs to start the engine, stop it, and read how it ended. The engine can log every command, but it can't recover from its log yet, so a restart still loses every book.
+What an operator needs to start the engine, stop it, and read how it ended. The engine logs every command, but it can't recover from its log yet, so a restart still loses every book.
 
 ## Starting
 
 ```text
-$ order_book_engine --instruments list.csv --shards 2 --listen 127.0.0.1:9000
+$ order_book_engine --instruments list.csv --shards 2 --listen 127.0.0.1:9000 --log-dir logs
 listening 127.0.0.1:9000
 ```
 
-`--instruments`, `--shards`, and `--listen` are required, and `--listen` has no default, so a gateway with no authentication is never exposed by accident. Port 0 lets the system pick, and the `listening` line says which it did. `-h` or `--help` anywhere on the line prints the usage, with every flag and its value's form, on stdout and exits 0. A usage error prints one line saying what was wrong, then the usage, on stderr, and exits 2.
+`--instruments`, `--shards`, `--listen`, and `--log-dir` are required, and `--listen` has no default, so a gateway with no authentication is never exposed by accident. Port 0 lets the system pick, and the `listening` line says which it did. `-h` or `--help` anywhere on the line prints the usage, with every flag and its value's form, on stdout and exits 0. A usage error prints one line saying what was wrong, then the usage, on stderr, and exits 2.
 
 - **stdout** is for a machine: one flushed `listening ADDR:PORT` once every shard is ready, then the stop report after a clean stop.
 - **stderr** is for a person, one line each, prefixed `order_book_engine:`, with no timestamps, which journald or a terminal can add. The first line is the run's record: every flag with its value, defaults included, so it would give the same run.
 
 ### The command log
 
-`--log-dir DIR` turns the log on: each shard writes every command it runs to its own file in that directory, `log-<shard, 4 digits>-<first position, 20 digits>.oblog`, through a log writer thread of its own. A command still matches at once, but its answer goes out only once its command is in the log, so a crash can lose only commands nobody was told about. `--durability` says what "in the log" means:
+`--log-dir DIR` is where the log goes: each shard writes every command it runs to its own file in that directory, `log-<shard, 4 digits>-<first position, 20 digits>.oblog`, through a log writer thread of its own. A command still matches at once, but its answer goes out only once its command is in the log, so a crash can lose only commands nobody was told about. `--durability` says what "in the log" means:
 
 - **`machine`** (the default): written through to the drive (`FILE_FLAG_WRITE_THROUGH` on Windows, `O_DSYNC` on Linux), so an answered command survives the engine crashing and the machine crashing too, as far as the drive keeps its word.
 - **`process`**: handed to the system, and flushed when the file closes, so an answered command survives the engine crashing but not the machine.
 
 Each shard's log is a run of files of `--log-file-size` (256 MiB by default, with `K`, `M`, or `G` if you like), each holding its header and as many whole commands as fit after it, 40 bytes each, so 6.7M at the default; a size that can't hold one command refuses the start. A file is named for its first position, so the files of a shard sort in order and each starts where the last ended. A housekeeping thread makes each shard's next file ahead, under its name plus `.tmp`, then renames it, so the log writer never waits for a file unless the drive is slow. The writer flushes a file it fills before it writes to the next, so only the last file can lose anything at `process` level. If the next file can't be made, the drive full for instance, the engine aborts at once, naming it, while the current file still has room, since the log could never go on. Files are never reused: every start opens new ones.
 
-`--log-ring RECORDS`, 65,536 by default and a power of two, is how many commands per shard may wait for their log writer, and so the most that can be unsafe at once. When it fills, the shard waits, its rings fill, and connections are parked: a slow drive reaches clients as backpressure, and nothing is refused. Without `--log-dir` the engine runs as before, answering at once and keeping nothing.
+`--log-ring RECORDS`, 65,536 by default and a power of two, is how many commands per shard may wait for their log writer, and so the most that can be unsafe at once. When it fills, the shard waits, its rings fill, and connections are parked: a slow drive reaches clients as backpressure, and nothing is refused.
 
 The directory must exist, and must hold no log, nor a `.tmp` one: recovery isn't built yet, so every start begins a new log at position 0, and any log already there refuses the start rather than be mixed with this one, with `order_book_engine: start refused: <dir> holds <file>, a log from an earlier run, ...`. Move or delete the earlier logs first. A start that is refused or stopped before it is ready removes the logs it made, so the directory is as it was. A log that can't be written or flushed once the engine runs ends it with an abort, naming the shard and file, since no write can be trusted after one fails.
 
 A clean stop answers everything queued, then each log writer writes the rest, cuts its last file to its last command, flushes, and closes it, and the unused next files are deleted, so `order_book_cli replay DIR --book` replays the engine's books from the log directory. A last file that still has zeros at its end means the engine did not stop cleanly. Each shard's line in the stop report then starts with `log-end=`, where its log ends.
+
+### Worst cases
+
+Every answer waits for its command to reach the log, so whatever slows the log's drive slows every answer. These are the cases that slow it most. None of them is in this release's recorded results.
+
+- **Only a separate drive protects the p99 from an image flush.** Checkpoints aren't written yet. Once they are, each book's image is written and flushed in the checkpoint directory, which defaults to the log's. On the log's drive, that flush makes the log's own writes wait, and the slowest answers wait with them. Put checkpoints on another drive to keep the two apart. Writing images in paced chunks might help too, and is unmeasured. The reference machine has one drive, so no second drive has been measured.
+- **Anything else writing heavily to the log's drive** does the same: another program, a copy, a backup, an indexing or antivirus scan. During such a burst the log's writes slow enough that the log ring can fill.
+- **A drive that stalls stalls every answer on its shards** for as long as it stalls. The log ring fills, the shard waits, its rings fill, and connections are parked. Nothing is refused and nothing times out, so a client sees only answers arriving late. `--log-ring` bounds how many commands that is per shard, not how long it lasts.
+- **At `machine`, each write waits for the drive.** A log writer has no batching timer: each write takes every command queued since the last, up to 1 MiB, so under load commands share a write, and an idle engine pays a whole write-through for one command. At `process` a write waits only for the system, and a machine crash can lose answered commands.
 
 ### Gateway threads
 
@@ -38,7 +47,7 @@ A clean stop answers everything queued, then each log writer writes the rest, cu
 Off by default.
 
 - `--pin-matching CORES` pins each shard's matching thread to a core, given as a comma list with exactly one core per shard, in shard order. `--pin-gateway CORES` does the same for the gateway threads, with exactly one core per gateway thread. A core may repeat. Cores are the system's logical processor numbers. On Windows only the first 64 can be named.
-- `--pin-log-writers CORES` pins each shard's log writer, with exactly one core per shard, and only with `--log-dir`.
+- `--pin-log-writers CORES` pins each shard's log writer, with exactly one core per shard.
 - `--thread-priority high` raises the matching and gateway threads, and the log writers: `THREAD_PRIORITY_HIGHEST` on Windows, a nice value of -10 on Linux, never a real-time policy, since a thread spinning under one can starve everything else on its core. Windows lets any user do this. Linux needs root, `CAP_SYS_NICE`, or an `RLIMIT_NICE` of at least 30 (`ulimit -e`, or `LimitNICE=` under systemd).
 
 Each thread pins and raises itself before the engine is ready. If the system refuses either, the start is refused with exit 1 and the system's reason, naming the thread and core for a pin (`cannot pin matching thread 1 to core 5: ...`, `log writer 1`, or `gateway thread 1` with several) or the setting for a priority (`--thread-priority high was denied: ...`), so a run's record never claims a setting that didn't apply.
@@ -87,7 +96,7 @@ shard 1: log-end=40 result-growths=0
 total: books=2 capacity-growths=2
 ```
 
-One `book` line per book, sorted by symbol, with the capacity it was warmed to and how many times it grew since ready, then a line per shard, with where its log ends when there is one, then the total last. A book that grew needs a larger capacity in the list or the defaults.
+One `book` line per book, sorted by symbol, with the capacity it was warmed to and how many times it grew since ready, then a line per shard, with where its log ends, then the total last. A book that grew needs a larger capacity in the list or the defaults.
 
 ### An abort
 

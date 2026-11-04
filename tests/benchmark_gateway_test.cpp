@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -76,6 +77,35 @@ void testABookThatGrewFailsTheRun() {
     expectThrows([&] { static_cast<void>(runInstrumentsOnce(workloads, BenchmarkKind::GATEWAY)); }, "a book past its capacity fails the run");
 }
 
+// At process and machine, the shard logs every timed command to real files, which the run deletes,
+// and the gateway thread holds each response until its command is durable.
+void testADurableGatewayRunDoesWhatACoreRunDoes() {
+    const std::vector<Workload> workloads = instrumentWorkloads(findWorkload("quote-refresh"), 1000, 42, 2);
+    for (const RunDurability durability : {RunDurability::PROCESS, RunDurability::MACHINE}) {
+        const std::filesystem::path parent =
+            std::filesystem::temp_directory_path() / (std::string("order_book_benchmark_gateway_tests_") + durabilityName(durability));
+        std::filesystem::remove_all(parent);
+        std::filesystem::create_directories(parent);
+        RunSettings settings;
+        settings.durability = durability;
+        settings.logParent = parent;
+        const Measurement run = runInstrumentsOnce(workloads, BenchmarkKind::GATEWAY, settings);
+        expect(run.outcome == totalOutcome(workloads) && run.durability == durability,
+               std::string("a gateway run at ") + durabilityName(durability) + " does what the books predict");
+        expect(std::filesystem::is_empty(parent), "and deletes its log directory");
+        std::filesystem::remove_all(parent);
+    }
+}
+
+void testALogThatCantBeMadeFailsTheRun() {
+    const std::vector<Workload> workloads = instrumentWorkloads(findWorkload("small-book"), 100, 42, 1);
+    RunSettings settings;
+    settings.durability = RunDurability::MACHINE;
+    settings.logParent = std::filesystem::temp_directory_path() / "order_book_no_such_directory" / "deeper";
+    expectThrows([&] { static_cast<void>(runInstrumentsOnce(workloads, BenchmarkKind::GATEWAY, settings)); },
+                 "a log directory that can't be made fails the run");
+}
+
 }  // namespace
 
 int main() {
@@ -84,6 +114,8 @@ int main() {
     testSeveralConnectionsSumToTheRun();
     testATamperedPredictionFails();
     testABookThatGrewFailsTheRun();
+    testADurableGatewayRunDoesWhatACoreRunDoes();
+    testALogThatCantBeMadeFailsTheRun();
     std::cout << "benchmark gateway tests passed" << std::endl;
     return EXIT_SUCCESS;
 }

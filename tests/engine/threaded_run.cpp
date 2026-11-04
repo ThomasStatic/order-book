@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <atomic>
 #include <exception>
+#include <functional>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -20,6 +22,11 @@
 #include "gateway_stepper.hpp"
 #include "order_book/network/gateway_thread.hpp"
 #include "order_book/network/in_memory_socket_set.hpp"
+#include "order_book/runtime/durability.hpp"
+#include "order_book/runtime/durable_position.hpp"
+#include "order_book/runtime/log_files.hpp"
+#include "order_book/runtime/log_storage.hpp"
+#include "order_book/runtime/log_writer.hpp"
 #include "order_book/runtime/ring.hpp"
 #include "order_book/runtime/shard.hpp"
 
@@ -41,7 +48,18 @@ namespace order_book::engine_testing {
         }
 
         StreamShape shapeOf(const ThreadedConfig& config) {
-            return StreamShape{config.instruments, config.shards, config.instruments, true, config.plant == ThreadedPlant::EVERY_RUN};
+            return StreamShape{config.instruments, config.shards, config.instruments, true, config.plant == ThreadedPlant::EVERY_RUN,
+                               config.connectionsPerInstrument};
+        }
+
+        // Records in the log file of the shard with the most symbols, so a run rolls across many.
+        constexpr std::uint64_t recordsPerSmallestFile = 25;
+
+        // How many of these frames end a command's answer: everything but the Welcome.
+        std::size_t answeredIn(const std::vector<Received>& frames) {
+            return static_cast<std::size_t>(std::count_if(frames.begin(), frames.end(), [](const Received& frame) {
+                return frame.last && frame.type != FrameType::WELCOME && frame.type != FrameType::PROTOCOL_ERROR;
+            }));
         }
 
         // A thread's failure, printed at once, since a failed thread can leave the others waiting
@@ -74,9 +92,16 @@ namespace order_book::engine_testing {
         };
 
         struct ShardRun {
+            explicit ShardRun(std::size_t logSlots) : logRing(logSlots) {}
+
             Doorbell doorbell;
             std::vector<std::unique_ptr<RingLink>> links;  // one per gateway thread
             std::thread thread;
+            Ring<LogEntry> logRing;
+            DurablePosition durable;
+            Doorbell writerBell;
+            std::thread writerThread;
+            std::uint64_t logEnd = 0;  // the writer's, once it has stopped
         };
 
         void run(const ThreadedConfig& config, ThreadedResult& result) {
@@ -85,6 +110,10 @@ namespace order_book::engine_testing {
             const InstrumentDirectory directory(streams.instruments, config.shards);
             const std::size_t commandSlots = config.ringSlots == 0 ? defaultCommandRingSlots : config.ringSlots;
             const std::size_t responseSlots = config.ringSlots == 0 ? defaultResponseRingSlots : config.ringSlots;
+            const std::size_t logSlots = config.ringSlots == 0 ? defaultLogRingRecords : config.ringSlots;
+            InMemoryLogStorage storage;
+            Housekeeping housekeeping(storage, directory, Durability::MACHINE,
+                                      leastLogFileBytes(directory) + (recordsPerSmallestFile - 1) * replay::logRecordBytes);
 
             InMemorySocketSet network(InMemorySocketSet::Mode::THREADED);
             std::vector<std::unique_ptr<InMemorySocketSet>> members;
@@ -98,15 +127,15 @@ namespace order_book::engine_testing {
 
             // Every connection is waiting before any thread starts, so thread 0 deals them all.
             std::vector<Client> clients;
-            clients.reserve(config.instruments);
-            for (std::size_t i = 0; i < config.instruments; ++i) {
+            clients.reserve(streams.bytes.size());
+            for (std::size_t i = 0; i < streams.bytes.size(); ++i) {
                 clients.emplace_back(network);
             }
 
             Failures failures;
             std::vector<std::unique_ptr<ShardRun>> shards;
             for (std::uint32_t number = 0; number < config.shards; ++number) {
-                shards.push_back(std::make_unique<ShardRun>());
+                shards.push_back(std::make_unique<ShardRun>(logSlots));
                 for (std::size_t thread = 0; thread < config.gatewayThreads; ++thread) {
                     shards.back()->links.push_back(std::make_unique<RingLink>(commandSlots, responseSlots));
                 }
@@ -117,23 +146,46 @@ namespace order_book::engine_testing {
             for (std::size_t thread = 0; thread < config.gatewayThreads; ++thread) {
                 std::vector<ShardLink> links;
                 for (const std::unique_ptr<ShardRun>& shard : shards) {
-                    links.push_back(ShardLink{&shard->links[thread]->commands, &shard->links[thread]->responses, &shard->doorbell, nullptr});
+                    links.push_back(ShardLink{&shard->links[thread]->commands, &shard->links[thread]->responses, &shard->doorbell,
+                                              &shard->durable});
                 }
                 gateways.push_back(std::make_unique<GatewayThread>(directory, std::move(links), socketsOf(thread), settings, &handOff, thread));
             }
 
-            // Each shard is built on its own thread, which owns its books.
+            // The housekeeping thread, then each shard's log writer, which makes its first file, and
+            // its matching thread, built on its own thread, which owns its books.
+            std::thread housekeeper([&] {
+                try {
+                    housekeeping.run();
+                } catch (...) {
+                    failures.record("housekeeping");
+                }
+            });
             for (std::uint32_t number = 0; number < config.shards; ++number) {
                 ShardRun& own = *shards[number];
+                own.writerThread = std::thread([&, number] {
+                    try {
+                        LogWriter writer(housekeeping, number, own.logRing, own.durable);
+                        writer.run(own.writerBell, config.spinWindow);
+                        own.logEnd = writer.nextPosition();
+                    } catch (...) {
+                        failures.record("log writer " + std::to_string(number));
+                    }
+                });
                 own.thread = std::thread([&, number] {
                     try {
                         Shard shard(directory, number);
+                        shard.watchDurablePosition(own.durable);
                         std::vector<RingPair> rings;
                         for (const std::unique_ptr<RingLink>& link : own.links) {
                             rings.push_back(RingPair{&link->commands, &link->responses});
                         }
-                        MatchingLoop loop(shard, own.doorbell, std::move(rings), config.spinWindow);
+                        MatchingLoop loop(shard, own.doorbell, std::move(rings), config.spinWindow, std::function<void()>{},
+                                          LogLink{&own.logRing, &own.writerBell});
                         loop.run();
+                        if (const std::optional<ShardViolation> violation = shard.checkInvariants()) {
+                            throw std::runtime_error("the stopped shard, durable position included: " + violation->message);
+                        }
                     } catch (...) {
                         failures.record("matching thread " + std::to_string(number));
                     }
@@ -174,8 +226,10 @@ namespace order_book::engine_testing {
                 }
                 static_cast<void>(clients[connection].frames());
             }
+            // Every command is answered once, by a frame flagged last, however many frames the
+            // take order gives it.
             for (std::size_t connection = 0; connection < clients.size(); ++connection) {
-                while (clients[connection].frames().size() < streams.frames[connection]) {
+                while (answeredIn(clients[connection].frames()) < streams.answers[connection]) {
                     if (network.closed(clients[connection].socket)) {
                         throw std::runtime_error("connection " + std::to_string(connection) + " closed before it was answered");
                     }
@@ -197,6 +251,14 @@ namespace order_book::engine_testing {
             for (const std::unique_ptr<ShardRun>& shard : shards) {
                 shard->thread.join();
             }
+            // Each stopped matching thread told its writer to finish, and a writer may wait for
+            // its next file until then, so housekeeping stops last.
+            for (const std::unique_ptr<ShardRun>& shard : shards) {
+                shard->writerThread.join();
+            }
+            housekeeping.stop();
+            housekeeper.join();
+            housekeeping.removeUnused();
             if (clientFailure) {
                 std::rethrow_exception(clientFailure);
             }
@@ -204,18 +266,34 @@ namespace order_book::engine_testing {
                 throw std::runtime_error(*failure);
             }
 
-            std::vector<std::vector<Received>> received;
+            // The run's own log, read back from the storage.
+            std::map<std::string, std::vector<replay::Command>> logged;
             std::ostringstream log;
-            log << "gateway sleeps:";
+            log << "log records per shard:";
+            for (std::uint32_t number = 0; number < config.shards; ++number) {
+                const ShardLogRecords read = readShardLog(storage, number);
+                log << ' ' << read.records.size() << " in " << read.files << " files";
+                if (read.records.size() != shards[number]->logEnd || shards[number]->durable.load() != shards[number]->logEnd) {
+                    throw std::runtime_error("shard " + std::to_string(number) + "'s files hold " + std::to_string(read.records.size()) +
+                                             " records, its writer ended at " + std::to_string(shards[number]->logEnd) +
+                                             ", and its durable position is " + std::to_string(shards[number]->durable.load()));
+                }
+                for (const replay::ReplayRecord& record : read.records) {
+                    logged[record.symbol.text()].push_back(record.command);
+                }
+            }
+
+            std::vector<std::vector<Received>> received;
+            log << "\ngateway sleeps:";
             for (std::size_t thread = 0; thread < config.gatewayThreads; ++thread) {
                 log << ' ' << socketsOf(thread).waits();
                 result.gatewaySleeps += socketsOf(thread).waits();
             }
-            log << "\nframes per connection (received/expected, thread):";
+            log << "\nanswers per connection (received/sent, thread):";
             for (std::size_t connection = 0; connection < clients.size(); ++connection) {
                 received.push_back(clients[connection].frames());
                 const std::optional<std::size_t> holder = network.holder(clients[connection].socket);
-                log << ' ' << received.back().size() << '/' << streams.frames[connection] << " t"
+                log << ' ' << answeredIn(received.back()) << '/' << streams.answers[connection] << " t"
                     << (holder ? std::to_string(*holder) : std::string("-"));
                 if (!network.closed(clients[connection].socket)) {
                     result.differences.push_back("connection " + std::to_string(connection) + " is still open after the stop");
@@ -225,13 +303,33 @@ namespace order_book::engine_testing {
                 }
             }
             result.log = log.str();
-            const std::vector<std::string> differences = differencesFromSingleThreaded(streams, received);
-            result.differences.insert(result.differences.end(), differences.begin(), differences.end());
+            if (config.connectionsPerInstrument > 1) {
+                // The take order decides each instrument's answers, so they are held to its log.
+                try {
+                    const std::vector<std::string> differences = differencesFromSingleThreaded(expectedFromLog(streams, logged), received);
+                    result.differences.insert(result.differences.end(), differences.begin(), differences.end());
+                } catch (const LogReplayDiverged&) {
+                    result.logReplayDiverged = true;
+                    throw;
+                }
+            } else {
+                const std::vector<std::string> differences = differencesFromSingleThreaded(streams, received);
+                result.differences.insert(result.differences.end(), differences.begin(), differences.end());
+                // One connection per instrument, so each instrument's log is its commands in order.
+                std::map<std::string, std::vector<replay::Command>> sent;
+                for (const StreamCommand& command : streams.commands) {
+                    sent[command.accepted.symbol.text()].push_back(command.accepted.command);
+                }
+                if (logged != sent) {
+                    result.differences.push_back("the log doesn't hold exactly each instrument's commands, in order");
+                }
+            }
             if (config.plant == ThreadedPlant::THREADS_ONLY || config.plant == ThreadedPlant::SHARD) {
                 result.differences.push_back("planted: a difference only this run reports");
             }
             if (!result.differences.empty()) {
-                result.failure = std::to_string(result.differences.size()) + " differences from the single-threaded run, first: " +
+                result.failure = std::to_string(result.differences.size()) + " differences from " +
+                                 (config.connectionsPerInstrument > 1 ? "the log's replay" : "the single-threaded run") + ", first: " +
                                  result.differences.front();
             }
         }
@@ -320,7 +418,9 @@ namespace order_book::engine_testing {
         return "engine_randomized_tests --threads run --seed " + std::to_string(config.seed) + " --commands " + std::to_string(config.commands) +
                " --instruments " + std::to_string(config.instruments) + " --shards " + std::to_string(config.shards) + " --gateway-threads " +
                std::to_string(config.gatewayThreads) + " --ring-slots " + std::to_string(config.ringSlots) + " --spin-window-ns " +
-               std::to_string(config.spinWindow.count());
+               std::to_string(config.spinWindow.count()) +
+               (config.connectionsPerInstrument > 1 ? " --connections-per-instrument " + std::to_string(config.connectionsPerInstrument)
+                                                    : std::string());
     }
 
     ThreadedTriage triageThreadedFailure(const ThreadedConfig& config, const ThreadedResult& result, std::size_t stepperSchedules,
@@ -334,6 +434,21 @@ namespace order_book::engine_testing {
                << " spin window=" << config.spinWindow.count() << "ns\n";
         for (const std::string& difference : result.differences) {
             report << "  " << difference << '\n';
+        }
+        if (config.connectionsPerInstrument > 1) {
+            // The run's own log was already replayed single-threaded, through a book and the
+            // model; a disagreement there is a logic bug. The stepper holds a connection per
+            // instrument to the single-threaded run, so it can't replay this take order.
+            if (result.logReplayDiverged) {
+                triage.verdict = ThreadedTriage::Verdict::LOGIC_BUG;
+                report << "the run's own log, replayed single-threaded, differs between the book and the model: a logic bug, unshrunk\n";
+            } else {
+                report << "several connections on one instrument: the run's log replays single-threaded as the model does, and no"
+                          " stepper schedule replays this take order, so it is timing-dependent and unshrunk\n";
+            }
+            report << "the run's log:\n" << result.log << '\n';
+            triage.report = report.str();
+            return triage;
         }
 
         EngineSeedConfig single = generationOf(config);

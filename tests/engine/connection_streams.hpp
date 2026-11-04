@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <map>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,13 @@ namespace order_book::engine_testing {
         std::size_t connection;
         std::size_t frameEnd;
         network::EntryAccepted accepted;
+        randomized::Command converted;  // what the model takes for it
+    };
+
+    // A log whose replay through a book differs from the model's: a logic bug, not a timing one.
+    class LogReplayDiverged : public std::runtime_error {
+    public:
+        using std::runtime_error::runtime_error;
     };
 
     struct StreamShape {
@@ -42,12 +50,19 @@ namespace order_book::engine_testing {
         // For testing the real-thread triage: instrument 0's first answer is expected twice, which
         // no run gives, so every run with one of its commands fails the same way.
         bool plantExtraAnswer = false;
+        // Above 1, each instrument has this many connections of its own, and connections is
+        // ignored: instrument k's are k × this + j, and a command goes to the j of its order ID
+        // mod this, so every command about one order is on one connection and in order there. How
+        // the connections' commands interleave is then the matching thread's take order, so
+        // expected and frames mean nothing until expectedFromLog fills them in.
+        std::size_t connectionsPerInstrument = 1;
     };
 
     struct ConnectionStreams {
         std::vector<runtime::Instrument> instruments;
         std::vector<gateway_testing::Bytes> bytes;          // per connection, Hello first
         std::vector<std::size_t> frames;                    // the frames expected back, per connection
+        std::vector<std::size_t> answers;                   // the commands sent, each answered once, per connection
         std::map<std::string, std::vector<Line>> expected;  // from the books, per instrument
         std::map<network::Correlation, BookEvent> refusedAsMalformed;
         std::set<network::Correlation> refusedAtEntry;      // with a Refused frame
@@ -56,6 +71,15 @@ namespace order_book::engine_testing {
 
     // Line i goes under correlation i + 1. Every line's instrument must be one of shape's.
     ConnectionStreams connectionStreams(const StreamShape& shape, const std::vector<EngineCommand>& lines);
+
+    // streams with expected and frames from each instrument's log in place of a single-threaded
+    // run: each record goes to the one connection whose next command for that instrument it is,
+    // and is replayed single-threaded through the model, its ReferenceBook, and a fresh book,
+    // whose events must agree; expected lists the model's answers, connection by connection, as
+    // differencesFromSingleThreaded gathers what was received. Throws std::runtime_error if a
+    // record is no connection's next command, or a command that passed entry isn't logged, and
+    // LogReplayDiverged if the book and the model disagree.
+    ConnectionStreams expectedFromLog(const ConnectionStreams& streams, const std::map<std::string, std::vector<replay::Command>>& logged);
 
     // How what each connection received differs from the single-threaded run: per instrument, its
     // first differing answer, then entry's own answers. Empty if nothing does.

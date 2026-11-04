@@ -11,6 +11,7 @@
 #include "interleaver.hpp"
 #include "order_book/command_log.hpp"
 #include "order_book/order_book.hpp"
+#include "order_book/runtime/log_storage.hpp"
 #include "order_book/symbol.hpp"
 
 // The engine's single-threaded harness: generated commands through the real entry check and
@@ -109,5 +110,15 @@ namespace order_book::engine_testing {
     // instrument through ReplayEngine, which must give a book equal to the witness, and checking
     // each Shard, durable position included.
     EngineRunResult runEngineSeed(const EngineSeedConfig& config);
+
+    struct ShardLogRecords {
+        std::vector<replay::ReplayRecord> records;  // from position 0, in order
+        std::size_t files = 0;
+    };
+
+    // Every record of one shard's files in the storage, read back through CommandLogReader, never
+    // the encoder, file by file in the order their names give. Throws std::runtime_error if a file
+    // wasn't closed whole, doesn't read back, or doesn't start where the last one ended.
+    ShardLogRecords readShardLog(const runtime::InMemoryLogStorage& storage, std::uint32_t shard);
 
 }  // namespace order_book::engine_testing

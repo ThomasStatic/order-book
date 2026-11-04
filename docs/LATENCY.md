@@ -29,7 +29,7 @@ Every statement drawn from these results follows this rule, and so does anything
 | **Round trip** | Scheduled send, over loopback through the shipped engine | Frame flagged last |
 | **Durable wait** | A record enters the log ring | The durable position covers it |
 
-The command, hand-off, and round-trip intervals exist so far. Durable wait lands with the log writer. A pinned hand-off row pins both threads, the sender with `--pin-core` and the matching thread with `--matching-core`. A pinned round-trip row pins four: the sender, the receiver with `--receiver-core`, and the engine's matching and gateway threads with `--matching-core` and `--gateway-core`. Until the log writer, a round trip runs through an engine with no log.
+All four intervals exist. A pinned hand-off row pins both threads, the sender with `--pin-core` and the matching thread with `--matching-core`. A pinned durable-wait row pins both too, the sender and the log writer with `--writer-core`. A pinned round-trip row pins four: the sender, the receiver with `--receiver-core`, and the engine's matching and gateway threads with `--matching-core` and `--gateway-core`, leaving the engine's log writer and housekeeping thread unpinned. A durable-wait or round-trip row names its durability, `machine` unless `--durability process` says otherwise, and says no checkpoints share the log's drive, since none are written yet.
 
 ## Results
 

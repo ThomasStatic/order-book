@@ -333,42 +333,17 @@ namespace order_book::engine_testing {
                 housekeeping.removeUnused();
                 std::vector<replay::ReplayRecord> records;
                 for (std::uint32_t shard = 0; shard < logs.size(); ++shard) {
-                    // Named for their first positions, 20 digits each, so they sort in order.
-                    const std::string prefix = runtime::logFileName(shard, 0).substr(0, 9);
-                    std::uint64_t position = 0;
-                    for (const std::string& name : storage.names()) {
-                        if (!name.starts_with(prefix)) {
-                            continue;
+                    try {
+                        const ShardLogRecords read = readShardLog(storage, shard);
+                        stats.logFiles += read.files;
+                        records.insert(records.end(), read.records.begin(), read.records.end());
+                        if (read.records.size() != logs[shard]->writer.nextPosition()) {
+                            return EngineFailure{index, "", "shard " + std::to_string(shard) + "'s files end at " +
+                                                                std::to_string(read.records.size()) + ", not its log's end, " +
+                                                                std::to_string(logs[shard]->writer.nextPosition())};
                         }
-                        ++stats.logFiles;
-                        const std::optional<runtime::InMemoryLogStorage::File> file = storage.file(name);
-                        if (!file->closed || file->bytes.size() != file->size) {
-                            return EngineFailure{index, "", name + " wasn't closed whole: " + std::to_string(file->bytes.size()) + " of " +
-                                                                std::to_string(file->size) + " bytes written"};
-                        }
-                        std::istringstream input(std::string(reinterpret_cast<const char*>(file->bytes.data()), file->bytes.size()),
-                                                 std::ios::binary);
-                        replay::CommandLogReader reader(input);
-                        std::uint64_t read = 0;
-                        for (;;) {
-                            const replay::ReadResult next = reader.next();
-                            if (const auto* record = std::get_if<replay::ReplayRecord>(&next)) {
-                                records.push_back(*record);
-                                ++read;
-                            } else if (const auto* error = std::get_if<replay::ParseError>(&next)) {
-                                return EngineFailure{index, "", name + " doesn't read back: " + error->message};
-                            } else {
-                                break;
-                            }
-                        }
-                        if (reader.header() == nullptr || reader.header()->firstPosition != position) {
-                            return EngineFailure{index, "", name + " doesn't start where the last file ended, " + std::to_string(position)};
-                        }
-                        position += read;
-                    }
-                    if (position != logs[shard]->writer.nextPosition()) {
-                        return EngineFailure{index, "", "shard " + std::to_string(shard) + "'s files end at " + std::to_string(position) +
-                                                            ", not its log's end, " + std::to_string(logs[shard]->writer.nextPosition())};
+                    } catch (const std::runtime_error& error) {
+                        return EngineFailure{index, "", error.what()};
                     }
                 }
                 const std::vector<replay::InstrumentRecords> grouped = replay::groupBySymbol(records);
@@ -399,6 +374,40 @@ namespace order_book::engine_testing {
             bool leftUnlogged = false;
         };
     }  // namespace
+
+    ShardLogRecords readShardLog(const runtime::InMemoryLogStorage& storage, std::uint32_t shard) {
+        ShardLogRecords read;
+        // Named for their first positions, 20 digits each, so they sort in order.
+        const std::string prefix = runtime::logFileName(shard, 0).substr(0, 9);
+        for (const std::string& name : storage.names()) {
+            if (!name.starts_with(prefix)) {
+                continue;
+            }
+            ++read.files;
+            const std::optional<runtime::InMemoryLogStorage::File> file = storage.file(name);
+            if (!file->closed || file->bytes.size() != file->size) {
+                throw std::runtime_error(name + " wasn't closed whole: " + std::to_string(file->bytes.size()) + " of " +
+                                         std::to_string(file->size) + " bytes written");
+            }
+            std::istringstream input(std::string(reinterpret_cast<const char*>(file->bytes.data()), file->bytes.size()), std::ios::binary);
+            replay::CommandLogReader reader(input);
+            const std::uint64_t position = read.records.size();
+            for (;;) {
+                const replay::ReadResult next = reader.next();
+                if (const auto* record = std::get_if<replay::ReplayRecord>(&next)) {
+                    read.records.push_back(*record);
+                } else if (const auto* error = std::get_if<replay::ParseError>(&next)) {
+                    throw std::runtime_error(name + " doesn't read back: " + error->message);
+                } else {
+                    break;
+                }
+            }
+            if (reader.header() == nullptr || reader.header()->firstPosition != position) {
+                throw std::runtime_error(name + " doesn't start where the last file ended, " + std::to_string(position));
+            }
+        }
+        return read;
+    }
 
     std::optional<Command> convertForEngine(const Command& command) {
         if (command.intent == CommandIntent::MARKED_FILLED || command.intent == CommandIntent::TYPE_CANNOT_REST) {

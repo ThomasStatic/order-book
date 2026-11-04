@@ -109,6 +109,14 @@ jobs:
               done
             done
           done
+          # And CI's six shapes with two connections on each instrument, held to their own log.
+          for shards in 1 2 4; do
+            for rings in 2 0; do
+              echo "real threads, shared instruments: --shards $shards --ring-slots $rings"
+              "$program" --threads run --explore "$THREAD_RUNS" --shards "$shards" --gateway-threads 2 \
+                --ring-slots "$rings" --spin-window-ns 0 --connections-per-instrument 2 --out-dir explore-failures
+            done
+          done
 
       - name: Keep any failure
         if: failure()

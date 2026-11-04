@@ -964,7 +964,11 @@ if(BUILD_TESTING)
                 --gateway-threads 2 --connections 8 --placement pinned --lines 0,5,17,40,41,42,150)
     add_test(NAME engine_threads_cli
         COMMAND engine_randomized_tests --threads run --seed 3 --commands 300 --shards 2 --gateway-threads 2 --ring-slots 2)
-    set_tests_properties(engine_threads_cli PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
+    # Two connections on each instrument, on different gateway threads, held to the run's own log.
+    add_test(NAME engine_threads_shared_cli
+        COMMAND engine_randomized_tests --threads run --seed 3 --commands 300 --shards 2 --gateway-threads 2 --ring-slots 2
+                --connections-per-instrument 2)
+    set_tests_properties(engine_threads_cli engine_threads_shared_cli PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
 
     add_executable(engine_harness_tests
         tests/engine/harness_test.cpp
@@ -1137,6 +1141,7 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         benchmarks/workload.cpp
         benchmarks/behavior_workload.cpp
         benchmarks/benchmark_runner.cpp
+        benchmarks/benchmark_log.cpp
         benchmarks/benchmark_report.cpp
         benchmarks/component_benchmark.cpp
         benchmarks/engine_process.cpp
@@ -1170,6 +1175,7 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
     # The latency harness (benchmarks/latency/README.md): clock, histogram, timetable driver,
     # and report. A library so latency_harness_tests can drive it with a fake clock and target.
     add_library(order_book_latency STATIC
+        benchmarks/latency/durable_wait_target.cpp
         benchmarks/latency/handoff_target.cpp
         benchmarks/latency/round_trip_target.cpp
         benchmarks/latency/clock.cpp
@@ -1218,6 +1224,8 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         order_book_enable_sanitizers(latency_harness_tests)
         add_test(NAME latency_harness_tests
             COMMAND latency_harness_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/latency)
+        # The durable-wait case runs a real log writer thread.
+        set_tests_properties(latency_harness_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
 
         # The program end to end on tiny runs, closed-loop then on a timetable, writing its
         # files. --allow-unoptimized, since CTest runs in every configuration.
@@ -1241,6 +1249,17 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
                     --workload small-book --commands 300 --runs 2 --warmup 0 --time response --discard-seconds 0
                     --noise-seconds 0 --allow-unoptimized --out-dir ${CMAKE_CURRENT_BINARY_DIR}/latency-smoke-round-trip-response)
         set_tests_properties(latency_cli_smoke_round_trip latency_cli_smoke_round_trip_response PROPERTIES
+            LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
+        # A real log writer on real files, closed-loop at machine, then the ladder at process.
+        add_test(NAME latency_cli_smoke_durable_wait
+            COMMAND order_book_latency_benchmarks --interval durable-wait --workload small-book --commands 300 --runs 2 --warmup 0
+                    --noise-seconds 0 --allow-unoptimized --log-dir ${CMAKE_CURRENT_BINARY_DIR}
+                    --out-dir ${CMAKE_CURRENT_BINARY_DIR}/latency-smoke-durable-wait)
+        add_test(NAME latency_cli_smoke_durable_wait_response
+            COMMAND order_book_latency_benchmarks --interval durable-wait --durability process --time response --workload small-book
+                    --commands 300 --runs 2 --warmup 0 --noise-seconds 0 --allow-unoptimized --log-dir ${CMAKE_CURRENT_BINARY_DIR}
+                    --out-dir ${CMAKE_CURRENT_BINARY_DIR}/latency-smoke-durable-wait-response)
+        set_tests_properties(latency_cli_smoke_durable_wait latency_cli_smoke_durable_wait_response PROPERTIES
             LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
         add_test(NAME latency_cli_smoke_response
             COMMAND order_book_latency_benchmarks --workload small-book --commands 500 --runs 2 --warmup 1
@@ -1317,7 +1336,11 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
             COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:order_book_benchmarks> -DEXPECTED_EXIT=1
                     "-DARGS=--workload|small-book|--commands|2000|--kind|queue|--tamper-prediction|--repetitions|1|--warmup|0|--allow-unoptimized"
                     "-DOUTPUT_REGEX=but the workload predicted" -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
-        set_tests_properties(benchmark_queue_smoke benchmark_queue_tampered PROPERTIES
+        # The same with the shard logging to real files, written through to the drive.
+        add_test(NAME benchmark_queue_smoke_machine
+            COMMAND order_book_benchmarks --workload small-book --commands 2000 --kind queue --instruments 4
+                    --durability machine --log-dir ${CMAKE_CURRENT_BINARY_DIR} --repetitions 1 --warmup 0 --allow-unoptimized)
+        set_tests_properties(benchmark_queue_smoke benchmark_queue_tampered benchmark_queue_smoke_machine PROPERTIES
             LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
         # Real loopback sockets on port 0, which ThreadSanitizer and Arm run.
         add_test(NAME benchmark_gateway_smoke
@@ -1327,9 +1350,12 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
             COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:order_book_benchmarks> -DEXPECTED_EXIT=1
                     "-DARGS=--workload|small-book|--commands|2000|--kind|gateway|--tamper-prediction|--repetitions|1|--warmup|0|--allow-unoptimized"
                     "-DOUTPUT_REGEX=but the workload predicted" -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
-        set_tests_properties(benchmark_gateway_smoke benchmark_gateway_tampered PROPERTIES
+        add_test(NAME benchmark_gateway_smoke_process
+            COMMAND order_book_benchmarks --workload small-book --commands 2000 --kind gateway --instruments 4
+                    --durability process --log-dir ${CMAKE_CURRENT_BINARY_DIR} --repetitions 1 --warmup 0 --allow-unoptimized)
+        set_tests_properties(benchmark_gateway_smoke benchmark_gateway_tampered benchmark_gateway_smoke_process PROPERTIES
             LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
-        # The shipped engine as a child on port 0, with no log until the log writer lands.
+        # The shipped engine as a child on port 0, logging at process durability.
         add_test(NAME benchmark_engine_smoke
             COMMAND order_book_benchmarks --workload small-book --commands 2000 --kind engine --instruments 4 --shards 2
                     --engine $<TARGET_FILE:order_book_engine> --repetitions 1 --warmup 0 --allow-unoptimized)

@@ -25,6 +25,7 @@
 #include "benchmark_runner.hpp"
 #include "clock.hpp"
 #include "command_target.hpp"
+#include "durable_wait_target.hpp"
 #include "engine_process.hpp"
 #include "order_book/runtime/matching_loop.hpp"
 #include "handoff_target.hpp"
@@ -47,11 +48,12 @@ constexpr int usageError = 2;
 constexpr int unoptimizedBuild = 3;
 
 constexpr std::string_view usageText =
-    "usage: order_book_latency_benchmarks [--interval command|hand-off|round-trip] [--time service|response]\n"
+    "usage: order_book_latency_benchmarks [--interval command|hand-off|durable-wait|round-trip] [--time service|response]\n"
     "                                     [--workload NAME]... [--size smoke|standard|extended | --commands N]\n"
     "                                     [--runs N] [--warmup N] [--seed N] [--noise-seconds N]\n"
     "                                     [--pin-core N] [--matching-core N] [--gateway-core N]\n"
-    "                                     [--receiver-core N] [--priority normal|high]\n"
+    "                                     [--receiver-core N] [--writer-core N] [--priority normal|high]\n"
+    "                                     [--durability process|machine] [--log-dir DIR]\n"
     "                                     [--engine PATH] [--discard-seconds N] [--machine-record FILE]\n"
     "                                     [--out-dir DIR] [--allow-unoptimized]\n"
     "       order_book_latency_benchmarks --help\n";
@@ -65,7 +67,9 @@ constexpr std::string_view helpText =
     "options:\n"
     "  --interval NAME      the interval to time: command, one book call (the default); hand-off,\n"
     "                       into the command ring and back out of the response ring, on a real\n"
-    "                       matching thread; or round-trip, from the send over loopback through\n"
+    "                       matching thread; durable-wait, from a record entering a shard's log\n"
+    "                       ring until the durable position covers it, through a real log writer\n"
+    "                       on real files; or round-trip, from the send over loopback through\n"
     "                       the shipped order_book_engine, a fresh child process each run, to the\n"
     "                       frame flagged last\n"
     "  --time KIND          service, closed-loop (the default), or response, on a timetable: 10, 25,\n"
@@ -88,8 +92,15 @@ constexpr std::string_view helpText =
     "                       --pin-core\n"
     "  --receiver-core N    for round-trip, pin the thread that reads responses on a timetable to\n"
     "                       this core; needed with --pin-core\n"
+    "  --writer-core N      for durable-wait, pin the log writer to this core; needed with --pin-core\n"
     "  --priority LEVEL     normal (the default) or high, for every thread pinned, the engine's\n"
     "                       included; a refusal fails the session\n"
+    "  --durability LEVEL   for durable-wait and round-trip: machine (the default), written through\n"
+    "                       to the drive, or process, written to the system and flushed when a\n"
+    "                       file closes\n"
+    "  --log-dir DIR        for durable-wait and round-trip, where each run makes a fresh directory\n"
+    "                       for its log, deleted afterwards (default: the system's temporary\n"
+    "                       directory)\n"
     "  --engine PATH        for round-trip, the order_book_engine to run (default: the one beside\n"
     "                       this program)\n"
     "  --discard-seconds N  for round-trip, commands sent in each run's first N seconds are sent\n"
@@ -107,7 +118,7 @@ constexpr std::string_view helpText =
     "  3  the build is not optimized and --allow-unoptimized was not given\n";
 
 enum class TimeKind { SERVICE, RESPONSE };
-enum class Interval { COMMAND, HAND_OFF, ROUND_TRIP };
+enum class Interval { COMMAND, HAND_OFF, DURABLE_WAIT, ROUND_TRIP };
 
 struct Settings {
     TimeKind time = TimeKind::SERVICE;
@@ -116,6 +127,12 @@ struct Settings {
     std::uint64_t discardSeconds = 2;
     std::optional<unsigned int> gatewayCore;
     std::optional<unsigned int> receiverCore;
+    std::optional<unsigned int> writerCore;  // for DURABLE_WAIT
+    // For DURABLE_WAIT and ROUND_TRIP: the engine's default level, and where each run's log goes.
+    bench::RunDurability durability = bench::RunDurability::MACHINE;
+    bool durabilityGiven = false;
+    std::filesystem::path logParent = bench::defaultLogParent();
+    bool logParentGiven = false;
     std::vector<std::string> workloads;
     std::string size = bench::benchmarkSizeName(bench::BenchmarkSize::EXTENDED);
     std::size_t commands = bench::timedCommandCount(bench::BenchmarkSize::EXTENDED);
@@ -159,10 +176,12 @@ std::optional<std::string> parseArguments(const std::vector<std::string_view>& a
             continue;
         }
         const bool textValue = arg == "--interval" || arg == "--time" || arg == "--workload" || arg == "--size" ||
-                               arg == "--priority" || arg == "--machine-record" || arg == "--out-dir" || arg == "--engine";
+                               arg == "--priority" || arg == "--machine-record" || arg == "--out-dir" || arg == "--engine" ||
+                               arg == "--durability" || arg == "--log-dir";
         const bool numberValue = arg == "--commands" || arg == "--runs" || arg == "--warmup" || arg == "--seed" ||
                                  arg == "--noise-seconds" || arg == "--pin-core" || arg == "--matching-core" ||
-                                 arg == "--gateway-core" || arg == "--receiver-core" || arg == "--discard-seconds";
+                                 arg == "--gateway-core" || arg == "--receiver-core" || arg == "--writer-core" ||
+                                 arg == "--discard-seconds";
         if (!textValue && !numberValue) {
             return "unknown option '" + std::string(arg) + "'";
         }
@@ -189,6 +208,8 @@ std::optional<std::string> parseArguments(const std::vector<std::string_view>& a
                 settings.gatewayCore = static_cast<unsigned int>(*number);
             } else if (arg == "--receiver-core") {
                 settings.receiverCore = static_cast<unsigned int>(*number);
+            } else if (arg == "--writer-core") {
+                settings.writerCore = static_cast<unsigned int>(*number);
             } else if (arg == "--discard-seconds") {
                 settings.discardSeconds = *number;
             } else if (*number == 0) {
@@ -203,10 +224,22 @@ std::optional<std::string> parseArguments(const std::vector<std::string_view>& a
         }
         try {
             if (arg == "--interval") {
-                if (value != "command" && value != "hand-off" && value != "round-trip") {
-                    return "unknown interval '" + std::string(value) + "' (known: command, hand-off, round-trip)";
+                if (value != "command" && value != "hand-off" && value != "durable-wait" && value != "round-trip") {
+                    return "unknown interval '" + std::string(value) + "' (known: command, hand-off, durable-wait, round-trip)";
                 }
-                settings.interval = value == "command" ? Interval::COMMAND : value == "hand-off" ? Interval::HAND_OFF : Interval::ROUND_TRIP;
+                settings.interval = value == "command"        ? Interval::COMMAND
+                                    : value == "hand-off"     ? Interval::HAND_OFF
+                                    : value == "durable-wait" ? Interval::DURABLE_WAIT
+                                                              : Interval::ROUND_TRIP;
+            } else if (arg == "--durability") {
+                if (value != "process" && value != "machine") {
+                    return "unknown durability '" + std::string(value) + "' (known: process, machine)";
+                }
+                settings.durability = bench::parseDurability(value);
+                settings.durabilityGiven = true;
+            } else if (arg == "--log-dir") {
+                settings.logParent = std::filesystem::path(value);
+                settings.logParentGiven = true;
             } else if (arg == "--time") {
                 if (value != "service" && value != "response") {
                     return "unknown time '" + std::string(value) + "' (known: service, response)";
@@ -270,7 +303,13 @@ std::string readMachineRecord(const std::string& path) {
 }
 
 std::string intervalName(Interval interval) {
-    return interval == Interval::COMMAND ? "command" : interval == Interval::HAND_OFF ? "hand-off" : "round-trip";
+    switch (interval) {
+        case Interval::COMMAND: return "command";
+        case Interval::HAND_OFF: return "hand-off";
+        case Interval::DURABLE_WAIT: return "durable-wait";
+        case Interval::ROUND_TRIP: return "round-trip";
+    }
+    return "command";
 }
 
 // What every row of a session shares.
@@ -313,19 +352,29 @@ latency::ReportRow startRow(const Session& session, const bench::Workload& workl
         record.set("spin-window", spinWindow);
         record.set("durability", "none, no log");
         record.set("logs-share-drive", "none, no log");
+    } else if (settings.interval == Interval::DURABLE_WAIT) {
+        record.set("shards", "1");
+        record.set("gateway-threads", "none, one producer thread in process");
+        record.set("active-connections", "none, one producer thread in process");
+        record.set("idle-connections", "none, one producer thread in process");
+        record.set("spin-window", spinWindow);
+        record.set("durability", bench::durabilityName(settings.durability));
+        record.set("logs-share-drive", "none, no checkpoints until roll-forward lands");
     } else if (settings.interval == Interval::ROUND_TRIP) {
         record.set("shards", "1");
         record.set("gateway-threads", "1");
         record.set("active-connections", "1");
         record.set("idle-connections", "0");
         record.set("spin-window", spinWindow);
-        record.set("durability", "none, the engine has no log until the log writer lands");
-        record.set("logs-share-drive", "none, no log");
+        record.set("durability", bench::durabilityName(settings.durability));
+        record.set("logs-share-drive", "none, no checkpoints until roll-forward lands");
     }
     const std::string senderCore = settings.pinCore ? std::to_string(*settings.pinCore) : "none";
     std::string coreMap = senderCore;
     if (settings.pinCore && settings.interval == Interval::HAND_OFF) {
         coreMap = "sender " + senderCore + ", matching thread " + std::to_string(*settings.matchingCore);
+    } else if (settings.pinCore && settings.interval == Interval::DURABLE_WAIT) {
+        coreMap = "sender " + senderCore + ", log writer " + std::to_string(*settings.writerCore);
     } else if (settings.pinCore && settings.interval == Interval::ROUND_TRIP) {
         coreMap = "sender " + senderCore + ", receiver " + std::to_string(*settings.receiverCore) + ", engine matching thread " +
                   std::to_string(*settings.matchingCore) + ", engine gateway thread " + std::to_string(*settings.gatewayCore);
@@ -336,8 +385,10 @@ latency::ReportRow startRow(const Session& session, const bench::Workload& workl
     // A round trip's engine was given its declared capacity, which is never 0.
     const order_book::BookCapacity capacity =
         settings.interval == Interval::ROUND_TRIP ? bench::declaredCapacity(workload) : bench::expectedBookSize(workload);
-    record.set("book-capacity", "orders=" + std::to_string(capacity.orders) + " stops=" + std::to_string(capacity.stops) +
-                                    " levels=" + std::to_string(capacity.levels));
+    record.set("book-capacity", settings.interval == Interval::DURABLE_WAIT
+                                    ? std::string("none, no book runs")
+                                    : "orders=" + std::to_string(capacity.orders) + " stops=" + std::to_string(capacity.stops) +
+                                          " levels=" + std::to_string(capacity.levels));
     record.set("clock", session.clockRecord.name);
     record.set("clock-step-ns", bench::formatFixed(session.clockRecord.stepNanoseconds, 1));
     record.set("clock-read-ns", bench::formatFixed(session.clockRecord.readCostNanoseconds, 1));
@@ -389,6 +440,8 @@ Target makeTarget(const Session& session, const bench::Workload& workload) {
         if (settings.highPriority) {
             setup.engineArguments.insert(setup.engineArguments.end(), {"--thread-priority", "high"});
         }
+        setup.durability = settings.durability;
+        setup.logParent = settings.logParent;
         setup.setUpReceiver = [receiverCore = settings.receiverCore, highPriority = settings.highPriority] {
             if (receiverCore) {
                 latency::pinCurrentThread(*receiverCore);
@@ -398,6 +451,16 @@ Target makeTarget(const Session& session, const bench::Workload& workload) {
             }
         };
         return Target(workload, setup);
+    } else if constexpr (std::is_same_v<Target, latency::DurableWaitTarget>) {
+        const Settings& settings = session.settings;
+        return Target(workload, settings.durability, settings.logParent, [writerCore = settings.writerCore, highPriority = settings.highPriority] {
+            if (writerCore) {
+                latency::pinCurrentThread(*writerCore);
+            }
+            if (highPriority) {
+                latency::raiseCurrentThreadPriority();
+            }
+        });
     } else {
         return Target(workload);
     }
@@ -651,6 +714,16 @@ int runSession(const Settings& settings) {
     if (settings.interval != Interval::ROUND_TRIP && (settings.gatewayCore || settings.receiverCore)) {
         return usage("--gateway-core and --receiver-core are for --interval round-trip");
     }
+    if (settings.interval == Interval::DURABLE_WAIT && settings.pinCore.has_value() != settings.writerCore.has_value()) {
+        return usage("--interval durable-wait needs both --pin-core and --writer-core, or neither");
+    }
+    if (settings.interval != Interval::DURABLE_WAIT && settings.writerCore) {
+        return usage("--writer-core is for --interval durable-wait");
+    }
+    if (settings.interval != Interval::DURABLE_WAIT && settings.interval != Interval::ROUND_TRIP &&
+        (settings.durabilityGiven || settings.logParentGiven)) {
+        return usage("--durability and --log-dir are for --interval durable-wait and round-trip");
+    }
     if (settings.pinCore) {
         latency::pinCurrentThread(*settings.pinCore);
     }
@@ -669,6 +742,7 @@ int runSession(const Settings& settings) {
         switch (settings.interval) {
             case Interval::COMMAND: runRows<latency::CommandTarget>(session, workload, rows); break;
             case Interval::HAND_OFF: runRows<latency::HandOffTarget>(session, workload, rows); break;
+            case Interval::DURABLE_WAIT: runRows<latency::DurableWaitTarget>(session, workload, rows); break;
             case Interval::ROUND_TRIP: runRows<latency::RoundTripTarget>(session, workload, rows); break;
         }
     }
