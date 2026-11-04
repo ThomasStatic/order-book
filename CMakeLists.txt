@@ -989,7 +989,9 @@ if(BUILD_TESTING)
     order_book_enable_warnings(gateway_tests)
     order_book_enable_sanitizers(gateway_tests)
     add_test(NAME gateway_tests COMMAND gateway_tests)
-    set_tests_properties(gateway_tests PROPERTIES TIMEOUT 240)
+    # One thread and a fixed count of schedules, so the timeout only bounds the work: Windows MSVC
+    # ASan Debug took 152 to 226 s of the old 240, then went past it.
+    set_tests_properties(gateway_tests PROPERTIES TIMEOUT 600)
 
     # Layer 3: real gateway and matching threads. A lost wake-up hangs, so the timeout fails it.
     add_executable(engine_thread_tests
