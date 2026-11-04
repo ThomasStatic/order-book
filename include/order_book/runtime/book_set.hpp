@@ -39,6 +39,9 @@ namespace order_book::runtime {
 
         const OrderBook& book(std::uint32_t slot) const;
 
+        // Warms this slot's book further, as OrderBook::reserve does, with its strong guarantee.
+        void reserve(std::uint32_t slot, const BookCapacity& capacity);
+
     private:
         void checkCaller(const char* call, std::uint32_t slot) const;
 

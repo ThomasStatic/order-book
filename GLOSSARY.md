@@ -151,6 +151,7 @@ _Avoid_: blocked, throttled, suspended
 
 **Capacity**:
 How much a book is prepared to hold without allocating memory: resting orders, pending stops, and price levels. It changes no outcome, so a book past its capacity grows and never refuses a command.
+`OrderBook::holding` gives what a book holds now in the same three numbers, which is not its capacity.
 _Avoid_: limit (a limit refuses something), size (what a book holds now)
 
 **Warm**:
@@ -226,7 +227,7 @@ Rebuilding a book from a book image, without running any command.
 _Avoid_: load, recover
 
 **Recovery**:
-Bringing the books back after a stop or crash: restoring each from its checkpoint, then replaying the command log after it.
+Bringing the books back after a stop or crash: restoring each from its checkpoint, then replaying the command log after it. Until checkpoints exist, every book replays its shard's whole log from position 0.
 _Avoid_: restore, restart
 
 ## The gateway

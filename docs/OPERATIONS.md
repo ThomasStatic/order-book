@@ -1,6 +1,6 @@
 # Running order_book_engine
 
-What an operator needs to start the engine, stop it, and read how it ended. The engine logs every command, but it can't recover from its log yet, so a restart still loses every book.
+What an operator needs to start the engine, stop it, and read how it ended. The engine logs every command, and a start recovers every book from the log an earlier run left, crashed or stopped.
 
 ## Starting
 
@@ -25,9 +25,19 @@ Each shard's log is a run of files of `--log-file-size` (256 MiB by default, wit
 
 `--log-ring RECORDS`, 65,536 by default and a power of two, is how many commands per shard may wait for their log writer, and so the most that can be unsafe at once. When it fills, the shard waits, its rings fill, and connections are parked: a slow drive reaches clients as backpressure, and nothing is refused.
 
-The directory must exist, and must hold no log, nor a `.tmp` one: recovery isn't built yet, so every start begins a new log at position 0, and any log already there refuses the start rather than be mixed with this one, with `order_book_engine: start refused: <dir> holds <file>, a log from an earlier run, ...`. Move or delete the earlier logs first. A start that is refused or stopped before it is ready removes the logs it made, so the directory is as it was. A log that can't be written or flushed once the engine runs ends it with an abort, naming the shard and file, since no write can be trusted after one fails.
+The directory must exist. It holds `engine.lock`, an empty file under an OS file lock while an engine runs there, which the system lets go of when the process ends, however it ends, so a second engine on a directory in use is refused with exit 1 (`start refused: <lock file> is locked: another engine or command is using <dir>`), and a crash never leaves it held. It is never deleted. A start that is refused or stopped before it is ready removes the log files it made. A log that can't be written or flushed once the engine runs ends it with an abort, naming the shard and file, since no write can be trusted after one fails.
 
 A clean stop answers everything queued, then each log writer writes the rest, cuts its last file to its last command, flushes, and closes it, and the unused next files are deleted, so `order_book_cli replay DIR --book` replays the engine's books from the log directory. A last file that still has zeros at its end means the engine did not stop cleanly. Each shard's line in the stop report then starts with `log-end=`, where its log ends.
+
+### Recovery
+
+Every start with a log already in the directory recovers it before anything listens, though the port is bound first, so a busy port fails at once rather than after a long recovery. Until checkpoints land, each shard replays its whole log from position 0, so a start takes longer the more the engine has ever done, and no log file holding a command is ever deleted.
+
+1. The engine takes the lock, then reads every log file's header. A symbol in one that isn't on the instrument list refuses the start with exit 1. A shard count other than the log's, or an instrument on another shard than the log's, refuses it with exit 4: placement can't change while a log exists, so start on the old placement. A new instrument is none of these. A file a crash left being made, `.tmp`, held nothing anyone was told of, and is deleted.
+2. Each shard, on its own thread, deletes trailing log files with no commands in them, such as the next file made ahead, then replays every command in its log into its books, checks every book, and warms each to the larger of what the list declares and 1.5 times what it holds, each of orders, stops, and levels apart; the stop report's `book` lines give what each was warmed to. If the last file with commands ends in a torn tail, the zeros an unstopped log leaves, or a command cut short as it was written, the tail is cut off and flushed. Each shard then starts a new file where its log ended.
+3. Each shard says what it did, in shard order, before `listening` prints: `order_book_engine: shard 0: recovered books=3 replayed=120 tail-cut-bytes=40`, where `tail-cut-bytes` counts the bytes a write had reached that recovery dropped, a torn command's, and not the zeros past them, so 0 means nothing was torn.
+
+Anything else recovery finds in the log, it can't explain, so it stops with exit 5 and changes nothing more, naming where: `order_book_engine: recovery stopped: shard 0 position 4 file log-0000-00000000000000000008.oblog: a gap: ...`. That covers a damaged header, a damaged command, a torn tail in a file before the last, which its log writer flushed whole, a missing file, and a book that replay left broken. A stop during recovery is enough on its own: the start ends with exit 6, and nothing is harmed.
 
 ### Worst cases
 
@@ -78,10 +88,12 @@ On Windows, closing the console window, logging off, or shutting down starts the
 | 1 | Start refused: `order_book_engine: start refused: <cause>` | Fix the cause and start again |
 | 2 | Usage error, with the usage | Fix the command line |
 | 3 | Never returned; on Windows, an abort | Investigate |
+| 4 | Start refused: `order_book_engine: start refused: placement changed: <what moved>` | Start on the old placement |
+| 5 | Recovery stopped: `order_book_engine: recovery stopped: shard <n> position <p> file <name>: <cause>` | Look at that file; the log is left as recovery found it |
 | 6 | Stopped before ready: `order_book_engine: stopped before ready` | Start again |
-| 8 | Forced stop: `order_book_engine: forced stop` | Start again |
+| 8 | Forced stop: `order_book_engine: forced stop` | Start again: recovery does the rest |
 
-Codes 4, 5, and 7 come with persistence: a changed placement, a recovery that stopped, and a clean stop that couldn't publish a book.
+Code 7, a clean stop that couldn't publish a book, comes with checkpoints.
 
 ### The stop report
 

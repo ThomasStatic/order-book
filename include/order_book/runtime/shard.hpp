@@ -63,6 +63,8 @@ namespace order_book::runtime {
         // shard whose results stayed inside what it reserved.
         std::uint64_t resultGrowths() const noexcept { return growths; }
         const BookSet& books() const noexcept { return bookSet; }
+        // Warms a slot's book further, which recovery does once a book holds what it replayed.
+        void reserve(std::uint32_t slot, const BookCapacity& capacity) { bookSet.reserve(slot, capacity); }
         std::size_t size() const noexcept { return bookSet.size(); }
 
         std::uint64_t nextPosition() const noexcept { return nextLogPosition; }

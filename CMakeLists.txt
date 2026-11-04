@@ -192,6 +192,7 @@ add_library(order_book_runtime STATIC
     src/runtime/log_storage.cpp
     src/runtime/log_writer.cpp
     src/runtime/matching_loop.cpp
+    src/runtime/recovery.cpp
     src/runtime/shard.cpp
     src/runtime/thread_placement.cpp
 )
@@ -633,6 +634,16 @@ if(BUILD_TESTING)
     order_book_enable_warnings(shard_tests)
     order_book_enable_sanitizers(shard_tests)
     add_test(NAME shard_tests COMMAND shard_tests)
+
+    add_executable(recovery_tests
+        tests/recovery_test.cpp
+    )
+
+    target_compile_features(recovery_tests PRIVATE cxx_std_20)
+    target_link_libraries(recovery_tests PRIVATE order_book_runtime)
+    order_book_enable_warnings(recovery_tests)
+    order_book_enable_sanitizers(recovery_tests)
+    add_test(NAME recovery_tests COMMAND recovery_tests)
 
     add_executable(shard_invariant_tests
         tests/shard_invariant_test.cpp

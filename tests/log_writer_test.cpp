@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -5,6 +6,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <span>
 #include <sstream>
@@ -521,6 +523,90 @@ void testRealFiles() {
     }
 }
 
+// What recovery asks of a storage, on either: the files there by name, an existing file opened
+// to read, reading as zeros past its writes up to its size, then cut and flushed, and the
+// directory's lock, which one holder at a time has, until it lets go.
+void expectRecoveryCalls(LogStorage& storage, const std::string& which) {
+    const std::vector<std::byte> bytes{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}, std::byte{5}};
+    {
+        std::unique_ptr<LogFile> made = storage.create("b.oblog", Durability::PROCESS);
+        made->close();
+        made = storage.create("a.oblog", Durability::MACHINE);
+        made->write(0, bytes);
+        made->extend(4096);
+        made->flush();
+        made->close();
+    }
+    const std::vector<std::string> names = storage.names();
+    expect(names == std::vector<std::string>{"a.oblog", "b.oblog"}, which + ": names lists every file, sorted");
+
+    std::unique_ptr<LogFile> opened = storage.open("a.oblog");
+    expect(opened->size() == 4096, which + ": an opened file is as long as it was extended to");
+    std::vector<std::byte> start(8, std::byte{9});
+    expect(opened->read(0, start) == 8, which + ": a read inside the file fills its buffer");
+    expect(start == std::vector<std::byte>{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}, std::byte{5}, std::byte{0},
+                                           std::byte{0}, std::byte{0}},
+           which + ": with what was written, then zeros");
+    std::vector<std::byte> end(16, std::byte{9});
+    expect(opened->read(4090, end) == 6, which + ": a read across the end takes what is there");
+    expect(std::all_of(end.begin(), end.begin() + 6, [](std::byte value) { return value == std::byte{0}; }), which + ": as zeros");
+    expect(opened->read(4096, end) == 0, which + ": and at the end, nothing");
+    opened->cut(3);
+    opened->flush();
+    expect(opened->size() == 3, which + ": a cut shortens it");
+    opened->close();
+    std::vector<std::byte> cut(8);
+    expect(storage.open("a.oblog")->read(0, cut) == 3 && cut[2] == std::byte{3}, which + ": and the cut stays, keeping what came before");
+    try {
+        static_cast<void>(storage.open("missing.oblog"));
+        expect(false, which + ": a file that isn't there can't be opened");
+    } catch (const LogStorageError& error) {
+        expect(error.kind() == LogStorageError::Kind::FAILED, which + ": and that is a failure: " + error.what());
+    }
+
+    {
+        const std::unique_ptr<StorageLock> held = storage.lock();
+        try {
+            static_cast<void>(storage.lock());
+            expect(false, which + ": a directory has one lock holder at a time");
+        } catch (const LogStorageError& error) {
+            expect(error.kind() == LogStorageError::Kind::LOCKED, which + ": a second is refused as locked: " + error.what());
+        }
+    }
+    const std::unique_ptr<StorageLock> again = storage.lock();
+    expect(again != nullptr, which + ": and once the holder lets go, the next takes it");
+    storage.remove("a.oblog");
+    storage.remove("b.oblog");
+}
+
+void testRecoveryCalls() {
+    InMemoryLogStorage memory;
+    expectRecoveryCalls(memory, "in memory");
+    const fs::path directory = fs::temp_directory_path() / "order_book_log_writer_tests_recovery";
+    fs::remove_all(directory);
+    fs::create_directories(directory);
+    {
+        FileLogStorage files(directory);
+        expectRecoveryCalls(files, "real files");
+        // A second storage over the same directory is another engine, or another process.
+        const std::unique_ptr<StorageLock> held = files.lock();
+        FileLogStorage other(directory);
+        try {
+            static_cast<void>(other.lock());
+            expect(false, "another storage over the directory is refused its lock");
+        } catch (const LogStorageError& error) {
+            expect(error.kind() == LogStorageError::Kind::LOCKED &&
+                       std::string(error.what()).find((directory / "engine.lock").string()) != std::string::npos,
+                   std::string("as locked, naming the lock file: ") + error.what());
+        }
+    }
+    expect(fs::exists(directory / "engine.lock") && fs::file_size(directory / "engine.lock") == 0,
+           "the lock file is empty, and stays once nobody holds it");
+    FileLogStorage files(directory);
+    expect(files.names() == std::vector<std::string>{"engine.lock"}, "and names lists it like any file");
+    fs::remove_all(directory);
+}
+
 // A log writer's real files: an engine that never stopped cleanly leaves an extended file that
 // reads as its records and then a torn tail, which recovery cuts, and a clean stop leaves files
 // that read whole, the full one included.
@@ -629,6 +715,7 @@ int main(int argc, char** argv) {
     testAStopOnAFullFile();
     testRealThreads();
     testRealFiles();
+    testRecoveryCalls();
     testRealLogFiles();
     std::cout << "log writer tests passed" << std::endl;
     return EXIT_SUCCESS;

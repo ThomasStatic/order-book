@@ -27,6 +27,7 @@
 #include "order_book/runtime/log_storage.hpp"
 #include "order_book/runtime/log_writer.hpp"
 #include "order_book/runtime/matching_loop.hpp"
+#include "order_book/runtime/recovery.hpp"
 #include "order_book/runtime/ring.hpp"
 #include "order_book/runtime/shard.hpp"
 #include "order_book/runtime/thread_placement.hpp"
@@ -87,9 +88,17 @@ namespace order_book::network {
             runtime::Doorbell writerBell;
             std::promise<void> writerReady;
             std::thread writerThread;
-            std::string logName;     // named before the writer starts, so marking it made allocates nothing
+            std::string logName;     // named before the writer makes it, so marking it made allocates nothing
             bool logMade = false;    // the writer's, once its file exists
             std::uint64_t logEnd = 0;
+
+            // Recovery's, with a log. The main thread finds the files, the matching thread replays
+            // them, and the log writer, told where the log ended, makes the next file there.
+            std::vector<runtime::LogFileEntry> logFiles;
+            std::promise<std::uint64_t> recovered;  // where the log ended, or why recovery failed
+            std::future<std::uint64_t> logEnded;    // its future, taken before either thread starts
+            bool recoveredTold = false;             // the matching thread's
+            runtime::RecoveredShard recovery;       // read once the shard is ready
         };
 
         // One gateway thread, its sockets, and how its start and its end went.
@@ -207,7 +216,7 @@ namespace order_book::network {
                             try {
                                 logStorage->remove(shard->logName);
                             } catch (const runtime::LogStorageError&) {
-                                // Only headers: the next start is refused on it, and says where.
+                                // Only headers: the next start removes it as a trailing file with no records.
                             }
                         }
                     }
@@ -218,6 +227,11 @@ namespace order_book::network {
             bool abandoned() const noexcept { return forced; }
 
         private:
+            void recoverOnThisThread();
+            EngineExit stoppedBeforeReady() {
+                diagnostics << prefix << "stopped before ready" << std::endl;
+                return EngineExit::STOPPED_BEFORE_READY;
+            }
             void startShards();
             void runShard(std::uint32_t number);
             void runLogWriter(std::uint32_t number);
@@ -247,11 +261,13 @@ namespace order_book::network {
             std::ostream& diagnostics;
             std::unique_ptr<runtime::InstrumentDirectory> directory;
             std::unique_ptr<runtime::LogStorage> logStorage;  // with --log-dir
+            std::unique_ptr<runtime::StorageLock> logLock;    // held for the engine's life
             std::unique_ptr<runtime::Housekeeping> housekeeping;  // with --log-dir
             std::thread housekeeper;  // once every shard is ready, unpinned, and running once released
             std::vector<std::unique_ptr<ShardRuntime>> shards;
             std::vector<std::unique_ptr<GatewayRuntime>> gateways;  // thread 0's sockets listen
             std::unique_ptr<ConnectionHandOff> handOff;
+            std::vector<std::vector<runtime::LogFileEntry>> logFiles;  // by shard, from recovery's start
             std::atomic<bool> gatewaysReleased{false};  // once listening is printed, or to stop
             std::atomic<bool> stopRequested{false};
             std::atomic<std::uint32_t> gatewaysDone{0};
@@ -279,12 +295,20 @@ namespace order_book::network {
             std::optional<runtime::Shard> shard;
             std::optional<runtime::MatchingLoop> loop;
             std::vector<std::uint64_t> growthsAtReady;
+            std::uint64_t resultGrowthsAtReady = 0;
             ShardRuntime& own = *shards[number];
             try {
                 // First, so the books are built on the core they will run on.
                 placeThisThread(settings.pinMatching, number, settings.threadPriority, "matching thread " + std::to_string(number));
                 const BookCapacity defaults{settings.capacityOrders, settings.capacityStops, settings.capacityLevels};
                 shard.emplace(*directory, number, defaults);
+                if (own.logRing) {
+                    // Replays the log, warms each book, and cuts a torn tail, before the log
+                    // writer makes the next file where the log ended.
+                    own.recovery = runtime::recoverShard(*logStorage, *directory, own.logFiles, *shard, defaults, stopRequested);
+                    own.recoveredTold = true;
+                    own.recovered.set_value(own.recovery.replayed);
+                }
                 std::vector<runtime::RingPair> rings;
                 for (const std::unique_ptr<GatewayRings>& pair : own.rings) {
                     rings.push_back(runtime::RingPair{&pair->commands, &pair->responses});
@@ -299,10 +323,15 @@ namespace order_book::network {
                 own.books.reserve(instruments.size());
                 growthsAtReady.reserve(instruments.size());
                 for (std::uint32_t slot = 0; slot < instruments.size(); ++slot) {
-                    own.books.push_back(BookLine{instruments[slot].symbol, number, runtime::capacityOf(instruments[slot], defaults), 0});
+                    const BookCapacity warmed = own.logRing ? own.recovery.warmed[slot] : runtime::capacityOf(instruments[slot], defaults);
+                    own.books.push_back(BookLine{instruments[slot].symbol, number, warmed, 0});
                     growthsAtReady.push_back(shard->books().book(slot).capacityGrowths());
                 }
+                resultGrowthsAtReady = shard->resultGrowths();
             } catch (...) {
+                if (own.logRing && !own.recoveredTold) {
+                    own.recovered.set_exception(std::current_exception());  // so the log writer makes nothing
+                }
                 own.ready.set_exception(std::current_exception());
                 return;
             }
@@ -314,25 +343,23 @@ namespace order_book::network {
             for (std::uint32_t slot = 0; slot < own.books.size(); ++slot) {
                 own.books[slot].growths = shard->books().book(slot).capacityGrowths() - growthsAtReady[slot];
             }
-            own.resultGrowths = shard->resultGrowths();
+            own.resultGrowths = shard->resultGrowths() - resultGrowthsAtReady;
         }
 
-        // On its own thread: places itself, then makes its shard's log file, before it is ready,
-        // so a refused pin or a file that can't be made refuses the start.
+        // On its own thread: places itself, waits for its shard's recovery, then makes the shard's
+        // next log file where the log ended, before it is ready, so a refused pin, a failed
+        // recovery, or a file that can't be made refuses the start.
         void Engine::runLogWriter(std::uint32_t number) {
             ShardRuntime& own = *shards[number];
             std::optional<runtime::LogWriter> writer;
             try {
                 placeThisThread(settings.pinLogWriters, number, settings.threadPriority, "log writer " + std::to_string(number));
-                writer.emplace(*housekeeping, number, *own.logRing, own.durable);
+                const std::uint64_t first = own.logEnded.get();
+                own.logName = runtime::logFileName(number, first);
+                writer.emplace(*housekeeping, number, *own.logRing, own.durable, first);
                 own.logMade = true;
             } catch (const runtime::LogStorageError& error) {
-                own.writerReady.set_exception(std::make_exception_ptr(
-                    error.kind() == runtime::LogStorageError::Kind::EXISTS
-                        ? Refusal{logStorage->describe(own.logName) +
-                                  " already exists: a log from an earlier run, which this build can't recover, so give a directory "
-                                  "with no log in it"}
-                        : Refusal{error.what()}));
+                own.writerReady.set_exception(std::make_exception_ptr(Refusal{error.what()}));
                 return;
             } catch (...) {
                 own.writerReady.set_exception(std::current_exception());
@@ -377,6 +404,23 @@ namespace order_book::network {
             }
         }
 
+        // Recovery's start, before any book exists: the lock, then what the log holds, then the
+        // files a crash left being made, which held nothing anyone was told of.
+        void Engine::recoverOnThisThread() {
+            logStorage = std::make_unique<runtime::FileLogStorage>(settings.logDir);
+            try {
+                logLock = logStorage->lock();
+            } catch (const runtime::LogStorageError& error) {
+                throw Refusal{error.what()};
+            }
+            runtime::LogSurvey survey = runtime::surveyLog(*logStorage, *directory);
+            for (const std::string& temporary : survey.temporaries) {
+                logStorage->remove(temporary);
+            }
+            housekeeping = std::make_unique<runtime::Housekeeping>(*logStorage, *directory, settings.durability, settings.logFileSize);
+            logFiles = std::move(survey.shards);
+        }
+
         void Engine::startShards() {
             const bool logged = !settings.logDir.empty();
             std::vector<std::future<void>> started;
@@ -385,19 +429,21 @@ namespace order_book::network {
             for (std::uint32_t number = 0; number < settings.shards; ++number) {
                 shards.push_back(std::make_unique<ShardRuntime>(settings.commandRing, settings.responseRing, settings.gatewayThreads,
                                                                 logged ? settings.logRing : 0));
+                if (logged) {
+                    shards.back()->logFiles = std::move(logFiles[number]);
+                    shards.back()->logEnded = shards.back()->recovered.get_future();
+                }
                 started.push_back(shards.back()->ready.get_future());
                 writersStarted.push_back(shards.back()->writerReady.get_future());
-                if (logged) {
-                    shards.back()->logName = runtime::logFileName(number, 0);
-                }
             }
             std::exception_ptr failure;
             for (std::uint32_t number = 0; number < settings.shards && !failure; ++number) {
                 try {
+                    // The matching thread first, since its log writer waits for its recovery.
+                    shards[number]->thread = std::thread([this, number] { runShard(number); });
                     if (logged) {
                         shards[number]->writerThread = std::thread([this, number] { runLogWriter(number); });
                     }
-                    shards[number]->thread = std::thread([this, number] { runShard(number); });
                 } catch (...) {
                     failure = std::current_exception();
                 }
@@ -442,29 +488,14 @@ namespace order_book::network {
                 if (!std::filesystem::is_directory(settings.logDir, error)) {
                     throw Refusal{"cannot use log directory " + settings.logDir + ": no such directory"};
                 }
-                // Recovery isn't built yet, so any engine's log here is one this run would lose
-                // track of: replay of the directory would then refuse a symbol in two shards.
-                std::vector<std::string> earlier;
-                for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(settings.logDir)) {
-                    const std::string name = entry.path().filename().string();
-                    if (name.starts_with("log-") && (name.ends_with(".oblog") || name.ends_with(".oblog.tmp"))) {
-                        earlier.push_back(name);
-                    }
-                }
-                if (!earlier.empty()) {
-                    std::sort(earlier.begin(), earlier.end());
-                    throw Refusal{settings.logDir + " holds " + earlier.front() +
-                                  ", a log from an earlier run, which this build can't recover, so give a directory with no log in it"};
-                }
                 if (const std::uint64_t least = runtime::leastLogFileBytes(*directory); settings.logFileSize < least) {
                     throw Refusal{"--log-file-size must be at least " + std::to_string(least) +
                                   " bytes, the largest shard's header and one record, not " + std::to_string(settings.logFileSize)};
                 }
-                logStorage = std::make_unique<runtime::FileLogStorage>(settings.logDir);
-                housekeeping =
-                    std::make_unique<runtime::Housekeeping>(*logStorage, *directory, settings.durability, settings.logFileSize);
             }
 
+            // Bound before recovery, so a busy port fails at once rather than after a long one,
+            // and listening only once every shard is ready.
             std::vector<SocketSet*> threadSockets;
             for (std::size_t thread = 0; thread < settings.gatewayThreads; ++thread) {
                 gateways.push_back(std::make_unique<GatewayRuntime>());
@@ -487,7 +518,28 @@ namespace order_book::network {
                 wakeGateways();
             });
 
-            startShards();
+            if (!settings.logDir.empty()) {
+                recoverOnThisThread();
+                if (stop.requests() != 0) {
+                    return stoppedBeforeReady();
+                }
+            }
+            try {
+                startShards();
+            } catch (...) {
+                // A stop during recovery ends a shard's replay, and nothing is harmed.
+                if (stop.requests() != 0) {
+                    return stoppedBeforeReady();
+                }
+                throw;
+            }
+            if (!settings.logDir.empty()) {
+                for (std::uint32_t number = 0; number < shards.size(); ++number) {
+                    const runtime::RecoveredShard& recovered = shards[number]->recovery;
+                    diagnostics << prefix << "shard " << number << ": recovered books=" << recovered.warmed.size()
+                                << " replayed=" << recovered.replayed << " tail-cut-bytes=" << recovered.tailCutBytes << std::endl;
+                }
+            }
             if (housekeeping) {
                 // Made before ready, so a thread that can't start refuses it, but making nothing
                 // until listening is printed, as the gateway threads wait: before ready nothing
@@ -499,14 +551,12 @@ namespace order_book::network {
                 });
             }
             if (stop.requests() != 0) {
-                diagnostics << prefix << "stopped before ready" << std::endl;
-                return EngineExit::STOPPED_BEFORE_READY;
+                return stoppedBeforeReady();
             }
 
             startGateways();
             if (stop.requests() != 0) {
-                diagnostics << prefix << "stopped before ready" << std::endl;
-                return EngineExit::STOPPED_BEFORE_READY;
+                return stoppedBeforeReady();
             }
             report << "listening "
                    << runtime::formatListenAddress(runtime::ListenAddress{settings.listen.host, gateways[0]->sockets->port()}) << std::endl;
@@ -677,6 +727,23 @@ namespace order_book::network {
         } catch (const Refusal& refusal) {
             engine.reset();
             diagnostics << prefix << "start refused: " << refusal.cause << std::endl;
+        } catch (const runtime::RecoveryError& error) {
+            engine.reset();
+            switch (error.kind()) {
+                case runtime::RecoveryError::Kind::PLACEMENT_CHANGED:
+                    diagnostics << prefix << "start refused: placement changed: " << error.what() << std::endl;
+                    return EngineExit::PLACEMENT_CHANGED;
+                case runtime::RecoveryError::Kind::RECOVERY_STOPPED:
+                    diagnostics << prefix << "recovery stopped: " << error.what() << std::endl;
+                    return EngineExit::RECOVERY_STOPPED;
+                case runtime::RecoveryError::Kind::START_REFUSED:
+                    break;
+            }
+            diagnostics << prefix << "start refused: " << error.what() << std::endl;
+        } catch (const runtime::RecoveryInterrupted&) {
+            engine.reset();
+            diagnostics << prefix << "stopped before ready" << std::endl;
+            return EngineExit::STOPPED_BEFORE_READY;
         } catch (const std::bad_alloc&) {
             engine.reset();
             diagnostics << prefix << "start refused: not enough memory" << std::endl;

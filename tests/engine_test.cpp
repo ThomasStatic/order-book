@@ -368,6 +368,24 @@ std::vector<std::string> filesIn(const std::filesystem::path& directory) {
     return names;
 }
 
+// The log files alone, without the lock file, which a start that took the lock leaves for good.
+std::vector<std::string> logsIn(const std::filesystem::path& directory) {
+    std::vector<std::string> names = filesIn(directory);
+    std::erase(names, "engine.lock");
+    return names;
+}
+
+EngineExit exitsWith(const runtime::EngineSettings& settings, const std::string& line) {
+    StopSource stop;
+    WatchedStream report;
+    WatchedStream diagnostics;
+    const EngineExit exit = runEngine(settings, stop, report, diagnostics);
+    const std::string text = diagnostics.text();
+    expect(text.ends_with("order_book_engine: " + line + "\n"), "ending with '" + line + "':\n" + text);
+    expect(report.text().empty(), "and never listening");
+    return exit;
+}
+
 std::string bytesOf(const std::filesystem::path& path) {
     std::ifstream in(path, std::ios::binary);
     return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
@@ -385,9 +403,9 @@ Bytes commandsFor(const char* symbol, OrderId count) {
 
 // With a log directory, each shard writes one log, named for its shard and first position, that
 // holds every command it ran, and the stop report gives where each ends. A second run on the
-// same directory is refused, since this build can't recover the first, and changes nothing.
+// same directory recovers the books from it and goes on where each log ended, in a new file.
 void testALoggedRun() {
-    const std::filesystem::path list = writeList("logged", "symbol,shard,orders,stops,levels\nAAPL,0,,,\nMSFT,1,,,\n");
+    const std::filesystem::path list = writeList("logged", "symbol,shard,orders,stops,levels\nAAPL,0,,,\nMSFT,1,2,3,4\n");
     const std::filesystem::path logs = logDirectory("logged");
     runtime::EngineSettings settings = settingsFor(list, 2);
     settings.logDir = logs.string();
@@ -407,7 +425,8 @@ void testALoggedRun() {
                "each shard's line gives where its log ends:\n" + report);
     }
     const std::vector<std::string> expected{"log-0000-00000000000000000000.oblog", "log-0001-00000000000000000000.oblog"};
-    expect(filesIn(logs) == expected, "one log per shard, named for its first position");
+    expect(logsIn(logs) == expected, "one log per shard, named for its first position");
+    expect(filesIn(logs).size() == 3 && std::filesystem::file_size(logs / "engine.lock") == 0, "and the lock file, empty");
     for (const auto& [name, symbol, count] : {std::tuple{expected[0], "AAPL", 3U}, std::tuple{expected[1], "MSFT", 5U}}) {
         const replay::ReplayInput input = replay::readCommandLogFile(logs / name);
         expect(!input.error, name + " reads to its end, with no torn tail");
@@ -418,25 +437,103 @@ void testALoggedRun() {
     }
 
     const std::string before = bytesOf(logs / expected[0]);
-    expect(refusedWith(settings, logs.string() + " holds " + expected[0] +
-                                     ", a log from an earlier run, which this build can't recover, so give a directory with no log in it") ==
-               EngineExit::START_REFUSED,
-           "a second run on the same directory is refused");
-    expect(filesIn(logs) == expected && bytesOf(logs / expected[0]) == before, "leaving the first run's logs as they were");
-
-    // Any engine's log refuses it, not only one this run would have named.
-    std::filesystem::remove(logs / expected[0]);
-    const std::filesystem::path one = writeList("logged_one", "symbol,shard,orders,stops,levels\nAAPL,,,,\n");
-    runtime::EngineSettings oneShard = settingsFor(one, 1);
-    oneShard.logDir = logs.string();
-    expect(refusedWith(oneShard, logs.string() + " holds " + expected[1] +
-                                     ", a log from an earlier run, which this build can't recover, so give a directory with no log in it") ==
-               EngineExit::START_REFUSED,
-           "a one-shard run is refused on another shard's log too");
-    expect(filesIn(logs) == std::vector<std::string>{expected[1]}, "and makes no log of its own");
-    std::filesystem::remove(one);
+    {
+        Run run(settings);
+        const std::uint16_t port = run.port();
+        // MSFT's orders 1 to 5 rest from the first run, so cancelling 3 finds it, and AAPL's 3 too.
+        Bytes stream = helloFrame();
+        std::uint64_t correlation = 10;
+        for (const auto& [symbol, id] : {std::pair{"MSFT", OrderId{3}}, std::pair{"AAPL", OrderId{3}}, std::pair{"AAPL", OrderId{4}}}) {
+            Bytes frame(64);
+            frame.resize(encodeCommand(correlation++, *Symbol::parse(symbol), replay::CancelCommand{id}, frame));
+            stream.insert(stream.end(), frame.begin(), frame.end());
+        }
+        const std::vector<BookEvent> events = talk(port, stream);
+        // Two shards answer in either order.
+        const auto cancelled = std::count_if(events.begin(), events.end(), [](const BookEvent& event) {
+            return std::holds_alternative<OrderCancelled>(event);
+        });
+        const auto rejected = std::count_if(events.begin(), events.end(), [](const BookEvent& event) {
+            return std::holds_alternative<CancelRejected>(event);
+        });
+        expect(events.size() == 3 && cancelled == 2 && rejected == 1,
+               "the second run holds the first run's books: orders 3 rest, and AAPL never had a 4");
+        run.stop.request();
+        expect(run.finish() == EngineExit::CLEAN_STOP, "a recovered run stops cleanly");
+        const std::string diagnostics = run.diagnostics.text();
+        expect(diagnostics.find("order_book_engine: shard 0: recovered books=1 replayed=3 tail-cut-bytes=0\n"
+                                "order_book_engine: shard 1: recovered books=1 replayed=5 tail-cut-bytes=0\n") != std::string::npos,
+               "each shard says what it recovered, in shard order:\n" + diagnostics);
+        const std::string report = run.report.text();
+        expect(report.find("shard 0: log-end=5 result-growths=0\nshard 1: log-end=6 result-growths=0\n") != std::string::npos,
+               "and each log goes on from where it ended:\n" + report);
+        // MSFT declares room for 2 orders and holds 5 on 1 level, so recovery warms it to 8
+        // orders, its own 3 stops, and its own 4 levels, more than 1.5 times its 1.
+        expect(report.find("book AAPL shard=0 orders=4096 stops=1024 levels=256 growths=0\n"
+                           "book MSFT shard=1 orders=8 stops=3 levels=4 growths=0\n") != std::string::npos,
+               "and the stop report gives what recovery warmed each book to:\n" + report);
+    }
+    expect(logsIn(logs) == std::vector<std::string>{expected[0], "log-0000-00000000000000000003.oblog", expected[1],
+                                                    "log-0001-00000000000000000005.oblog"},
+           "each shard's next run is in a new file, named for where its log ended");
+    expect(bytesOf(logs / expected[0]) == before, "leaving the first run's files as they were");
     std::filesystem::remove_all(logs);
     std::filesystem::remove(list);
+}
+
+// The lock, and the start's own refusals: another shard count or a moved symbol exits 4, and a
+// damaged log exits 5, each before anything listens, changing nothing.
+void testRecoveryRefusals() {
+    const std::filesystem::path list = writeList("recovery", "symbol,shard,orders,stops,levels\nAAPL,0,,,\nMSFT,1,,,\n");
+    const std::filesystem::path logs = logDirectory("recovery");
+    runtime::EngineSettings settings = settingsFor(list, 2);
+    settings.logDir = logs.string();
+    {
+        Run run(settings);
+        Bytes stream = helloFrame();
+        const Bytes commands = commandsFor("MSFT", 2);
+        stream.insert(stream.end(), commands.begin(), commands.end());
+        expect(talk(run.port(), stream).size() == 2, "every command was answered");
+        // While it runs, the directory is locked.
+        const std::string lockFile = (logs / "engine.lock").string();
+        expect(refusedWith(settings, lockFile + " is locked: another engine or command is using " + logs.string()) ==
+                   EngineExit::START_REFUSED,
+               "a second engine on a directory in use is refused");
+        run.stop.request();
+        expect(run.finish() == EngineExit::CLEAN_STOP, "and the first stops cleanly");
+    }
+    const std::vector<std::string> before = filesIn(logs);
+    const std::string placement = "and this build can't change placement while a log exists, so start on the old placement";
+    runtime::EngineSettings three = settingsFor(list, 3);
+    three.logDir = logs.string();
+    expect(exitsWith(three, "start refused: placement changed: the log was written by 2 shards and this start has 3, " + placement) ==
+               EngineExit::PLACEMENT_CHANGED,
+           "another shard count exits 4");
+    const std::filesystem::path moved = writeList("recovery_moved", "symbol,shard,orders,stops,levels\nAAPL,0,,,\nMSFT,0,,,\n");
+    runtime::EngineSettings movedSettings = settingsFor(moved, 2);
+    movedSettings.logDir = logs.string();
+    expect(exitsWith(movedSettings, "start refused: placement changed: MSFT moved from shard 1 to shard 0, " + placement) ==
+               EngineExit::PLACEMENT_CHANGED,
+           "a moved symbol exits 4");
+    const std::filesystem::path off = writeList("recovery_off", "symbol,shard,orders,stops,levels\nAAPL,0,,,\n");
+    runtime::EngineSettings offSettings = settingsFor(off, 2);
+    offSettings.logDir = logs.string();
+    expect(refusedWith(offSettings, "log-0001-00000000000000000000.oblog names MSFT, which is not on the instrument list") ==
+               EngineExit::START_REFUSED,
+           "a symbol off the list exits 1");
+    expect(filesIn(logs) == before, "and none of them changes the directory");
+
+    std::string damaged = bytesOf(logs / "log-0000-00000000000000000000.oblog");
+    damaged[9] = static_cast<char>(damaged[9] ^ 1);
+    std::ofstream(logs / "log-0000-00000000000000000000.oblog", std::ios::binary | std::ios::trunc) << damaged;
+    expect(exitsWith(settings, "recovery stopped: shard 0 position 0 file log-0000-00000000000000000000.oblog: CORRUPT_HEADER: the "
+                               "header's checksum does not match") == EngineExit::RECOVERY_STOPPED,
+           "a damaged log exits 5");
+    expect(filesIn(logs) == before, "changing nothing");
+    std::filesystem::remove_all(logs);
+    for (const std::filesystem::path& path : {list, moved, off}) {
+        std::filesystem::remove(path);
+    }
 }
 
 // A shard's log rolls across files of --log-file-size, each starting where the last ended, every
@@ -467,7 +564,7 @@ void testALoggedRunAcrossFiles() {
     const std::vector<std::string> expected{"log-0000-00000000000000000000.oblog", "log-0000-00000000000000000002.oblog",
                                             "log-0001-00000000000000000000.oblog", "log-0001-00000000000000000002.oblog",
                                             "log-0001-00000000000000000004.oblog"};
-    expect(filesIn(logs) == expected, "files of two records, and no unused next file, which shard 0's full last file had");
+    expect(logsIn(logs) == expected, "files of two records, and no unused next file, which shard 0's full last file had");
     for (const auto& [name, symbol, first, count] :
          {std::tuple{expected[0], "AAPL", 0U, 2U}, std::tuple{expected[1], "AAPL", 2U, 2U}, std::tuple{expected[2], "MSFT", 0U, 2U},
           std::tuple{expected[3], "MSFT", 2U, 2U}, std::tuple{expected[4], "MSFT", 4U, 1U}}) {
@@ -507,14 +604,15 @@ void testLogRefusals() {
                                      " bytes, the largest shard's header and one record, not " + std::to_string(least - 1)) ==
                EngineExit::START_REFUSED,
            "a log file must hold a record");
-    expect(filesIn(logs).empty(), "and that refusal makes no file");
+    expect(filesIn(logs).empty(), "and that refusal makes no file, not even the lock's");
     settings.logFileSize = runtime::defaultLogFileBytes;
-    // A file being made when an engine crashed is a log from an earlier run too.
+    // A file being made when an engine crashed held nothing anyone was told of, so it goes.
     std::ofstream(logs / "log-0000-00000000000000000002.oblog.tmp").put('x');
-    expect(refusedWith(settings, logs.string() + " holds log-0000-00000000000000000002.oblog.tmp, a log from an earlier run, which this "
-                                                 "build can't recover, so give a directory with no log in it") == EngineExit::START_REFUSED,
-           "a temporary log file refuses the start");
-    std::filesystem::remove(logs / "log-0000-00000000000000000002.oblog.tmp");
+    expectACleanRun(settings, "a file left being made doesn't stop a start");
+    expect(logsIn(logs) == std::vector<std::string>{"log-0000-00000000000000000000.oblog", "log-0001-00000000000000000000.oblog"},
+           "and is gone");
+    std::filesystem::remove_all(logs);
+    std::filesystem::create_directories(logs);
     settings = settingsFor(list, 2);
     settings.pinLogWriters = {0, 0};
     expect(refusedWith(settings, "--pin-log-writers needs --log-dir, since there are no log writers without a log") ==
@@ -529,7 +627,7 @@ void testLogRefusals() {
     const std::string past = *runtime::pinThisThread(4'000'000'000u);
     expect(refusedWith(settings, "cannot pin log writer 1 to core 4000000000: " + past) == EngineExit::START_REFUSED,
            "a core one log writer can't take refuses the start, naming it");
-    expect(filesIn(logs).empty(), "and the log shard 0 made is gone");
+    expect(filesIn(logs) == std::vector<std::string>{"engine.lock"}, "and the log shard 0 made is gone, leaving only the lock file");
 
     settings.pinLogWriters.clear();
     StopSource stop;
@@ -537,7 +635,7 @@ void testLogRefusals() {
     WatchedStream report;
     WatchedStream diagnostics;
     expect(runEngine(settings, stop, report, diagnostics) == EngineExit::STOPPED_BEFORE_READY, "a logged stop before ready exits 6");
-    expect(filesIn(logs).empty(), "and leaves no log, since nothing ran");
+    expect(logsIn(logs).empty(), "and leaves no log, since nothing ran");
     std::filesystem::remove_all(logs);
     std::filesystem::remove(list);
 }
@@ -628,6 +726,7 @@ int main() {
     testALoggedRun();
     testALoggedRunAcrossFiles();
     testLogRefusals();
+    testRecoveryRefusals();
     testACleanStop();
     testAStopBeforeReady();
     testRefusals();

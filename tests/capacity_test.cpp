@@ -124,6 +124,32 @@ void testLevelsArePerSide() {
     expect(book.capacityGrowths() == 0, "levels are counted per side");
 }
 
+bool operator==(const BookCapacity& left, const BookCapacity& right) {
+    return left.orders == right.orders && left.stops == right.stops && left.levels == right.levels;
+}
+
+// What a book holds, in reserve's terms, which recovery warms a book from: resting orders,
+// pending stops, and the most levels any one side has, resting or stop.
+void testHoldingCountsWhatTheBookHolds() {
+    OrderBook book;
+    expect(book.holding() == BookCapacity{0, 0, 0}, "an empty book holds nothing");
+    // 5 buys and 5 sells on 3 levels a side, and 3 stops a side on 2 stop prices.
+    fill(book, BookCapacity{10, 6, 3});
+    const BookCapacity held = book.holding();
+    expect(held == BookCapacity{10, 6, 3}, "ten orders, six stops, and three levels on the busiest side, not " +
+                                               std::to_string(held.orders) + ", " + std::to_string(held.stops) + ", " +
+                                               std::to_string(held.levels));
+
+    // One level a side resting, and four stop prices a side, so the stops' levels count.
+    OrderBook stops;
+    fill(stops, BookCapacity{2, 8, 4});
+    expect(stops.holding() == BookCapacity{2, 8, 4}, "stop levels count as levels");
+
+    OrderBook reserved;
+    reserved.reserve(BookCapacity{100, 100, 100});
+    expect(reserved.holding() == BookCapacity{0, 0, 0}, "what was reserved is not held");
+}
+
 void testPastCapacityGrowsAndNeverRefuses() {
     OrderBook book;
     book.reserve(BookCapacity{8, 0, 4});
@@ -275,6 +301,7 @@ int main() {
     testAColdBookCountsItsGrowths();
     testAReservedBookNeverGrows();
     testLevelsArePerSide();
+    testHoldingCountsWhatTheBookHolds();
     testPastCapacityGrowsAndNeverRefuses();
     testReserveChangesNothingTheBookReports();
     testASecondCallCostsNothing();

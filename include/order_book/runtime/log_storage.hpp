@@ -10,6 +10,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "order_book/runtime/durability.hpp"
@@ -23,7 +24,8 @@ namespace order_book::runtime {
     // retry can be trusted; one at start refuses it.
     class LogStorageError : public std::runtime_error {
     public:
-        enum class Kind { EXISTS, FAILED };
+        // LOCKED: someone else holds the directory's lock.
+        enum class Kind { EXISTS, FAILED, LOCKED };
 
         LogStorageError(Kind kind, const std::string& what) : std::runtime_error(what), errorKind(kind) {}
         Kind kind() const noexcept { return errorKind; }
@@ -32,10 +34,16 @@ namespace order_book::runtime {
         Kind errorKind;
     };
 
-    // One open log file, written by one thread. Every failure throws LogStorageError.
+    // One open log file, used by one thread. Every failure throws LogStorageError.
     class LogFile {
     public:
         virtual ~LogFile() = default;
+
+        // Copies up to out.size() bytes from offset, and returns how many there were: fewer only
+        // at the file's end. Past the written part, up to the size it was extended to, it reads
+        // zeros.
+        virtual std::size_t read(std::uint64_t offset, std::span<std::byte> out) = 0;
+        virtual std::uint64_t size() = 0;
 
         // Returns once the bytes hold at the file's durability level.
         virtual void write(std::uint64_t offset, std::span<const std::byte> bytes) = 0;
@@ -53,9 +61,24 @@ namespace order_book::runtime {
         virtual void rename(const std::string& name) = 0;
     };
 
+    // A directory's lock, held until this is destroyed, or the process ends, however it ends.
+    class StorageLock {
+    public:
+        virtual ~StorageLock() = default;
+    };
+
     class LogStorage {
     public:
         virtual ~LogStorage() = default;
+
+        // The lock on the directory, so a second engine or an offline command on it is refused,
+        // with Kind::LOCKED, while this one holds it.
+        virtual std::unique_ptr<StorageLock> lock() = 0;
+        // Every file's name, sorted.
+        virtual std::vector<std::string> names() const = 0;
+        // An existing file, to read, and at recovery to cut and flush. A file that isn't there
+        // is Kind::FAILED.
+        virtual std::unique_ptr<LogFile> open(const std::string& name) = 0;
 
         // A new file, never an existing one, which throws with Kind::EXISTS: old files are never
         // reused, since their stale records still chain. Its name may not survive a machine
@@ -69,11 +92,29 @@ namespace order_book::runtime {
     // log-<shard, 4 digits>-<first position, 20 digits>.oblog
     std::string logFileName(std::uint32_t shard, std::uint64_t firstPosition);
 
-    // The real files, in one directory, which must exist.
+    // What a log file's name says, the name plus .tmp of one being made included.
+    struct LogFileNameParts {
+        std::uint32_t shard = 0;
+        std::uint64_t firstPosition = 0;
+        bool temporary = false;
+    };
+
+    // What logFileName gives, or that plus .tmp, read back; nothing for any other name.
+    std::optional<LogFileNameParts> parseLogFileName(std::string_view name);
+    // log- and .oblog or .oblog.tmp, whether or not an engine names a file so.
+    bool namedLikeALogFile(std::string_view name);
+
+    // The real files, in one directory, which must exist. Its lock is engine.lock there, empty
+    // and never deleted, under an OS file lock (LockFileEx, flock), so a crash releases it.
     class FileLogStorage final : public LogStorage {
     public:
+        static constexpr const char* lockFileName = "engine.lock";
+
         explicit FileLogStorage(std::filesystem::path directory);
 
+        std::unique_ptr<StorageLock> lock() override;
+        std::vector<std::string> names() const override;
+        std::unique_ptr<LogFile> open(const std::string& name) override;
         std::unique_ptr<LogFile> create(const std::string& name, Durability durability) override;
         void remove(const std::string& name) override;
         std::string describe(const std::string& name) const override;
@@ -99,6 +140,9 @@ namespace order_book::runtime {
             bool closed = false;
         };
 
+        std::unique_ptr<StorageLock> lock() override;
+        std::vector<std::string> names() const override;
+        std::unique_ptr<LogFile> open(const std::string& name) override;
         std::unique_ptr<LogFile> create(const std::string& name, Durability durability) override;
         void remove(const std::string& name) override;
         std::string describe(const std::string& name) const override;
@@ -109,7 +153,6 @@ namespace order_book::runtime {
         // leaving out an extended file's zeros; empty for a file that isn't there or holds no
         // more than that.
         std::vector<std::byte> read(const std::string& name, std::size_t offset) const;
-        std::vector<std::string> names() const;
         // From now on, the next create or write after this many succeed throws. So does every
         // flush once failFlushes is set.
         void failCreateAfter(std::size_t creates);
@@ -118,13 +161,15 @@ namespace order_book::runtime {
 
     private:
         class OpenFile;
+        class HeldLock;
 
-        mutable std::mutex lock;
+        mutable std::mutex guard;
         // Shared with each open file, so a remove leaves it writing where it was.
         std::map<std::string, std::shared_ptr<File>> files;
         std::optional<std::size_t> createsBeforeFailure;
         std::optional<std::size_t> writesBeforeFailure;
         bool flushesFail = false;
+        bool locked = false;
     };
 
 }  // namespace order_book::runtime

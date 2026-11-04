@@ -820,6 +820,11 @@ namespace order_book {
         }
     }
 
+    BookCapacity OrderBook::holding() const noexcept {
+        return BookCapacity{orderIndex.size(), pendingIndex.size(),
+                            std::max({bids.size(), asks.size(), buyStops.size(), sellStops.size()})};
+    }
+
     std::uint64_t OrderBook::capacityGrowths() const noexcept {
         const std::uint64_t poolGrowths = nodePool ? nodePool->chunksTaken() - reservedChunks : 0;
         return orderIndex.growths() + pendingIndex.growths() + bids.growths() + asks.growths() + buyStops.growths() +

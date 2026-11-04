@@ -12,8 +12,8 @@ namespace order_book::network {
     enum class EngineExit : int {
         CLEAN_STOP = 0,            // every book published
         START_REFUSED = 1,         // fix the cause and start again
-        PLACEMENT_CHANGED = 4,     // from D1
-        RECOVERY_STOPPED = 5,      // from D3
+        PLACEMENT_CHANGED = 4,     // any placement change while a log exists, until D6
+        RECOVERY_STOPPED = 5,      // the log holds what recovery can't explain
         STOPPED_BEFORE_READY = 6,  // nothing harmed: start again
         NOT_PUBLISHED = 7,         // from D6
         FORCED_STOP = 8,           // a second stop: the next start recovers

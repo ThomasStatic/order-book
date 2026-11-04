@@ -46,6 +46,9 @@ namespace order_book::process_testing {
         // Whether the child is still running once this long has passed, killing nothing. If it
         // exited sooner, wait then says how.
         bool stillRunningAfter(std::chrono::milliseconds limit);
+        // Ends the child at once, as a crash would: TerminateProcess on Windows, SIGKILL
+        // elsewhere. wait then says how it ended.
+        void kill();
 #ifdef _WIN32
         // Ctrl-Break to the child's process group, which needs ownProcessGroup and a console in
         // this process. Whether the system sent it.
@@ -66,7 +69,6 @@ namespace order_book::process_testing {
             bool ended = false;
         };
 
-        void kill();
         void collect(int which);  // 0 stdout, 1 stderr: a reader thread's body
         void awaitStreamsEnded();
 

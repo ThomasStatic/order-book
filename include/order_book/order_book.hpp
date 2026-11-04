@@ -446,6 +446,10 @@ namespace order_book {
         // reports what it did, and a later call tops up as if it had never run.
         void reserve(const BookCapacity& capacity);
 
+        // What the book holds now, in reserve's terms: its resting orders, its pending stops, and
+        // the most levels any one side has, resting or stop. Not what was reserved. O(1).
+        BookCapacity holding() const noexcept;
+
         // How many times the index, the pool, or a level array has allocated outside reserve:
         // whether the book was sized right, zero if it was. Not book state: two books with the
         // same orders can differ here.

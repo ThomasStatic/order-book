@@ -42,6 +42,11 @@ namespace order_book::runtime {
         replay::executeCommand(books[slot], command, out);
     }
 
+    void BookSet::reserve(std::uint32_t slot, const BookCapacity& capacity) {
+        checkCaller("reserve", slot);
+        books[slot].reserve(capacity);
+    }
+
     const OrderBook& BookSet::book(std::uint32_t slot) const {
         checkCaller("book", slot);
         return books[slot];

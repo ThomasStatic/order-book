@@ -8,12 +8,22 @@
 #include <iostream>
 #include <new>
 #include <ostream>
+#include <algorithm>
+#include <iterator>
+#include <map>
 #include <streambuf>
 #include <string>
+#include <variant>
+#include <vector>
 
 #include "order_book/network/engine.hpp"
 #include "order_book/network/stop_source.hpp"
 #include "order_book/runtime/engine_settings.hpp"
+#include "order_book/runtime/instruments.hpp"
+#include "order_book/runtime/log_files.hpp"
+#include "order_book/runtime/log_storage.hpp"
+#include "order_book/runtime/log_writer.hpp"
+#include "order_book/symbol.hpp"
 
 // Each allocation runEngine makes before it is ready fails in turn, on whichever thread makes it,
 // and each must refuse the start cleanly: no crash, no hang, and a message. Under MSVC's checked
@@ -127,9 +137,57 @@ private:
     bool requested = false;
 };
 
-// Once with no log, and once with one, where a refused start must also leave no log behind, or
-// the next start would be refused on it.
-long failEachStartAllocation(const std::filesystem::path& list, const std::optional<std::filesystem::path>& logs) {
+// Each shard holds an instrument, so each of the earlier run's files holds records, and no
+// refused start may remove one: recovery removes only trailing files with none.
+constexpr const char* listText = "symbol,shard,orders,stops,levels\nAAPL,0,,,\nMSFT,1,10,10,10\n";
+
+// Every file in a directory but the lock, which a start that took it leaves for good, and its
+// bytes.
+std::map<std::string, std::string> logsIn(const std::filesystem::path& directory) {
+    std::map<std::string, std::string> files;
+    for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(directory)) {
+        const std::string name = entry.path().filename().string();
+        if (name != "engine.lock") {
+            std::ifstream in(entry.path(), std::ios::binary);
+            files[name] = std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        }
+    }
+    return files;
+}
+
+// An earlier run's log, stopped cleanly: MSFT holds 20 orders on 20 levels, past the 10 it
+// declares, so recovery warms its book further, and AAPL holds 3.
+void writeEarlierLog(const std::filesystem::path& logs) {
+    const runtime::InstrumentDirectory directory(std::get<std::vector<runtime::Instrument>>(runtime::parseInstrumentList(listText, 2)), 2);
+    runtime::FileLogStorage storage(logs);
+    runtime::Housekeeping housekeeping(storage, directory, runtime::Durability::PROCESS, runtime::defaultLogFileBytes);
+    for (std::uint32_t shard = 0; shard < 2; ++shard) {
+        runtime::Ring<runtime::LogEntry> ring(64);
+        runtime::DurablePosition durable;
+        runtime::LogWriter writer(housekeeping, shard, ring, durable);
+        for (std::uint32_t slot = 0; slot < directory.onShard(shard).size(); ++slot) {
+            const bool msft = directory.onShard(shard)[slot].symbol == *replay::Symbol::parse("MSFT");
+            for (OrderId id = 1; id <= (msft ? 20U : 3U); ++id) {
+                replay::AddCommand add{};
+                add.orderId = id;
+                add.side = Side::BUY;
+                add.price = static_cast<Price>(100 + id);
+                add.quantity = 1;
+                ring.tryPush(runtime::LogEntry{add, slot, runtime::ControlKind::COMMAND});
+            }
+        }
+        ring.tryPush(runtime::LogEntry::stop());
+        while (!writer.stopped()) {
+            writer.pass();
+        }
+    }
+    housekeeping.removeUnused();
+}
+
+// Once with no log, once with a new one, where a refused start must also leave no log behind, or
+// the next start would be refused on it, and once recovering an earlier run's, which a refused
+// start must leave as it was.
+long failEachStartAllocation(const std::filesystem::path& list, const std::optional<std::filesystem::path>& logs, bool earlier = false) {
     runtime::EngineSettings settings;
     settings.instruments = list.string();
     settings.shards = 2;
@@ -142,6 +200,13 @@ long failEachStartAllocation(const std::filesystem::path& list, const std::optio
         std::filesystem::create_directories(*logs);
         settings.logDir = logs->string();
         settings.logRing = 64;
+        if (earlier) {
+            writeEarlierLog(*logs);
+        }
+    }
+    const std::map<std::string, std::string> before = logs ? logsIn(*logs) : std::map<std::string, std::string>{};
+    if (earlier) {
+        expect(before.size() == 2, "the earlier run left a log for each shard");
     }
 
     long refusals = 0;
@@ -166,7 +231,15 @@ long failEachStartAllocation(const std::filesystem::path& list, const std::optio
         expect(said.find("order_book_engine: start refused: ") != std::string::npos, "and says so:\n" + said);
         expect(trigger.text.empty(), "and never listened");
         if (logs) {
-            expect(std::filesystem::is_empty(*logs), "allocation " + std::to_string(k) + " failing left a log behind");
+            const std::map<std::string, std::string> after = logsIn(*logs);
+            if (after != before) {
+                std::string names;
+                for (const auto& [name, bytes] : after) {
+                    names += "\n" + name + ", " + std::to_string(bytes.size()) + " bytes";
+                }
+                expect(false, "allocation " + std::to_string(k) + " failing left the log other than it found it, holding:" + names +
+                                  "\nwith:\n" + said);
+            }
         }
         ++refusals;
     }
@@ -179,13 +252,16 @@ long failEachStartAllocation(const std::filesystem::path& list, const std::optio
 
 int failEachStartAllocation() {
     const std::filesystem::path list = std::filesystem::temp_directory_path() / "order_book_engine_start_allocation_test.csv";
-    std::ofstream(list, std::ios::binary) << "symbol,shard,orders,stops,levels\nAAPL,,,,\nMSFT,1,10,10,10\n";
+    std::ofstream(list, std::ios::binary) << listText;
+    const std::filesystem::path logs = std::filesystem::temp_directory_path() / "order_book_engine_start_allocation_logs";
     const long unlogged = failEachStartAllocation(list, std::nullopt);
-    const long logged = failEachStartAllocation(list, std::filesystem::temp_directory_path() / "order_book_engine_start_allocation_logs");
+    const long logged = failEachStartAllocation(list, logs);
+    const long recovered = failEachStartAllocation(list, logs, true);
     expect(logged > unlogged, "a log adds allocations to the start");
+    expect(recovered > logged, "and recovering one adds more");
     std::filesystem::remove(list);
-    std::cout << "engine start allocation tests passed after " << unlogged << " refused starts, and " << logged << " with a log"
-              << std::endl;
+    std::cout << "engine start allocation tests passed after " << unlogged << " refused starts, " << logged << " with a new log, and "
+              << recovered << " recovering one" << std::endl;
     return EXIT_SUCCESS;
 }
 

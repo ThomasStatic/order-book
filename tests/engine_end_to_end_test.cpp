@@ -7,8 +7,10 @@
 #include <iostream>
 #include <iterator>
 #include <optional>
+#include <map>
 #include <set>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -83,13 +85,15 @@ std::string describe(const std::vector<std::string>& arguments, const Run& resul
 }
 
 // One engine on port 0 with these instruments, stopped by closing its stdin, logging to a log
-// directory of its own at process durability and in 1 MiB files unless told otherwise.
+// directory of its own at process durability and in 1 MiB files unless told otherwise, or to an
+// earlier engine's, which it then recovers.
 class Engine {
 public:
     Engine(std::string named, const std::set<std::string>& symbols, std::uint32_t shards, std::uint32_t gatewayThreads = 1,
-           const std::string& durability = "process", const std::string& logFileSize = "1M")
+           const std::string& durability = "process", const std::string& logFileSize = "1M",
+           const std::optional<fs::path>& earlierLogs = std::nullopt)
         : name(std::move(named)), list(fs::temp_directory_path() / ("order_book_end_to_end_" + std::to_string(++started) + ".csv")) {
-        logs = fs::temp_directory_path() / ("order_book_end_to_end_logs_" + std::to_string(started));
+        logs = earlierLogs ? *earlierLogs : fs::temp_directory_path() / ("order_book_end_to_end_logs_" + std::to_string(started));
         {
             std::ofstream out(list, std::ios::binary);
             out << "symbol,shard,orders,stops,levels\n";
@@ -97,16 +101,28 @@ public:
                 out << symbol << ",,,,\n";
             }
         }
-        fs::remove_all(logs);
-        fs::create_directories(logs);
-        child.emplace(engine, std::vector<std::string>{"--instruments", list.string(), "--shards", std::to_string(shards), "--listen",
-                                                       "127.0.0.1:0", "--gateway-threads", std::to_string(gatewayThreads), "--log-dir",
-                                                       logs.string(), "--durability", durability, "--log-file-size", logFileSize,
-                                                       "--stop-on-stdin-close"});
-        const std::optional<std::string> line = child->readLine(30s);
-        expect(line && line->starts_with("listening 127.0.0.1:"),
-               name + ": the engine said where it listens, with stderr:\n" + child->standardError());
-        address = line->substr(std::string("listening ").size());
+        if (!earlierLogs) {
+            fs::remove_all(logs);
+            fs::create_directories(logs);
+        }
+        const std::vector<std::string> arguments{"--instruments", list.string(), "--shards", std::to_string(shards), "--listen",
+                                                 "127.0.0.1:0", "--gateway-threads", std::to_string(gatewayThreads), "--log-dir",
+                                                 logs.string(), "--durability", durability, "--log-file-size", logFileSize,
+                                                 "--stop-on-stdin-close"};
+        // Windows releases a killed process's file lock in its own time, so a restart may find
+        // the lock still held for a moment; nothing else is retried.
+        for (int attempt = 0;; ++attempt) {
+            child.emplace(engine, arguments);
+            if (const std::optional<std::string> line = child->readLine(60s); line && line->starts_with("listening 127.0.0.1:")) {
+                address = line->substr(std::string("listening ").size());
+                return;
+            }
+            const ExitStatus status = child->wait(30s);
+            const std::string said = child->standardError();
+            expect(!status.killed && status.code == 1 && said.find("engine.lock is locked") != std::string::npos && attempt < 100,
+                   name + ": the engine said where it listens, with stderr:\n" + said);
+            std::this_thread::sleep_for(100ms);
+        }
     }
 
     ~Engine() {
@@ -114,6 +130,15 @@ public:
         fs::remove(list, ignored);
         fs::remove_all(logs, ignored);
     }
+
+    // As a crash would end it, leaving its log as the crash left it.
+    void kill() {
+        child->kill();
+        child->wait(30s);
+    }
+
+    // Everything the engine said, once it has stopped.
+    std::string standardError() { return child->standardError(); }
 
     Engine(const Engine&) = delete;
     Engine& operator=(const Engine&) = delete;
@@ -247,7 +272,10 @@ void testManyInstrumentsAtOneAndThreeShards() {
         std::size_t files = 0;
         for (const fs::directory_entry& entry : fs::directory_iterator(running.logs)) {
             const std::string logName = entry.path().filename().string();
-            expect(logName.ends_with(".oblog"), running.name + ": only log files are left, not " + logName);
+            if (logName == "engine.lock") {
+                continue;  // empty, and never deleted
+            }
+            expect(logName.ends_with(".oblog"), running.name + ": only log files and the lock are left, not " + logName);
             const std::uintmax_t size = fs::file_size(entry.path());
             expect(size <= 1024, running.name + ": " + logName + " is no larger than its file size, at " + std::to_string(size));
             ++files;
@@ -295,6 +323,210 @@ void testASymbolOffTheListExits4() {
     running.stop();
 }
 
+// A file of the sample's rows again and again, each pass's order IDs past the last pass's, so
+// every pass trades as the first did, and a stream long enough to kill an engine in the middle of.
+// Returns how many commands it holds.
+std::uint64_t writeRepeated(const fs::path& sample, int passes, const fs::path& out) {
+    std::ifstream in(sample, std::ios::binary);
+    std::string header;
+    std::getline(in, header);
+    std::vector<std::string> rows;
+    for (std::string row; std::getline(in, row);) {
+        if (!row.empty() && row.back() == '\r') {
+            row.pop_back();
+        }
+        if (!row.empty()) {
+            rows.push_back(row);
+        }
+    }
+    if (!header.empty() && header.back() == '\r') {
+        header.pop_back();
+    }
+    std::ofstream written(out, std::ios::binary);
+    written << header << '\n';
+    std::uint64_t sequence = 1;
+    for (int pass = 0; pass < passes; ++pass) {
+        for (const std::string& row : rows) {
+            const std::size_t first = row.find(',');
+            const std::size_t second = row.find(',', first + 1);
+            const std::size_t third = row.find(',', second + 1);
+            const std::uint64_t id = std::stoull(row.substr(second + 1, third - second - 1)) + static_cast<std::uint64_t>(pass) * 1'000'000;
+            written << sequence++ << row.substr(first, second - first + 1) << id << row.substr(third) << '\n';
+        }
+    }
+    return sequence - 1;
+}
+
+// Every log file in a directory, in shard then position order, as recovery reads them.
+std::vector<fs::path> logFilesIn(const fs::path& directory) {
+    std::vector<fs::path> files;
+    for (const fs::directory_entry& entry : fs::directory_iterator(directory)) {
+        const std::string name = entry.path().filename().string();
+        if (name.starts_with("log-") && name.ends_with(".oblog")) {
+            files.push_back(entry.path());
+        }
+    }
+    std::sort(files.begin(), files.end());
+    return files;
+}
+
+bool aRecordIsLogged(const fs::path& directory) {
+    for (const fs::path& file : logFilesIn(directory)) {
+        if (!replay::readCommandLogFile(file).records.empty()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// replay --events or send's output: a section per symbol, each line with its line number.
+struct Answer {
+    std::size_t line;
+    std::string text;
+};
+using Sections = std::map<std::string, std::vector<Answer>>;
+
+Sections sectionsOf(const std::string& output) {
+    Sections sections;
+    std::vector<Answer>* current = nullptr;
+    std::size_t start = 0;
+    while (start < output.size()) {
+        const std::size_t end = output.find('\n', start);
+        const std::string line = output.substr(start, end - start);
+        start = end == std::string::npos ? output.size() : end + 1;
+        if (line.empty()) {
+            continue;
+        }
+        if (line.starts_with("symbol ")) {
+            current = &sections[line.substr(7)];
+            continue;
+        }
+        const std::size_t colon = line.find(": ");
+        expect(current != nullptr && line.starts_with("line ") && colon != std::string::npos, "an answer line: " + line);
+        current->push_back(Answer{std::stoul(line.substr(5, colon - 5)), line.substr(colon + 2)});
+    }
+    return sections;
+}
+
+std::string formatSections(const Sections& sections) {
+    std::string text;
+    for (const auto& [symbol, answers] : sections) {
+        if (answers.empty()) {
+            continue;
+        }
+        text += (text.empty() ? "symbol " : "\nsymbol ") + symbol + '\n';
+        for (const Answer& answer : answers) {
+            text += "line " + std::to_string(answer.line) + ": " + answer.text + '\n';
+        }
+    }
+    return text;
+}
+
+// A child engine killed in the middle of a stream restarts on its own log, recovers what
+// survived, and goes on: its answers to a second stream are a single-threaded replay's of the
+// survivors and then that stream, and its log replays to the same books. When the kill lands is
+// chance, but every check holds wherever it lands. At machine durability, every answer the first
+// stream's client heard is one the survivors give too.
+void testAKilledEngineRestarts() {
+    const fs::path sample = engineSamples / "seven_instruments.csv";
+    const fs::path first = fs::temp_directory_path() / "order_book_end_to_end_killed_first.csv";
+    const std::uint64_t commands = writeRepeated(sample, 300, first);
+    Engine killed("killed mid-stream", symbolsIn(sample), 2, 1, "machine");
+    std::string heard;
+    {
+        ChildProcess sender(cli, {"send", first.string(), "--connect", killed.address});
+        for (int waited = 0; !aRecordIsLogged(killed.logs); ++waited) {
+            expect(waited < 12000, "the engine logged a command");
+            std::this_thread::sleep_for(5ms);
+        }
+        killed.kill();
+        const ExitStatus status = sender.wait(60s);
+        expect(!status.killed && (status.code == 3 || status.code == 0), "send loses its connection, unless it was all answered first");
+        heard = sender.standardOutput();
+    }
+
+    // What survived, as recovery reads it: each shard's files, each up to its first error.
+    std::vector<replay::ReplayRecord> survivors;
+    for (const fs::path& file : logFilesIn(killed.logs)) {
+        const replay::ReplayInput input = replay::readCommandLogFile(file);
+        expect(!input.error || input.error->parseError->code == replay::ParseErrorCode::TORN_TAIL,
+               "a killed engine's files end, if anywhere, in a torn tail: " + file.filename().string());
+        survivors.insert(survivors.end(), input.records.begin(), input.records.end());
+    }
+    expect(!survivors.empty(), "something survived");
+    // Chance, so a log can show where a failing run's kill landed.
+    std::cout << "the kill left " << survivors.size() << " of " << commands << " commands in the log" << std::endl;
+
+    Engine restarted("restarted", symbolsIn(sample), 2, 1, "machine", "1M", killed.logs);
+    const std::vector<std::string> sendArguments{"send", sample.string(), "--connect", restarted.address};
+    const Run sent = run(sendArguments);
+    expect(!sent.status.killed && sent.status.code == 0, "the restarted engine answers a second stream: " + describe(sendArguments, sent));
+    restarted.stop();
+    const std::string said = plain(restarted.standardError());
+    std::uint64_t replayedRecords = 0;
+    for (std::uint32_t shard = 0; shard < 2; ++shard) {
+        const std::string label = "order_book_engine: shard " + std::to_string(shard) + ": recovered books=";
+        const std::size_t at = said.find(label);
+        expect(at != std::string::npos, "each shard says what it recovered:\n" + said);
+        const std::size_t count = said.find(" replayed=", at);
+        const std::size_t cut = said.find(" tail-cut-bytes=", count);
+        expect(count != std::string::npos && cut != std::string::npos && said.find('\n', cut) != std::string::npos,
+               "naming what it replayed and the bytes it cut:\n" + said);
+        replayedRecords += std::stoull(said.substr(count + 10, cut - count - 10));
+    }
+    expect(replayedRecords == survivors.size(), "the shards replayed every survivor, " + std::to_string(replayedRecords) + " of " +
+                                             std::to_string(survivors.size()));
+
+    // The survivors, then the second stream, as one file.
+    const fs::path combined = fs::temp_directory_path() / "order_book_end_to_end_killed_combined.csv";
+    {
+        std::ifstream in(sample, std::ios::binary);
+        std::string header;
+        std::getline(in, header);
+        if (!header.empty() && header.back() == '\r') {
+            header.pop_back();
+        }
+        std::ofstream out(combined, std::ios::binary);
+        out << header << '\n';
+        std::uint64_t sequence = 1;
+        for (replay::ReplayRecord record : survivors) {
+            record.sequence = sequence++;
+            out << replay::formatReplayRow(record) << '\n';
+        }
+        for (replay::ReplayRecord record : replay::readReplayFile(sample).records) {
+            record.sequence = sequence++;
+            out << replay::formatReplayRow(record) << '\n';
+        }
+    }
+    const std::vector<std::string> replayArguments{"replay", combined.string(), "--events", "--no-statistics"};
+    const Run replayed = run(replayArguments);
+    expect(!replayed.status.killed && replayed.status.code == 0, describe(replayArguments, replayed));
+    const std::size_t lastSurvivorLine = survivors.size() + 1;
+    Sections afterRestart;
+    Sections beforeKill;
+    for (const auto& [symbol, answers] : sectionsOf(replayed.out)) {
+        for (const Answer& answer : answers) {
+            if (answer.line > lastSurvivorLine) {
+                afterRestart[symbol].push_back(Answer{answer.line - survivors.size(), answer.text});
+            } else {
+                beforeKill[symbol].push_back(answer);
+            }
+        }
+    }
+    expect(sent.out == formatSections(afterRestart), "the restarted engine answers as a replay of its log and the second stream; send:\n" +
+                                                          sent.out + "\nreplay:\n" + formatSections(afterRestart));
+    for (const auto& [symbol, answers] : sectionsOf(heard)) {
+        const std::vector<Answer>& survived = beforeKill[symbol];
+        expect(answers.size() <= survived.size(), symbol + ": every answer the client heard is a survivor's");
+        for (std::size_t i = 0; i < answers.size(); ++i) {
+            expect(answers[i].text == survived[i].text, symbol + ": heard " + answers[i].text + ", where the survivors give " + survived[i].text);
+        }
+    }
+    expectLogReplaysTo(restarted, {"replay", combined.string(), "--book"});
+    fs::remove(first);
+    fs::remove(combined);
+}
+
 void testNoEngineExits1() {
     std::uint16_t port = 0;
     {
@@ -326,6 +558,7 @@ int main(int argc, char** argv) {
     testAMalformedFileSendsItsPrefix();
     testALogSendsItsRecords();
     testASymbolOffTheListExits4();
+    testAKilledEngineRestarts();
     testNoEngineExits1();
     std::cout << "engine end-to-end tests passed" << std::endl;
     return EXIT_SUCCESS;
