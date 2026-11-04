@@ -22,6 +22,7 @@
 #include "child_process.hpp"
 #include "engine/gateway_frames.hpp"
 #include "engine_handlers.hpp"
+#include "order_book/command_log.hpp"
 #include "order_book/invariants.hpp"
 #include "order_book/network/tcp.hpp"
 #include "order_book/network/wire_codec.hpp"
@@ -267,6 +268,25 @@ void testEachStopSignalStopsCleanly() {
 
 // Reads to the end of the stream: how many commands were answered, counting each response's
 // last frame, and whether the stream ended rather than failed.
+// The records the engine's log files hold so far, read through the log's own reader while the
+// engine writes them: each stops at its first record not yet written whole, so a file's zero tail
+// or a half-written record ends its count. A file renamed or made meanwhile is read next time.
+std::uint64_t recordsLogged(const std::filesystem::path& logs) {
+    std::uint64_t records = 0;
+    std::error_code error;
+    for (std::filesystem::directory_iterator entry(logs, error), end; !error && entry != end; entry.increment(error)) {
+        if (entry->path().extension() != ".oblog") {
+            continue;
+        }
+        std::ifstream input(entry->path(), std::ios::binary);
+        replay::CommandLogReader reader(input);
+        while (std::holds_alternative<replay::ReplayRecord>(reader.next())) {
+            ++records;
+        }
+    }
+    return records;
+}
+
 std::pair<std::uint64_t, bool> answersUntilTheEnd(const TcpSocket& client) {
     FrameReader reader(FrameSource::ENGINE);
     std::uint64_t answered = 0;
@@ -294,6 +314,7 @@ void testASecondStopForcesIt() {
     const std::filesystem::path list = writeList("forced");
     ChildProcess child(engine, startArguments(list, {"--stop-grace", "60s", "--high-water-mark", "1G", "--hard-limit", "1G"}),
                        ChildOptions{true});
+    const std::filesystem::path logs = logDirectories.back();
     const TcpSocket client = TcpSocket::connectLoopback(listeningPort(child));
     constexpr std::size_t chunks = 512;  // of 64 KiB each
 
@@ -307,6 +328,7 @@ void testASecondStopForcesIt() {
     std::uint64_t sent = 0;
     bool lost = false;
     // The engine reads all of it, so these sends finish; a CTest timeout catches one that doesn't.
+    // A send returning means only that the system took the bytes, not that the engine read them.
     std::span<const std::byte> left(chunk);
     for (std::size_t sentChunks = 0; !lost;) {
         if (left.empty()) {
@@ -327,10 +349,22 @@ void testASecondStopForcesIt() {
 
     const std::uint64_t commands = chunks * (rest.size() / commandFrameBytes);
 
+    // Every command is a cancel entry passes, so each the engine reads reaches its log. Waiting
+    // until the log holds them all is the signal the engine has read every byte: a stop landing
+    // with client bytes still unread would close the connection with a reset, which on Windows
+    // throws away the answers the client hasn't read yet (#104).
+    std::uint64_t logged = 0;
+    for (const auto deadline = std::chrono::steady_clock::now() + 60s; !lost && std::chrono::steady_clock::now() < deadline;) {
+        logged = recordsLogged(logs);
+        if (logged == commands || !child.stillRunningAfter(50ms)) {
+            break;
+        }
+    }
+
     // Each check is taken before its message is built, since argument order is unspecified.
-    const bool holding = !lost && child.stillRunningAfter(0ms);
-    expect(holding, "the engine took everything the client sent, not " + std::to_string(sent) + " bytes, with stderr:\n" +
-                        child.standardError());
+    const bool holding = !lost && logged == commands && child.stillRunningAfter(0ms);
+    expect(holding, "the engine read everything the client sent, not " + std::to_string(sent) + " bytes, " + std::to_string(logged) +
+                        " of " + std::to_string(commands) + " commands logged, with stderr:\n" + child.standardError());
     sendStop(child, stopSignals[0]);
     const bool held = child.stillRunningAfter(2s);
     if (!held) {
