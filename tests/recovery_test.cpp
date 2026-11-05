@@ -1128,6 +1128,12 @@ std::vector<std::string> checkpointsOf(const InMemoryLogStorage& storage) {
     return names;
 }
 
+// Log files of 64 records, so a restart's look at a trailing file reads a few KiB of zeros, not
+// the default 256 MiB, which a sanitizer build crawls through at every step of a crash test.
+std::uint64_t smallFiles(const InstrumentDirectory& directory) {
+    return leastLogFileBytes(directory) + 63 * replay::logRecordBytes;
+}
+
 // After a clean stop every book stands at its log's end, where the next run's first file begins,
 // so retention keeps the file before it: a crash that loses that first file's records, all of
 // them or with a torn first record, as a machine crash at process durability can, must still find
@@ -1138,8 +1144,8 @@ void testRetentionKeepsTheLastRecord() {
         StoppedCleanly store;
         stopCleanly(store, directory);
         // The next run's first file, at 4, and the one made ahead, retention at every book's 4.
-        writeLog(store.storage, directory, 0, commandsFor(2, 3), false, defaultLogFileBytes, Durability::PROCESS, 4);
-        Housekeeping trimming(store.storage, directory, Durability::PROCESS, defaultLogFileBytes);
+        writeLog(store.storage, directory, 0, commandsFor(2, 3), false, smallFiles(directory), Durability::PROCESS, 4);
+        Housekeeping trimming(store.storage, directory, Durability::PROCESS, smallFiles(directory));
         trimming.retain(0, 4);
         static_cast<void>(trimming.pass());
         expect(store.storage.file(logFileName(0, 0)).has_value() && trimming.filesDeleted() == 0,
@@ -1178,7 +1184,7 @@ void testAPlacementChangeRefused() {
         // A crash after a clean stop that left records past the checkpoints.
         StoppedCleanly store;
         stopCleanly(store, directory);
-        writeLog(store.storage, directory, 1, commandsFor(1, 2), false, defaultLogFileBytes, Durability::MACHINE, 3);
+        writeLog(store.storage, directory, 1, commandsFor(1, 2), false, smallFiles(directory), Durability::MACHINE, 3);
         expectError([&] { surveyLog(store.storage, moved); }, RecoveryError::Kind::PLACEMENT_CHANGED, refused, "records past a checkpoint");
     }
     {
@@ -1240,8 +1246,8 @@ void testAPlacementChangeAfterACleanStop() {
         const CheckpointHeader header = headerOf(store.storage, "ckpt-MSFT-00000000000000000003.obckpt");
         expect(header.shardIndex == 1 && header.shardCount == 2 && header.position == 3, "MSFT's under shard 1 at 3");
         // The new run's first files carry the new placement, and then nothing has changed.
-        writeLog(store.storage, moved, 0, {}, true, defaultLogFileBytes, Durability::MACHINE, 4);
-        writeLog(store.storage, moved, 1, {}, true, defaultLogFileBytes, Durability::MACHINE, 3);
+        writeLog(store.storage, moved, 0, {}, true, smallFiles(moved), Durability::MACHINE, 4);
+        writeLog(store.storage, moved, 1, {}, true, smallFiles(moved), Durability::MACHINE, 3);
         expect(!surveyLog(store.storage, moved).placement, "the next start finds no change");
         // And IBM can still fall back to its older one: shard 1's log from 0 holds IBM's records alone.
         damage(store.storage, "ckpt-IBM-00000000000000000003.obckpt");
@@ -1257,8 +1263,8 @@ void testAPlacementChangeAfterACleanStop() {
         const std::vector<RecoveredShard> recovered = startOn(store.storage, gathered, imagesBySymbol(store), "a shard left with no book");
         expect(recovered[1].start == 3 && recovered[1].replayed == 3 && recovered[0].start == 4,
                "shard 1, with no book, starts at its log's end, 3");
-        writeLog(store.storage, gathered, 0, {}, true, defaultLogFileBytes, Durability::MACHINE, 4);
-        writeLog(store.storage, gathered, 1, {}, true, defaultLogFileBytes, Durability::MACHINE, 3);
+        writeLog(store.storage, gathered, 0, {}, true, smallFiles(gathered), Durability::MACHINE, 4);
+        writeLog(store.storage, gathered, 1, {}, true, smallFiles(gathered), Durability::MACHINE, 3);
         expect(!surveyLog(store.storage, gathered).placement, "the next start finds no change");
         const std::vector<RecoveredShard> again = startOn(store.storage, gathered, imagesBySymbol(store), "the next start");
         expect(again[1].start == 3 && again[1].replayed == 3, "and shard 1 starts at its end again");
@@ -1291,7 +1297,7 @@ void testAPlacementChangeAfterACleanStop() {
         expect(recovered.size() == 1 && recovered[0].start == 4, "one shard, from its log's end");
         expect(store.storage.file(logFileName(1, 0)).has_value(), "shard 1's log stays, unread");
         expect(headerOf(store.storage, "ckpt-IBM-00000000000000000004.obckpt").shardIndex == 0, "IBM rewrapped at shard 0's end");
-        writeLog(store.storage, one, 0, {}, true, defaultLogFileBytes, Durability::MACHINE, 4);
+        writeLog(store.storage, one, 0, {}, true, smallFiles(one), Durability::MACHINE, 4);
         const LogSurvey next = surveyLog(store.storage, one);
         expect(!next.placement && next.shards.size() == 1, "and the next start finds no change, the old log set aside");
     }
@@ -1314,7 +1320,7 @@ void testACrashAtEveryStepOfAPlacementChange() {
         changePlacement(store.storage, *surveyLog(store.storage, three).placement);
         changed = steps.size() - 1;
         const LogSurvey survey = surveyLog(store.storage, three);
-        Housekeeping housekeeping(store.storage, three, Durability::MACHINE, defaultLogFileBytes);
+        Housekeeping housekeeping(store.storage, three, Durability::MACHINE, smallFiles(three));
         for (std::uint32_t shard = 0; shard < three.shardCount(); ++shard) {
             Shard books(three, shard);
             const RecoveredShard recovered =
