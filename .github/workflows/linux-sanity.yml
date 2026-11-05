@@ -4,8 +4,9 @@ name: Linux sanity
 # v2.1.0 (spec #58): this asks only whether `machine` durability is a sane default on Linux,
 # and, from V1, whether `poll` loses to epoll by more than twice. Read Linux against the
 # Windows runner beside it, ratio against ratio, since a runner's disk is not the reference
-# machine's. Every row is unquotable: unpinned, on a shared machine, with no hand-written
-# machine record. docs/LATENCY.md's claims rule refuses quoting any of it.
+# machine's. The harness may mark a closed-loop row quotable, since closed-loop service time
+# may run unpinned, but it can't tell a shared runner from the reference machine:
+# docs/LATENCY.md's claims rule refuses quoting any number from this workflow.
 on:
   workflow_dispatch:
     inputs:
