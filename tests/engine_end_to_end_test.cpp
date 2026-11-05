@@ -10,6 +10,7 @@
 #include <optional>
 #include <map>
 #include <set>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <utility>
@@ -545,6 +546,142 @@ void testAKilledEngineRestarts() {
     fs::remove(combined);
 }
 
+// The offline commands (D7) on a real engine's store, one case per command and exit a store can
+// give. Exit 3, a book broken or a proof failed, needs a broken book, which no file a correct
+// build accepts can hold, since restore refuses one that fails checkInvariants and no command
+// breaks a sound book: offline_tests stands one up through a check. Then a record damaged
+// mid-log, which stops a start with exit 5: verify names it, cut-log moves it and everything
+// after it to a cut- file, every byte kept, and the engine starts on what is left.
+void testOfflineCommands() {
+    const fs::path sample = engineSamples / "seven_instruments.csv";
+    const fs::path input = fs::temp_directory_path() / "order_book_end_to_end_offline.csv";
+    const std::uint64_t commands = writeRepeated(sample, 20, input);
+    const std::set<std::string> symbols = symbolsIn(sample);
+    Engine store("offline", symbols, 1, 1, "process", "4K");
+    const std::string logs = store.logs.string();
+    // The start's empty-book checkpoints at 0, before any roll supersedes them.
+    std::map<std::string, std::string> empties;
+    for (const fs::directory_entry& entry : fs::directory_iterator(store.logs)) {
+        const std::string name = entry.path().filename().string();
+        if (name.starts_with("ckpt-")) {
+            std::ifstream in(entry.path(), std::ios::binary);
+            empties[name] = std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        }
+    }
+    expect(empties.size() == symbols.size(), "each instrument's empty checkpoint, published at the start");
+    const auto expectRun = [](const std::vector<std::string>& arguments, int code, const std::string& what) {
+        const Run result = run(arguments);
+        expect(!result.status.killed && result.status.code == code, what + ": " + describe(arguments, result));
+        return result;
+    };
+    {
+        const std::vector<std::string> sendArguments{"send", input.string(), "--connect", store.address};
+        expectRun(sendArguments, 0, "every command answered");
+        // In use, each command is refused, changing nothing.
+        for (const std::vector<std::string>& arguments :
+             {std::vector<std::string>{"verify", "--log-dir", logs}, std::vector<std::string>{"checkpoint", "roll", "--log-dir", logs},
+              std::vector<std::string>{"cut-log", "--log-dir", logs, "--shard", "0", "--position", "0"}}) {
+            const Run refused = expectRun(arguments, 1, "a store an engine is using");
+            expect(plain(refused.err).find("engine.lock is locked") != std::string::npos && refused.out.empty(),
+                   "naming the lock: " + refused.err);
+        }
+    }
+    store.stop();
+    const std::vector<fs::path> files = logFilesIn(store.logs);
+    expect(files.size() > 3, "the log spans several files: " + std::to_string(files.size()));
+
+    // verify: a line per shard, one per book, then ok, every book at the log's end after a clean stop.
+    const Run verified = expectRun({"verify", "--log-dir", logs}, 0, "a store stopped cleanly verifies");
+    std::string expected = "shard 0: start=" + std::to_string(commands) + " end=" + std::to_string(commands) + " files=" +
+                           std::to_string(files.size()) + " tail-cut-bytes=0 files-dropped=0\n";
+    for (const std::string& symbol : symbols) {
+        expected += "book " + symbol + " shard=0 checkpoint=" + std::to_string(commands) + "\n";
+    }
+    expect(verified.out == expected + "ok\n", "verify's lines:\n" + verified.out + "\nnot:\n" + expected + "ok\n");
+
+    // checkpoint roll: with only the start's empty checkpoints, as a crash before any roll leaves
+    // them, it rolls every closed file, each publishing every book.
+    const auto keepOnlyTheEmpty = [&store, &empties] {
+        std::vector<fs::path> checkpoints;
+        for (const fs::directory_entry& entry : fs::directory_iterator(store.logs)) {
+            if (entry.path().filename().string().starts_with("ckpt-")) {
+                checkpoints.push_back(entry.path());
+            }
+        }
+        for (const fs::path& checkpoint : checkpoints) {
+            fs::remove(checkpoint);
+        }
+        for (const auto& [name, bytes] : empties) {
+            std::ofstream(store.logs / name, std::ios::binary) << bytes;
+        }
+    };
+    keepOnlyTheEmpty();
+    const Run rolled = expectRun({"checkpoint", "roll", "--log-dir", logs}, 0, "an offline roll");
+    expect(rolled.out == "rolled files=" + std::to_string(files.size() - 1) + " books=" + std::to_string((files.size() - 1) * symbols.size()) + "\n",
+           "every closed file, each publishing all seven books: " + rolled.out);
+    const Run again = expectRun({"checkpoint", "roll", "--log-dir", logs}, 0, "a second roll");
+    expect(again.out == "rolled files=0 books=0\n", "has nothing to do: " + again.out);
+
+    // The roll's checkpoints hold what a cut at 5 would move, so cut-log refuses.
+    const Run refused = expectRun({"cut-log", "--log-dir", logs, "--shard", "0", "--position", "5"}, 1, "a checkpoint past the cut");
+    expect(plain(refused.err).find("stands past position 5") != std::string::npos, "naming it: " + refused.err);
+
+    // A record damaged in the first file, which its writer flushed whole, with only the empty
+    // checkpoints, as after a crash before any roll: a start reads it, and stops, exit 5.
+    keepOnlyTheEmpty();
+    const std::uint64_t damagedAt = 5;
+    {
+        std::ifstream in(files[0], std::ios::binary);
+        std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        std::istringstream header(bytes, std::ios::binary);
+        replay::CommandLogReader reader(header);
+        static_cast<void>(reader.next());
+        const replay::LogHeader& read = *reader.header();
+        const std::size_t at = read.headerBytes + read.symbols.size() * replay::Symbol::size + sizeof(std::uint64_t) + damagedAt * replay::logRecordBytes + 12;
+        bytes[at] = static_cast<char>(bytes[at] ^ 0x10);
+        std::ofstream(files[0], std::ios::binary | std::ios::trunc) << bytes;
+    }
+    const fs::path list = fs::temp_directory_path() / "order_book_end_to_end_offline_list.csv";
+    {
+        std::ofstream out(list, std::ios::binary);
+        out << "symbol,shard,orders,stops,levels\n";
+        for (const std::string& symbol : symbols) {
+            out << symbol << ",,,,\n";
+        }
+    }
+    {
+        ChildProcess start(engine, {"--instruments", list.string(), "--shards", "1", "--listen", "127.0.0.1:0",
+                                                                       "--log-dir", logs, "--durability", "process", "--log-file-size", "4K",
+                                                                       "--keep-log"});
+        const ExitStatus status = start.wait(60s);
+        expect(!status.killed && status.code == 5 && plain(start.standardError()).find("recovery stopped: shard 0 position 5 file " +
+                                                                                       files[0].filename().string() + ": CORRUPT_RECORD") != std::string::npos,
+               "a start stops on it, exit 5, not " + std::to_string(status.code) + (status.killed ? " (killed)" : "") + ", with stderr:\n" +
+                   start.standardError());
+    }
+    const Run found = expectRun({"verify", "--log-dir", logs, "--validate", "per-command"}, 1, "verify stops where a start would");
+    expect(plain(found.err).starts_with("order_book_cli: verify: shard 0 position 5 file " + files[0].filename().string() + ": CORRUPT_RECORD"),
+           "naming the record: " + found.err);
+
+    const Run cut =expectRun({"cut-log", "--log-dir", logs, "--shard", "0", "--position", "5"}, 0, "cut-log");
+    const std::string cutName = "cut-0000-00000000000000000005.oblog";
+    expect(cut.out == "moved records=" + std::to_string(commands - damagedAt) + " shard=0 to " + cutName + "\n", "every record from 5 on: " + cut.out);
+    expect(logFilesIn(store.logs).size() == 1, "the log is its first file, cut at the record");
+    expect(fs::file_size(store.logs / cutName) > (commands - damagedAt) * replay::logRecordBytes, "the cut file holds every moved record");
+
+    // The engine starts on what is left, the log ending at 5.
+    Engine restarted("offline restarted", symbols, 1, 1, "process", "4K", store.logs);
+    restarted.stop();
+    expect(plain(restarted.standardError()).find("shard 0: recovered books=7 replayed=5 ") != std::string::npos,
+           "the start passes the cut, its log ending at 5:\n" + restarted.standardError());
+    expectRun({"verify", "--log-dir", logs}, 0, "and verifies");
+
+    const Run missing = expectRun({"verify", "--log-dir", logs + "-missing"}, 1, "no such directory");
+    expect(plain(missing.err) == "order_book_cli: cannot use log directory " + logs + "-missing: no such directory\n", missing.err);
+    fs::remove(input);
+    fs::remove(list);
+}
+
 void testNoEngineExits1() {
     std::uint16_t port = 0;
     {
@@ -577,6 +714,7 @@ int main(int argc, char** argv) {
     testALogSendsItsRecords();
     testASymbolOffTheListExits4();
     testAKilledEngineRestarts();
+    testOfflineCommands();
     testNoEngineExits1();
     std::cout << "engine end-to-end tests passed" << std::endl;
     return EXIT_SUCCESS;

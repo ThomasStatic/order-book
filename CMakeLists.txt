@@ -203,6 +203,7 @@ add_library(order_book_runtime STATIC
     src/runtime/log_storage.cpp
     src/runtime/log_writer.cpp
     src/runtime/matching_loop.cpp
+    src/runtime/offline.cpp
     src/runtime/recovery.cpp
     src/runtime/roll_forward.cpp
     src/runtime/shard.cpp
@@ -695,6 +696,17 @@ if(BUILD_TESTING)
                 "-DOUTPUT_REGEX=order book runtime: roll forward: shard 0 AAPL at 25: the image proof failed: restore refused it: NONZERO_RESERVED"
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
 
+    # The offline commands' work (D7): verify, checkpoint roll, and cut-log on the in-memory storage.
+    add_executable(offline_tests
+        tests/offline_test.cpp
+    )
+
+    target_compile_features(offline_tests PRIVATE cxx_std_20)
+    target_link_libraries(offline_tests PRIVATE order_book_runtime)
+    order_book_enable_warnings(offline_tests)
+    order_book_enable_sanitizers(offline_tests)
+    add_test(NAME offline_tests COMMAND offline_tests)
+
     # A clean stop's last three steps (D6): live images, the comparison, and a crash at every step.
     add_executable(clean_stop_tests
         tests/clean_stop_test.cpp
@@ -1015,7 +1027,22 @@ if(BUILD_TESTING)
         ARGS checkpoint verify no_such_file.obckpt EXIT 1 STDERR checkpoint_missing.stderr)
     order_book_add_replay_cli_test(usage_checkpoint_no_command ARGS checkpoint EXIT 2 STDERR usage_checkpoint_no_command.stderr)
     order_book_add_replay_cli_test(usage_checkpoint_unknown_command
-        ARGS checkpoint roll ../checkpoint/files/resting.obckpt EXIT 2 STDERR usage_checkpoint_unknown_command.stderr)
+        ARGS checkpoint write ../checkpoint/files/resting.obckpt EXIT 2 STDERR usage_checkpoint_unknown_command.stderr)
+    # The store commands' usage errors (D7); what each does on a store is engine_end_to_end_tests'.
+    order_book_add_replay_cli_test(usage_verify_no_log_dir ARGS verify EXIT 2 STDERR usage_verify_no_log_dir.stderr)
+    order_book_add_replay_cli_test(usage_verify_file ARGS verify valid/basic.csv EXIT 2 STDERR usage_verify_file.stderr)
+    order_book_add_replay_cli_test(usage_verify_bad_validation
+        ARGS verify --log-dir valid --validate none EXIT 2 STDERR usage_verify_bad_validation.stderr)
+    order_book_add_replay_cli_test(usage_verify_twice
+        ARGS verify --log-dir valid --log-dir valid EXIT 2 STDERR usage_verify_twice.stderr)
+    order_book_add_replay_cli_test(usage_checkpoint_roll_unknown_option
+        ARGS checkpoint roll --log-dir valid --validate final EXIT 2 STDERR usage_checkpoint_roll_unknown_option.stderr)
+    order_book_add_replay_cli_test(usage_cut_log_no_shard
+        ARGS cut-log --log-dir valid --position 3 EXIT 2 STDERR usage_cut_log_no_shard.stderr)
+    order_book_add_replay_cli_test(usage_cut_log_bad_position
+        ARGS cut-log --log-dir valid --shard 0 --position 3x EXIT 2 STDERR usage_cut_log_bad_position.stderr)
+    order_book_add_replay_cli_test(usage_cut_log_missing_value
+        ARGS cut-log --log-dir valid --shard EXIT 2 STDERR usage_cut_log_missing_value.stderr)
     order_book_add_replay_cli_test(usage_checkpoint_no_file ARGS checkpoint verify EXIT 2 STDERR usage_checkpoint_no_file.stderr)
     order_book_add_replay_cli_test(usage_checkpoint_two_files
         ARGS checkpoint describe ../checkpoint/files/resting.obckpt ../checkpoint/files/empty.obckpt

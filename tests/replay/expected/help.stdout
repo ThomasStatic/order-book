@@ -3,6 +3,9 @@ usage: order_book_cli replay <path>... [--trades] [--events] [--book] [--validat
        order_book_cli convert <path>... --out <path> [--symbol SYM]
        order_book_cli send <file> --connect ADDR:PORT [--symbol SYM]
        order_book_cli checkpoint describe|verify <file>
+       order_book_cli checkpoint roll --log-dir DIR [--checkpoint-dir DIR]
+       order_book_cli verify --log-dir DIR [--checkpoint-dir DIR] [--validate final|per-command]
+       order_book_cli cut-log --log-dir DIR --shard S --position P [--checkpoint-dir DIR]
        order_book_cli demo
        order_book_cli --help
 
@@ -23,6 +26,13 @@ commands:
   checkpoint verify <file>
                      check a checkpoint file's checksum, then rebuild its book from the
                      image; print ok, or the first fault's byte offset, code, and message
+  checkpoint roll    roll an engine's checkpoints forward over its closed log files, as its
+                     workers do, with no engine running; print the files and books rolled
+  verify             what an engine's start would make of its log and checkpoints, changing
+                     nothing: a line per shard (where its replay starts, its log ends, and
+                     what a start would drop) and per book, then ok
+  cut-log            move a shard's record at a position, and every one after it, to a
+                     cut- file beside the log, keeping every byte, so a start passes them
   demo               print the events of a short scripted session
   help               print this help
 
@@ -40,6 +50,16 @@ replay options, in any order before or after the file:
   --                 treat the next argument as the file, even if it starts with '-'
   -h, --help         print this help and exit
 
+verify, checkpoint roll, and cut-log options, each given once, with no engine using the
+directories, whose locks they take:
+  --log-dir DIR         the engine's log directory; required
+  --checkpoint-dir DIR  its checkpoint directory, if not the log directory
+  --validate MODE       verify only: check each book once replayed, final (the default),
+                        or after every command, per-command, which names a poison command
+  --shard S, --position P
+                        cut-log only, required: the shard, and the log position of the
+                        first record to move, as recovery names it
+
 send options, in any order before or after the file:
   --connect ADDR:PORT  the engine's IPv4 address and port; required
   --symbol SYM         as for replay, and required for a v1 or v2 file
@@ -47,12 +67,18 @@ send options, in any order before or after the file:
 
 exit status:
   0  replayed to the end, even if the book rejected some commands; or help printed;
-     for send, every command answered; for checkpoint, the file described or verified
+     for send, every command answered; for checkpoint, the file described or verified,
+     or the store rolled; for verify, a start would pass, a torn tail it cuts included;
+     for cut-log, the records moved
   1  input error: the file can't be opened or read, or is malformed (what ran before
      the error is still printed); for send, also no connection; for checkpoint, not a
-     checkpoint file, or one verify refuses
+     checkpoint file, or one verify refuses, or a checkpoint roll couldn't publish; for
+     verify, a start would stop; for cut-log, refused; and for each store command, a
+     directory another engine or command is using
   2  usage error
-  3  engine failure: the book threw, or failed an invariant check; for send, the
+  3  engine failure: the book threw, or failed an invariant check; for verify, a book
+     broke, named with its command under --validate per-command; for checkpoint roll, a
+     rolled book failed its proof; for send, the
      connection was lost or the engine sent ProtocolError before every command was
      answered, so what ran is unknown (this wins over 1 and 4)
   4  send only: every command answered, but at least one was Refused, so that one

@@ -997,6 +997,7 @@ namespace order_book::network {
                     diagnostics << prefix << "start refused: placement changed: " << error.what() << std::endl;
                     return EngineExit::PLACEMENT_CHANGED;
                 case runtime::RecoveryError::Kind::RECOVERY_STOPPED:
+                case runtime::RecoveryError::Kind::BOOK_BROKEN:
                     diagnostics << prefix << "recovery stopped: " << error.what() << std::endl;
                     return EngineExit::RECOVERY_STOPPED;
                 case runtime::RecoveryError::Kind::START_REFUSED:

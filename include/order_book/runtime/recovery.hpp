@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -10,6 +11,7 @@
 #include "order_book/order_book.hpp"
 #include "order_book/runtime/instruments.hpp"
 #include "order_book/runtime/log_storage.hpp"
+#include "order_book/runtime/roll_forward.hpp"
 #include "order_book/runtime/shard.hpp"
 
 // Recovery (spec #58's D2 and D5, ADRs 0013 and 0014): what a start does with the log and the
@@ -25,7 +27,9 @@ namespace order_book::runtime {
     // names the shard, position, file, symbol, and command, as far as each is known.
     class RecoveryError : public std::runtime_error {
     public:
-        enum class Kind { START_REFUSED, PLACEMENT_CHANGED, RECOVERY_STOPPED };
+        // BOOK_BROKEN: a book failed its check during or after the replay, which a start reports
+        // as RECOVERY_STOPPED and verify as exit 3.
+        enum class Kind { START_REFUSED, PLACEMENT_CHANGED, RECOVERY_STOPPED, BOOK_BROKEN };
 
         RecoveryError(Kind kind, const std::string& what) : std::runtime_error(what), errorKind(kind) {}
         Kind kind() const noexcept { return errorKind; }
@@ -141,5 +145,21 @@ namespace order_book::runtime {
     RecoveredShard recoverShard(LogStorage& logs, LogStorage& checkpoints, const InstrumentDirectory& directory,
                                 const std::vector<LogFileEntry>& files, const std::vector<std::vector<std::uint64_t>>& bookCheckpoints,
                                 Shard& shard, const BookCapacity& defaults, const std::atomic<bool>& stopping);
+
+    // How recovery runs offline, for verify (spec #58's D7).
+    struct RecoveryOptions {
+        // Removes and cuts nothing, but counts what a start would, so tailCutBytes and
+        // filesRemoved say what it would drop.
+        bool readOnly = false;
+        // Checks each book after every command it runs, and as restored, so a poison command is
+        // found exactly: BOOK_BROKEN naming the shard, position, file, symbol, and command.
+        // Otherwise only once replayed, where a broken book names the range it broke in.
+        bool perCommand = false;
+        BookCheck check;  // run beside each book's checkInvariants; empty for none
+    };
+
+    RecoveredShard recoverShard(LogStorage& logs, LogStorage& checkpoints, const InstrumentDirectory& directory,
+                                const std::vector<LogFileEntry>& files, const std::vector<std::vector<std::uint64_t>>& bookCheckpoints,
+                                Shard& shard, const BookCapacity& defaults, const std::atomic<bool>& stopping, const RecoveryOptions& options);
 
 }  // namespace order_book::runtime

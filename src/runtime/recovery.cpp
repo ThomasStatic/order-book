@@ -378,9 +378,26 @@ namespace order_book::runtime {
     RecoveredShard recoverShard(LogStorage& storage, LogStorage& checkpointStore, const InstrumentDirectory& directory,
                                 const std::vector<LogFileEntry>& files, const std::vector<std::vector<std::uint64_t>>& bookCheckpoints,
                                 Shard& shard, const BookCapacity& defaults, const std::atomic<bool>& stopping) {
+        return recoverShard(storage, checkpointStore, directory, files, bookCheckpoints, shard, defaults, stopping, RecoveryOptions{});
+    }
+
+    RecoveredShard recoverShard(LogStorage& storage, LogStorage& checkpointStore, const InstrumentDirectory& directory,
+                                const std::vector<LogFileEntry>& files, const std::vector<std::vector<std::uint64_t>>& bookCheckpoints,
+                                Shard& shard, const BookCapacity& defaults, const std::atomic<bool>& stopping, const RecoveryOptions& options) {
         const std::uint32_t number = shard.books().shard();
         const std::span<const Instrument> instruments = directory.onShard(number);
         RecoveredShard recovered;
+        // What is wrong with a book, its own check first, or nothing.
+        const auto faultOf = [&options](const OrderBook& book) -> std::optional<std::string> {
+            const InvariantResult invariants = book.checkInvariants();
+            if (!invariants.isValid()) {
+                return formatInvariantResult(invariants);
+            }
+            return options.check ? options.check(book) : std::nullopt;
+        };
+        const auto broken = [](const std::string& what) {
+            throw RecoveryError(RecoveryError::Kind::BOOK_BROKEN, what);
+        };
 
         // Each book from its newest checkpoint that restores, or an older one.
         recovered.restoredFrom.assign(instruments.size(), 0);
@@ -422,6 +439,12 @@ namespace order_book::runtime {
                     if (const auto* error = std::get_if<RestoreError>(&book)) {
                         fault = std::string(restoreErrorCodeName(error->code)) + " at " + std::to_string(error->offset) + ": " + error->message;
                     } else {
+                        if (options.perCommand) {
+                            if (const std::optional<std::string> wrong = faultOf(std::get<OrderBook>(book))) {
+                                broken("shard " + std::to_string(number) + " symbol " + symbol.text() + ": " + name +
+                                       " restores a book that fails its check: " + *wrong);
+                            }
+                        }
                         shard.replaceBook(slot, std::move(std::get<OrderBook>(book)));
                         recovered.restoredFrom[slot] = position;
                         oldest = oldest ? std::min(*oldest, position) : position;
@@ -457,7 +480,9 @@ namespace order_book::runtime {
             if (!dropped) {
                 break;
             }
-            storage.remove(kept.back().name);
+            if (!options.readOnly) {
+                storage.remove(kept.back().name);
+            }
             recovered.tailCutBytes += *dropped;
             ++recovered.filesRemoved;
             kept.pop_back();
@@ -514,6 +539,12 @@ namespace order_book::runtime {
                         shard.skip();  // its book's checkpoint holds it already
                     } else {
                         shard.process(record->command, location->slot);
+                        if (options.perCommand) {
+                            if (const std::optional<std::string> wrong = faultOf(shard.books().book(location->slot))) {
+                                broken(where(number, position, entry.name) + " symbol " + record->symbol.text() + " command " +
+                                       replay::formatReplayRow(*record) + ": the book fails its check after it: " + *wrong);
+                            }
+                        }
                     }
                     continue;
                 }
@@ -572,9 +603,26 @@ namespace order_book::runtime {
             }
         }
 
+        // A book broken by the replay names the range it broke in, since only a check after every
+        // command finds the one that broke it.
+        const auto brokeIn = [&](std::uint32_t slot, const std::string& why) {
+            broken("shard " + std::to_string(number) + " positions " + std::to_string(recovered.restoredFrom[slot]) + " to " +
+                   std::to_string(shard.nextPosition()) + " symbol " + shard.books().symbol(slot).text() + ": replay left the book broken: " +
+                   why + "; verify --validate per-command finds the command");
+        };
         if (const std::optional<ShardViolation> violation = shard.checkInvariants()) {
+            if (violation->kind == ShardViolationKind::BOOK) {
+                brokeIn(violation->slot, violation->message);
+            }
             stopRecovery("shard " + std::to_string(number) + " position " + std::to_string(shard.nextPosition()) + " symbol " +
-                 shard.books().symbol(violation->slot).text() + ": replay left a book broken: " + violation->message);
+                 shard.books().symbol(violation->slot).text() + ": replay left the shard broken: " + violation->message);
+        }
+        if (options.check) {
+            for (std::uint32_t slot = 0; slot < shard.size(); ++slot) {
+                if (const std::optional<std::string> wrong = options.check(shard.books().book(slot))) {
+                    brokeIn(slot, *wrong);
+                }
+            }
         }
 
         recovered.warmed.reserve(instruments.size());
@@ -592,9 +640,11 @@ namespace order_book::runtime {
             if (cut->offset == cut->headerBytes) {
                 // Nothing is left in it, so it goes, as a trailing file with no records does, and
                 // the next file can start where it did.
-                storage.remove(cut->file);
+                if (!options.readOnly) {
+                    storage.remove(cut->file);
+                }
                 ++recovered.filesRemoved;
-            } else {
+            } else if (!options.readOnly) {
                 const std::unique_ptr<LogFile> file = storage.open(cut->file);
                 file->cut(cut->offset);
                 file->flush();

@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -37,6 +38,17 @@ namespace order_book::runtime {
 
     // What a checkpoint file's name says, or nothing for a name no engine makes.
     std::optional<CheckpointFileNameParts> parseCheckpointFileName(std::string_view name);
+
+    // A check on top of a book's own invariants, for what a sound book can't show: what a poison
+    // command would do, which tests stand up, since none can break a correct book. Nothing for a
+    // book that passes.
+    using BookCheck = std::function<std::optional<std::string>(const OrderBook&)>;
+
+    // A rolled book that failed its proof, from a roller told to throw rather than abort, as
+    // checkpoint roll is, offline, with no live book to protect.
+    struct ProofFailed : std::runtime_error {
+        using std::runtime_error::runtime_error;
+    };
 
     // The image proof: restore the image, run checkInvariants, and write it again, which must give
     // the same bytes. What failed, or nothing.
@@ -111,8 +123,18 @@ namespace order_book::runtime {
         // is in stopped(slot), and what went wrong is reported as it happens.
         void finish(std::uint64_t logEnd, const LiveImages& live);
 
+        // From now on a failed proof throws ProofFailed out of roll, naming the shard, symbol, and
+        // position, rather than aborting; check, if given, is part of the proof.
+        void throwOnFailedProof(BookCheck check = {}) {
+            throwProofs = true;
+            proofCheck = std::move(check);
+        }
+
         // What the last finish did with a slot's book; NOT_ROLLED before any.
         const StoppedBook& stopped(std::uint32_t slot) const { return atStop.at(slot); }
+
+        // Whether the last roll stopped on a file or checkpoint it couldn't read, which it reported.
+        bool lastRollStopped() const noexcept { return rollStopped; }
 
         // Closed files, up to the last roll's closedEnd, that some book still needs.
         std::size_t filesBehind() const noexcept { return behind; }
@@ -190,6 +212,9 @@ namespace order_book::runtime {
         RollCounts totals;
         std::vector<StoppedBook> atStop;     // by slot, from the last finish
         bool rollAbandoned = false;          // the last roll gave a pass up, for a checkpoint that no longer reads
+        bool rollStopped = false;            // the last roll stopped on something it couldn't read
+        bool throwProofs = false;
+        BookCheck proofCheck;
     };
 
     // What the clean stop's last roll needs of one shard: where its log ended, and the images its

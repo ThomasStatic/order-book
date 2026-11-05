@@ -1,8 +1,11 @@
-order_book_cli: unknown checkpoint command 'roll'; expected describe or verify
+order_book_cli: unknown checkpoint command 'write'; expected describe, verify, or roll
 usage: order_book_cli replay <path>... [--trades] [--events] [--book] [--validate none|final|per-command]
                                        [--symbol SYM] [--no-statistics]
        order_book_cli convert <path>... --out <path> [--symbol SYM]
        order_book_cli send <file> --connect ADDR:PORT [--symbol SYM]
        order_book_cli checkpoint describe|verify <file>
+       order_book_cli checkpoint roll --log-dir DIR [--checkpoint-dir DIR]
+       order_book_cli verify --log-dir DIR [--checkpoint-dir DIR] [--validate final|per-command]
+       order_book_cli cut-log --log-dir DIR --shard S --position P [--checkpoint-dir DIR]
        order_book_cli demo
        order_book_cli --help

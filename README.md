@@ -107,7 +107,7 @@ The code is split into libraries that depend in one direction only. The book kno
 | `order_book_replay` | static library | The CSV replay format: a parser that turns text into typed records, an engine that runs records through a book, and locale-free printing of the outcome. |
 | `order_book_runtime` | static library | The engine's instrument list, placement, and per-shard books. Not public API. |
 | `order_book_network` | static library | The wire protocol's frames and entry check, the gateway threads and how they share connections, sockets, `runEngine`, and `ClientStream`, the client `send` uses. Not public API; its contract is [`docs/wire-protocol.md`](docs/wire-protocol.md). |
-| `order_book_cli` | executable | `replay <path>...`, `convert`, `send` (a file's commands to a running engine), `checkpoint describe` and `checkpoint verify` (one checkpoint file), and a scripted `demo`. Non-interactive, so it scripts cleanly. |
+| `order_book_cli` | executable | `replay <path>...`, `convert`, `send` (a file's commands to a running engine), `checkpoint describe` and `checkpoint verify` (one checkpoint file), `verify`, `checkpoint roll`, and `cut-log` (an engine's whole store, offline), and a scripted `demo`. Non-interactive, so it scripts cleanly. |
 | `order_book_engine` | executable | The engine as a process: `--instruments FILE --shards N --listen ADDR:PORT --log-dir DIR`, printing `listening ADDR:PORT` once ready and a stop report after a clean stop. A signal or console event stops it cleanly, and a second forces it. Each shard logs every command to `--log-dir`, in files of `--log-file-size`, and answers only once it is logged at `--durability machine` or `process`; a start recovers every book from the log an earlier run left there, crashed or stopped, under a lock file so two engines never share a directory. Operating it: [`docs/OPERATIONS.md`](docs/OPERATIONS.md). |
 | `order_book_reference` | test library | `ReferenceBook`, an independent model of the book that never touches an `OrderBook`, and the seeded interleaver. |
 | `order_book_randomized`, `randomized_tests` | test library, executable | Seeded command generation against the reference model, failure reports, and stream shrinking. |
@@ -456,6 +456,9 @@ order_book_cli replay <path>... [--trades] [--events] [--book] [--validate none|
 order_book_cli convert <path>... --out <path> [--symbol SYM]
 order_book_cli send <file> --connect ADDR:PORT [--symbol SYM]
 order_book_cli checkpoint describe|verify <file>
+order_book_cli checkpoint roll --log-dir DIR [--checkpoint-dir DIR]
+order_book_cli verify --log-dir DIR [--checkpoint-dir DIR] [--validate final|per-command]
+order_book_cli cut-log --log-dir DIR --shard S --position P [--checkpoint-dir DIR]
 order_book_cli demo
 order_book_cli --help
 ```
@@ -526,6 +529,8 @@ line 7: Refused symbol=ZZZ id=9 code=UNKNOWN_INSTRUMENT
 Only a refused command is safe to retry; [`docs/wire-protocol.md`](docs/wire-protocol.md) says why. `send` holds every answer in memory until the end, so it is not a load generator.
 
 `checkpoint describe <file>` and `checkpoint verify <file>` read one checkpoint file ([`docs/checkpoint-format.md`](docs/checkpoint-format.md)), with no lock, since a published checkpoint never changes. `describe` prints both headers, the file's and its image's, as `key: value` lines ending `checksum: not checked`: it checks nothing past the magic, so it still reads a damaged file, and exits 1 only for a file it can't read, one of another kind, or one shorter than a header. `verify` checks the checksum and the wrapper, then rebuilds the book from the image with `OrderBook::restore`, and prints `ok`, or exits 1 with `<path>: <byte offset>: <code>: <message>` on stderr, the offset in the file and the code that of the wrapper or of `restore`.
+
+`verify`, `checkpoint roll`, and `cut-log` work on a whole engine store, offline: they take no instrument list, since the log's headers and the checkpoints give the placement, and they take the directories' locks, so each is refused (exit 1) while an engine or another command uses them. `verify` is read-only: it runs a start's checks and replay, and prints a line per shard (where its replay starts, where its log ends, and what a start would cut and remove) and per book, then `ok`, exiting 0 on a torn tail, which a start passes too, 1 where a start would stop, and 3 where a book breaks; `--validate per-command` checks every book after each command, which names a poison command exactly. `checkpoint roll` rolls checkpoints forward over the closed log files, as the engine's workers do, and prints `rolled files=N books=M`, exiting 1 if a checkpoint couldn't be published and 3 if a rolled book fails its proof. `cut-log` moves a shard's record at a position, and every one after it, to `cut-<shard>-<position>.oblog` beside the log, keeping every byte, so a start passes them; it prints `moved records=N shard=S to <file>`, and is refused if a checkpoint stands past that position. [`docs/OPERATIONS.md`](docs/OPERATIONS.md) has the procedure.
 
 ## Benchmarks and optimization
 

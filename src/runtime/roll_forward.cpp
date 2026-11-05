@@ -369,6 +369,7 @@ namespace order_book::runtime {
     std::size_t ShardRoller::roll(std::uint64_t closedEnd, const std::atomic<bool>* stopping) {
         std::size_t made = 0;
         rollAbandoned = false;
+        rollStopped = false;
         try {
             for (std::uint32_t slot = 0; slot < kept.size(); ++slot) {
                 removeSuperseded(slot);
@@ -396,10 +397,12 @@ namespace order_book::runtime {
             say("a roll-forward pass was lost to bad_alloc; the next roll makes it again", "");
         } catch (const PassAbandoned& abandoned) {
             rollAbandoned = true;
+            rollStopped = true;
             say("roll forward stopped: ", abandoned.why.c_str());
         } catch (const LogStorageError& error) {
             // A read that failed, since a failed publish is caught where it happens: the next
             // roll tries again.
+            rollStopped = true;
             say("roll forward stopped: ", error.what());
         }
         countBehind();
@@ -568,8 +571,20 @@ namespace order_book::runtime {
             const Symbol& symbol = instruments[slot].symbol;
             if (books[slot]) {
                 std::vector<std::byte> image = imageOf(*books[slot]);
+                const std::string what = "shard " + std::to_string(shard) + " " + symbol.text() + " at " + std::to_string(end);
+                if (throwProofs) {
+                    std::optional<std::string> failure = proofCheck ? proofCheck(*books[slot]) : std::nullopt;
+                    if (!failure) {
+                        failure = proveImage(image);
+                    }
+                    if (failure) {
+                        throw ProofFailed(what + ": the image proof failed: " + *failure);
+                    }
+                }
                 books[slot].reset();
-                requireProvedImage(image, "shard " + std::to_string(shard) + " " + symbol.text() + " at " + std::to_string(end));
+                if (!throwProofs) {
+                    requireProvedImage(image, what);
+                }
                 ready.push_back(Ready{slot, std::move(image)});
             } else if (kept[slot].newest) {
                 // No command: a new wrapper around the same image, with no restore.
