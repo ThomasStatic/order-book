@@ -75,7 +75,7 @@ The interval is a raw loopback echo with no gateway: one 64-byte message out and
 - **The result on Windows:** at the shipped spin window, `WSAPoll` is 17.72 µs against 5.78 µs on completion ports, 3.07 times. The rule fires.
 - **The cost of each idle connection.** `WSAPoll` costs grow with every connection the gateway thread watches, about 0.18 µs per idle connection at 64 and 0.55 µs at 1,024. Completion ports stay flat.
 - **What this means for operators.** The engine still ships `poll` only, capped at 64 connections per gateway thread. On Windows, a deployment with many connections should spread them over more gateway threads until the completion-port adapter lands: [#105](https://github.com/ThomasStatic/order-book/issues/105).
-- **Linux.** The Linux verdict, `poll` against epoll, comes from the Linux sanity workflow, for large effects only, and is never quoted. Its verdict is recorded on #105 once the workflow has run.
+- **Linux.** The Linux verdict, `poll` against epoll, comes from the Linux sanity workflow, for large effects only, and is never quoted. Run 42128051178 found `poll` at 1.57 times epoll at 64 idle connections, under twice, so on Linux the rule does not fire and no epoll adapter is called for; past the 64-connection cap per gateway thread `poll` falls further behind (about 4.5 times at 256). Its Windows runner found `WSAPoll` at 2.97 times completion ports, as the reference machine did. Beside the durable wait at 1,000 a second, the raw loop's worst cases were of the same order on both runners, so no engine-only stall showed there either.
 
 ### 10k/s durable wait
 
