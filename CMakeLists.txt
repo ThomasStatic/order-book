@@ -1346,7 +1346,8 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         add_test(NAME latency_cli_smoke_round_trip_response
             COMMAND order_book_latency_benchmarks --interval round-trip --engine $<TARGET_FILE:order_book_engine>
                     --workload small-book --commands 300 --runs 2 --warmup 0 --time response --discard-seconds 0
-                    --noise-seconds 0 --allow-unoptimized --out-dir ${CMAKE_CURRENT_BINARY_DIR}/latency-smoke-round-trip-response)
+                    --durability process --noise-seconds 0 --allow-unoptimized
+                    --out-dir ${CMAKE_CURRENT_BINARY_DIR}/latency-smoke-round-trip-response)
         set_tests_properties(latency_cli_smoke_round_trip latency_cli_smoke_round_trip_response PROPERTIES
             LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
         # A real log writer on real files, closed-loop at machine, then the ladder at process.
