@@ -210,7 +210,10 @@ namespace order_book::runtime {
         }
         std::sort(files.begin(), files.end());
         bool whole = true;
-        for (std::size_t i = 0; i + 1 < files.size() && files[i + 1].first <= floor; ++i) {
+        // The three newest stay: the writer's, the one made ahead, and the one before them, which
+        // holds the log's last record while the writer's holds none yet, as after a clean stop,
+        // when every book can stand where the writer's begins.
+        for (std::size_t i = 0; i + 3 < files.size() && files[i + 1].first <= floor; ++i) {
             try {
                 logStorage.remove(files[i].second);
                 deleted.fetch_add(1, std::memory_order_relaxed);

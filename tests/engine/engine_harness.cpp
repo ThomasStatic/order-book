@@ -46,6 +46,7 @@ namespace order_book::engine_testing {
         constexpr std::uint64_t restoreStream = 0x85EBCA77C2B2AE63ULL;
         constexpr std::uint64_t rollStream = 0x94D049BB133111EBULL;
         constexpr std::uint64_t damageStream = 0xBF58476D1CE4E5B9ULL;
+        constexpr std::uint64_t cleanStopStream = 0xD6E8FEB86659FD93ULL;
         // Records in the log file of the shard with the most symbols, so a run rolls across many,
         // and a file spans two of a drive's pages, so a machine crash can tear a record or leave a
         // hole that valid records follow.
@@ -120,11 +121,13 @@ namespace order_book::engine_testing {
         };
 
         // A command as its shard's log holds it, in log order, so the model and witness can be
-        // rebuilt from what a crash left.
+        // rebuilt from what a crash left. Its line in the stream orders it against other shards'
+        // logs, which a placement change can spread one instrument across.
         struct Logged {
             std::size_t instrument;
             Command command;
             replay::Command bookCommand;
+            std::size_t line;
         };
 
         const std::atomic<bool> neverStopping{false};
@@ -141,7 +144,7 @@ namespace order_book::engine_testing {
         public:
             explicit Run(const EngineSeedConfig& seedConfig)
                 : config(seedConfig),
-                  directory(listOf(seedConfig), seedConfig.shards),
+                  directory(std::make_unique<runtime::InstrumentDirectory>(listOf(seedConfig), seedConfig.shards)),
                   lock(storage.lock()),
                   housekeeping(makeHousekeeping()),
                   logged(seedConfig.shards),
@@ -151,10 +154,10 @@ namespace order_book::engine_testing {
                 // empty-book checkpoint before its shard's first file.
                 for (std::size_t i = 0; i < config.instruments; ++i) {
                     const Symbol symbol = symbolOf(i);
-                    runtime::publishEmptyCheckpoint(storage, symbol, config.shards, directory.find(symbol)->shard, 0);
+                    runtime::publishEmptyCheckpoint(storage, symbol, shardCount(), directory->find(symbol)->shard, 0);
                 }
-                for (std::uint32_t shard = 0; shard < config.shards; ++shard) {
-                    shards.push_back(std::make_unique<runtime::Shard>(directory, shard, config.shardCapacity));
+                for (std::uint32_t shard = 0; shard < shardCount(); ++shard) {
+                    shards.push_back(std::make_unique<runtime::Shard>(*directory, shard, config.shardCapacity));
                     logs.push_back(std::make_unique<ShardLog>(*housekeeping, shard, config.logRingRecords, *closed));
                     shards.back()->watchDurablePosition(logs.back()->durable);
                 }
@@ -162,7 +165,7 @@ namespace order_book::engine_testing {
                 instruments.reserve(config.instruments);
                 for (std::size_t i = 0; i < config.instruments; ++i) {
                     const Symbol symbol = symbolOf(i);
-                    instruments.push_back(Instrument{symbol, *directory.find(symbol), ReferenceBook{}, OrderBook{}});
+                    instruments.push_back(Instrument{symbol, *directory->find(symbol), ReferenceBook{}, OrderBook{}});
                     instruments.back().witness.reserve(config.witnessCapacity);
                 }
             }
@@ -193,6 +196,10 @@ namespace order_book::engine_testing {
                         damage(stream[index], result.stats);
                         continue;
                     }
+                    if (stream[index].action == EngineAction::CLEAN_STOP) {
+                        result.failure = cleanStop(stream[index], index, result.stats);
+                        continue;
+                    }
                     result.failure = execute(stream[index], index, result.stats);
                 }
                 if (!result.failure) {
@@ -213,18 +220,22 @@ namespace order_book::engine_testing {
             }
 
         private:
-            static std::vector<runtime::Instrument> listOf(const EngineSeedConfig& seedConfig) {
+            std::uint32_t shardCount() const { return directory->shardCount(); }
+
+            // Every instrument hashed to its shard, but one a CLEAN_STOP line pins.
+            static std::vector<runtime::Instrument> listOf(const EngineSeedConfig& seedConfig, std::size_t pinned = 0,
+                                                           std::optional<std::uint32_t> pin = std::nullopt) {
                 std::vector<runtime::Instrument> list;
                 for (std::size_t i = 0; i < seedConfig.instruments; ++i) {
-                    list.push_back(runtime::Instrument{symbolOf(i), std::nullopt, std::nullopt, std::nullopt, std::nullopt});
+                    list.push_back(runtime::Instrument{symbolOf(i), i == pinned ? pin : std::nullopt, std::nullopt, std::nullopt, std::nullopt});
                 }
                 return list;
             }
 
             std::unique_ptr<runtime::Housekeeping> makeHousekeeping() {
                 return std::make_unique<runtime::Housekeeping>(
-                    storage, directory, config.durability,
-                    runtime::leastLogFileBytes(directory) + (recordsPerSmallestFile - 1) * replay::logRecordBytes);
+                    storage, *directory, config.durability,
+                    runtime::leastLogFileBytes(*directory) + (recordsPerSmallestFile - 1) * replay::logRecordBytes);
             }
 
             static EngineFailure failure(std::size_t index, const Instrument& instrument, std::string reason) {
@@ -253,7 +264,7 @@ namespace order_book::engine_testing {
                 }
                 const Command& command = *line.converted;
                 const network::CommandFrame frame{index, rawCommandOf(command, faultySymbol(line.fault, instrument.symbol))};
-                const network::EntryDecision decision = network::checkEntry(frame, directory, false);
+                const network::EntryDecision decision = network::checkEntry(frame, *directory, false);
 
                 if (line.fault != SymbolFault::NONE) {
                     const auto* refused = std::get_if<network::EntryRefused>(&decision);
@@ -309,7 +320,7 @@ namespace order_book::engine_testing {
                     leftUnlogged = true;
                     return;
                 }
-                logged[accepted.location.shard].push_back(Logged{line.instrument, *line.converted, accepted.command});
+                logged[accepted.location.shard].push_back(Logged{line.instrument, *line.converted, accepted.command, index});
                 ShardLog& shardLog = *logs[accepted.location.shard];
                 while (!shardLog.ring.tryPush(runtime::LogEntry{accepted.command, accepted.location.slot, runtime::ControlKind::COMMAND})) {
                     const std::size_t written = writeLog(shardLog);
@@ -372,8 +383,8 @@ namespace order_book::engine_testing {
             // checkpoints are read.
             void makeRollers() {
                 rollers.clear();
-                for (std::uint32_t shard = 0; shard < config.shards; ++shard) {
-                    rollers.push_back(std::make_unique<runtime::ShardRoller>(storage, directory, shard, [](const std::string&) {}));
+                for (std::uint32_t shard = 0; shard < shardCount(); ++shard) {
+                    rollers.push_back(std::make_unique<runtime::ShardRoller>(storage, *directory, shard, [](const std::string&) {}));
                 }
             }
 
@@ -384,7 +395,7 @@ namespace order_book::engine_testing {
                 for (const Instrument& instrument : instruments) {
                     before.push_back(rollers[instrument.location.shard]->position(instrument.location.slot));
                 }
-                for (std::uint32_t shard = 0; shard < config.shards; ++shard) {
+                for (std::uint32_t shard = 0; shard < shardCount(); ++shard) {
                     runtime::ShardRoller& roller = *rollers[shard];
                     const std::uint64_t published = roller.counts().published;
                     stats.rollPasses += roller.roll(closed->end(shard));
@@ -536,16 +547,16 @@ namespace order_book::engine_testing {
                 housekeeping = makeHousekeeping();
                 std::vector<runtime::RecoveredShard> recovered;
                 try {
-                    const runtime::LogSurvey survey = runtime::surveyLog(storage, directory);
+                    const runtime::LogSurvey survey = runtime::surveyLog(storage, *directory);
                     for (const std::string& temporary : survey.temporaries) {
                         storage.remove(temporary);
                     }
                     for (const std::string& temporary : survey.checkpointTemporaries) {
                         storage.remove(temporary);
                     }
-                    for (std::uint32_t shard = 0; shard < config.shards; ++shard) {
-                        shards.push_back(std::make_unique<runtime::Shard>(directory, shard, config.shardCapacity));
-                        recovered.push_back(runtime::recoverShard(storage, storage, directory, survey.shards[shard], survey.checkpoints[shard],
+                    for (std::uint32_t shard = 0; shard < shardCount(); ++shard) {
+                        shards.push_back(std::make_unique<runtime::Shard>(*directory, shard, config.shardCapacity));
+                        recovered.push_back(runtime::recoverShard(storage, storage, *directory, survey.shards[shard], survey.checkpoints[shard],
                                                                   *shards.back(), config.shardCapacity, neverStopping));
                     }
                 } catch (const runtime::RecoveryError& error) {
@@ -555,7 +566,7 @@ namespace order_book::engine_testing {
                 }
 
                 const bool promised = !machine || config.durability == runtime::Durability::MACHINE;
-                for (std::uint32_t shard = 0; shard < config.shards; ++shard) {
+                for (std::uint32_t shard = 0; shard < shardCount(); ++shard) {
                     const std::uint64_t survived = recovered[shard].replayed;
                     stats.fellBack += recovered[shard].fellBack;
                     stats.tailCutBytes += recovered[shard].tailCutBytes;
@@ -570,6 +581,9 @@ namespace order_book::engine_testing {
                     }
                     stats.lostToCrashes += logged[shard].size() - survived;
                     logged[shard].resize(static_cast<std::size_t>(survived));
+                    // A crash the promise doesn't cover may lose released responses: from here on
+                    // only what survived was ever released.
+                    released[shard] = std::min(released[shard], survived);
                 }
                 rebuildFromTheLog();
                 for (const Instrument& instrument : instruments) {
@@ -581,8 +595,110 @@ namespace order_book::engine_testing {
                         return failure(index, instrument, "after the crash, the shard's book differs from the witness: " + *difference);
                     }
                 }
-                closed = std::make_unique<runtime::ClosedLog>(config.shards);
-                for (std::uint32_t shard = 0; shard < config.shards; ++shard) {
+                closed = std::make_unique<runtime::ClosedLog>(shardCount());
+                for (std::uint32_t shard = 0; shard < shardCount(); ++shard) {
+                    logs.push_back(std::make_unique<ShardLog>(*housekeeping, shard, config.logRingRecords, *closed, recovered[shard].replayed));
+                    shards[shard]->watchDurablePosition(logs.back()->durable);
+                }
+                makeRollers();
+                return checkCheckpoints(index);
+            }
+
+            // A CLEAN_STOP line, as runEngineSeed's comment in engine_harness.hpp says.
+            std::optional<EngineFailure> cleanStop(const EngineCommand& line, std::size_t index, EngineStats& stats) {
+                ++stats.cleanStops;
+                // Steps 1 and 2: each log writer writes the rest, cuts, flushes, and closes its file,
+                // then the next files no writer took go.
+                for (const std::unique_ptr<ShardLog>& shardLog : logs) {
+                    while (!shardLog->ring.tryPush(runtime::LogEntry::stop())) {
+                        stats.recordsLogged += writeLog(*shardLog);
+                    }
+                    while (!shardLog->writer.stopped()) {
+                        stats.recordsLogged += writeLog(*shardLog);
+                    }
+                }
+                housekeeping->removeUnused();
+                // Steps 3 to 5: each shard's live books, then its last roll, which must publish every
+                // one at its log's end.
+                for (std::uint32_t shard = 0; shard < shardCount(); ++shard) {
+                    const runtime::LiveImages live = runtime::captureLiveImages(*shards[shard]);
+                    const std::uint64_t end = logs[shard]->writer.nextPosition();
+                    rollers[shard]->finish(end, live);
+                    for (std::uint32_t slot = 0; slot < shards[shard]->size(); ++slot) {
+                        const Symbol& symbol = shards[shard]->books().symbol(slot);
+                        if (const std::optional<std::string> unpublished = runtime::formatStoppedBook(symbol, end, rollers[shard]->stopped(slot))) {
+                            return EngineFailure{index, symbol.text(), "the clean stop: " + *unpublished};
+                        }
+                    }
+                }
+                // Everything the stopped engine had, its log writers before the housekeeping.
+                logs.clear();
+                rollers.clear();
+                housekeeping.reset();
+                shards.clear();
+                lock.reset();
+                // The line's placement, which changed if the count or any instrument's shard did.
+                const std::uint32_t countBefore = shardCount();
+                directory = std::make_unique<runtime::InstrumentDirectory>(listOf(config, line.instrument, line.pin), line.shards);
+                const bool moved = std::any_of(instruments.begin(), instruments.end(), [this](const Instrument& instrument) {
+                    return directory->find(instrument.symbol)->shard != instrument.location.shard;
+                });
+                if (moved || line.shards != countBefore) {
+                    ++stats.placementChanges;
+                    stats.symbolMoves += line.shards == countBefore ? 1 : 0;
+                    placementChanged = true;
+                }
+
+                // The start, as the engine's: a change of placement first, then recovery.
+                lock = storage.lock();
+                housekeeping = makeHousekeeping();
+                std::vector<runtime::RecoveredShard> recovered;
+                try {
+                    runtime::LogSurvey survey = runtime::surveyLog(storage, *directory);
+                    for (const std::string& temporary : survey.temporaries) {
+                        storage.remove(temporary);
+                    }
+                    for (const std::string& temporary : survey.checkpointTemporaries) {
+                        storage.remove(temporary);
+                    }
+                    if (survey.placement && (!survey.placement->rewraps.empty() || !survey.placement->dropped.empty())) {
+                        runtime::changePlacement(storage, *survey.placement);
+                        stats.rewraps += survey.placement->rewraps.size();
+                        survey = runtime::surveyLog(storage, *directory);
+                    }
+                    for (std::uint32_t shard = 0; shard < shardCount(); ++shard) {
+                        shards.push_back(std::make_unique<runtime::Shard>(*directory, shard, config.shardCapacity));
+                        recovered.push_back(runtime::recoverShard(storage, storage, *directory, survey.shards[shard], survey.checkpoints[shard],
+                                                                  *shards.back(), config.shardCapacity, neverStopping));
+                    }
+                } catch (const runtime::RecoveryError& error) {
+                    return EngineFailure{index, "", std::string("the start after a clean stop failed: ") + error.what()};
+                }
+                if (logged.size() < shardCount()) {
+                    logged.resize(shardCount());  // a shard new to this placement, its log starting at 0
+                    released.resize(shardCount(), 0);
+                }
+                for (std::uint32_t shard = 0; shard < shardCount(); ++shard) {
+                    if (recovered[shard].replayed != logged[shard].size()) {
+                        return EngineFailure{index, "", "after a clean stop, shard " + std::to_string(shard) + " recovered " +
+                                                            std::to_string(recovered[shard].replayed) + " commands of the " +
+                                                            std::to_string(logged[shard].size()) + " it logged"};
+                    }
+                    if (recovered[shard].start != recovered[shard].replayed) {
+                        return EngineFailure{index, "", "after a clean stop, shard " + std::to_string(shard) + " replayed from " +
+                                                            std::to_string(recovered[shard].start) + ", not its log's end, " +
+                                                            std::to_string(recovered[shard].replayed)};
+                    }
+                }
+                for (Instrument& instrument : instruments) {
+                    instrument.location = *directory->find(instrument.symbol);
+                    const OrderBook& book = shards[instrument.location.shard]->books().book(instrument.location.slot);
+                    if (const std::optional<std::string> difference = randomized::compareBooks(book, instrument.witness, instrument.model)) {
+                        return failure(index, instrument, "after a clean stop, the shard's book differs from the witness: " + *difference);
+                    }
+                }
+                closed = std::make_unique<runtime::ClosedLog>(shardCount());
+                for (std::uint32_t shard = 0; shard < shardCount(); ++shard) {
                     logs.push_back(std::make_unique<ShardLog>(*housekeeping, shard, config.logRingRecords, *closed, recovered[shard].replayed));
                     shards[shard]->watchDurablePosition(logs.back()->durable);
                 }
@@ -613,12 +729,19 @@ namespace order_book::engine_testing {
                     instrument.witness = OrderBook{};
                     instrument.witness.reserve(config.witnessCapacity);
                 }
+                // In the stream's order, since after a placement change an instrument's commands
+                // can lie in two shards' logs.
+                std::vector<const Logged*> ordered;
                 for (const std::vector<Logged>& shardLog : logged) {
                     for (const Logged& entry : shardLog) {
-                        Instrument& instrument = instruments[entry.instrument];
-                        randomized::applyCommand(instrument.model, entry.command);
-                        static_cast<void>(replay::executeCommand(instrument.witness, entry.bookCommand));
+                        ordered.push_back(&entry);
                     }
+                }
+                std::sort(ordered.begin(), ordered.end(), [](const Logged* a, const Logged* b) { return a->line < b->line; });
+                for (const Logged* entry : ordered) {
+                    Instrument& instrument = instruments[entry->instrument];
+                    randomized::applyCommand(instrument.model, entry->command);
+                    static_cast<void>(replay::executeCommand(instrument.witness, entry->bookCommand));
                 }
             }
 
@@ -670,7 +793,9 @@ namespace order_book::engine_testing {
                 // The next files no writer took, as a clean stop removes them.
                 housekeeping->removeUnused();
                 std::vector<replay::ReplayRecord> records;
-                bool wholeLog = true;  // unless retention deleted the start of some shard's
+                // Unless retention deleted the start of some shard's, or a placement change spread an
+                // instrument over two shards' logs, whose positions can't be compared.
+                bool wholeLog = !placementChanged;
                 for (std::uint32_t shard = 0; shard < logs.size(); ++shard) {
                     try {
                         const ShardLogRecords read = readShardLog(storage, shard);
@@ -711,7 +836,7 @@ namespace order_book::engine_testing {
             }
 
             EngineSeedConfig config;
-            runtime::InstrumentDirectory directory;
+            std::unique_ptr<runtime::InstrumentDirectory> directory;  // a CLEAN_STOP line may change its shard count
             runtime::InMemoryLogStorage storage;
             std::unique_ptr<runtime::StorageLock> lock;
             std::unique_ptr<runtime::Housekeeping> housekeeping;
@@ -722,6 +847,7 @@ namespace order_book::engine_testing {
             std::vector<std::uint64_t> released;      // by shard: how far responses were released
             bool leftUnlogged = false;
             bool crashedOnce = false;
+            bool placementChanged = false;  // once a CLEAN_STOP line changed the shard count
             std::unique_ptr<runtime::ClosedLog> closed;  // what each log writer has closed
             std::vector<std::unique_ptr<runtime::ShardRoller>> rollers;  // by shard
         };
@@ -756,6 +882,12 @@ namespace order_book::engine_testing {
             }
             if (read.files == 1 && reader.header() != nullptr) {
                 read.firstPosition = reader.header()->firstPosition;  // retention may have deleted those before it
+                position = read.firstPosition;
+            } else if (reader.header() != nullptr && reader.header()->firstPosition > position) {
+                // Retention deleted the files between, and a machine crash brought back an older
+                // one whose removal had not reached the drive: the log starts again here.
+                read.records.erase(read.records.begin(), read.records.begin() + static_cast<std::ptrdiff_t>(position - read.firstPosition));
+                read.firstPosition = reader.header()->firstPosition;
                 position = read.firstPosition;
             }
             if (reader.header() == nullptr || reader.header()->firstPosition != position) {
@@ -859,6 +991,24 @@ namespace order_book::engine_testing {
             }
             std::stable_sort(damageAfter.begin(), damageAfter.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
         }
+        // CLEAN_STOP lines, each after a command, with a shard count from 1 to 4, from a source of
+        // their own.
+        std::mt19937_64 cleanStops(config.seed ^ cleanStopStream);
+        std::vector<std::pair<std::size_t, EngineCommand>> cleanStopAfter;
+        if (config.commands != 0) {
+            for (std::size_t i = 0; i < config.cleanStops; ++i) {
+                const auto after = static_cast<std::size_t>(cleanStops() % config.commands);
+                EngineCommand stop{0, Command{}, std::nullopt, SymbolFault::NONE, EngineAction::CLEAN_STOP, 0,
+                                   static_cast<std::uint32_t>(1 + cleanStops() % 4)};
+                if (cleanStops() % 2 == 0) {
+                    stop.instrument = static_cast<std::size_t>(cleanStops() % config.instruments);
+                    stop.pin = static_cast<std::uint32_t>(cleanStops() % stop.shards);
+                }
+                cleanStopAfter.emplace_back(after, std::move(stop));
+            }
+            std::stable_sort(cleanStopAfter.begin(), cleanStopAfter.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        }
+        std::size_t nextCleanStop = 0;
         std::size_t nextDamage = 0;
         std::size_t nextRoll = 0;
         std::size_t nextRestore = 0;
@@ -897,6 +1047,9 @@ namespace order_book::engine_testing {
             }
             while (nextDamage < damageAfter.size() && damageAfter[nextDamage].first == i) {
                 stream.push_back(EngineCommand{damageAfter[nextDamage++].second, Command{}, std::nullopt, SymbolFault::NONE, EngineAction::DAMAGE});
+            }
+            while (nextCleanStop < cleanStopAfter.size() && cleanStopAfter[nextCleanStop].first == i) {
+                stream.push_back(cleanStopAfter[nextCleanStop++].second);
             }
         }
         return stream;

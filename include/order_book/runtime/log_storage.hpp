@@ -60,6 +60,10 @@ namespace order_book::runtime {
         // with Kind::EXISTS, and returns once the new name survives a machine crash. Its
         // messages name it by its new name from then on.
         virtual void rename(const std::string& name) = 0;
+        // The same, but over a file of that name if there is one, in one step: a machine crash
+        // leaves the old file under the name or this one, never neither. Only a placement change
+        // uses it, to rewrap a checkpoint whose name stays the same.
+        virtual void replace(const std::string& name) = 0;
     };
 
     // A directory's lock, held until this is destroyed, or the process ends, however it ends.
@@ -155,6 +159,9 @@ namespace order_book::runtime {
             std::size_t renames = 0;
             std::size_t cuts = 0;
             bool closed = false;  // since its last write, extend, or cut, by a handle or a crash
+            // Removed by a replace that never reached the drive, so a machine crash brings it
+            // back for certain: the drive's directory never left it.
+            bool replacedOffDrive = false;
         };
 
         // Every file, by name, as it stands, and the files removed since the directory was last

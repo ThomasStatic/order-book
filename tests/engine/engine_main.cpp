@@ -161,6 +161,7 @@ bool runSchedule(const StepperConfig& config, const std::optional<std::vector<st
         generation.restores = 0;
         generation.rolls = 0;
         generation.damages = 0;
+        generation.cleanStops = 0;
         const std::vector<EngineCommand> all = generateEngineStream(generation);
         std::vector<EngineCommand> kept;
         for (const std::size_t index : *lines) {
@@ -268,7 +269,8 @@ bool runSeed(const EngineSeedConfig& config, bool report = false) {
         std::cout << "seed " << config.seed << ": queued=" << stats.queued << " crashes=" << stats.crashes
                   << " lost=" << stats.lostToCrashes << " tail-cut-bytes=" << stats.tailCutBytes << " roll-passes=" << stats.rollPasses
                   << " checkpoints=" << stats.checkpoints << " damages=" << stats.damages << " fell-back=" << stats.fellBack
-                  << " files-deleted=" << stats.logFilesDeleted << std::endl;
+                  << " files-deleted=" << stats.logFilesDeleted << " clean-stops=" << stats.cleanStops
+                  << " placement-changes=" << stats.placementChanges << " rewraps=" << stats.rewraps << std::endl;
     }
     return true;
 }

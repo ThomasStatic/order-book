@@ -350,6 +350,7 @@ namespace order_book::engine_testing {
         generation.restores = 0;
         generation.rolls = 0;
         generation.damages = 0;
+        generation.cleanStops = 0;
         return runStepperSchedule(config, generateEngineStream(generation));
     }
 

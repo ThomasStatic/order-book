@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -47,6 +48,28 @@ namespace order_book::runtime {
         bool operator==(const LogFileEntry&) const = default;
     };
 
+    // A book a placement change puts on another shard, or under another shard count: its newest
+    // checkpoint, standing at its old log's end, is rewrapped with the new shard and that shard's
+    // log end (spec #58's D6b).
+    struct Rewrap {
+        Symbol symbol;
+        std::uint64_t from = 0;      // the checkpoint's position, its old shard's log end
+        std::uint32_t fromShard = 0;
+        std::uint32_t fromShards = 0;
+        std::uint32_t toShard = 0;
+        std::uint32_t toShards = 0;
+        std::uint64_t to = 0;        // its new shard's log end
+    };
+
+    // What a start on a changed placement must do before any book exists, every tail being empty.
+    struct PlacementChange {
+        std::string what;                 // "AAPL moved from shard 0 to shard 1", or the shard counts
+        std::vector<Rewrap> rewraps;
+        // The older checkpoints whose positions the change voids: a rewrapped book's, and a book's on
+        // a shard some book left, since a fall-back to one would replay a log across the change.
+        std::vector<std::string> dropped;
+    };
+
     // What the main thread found: each shard's log files, oldest first, each book's checkpoints,
     // and the files a crash left being made, which held nothing anyone was told of.
     struct LogSurvey {
@@ -61,18 +84,33 @@ namespace order_book::runtime {
         // whose empty-book checkpoints the log writer publishes where the log ends.
         std::vector<std::vector<std::uint32_t>> newBooks;
         std::vector<std::string> checkpointTemporaries;  // checkpoints being published
+        // Set when some shard's newest header was written under another placement: what
+        // changePlacement must do, which may be nothing once it has.
+        std::optional<PlacementChange> placement;
     };
 
     // Recovery's start on the main thread, once the caller holds both stores' locks, before any
     // book exists: reads every log file's header and every checkpoint's name; refuses a symbol
     // off the list in either; stops on a lost checkpoint, a listed instrument a log header names
-    // that no checkpoint holds; then compares each shard's newest header with the directory's
-    // placement. Throws RecoveryError, and LogStorageError if a file can't be read. Changes
-    // nothing. The checkpoint store may be the log's.
+    // that no checkpoint holds; then compares each current shard's newest header with the
+    // directory's placement. A change needs every tail empty: each shard's log, its trailing
+    // files with no record set aside, read whole to its end with no torn tail, and every book's
+    // newest checkpoint standing at the end of the log its own header names. Otherwise it is
+    // refused, PLACEMENT_CHANGED, "<what> and the last run did not stop cleanly; restart on the
+    // old placement and stop cleanly first". A shard at or past the directory's count is a log no
+    // shard writes any more and is not recovered. Throws RecoveryError, and LogStorageError if a
+    // file can't be read. Changes nothing. The checkpoint store may be the log's.
     LogSurvey surveyLog(LogStorage& logs, LogStorage& checkpoints, const InstrumentDirectory& directory);
     inline LogSurvey surveyLog(LogStorage& storage, const InstrumentDirectory& directory) {
         return surveyLog(storage, storage, directory);
     }
+
+    // A survey's placement change, on the main thread before any book exists: every dropped
+    // checkpoint removed, then each rewrap published under the new header, in place of any file
+    // of its name, and the checkpoint it came from removed. A crash anywhere in it leaves what the next start's
+    // survey finds the same change in, with less to do, so the caller surveys again afterwards.
+    // Throws LogStorageError, and RecoveryError if a checkpoint no longer decodes.
+    void changePlacement(LogStorage& checkpoints, const PlacementChange& change);
 
     struct RecoveredShard {
         std::uint64_t replayed = 0;       // the log's end, where its next file starts

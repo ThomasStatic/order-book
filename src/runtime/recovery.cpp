@@ -4,6 +4,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <span>
@@ -38,9 +40,6 @@ namespace order_book::runtime {
         [[noreturn]] void stopRecovery(const std::string& what) {
             throw RecoveryError(RecoveryError::Kind::RECOVERY_STOPPED, what);
         }
-
-        constexpr std::string_view placementRule =
-            ", and this build can't change placement while a log exists, so start on the old placement";
 
         // 1.5 times, rounded up.
         std::size_t halfAgain(std::size_t held) {
@@ -94,6 +93,62 @@ namespace order_book::runtime {
                 return std::nullopt;
             }
             return written;
+        }
+
+        // Where a shard's log ends, if it ended as a clean stop leaves it: trailing files with no
+        // record set aside, as a clean stop's last file or a start's first can be, the last that
+        // holds one read whole to its end. Nothing for a torn tail, a torn first record, or any
+        // finding the reader makes.
+        std::optional<std::uint64_t> cleanEnd(LogStorage& storage, const std::vector<LogFileEntry>& files) {
+            std::size_t last = files.size();
+            std::optional<std::uint64_t> end;
+            while (last > 0 && !end) {
+                const LogFileEntry& file = files[last - 1];
+                const std::optional<std::uint64_t> dropped = droppedWithoutARecord(storage, file);
+                if (dropped == std::uint64_t{0}) {
+                    --last;
+                    continue;
+                }
+                if (dropped) {
+                    return std::nullopt;  // a first record torn as it was written
+                }
+                LogFileReader reader(storage, file.name);
+                std::uint64_t records = 0;
+                for (;;) {
+                    const replay::ReadResult result = reader.next();
+                    if (std::holds_alternative<replay::ReplayRecord>(result)) {
+                        ++records;
+                    } else if (std::holds_alternative<replay::EndOfInput>(result)) {
+                        end = file.firstPosition + records;
+                        break;
+                    } else {
+                        return std::nullopt;
+                    }
+                }
+            }
+            if (!end) {
+                end = files.empty() ? 0 : files.front().firstPosition;
+            }
+            // Each file set aside must start at that end, as a clean stop's or a start's does: one
+            // past it held records a crash zeroed, which the files after it still count.
+            for (std::size_t i = last; i < files.size(); ++i) {
+                if (files[i].firstPosition != *end) {
+                    return std::nullopt;
+                }
+            }
+            return end;
+        }
+
+        [[noreturn]] void refusePlacementChange(const std::string& what) {
+            throw RecoveryError(RecoveryError::Kind::PLACEMENT_CHANGED,
+                                what + " and the last run did not stop cleanly; restart on the old placement and stop cleanly first");
+        }
+
+        std::vector<std::byte> readWholeFile(LogStorage& storage, const std::string& name) {
+            const std::unique_ptr<LogFile> file = storage.open(name);
+            std::vector<std::byte> bytes(static_cast<std::size_t>(file->size()));
+            bytes.resize(file->read(0, bytes));
+            return bytes;
         }
 
     }  // namespace
@@ -184,30 +239,140 @@ namespace order_book::runtime {
                 survey.newBooks[shard].push_back(slot);
             }
         }
-        for (std::size_t i = 0; i < found.size(); ++i) {
+        // Every shard's files, a shard no longer running included, and the current ones' to recover.
+        std::map<std::uint32_t, std::vector<LogFileEntry>> logs;
+        for (const Found& file : found) {
+            logs[file.name.shard].push_back(LogFileEntry{file.file, file.name.firstPosition});
+            if (file.name.shard < directory.shardCount()) {
+                survey.shards[file.name.shard].push_back(LogFileEntry{file.file, file.name.firstPosition});
+            }
+        }
+
+        // Placement (D6b): each current shard's newest header against the directory. A shard past
+        // the count is a log a change left, which no shard writes, so it moves nothing.
+        std::optional<std::string> change;
+        for (std::size_t i = 0; i < found.size() && !change; ++i) {
             const bool newest = i + 1 == found.size() || found[i + 1].name.shard != found[i].name.shard;
-            if (!newest) {
+            if (!newest || found[i].name.shard >= directory.shardCount()) {
                 continue;
             }
             const replay::LogHeader& header = found[i].header;
             if (header.shardCount != directory.shardCount()) {
-                throw RecoveryError(RecoveryError::Kind::PLACEMENT_CHANGED,
-                                    "the log was written by " + std::to_string(header.shardCount) + " shards and this start has " +
-                                        std::to_string(directory.shardCount()) + std::string(placementRule));
+                change = "the log was written by " + std::to_string(header.shardCount) + " shards and this start has " +
+                         std::to_string(directory.shardCount());
+                break;
             }
             for (const Symbol& symbol : header.symbols) {
                 const std::uint32_t now = directory.find(symbol)->shard;
                 if (now != header.shardIndex) {
-                    throw RecoveryError(RecoveryError::Kind::PLACEMENT_CHANGED,
-                                        symbol.text() + " moved from shard " + std::to_string(header.shardIndex) + " to shard " +
-                                            std::to_string(now) + std::string(placementRule));
+                    change = symbol.text() + " moved from shard " + std::to_string(header.shardIndex) + " to shard " + std::to_string(now);
+                    break;
                 }
             }
         }
-        for (const Found& file : found) {
-            survey.shards[file.name.shard].push_back(LogFileEntry{file.file, file.name.firstPosition});
+        if (!change) {
+            return survey;
         }
+
+        // Every tail must be empty: each book's newest checkpoint at the end of the log its own
+        // header names, each log ending cleanly.
+        const std::string& what = *change;
+        std::map<std::uint32_t, std::optional<std::uint64_t>> ends;
+        const auto endOf = [&](std::uint32_t shard) -> std::optional<std::uint64_t> {
+            if (const auto known = ends.find(shard); known != ends.end()) {
+                return known->second;
+            }
+            const auto files = logs.find(shard);
+            const std::optional<std::uint64_t> end = files == logs.end() ? std::optional<std::uint64_t>(0) : cleanEnd(storage, files->second);
+            ends.emplace(shard, end);
+            return end;
+        };
+        PlacementChange placement;
+        placement.what = *change;
+        // Each book with a checkpoint: where it stands, and where a rewrap takes it, if anywhere.
+        struct Standing {
+            const Symbol* symbol;
+            const std::vector<std::uint64_t>* positions;
+            std::uint32_t shard;  // under the placement it was written by, the same if not rewrapped
+            std::optional<std::uint64_t> to;
+        };
+        std::vector<Standing> standing;
+        for (std::uint32_t shard = 0; shard < directory.shardCount(); ++shard) {
+            const std::span<const Instrument> instruments = directory.onShard(shard);
+            for (std::uint32_t slot = 0; slot < instruments.size(); ++slot) {
+                const std::vector<std::uint64_t>& positions = survey.checkpoints[shard][slot];
+                if (positions.empty()) {
+                    continue;  // new: its empty checkpoint goes where its shard's log ends
+                }
+                const Symbol& symbol = instruments[slot].symbol;
+                const std::vector<std::byte> bytes = readWholeFile(checkpointStore, checkpointFileName(symbol, positions.front()));
+                const auto decoded = decodeCheckpoint(bytes);
+                const auto* checkpoint = std::get_if<DecodedCheckpoint>(&decoded);
+                if (checkpoint == nullptr || checkpoint->header.symbol != symbol || checkpoint->header.position != positions.front()) {
+                    refusePlacementChange(what);  // nothing to say where its tail ends
+                }
+                const CheckpointHeader& header = checkpoint->header;
+                if (endOf(header.shardIndex) != header.position) {
+                    refusePlacementChange(what);
+                }
+                std::optional<std::uint64_t> to;
+                if (header.shardCount != directory.shardCount() || header.shardIndex != shard) {
+                    to = endOf(shard);
+                    if (!to) {
+                        refusePlacementChange(what);
+                    }
+                    placement.rewraps.push_back(Rewrap{symbol, header.position, header.shardIndex, header.shardCount, shard,
+                                                       directory.shardCount(), *to});
+                }
+                standing.push_back(Standing{&symbol, &positions, header.shardIndex, to});
+            }
+        }
+        // An older checkpoint's position voids where a fall-back to it would replay a log across
+        // the change: a rewrapped book's, which a new count makes every book, and a book's on a
+        // shard some book left, whose log holds that book's records after it. One a rewrap is
+        // landing on, which a crash left, stays.
+        std::vector<std::uint32_t> left;
+        for (const Rewrap& rewrap : placement.rewraps) {
+            left.push_back(rewrap.fromShard);
+        }
+        for (const Standing& book : standing) {
+            const bool voided = book.to || std::find(left.begin(), left.end(), book.shard) != left.end();
+            for (std::size_t older = 1; voided && older < book.positions->size(); ++older) {
+                if ((*book.positions)[older] != book.to) {
+                    placement.dropped.push_back(checkpointFileName(*book.symbol, (*book.positions)[older]));
+                }
+            }
+        }
+        survey.placement = std::move(placement);
         return survey;
+    }
+
+    void changePlacement(LogStorage& checkpoints, const PlacementChange& change) {
+        for (const std::string& name : change.dropped) {
+            checkpoints.remove(name);
+        }
+        for (const Rewrap& rewrap : change.rewraps) {
+            const std::string from = checkpointFileName(rewrap.symbol, rewrap.from);
+            const std::vector<std::byte> bytes = readWholeFile(checkpoints, from);
+            const auto decoded = decodeCheckpoint(bytes);
+            const auto* checkpoint = std::get_if<DecodedCheckpoint>(&decoded);
+            if (checkpoint == nullptr) {
+                stopRecovery(from + " no longer decodes, so it can't be rewrapped for the new placement");
+            }
+            CheckpointHeader header = checkpoint->header;
+            header.engineMajor = ORDER_BOOK_VERSION_MAJOR;
+            header.engineMinor = ORDER_BOOK_VERSION_MINOR;
+            header.enginePatch = ORDER_BOOK_VERSION_PATCH;
+            header.shardCount = rewrap.toShards;
+            header.shardIndex = rewrap.toShard;
+            header.position = rewrap.to;
+            // Over any file of its name: the one it came from, at the same position, or one an
+            // interrupted change left.
+            publishCheckpoint(checkpoints, header, checkpoint->image, true);
+            if (rewrap.to != rewrap.from) {
+                checkpoints.remove(from);
+            }
+        }
     }
 
     RecoveredShard recoverShard(LogStorage& storage, LogStorage& checkpointStore, const InstrumentDirectory& directory,
@@ -250,7 +415,8 @@ namespace order_book::runtime {
                                         name + " was written by shard " + std::to_string(checkpoint->header.shardIndex) + " of " +
                                             std::to_string(checkpoint->header.shardCount) + ", and this start places " + symbol.text() +
                                             " on shard " + std::to_string(number) + " of " + std::to_string(directory.shardCount()) +
-                                            std::string(placementRule));
+                                            ", though the logs' headers name this placement: a placement change was cut short, so "
+                                            "start on the placement that checkpoint names to finish it");
                 } else {
                     std::variant<OrderBook, RestoreError> book = OrderBook::restore(checkpoint->image);
                     if (const auto* error = std::get_if<RestoreError>(&book)) {
@@ -272,13 +438,19 @@ namespace order_book::runtime {
                 ++recovered.fellBack;
             }
         }
-        recovered.start = oldest.value_or(0);
+        // With no book standing anywhere, as when a placement change moved every book away or the
+        // shard holds only new ones, nothing here needs a record: only the last file is read, its
+        // records passed over, their chain still checked, and the shard starts where it ends.
+        const bool bookless = !oldest;
+        recovered.start = oldest.value_or(std::numeric_limits<std::uint64_t>::max());
         for (std::uint32_t slot = 0; slot < instruments.size(); ++slot) {
             if (slot >= bookCheckpoints.size() || bookCheckpoints[slot].empty()) {
                 recovered.restoredFrom[slot] = recovered.start;
             }
         }
-        shard.startAt(recovered.start);
+        if (!bookless) {
+            shard.startAt(recovered.start);
+        }
         std::vector<LogFileEntry> kept = files;
         while (!kept.empty()) {
             const std::optional<std::uint64_t> dropped = droppedWithoutARecord(storage, kept.back());
@@ -367,6 +539,11 @@ namespace order_book::runtime {
                 stopRecovery(where(number, entry.firstPosition + inFile, entry.name) + ": " + finding(error) +
                      (tear ? ", in a file before the last, which its log writer flushed whole" : ""));
             }
+        }
+        if (bookless) {
+            recovered.start = logEnd;
+            std::fill(recovered.restoredFrom.begin(), recovered.restoredFrom.end(), logEnd);
+            shard.startAt(logEnd);
         }
 
         std::uint64_t cutBytes = 0;

@@ -132,7 +132,7 @@ namespace order_book::runtime {
         }
     }
 
-    void publishCheckpoint(LogStorage& storage, const CheckpointHeader& header, std::span<const std::byte> image) {
+    void publishCheckpoint(LogStorage& storage, const CheckpointHeader& header, std::span<const std::byte> image, bool replacing) {
         const std::string name = checkpointFileName(header.symbol, header.position);
         const std::string temporary = name + std::string(temporarySuffix);
         const std::vector<std::byte> bytes = encodeCheckpoint(header, image);
@@ -162,7 +162,11 @@ namespace order_book::runtime {
                                                                          " does not read back as written");
             }
             file->flush();
-            file->rename(name);
+            if (replacing) {
+                file->replace(name);
+            } else {
+                file->rename(name);
+            }
         } catch (...) {
             try {
                 file->close();
@@ -364,6 +368,7 @@ namespace order_book::runtime {
 
     std::size_t ShardRoller::roll(std::uint64_t closedEnd, const std::atomic<bool>* stopping) {
         std::size_t made = 0;
+        rollAbandoned = false;
         try {
             for (std::uint32_t slot = 0; slot < kept.size(); ++slot) {
                 removeSuperseded(slot);
@@ -390,6 +395,7 @@ namespace order_book::runtime {
             ++totals.passesLost;
             say("a roll-forward pass was lost to bad_alloc; the next roll makes it again", "");
         } catch (const PassAbandoned& abandoned) {
+            rollAbandoned = true;
             say("roll forward stopped: ", abandoned.why.c_str());
         } catch (const LogStorageError& error) {
             // A read that failed, since a failed publish is caught where it happens: the next
@@ -415,11 +421,25 @@ namespace order_book::runtime {
     }
 
     void ShardRoller::finish(std::uint64_t logEnd, const LiveImages& live) {
+        // A pass abandoned for a checkpoint that no longer reads has its book fall back, and is
+        // made again at once, as the next roll would make it; each book can fall back only so far.
+        for (std::size_t attempt = 0; attempt <= 2 * kept.size(); ++attempt) {
+            if (finishOnce(logEnd, live)) {
+                break;
+            }
+        }
+        countBehind();
+    }
+
+    bool ShardRoller::finishOnce(std::uint64_t logEnd, const LiveImages& live) {
         std::fill(atStop.begin(), atStop.end(), StoppedBook{.outcome = live ? StopOutcome::NOT_ROLLED : StopOutcome::NO_IMAGE});
         // Every closed file first, each published at its own end, as any roll publishes it.
         static_cast<void>(roll(logEnd));
+        if (rollAbandoned) {
+            return false;
+        }
         if (!live) {
-            return;
+            return true;
         }
         try {
             const std::optional<LogFileInfo> last = lastFile(logEnd);
@@ -473,10 +493,11 @@ namespace order_book::runtime {
             say("the clean stop's last roll-forward pass was lost to bad_alloc", "");
         } catch (const PassAbandoned& abandoned) {
             say("the clean stop's last roll forward stopped: ", abandoned.why.c_str());
+            return false;
         } catch (const LogStorageError& error) {
             say("the clean stop's last roll forward stopped: ", error.what());
         }
-        countBehind();
+        return true;
     }
 
     void ShardRoller::pass(const LogFileInfo& file, std::uint64_t end, const std::vector<bool>& needs) {

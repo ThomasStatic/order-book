@@ -81,11 +81,12 @@ namespace order_book::runtime {
         // The name a log file is known by must survive a machine crash, or its records go with
         // it. On Windows MOVEFILE_WRITE_THROUGH returns only once the move is on the drive, and on
         // Linux it takes a flush of the directory.
-        void moveInDirectory(const std::filesystem::path& directory, const std::string& from, const std::string& to) {
+        void moveInDirectory(const std::filesystem::path& directory, const std::string& from, const std::string& to, bool replacing = false) {
             const std::filesystem::path source = directory / from;
             const std::filesystem::path target = directory / to;
 #ifdef _WIN32
-            if (!MoveFileExW(source.c_str(), target.c_str(), MOVEFILE_WRITE_THROUGH)) {
+            const DWORD flags = MOVEFILE_WRITE_THROUGH | (replacing ? MOVEFILE_REPLACE_EXISTING : 0);
+            if (!MoveFileExW(source.c_str(), target.c_str(), flags)) {
                 const DWORD error = lastError();
                 if (error == ERROR_FILE_EXISTS || error == ERROR_ALREADY_EXISTS) {
                     throw LogStorageError(LogStorageError::Kind::EXISTS, target.string() + " already exists");
@@ -94,13 +95,16 @@ namespace order_book::runtime {
             }
 #else
 #ifdef RENAME_NOREPLACE
-            int renamed = ::renameat2(AT_FDCWD, source.c_str(), AT_FDCWD, target.c_str(), RENAME_NOREPLACE);
-            if (renamed != 0 && (errno == EINVAL || errno == ENOSYS)) {
+            // rename replaces in one step, as POSIX has it.
+            int renamed = replacing ? ::rename(source.c_str(), target.c_str())
+                                    : ::renameat2(AT_FDCWD, source.c_str(), AT_FDCWD, target.c_str(), RENAME_NOREPLACE);
+            if (!replacing && renamed != 0 && (errno == EINVAL || errno == ENOSYS)) {
                 // A file system that can't refuse to replace: the start's check that no log is
                 // there, and every name being new to this run, keep the target free.
                 renamed = ::rename(source.c_str(), target.c_str());
             }
 #else
+            static_cast<void>(replacing);  // rename replaces, which the start's checks make safe
             const int renamed = ::rename(source.c_str(), target.c_str());
 #endif
             if (renamed != 0) {
@@ -202,14 +206,17 @@ namespace order_book::runtime {
             }
 
             // Opened sharing delete, so it moves while this handle holds it.
-            void rename(const std::string& to) override {
+            void rename(const std::string& to) override { moveTo(to, false); }
+            void replace(const std::string& to) override { moveTo(to, true); }
+
+        private:
+            void moveTo(const std::string& to, bool replacing) {
                 std::string moved = (directory / to).string();
-                moveInDirectory(directory, name, to);
+                moveInDirectory(directory, name, to, replacing);
                 name = to;
                 path = std::move(moved);
             }
 
-        private:
             void setEnd(std::uint64_t size, const char* what) {
                 FILE_END_OF_FILE_INFO end{};
                 end.EndOfFile.QuadPart = static_cast<LONGLONG>(size);
@@ -310,14 +317,17 @@ namespace order_book::runtime {
                 }
             }
 
-            void rename(const std::string& to) override {
+            void rename(const std::string& to) override { moveTo(to, false); }
+            void replace(const std::string& to) override { moveTo(to, true); }
+
+        private:
+            void moveTo(const std::string& to, bool replacing) {
                 std::string moved = (directory / to).string();
-                moveInDirectory(directory, name, to);
+                moveInDirectory(directory, name, to, replacing);
                 name = to;
                 path = std::move(moved);
             }
 
-        private:
             void setEnd(std::uint64_t size, const char* what) {
                 if (::ftruncate(descriptor, static_cast<off_t>(size)) != 0) {
                     throw failure(what, path, lastError());
@@ -591,10 +601,23 @@ namespace order_book::runtime {
             file->closed = true;
         }
 
-        void rename(const std::string& to) override {
+        void rename(const std::string& to) override { moveTo(to, false); }
+        void replace(const std::string& to) override { moveTo(to, true); }
+
+    private:
+        // A replace removes the file under the name first, as a remove does, in the same step.
+        void moveTo(const std::string& to, bool replacing) {
             std::unique_lock<std::mutex> held(storage.guard);
-            if (storage.files.contains(to)) {
-                throw LogStorageError(LogStorageError::Kind::EXISTS, to + " already exists");
+            if (const auto found = storage.files.find(to); found != storage.files.end()) {
+                if (!replacing) {
+                    throw LogStorageError(LogStorageError::Kind::EXISTS, to + " already exists");
+                }
+                if (found->second->nameOnDrive && storage.interrupted) {
+                    File displaced = *found->second;  // the drive still names it, as this replace never lands
+                    displaced.replacedOffDrive = true;
+                    storage.removed.insert_or_assign(to, std::move(displaced));
+                }
+                storage.files.erase(found);
             }
             std::string moved = to;
             storage.files.erase(name);  // a removed file renames into view again, as on Linux
@@ -832,13 +855,16 @@ namespace order_book::runtime {
             }
             File after = kind == Crash::MACHINE ? afterAMachineCrash(*file, random) : *file;
             after.closed = true;  // every handle belonged to the engine that died
+            after.replacedOffDrive = false;
             survivors.emplace(name, std::make_shared<File>(std::move(after)));
         }
         if (kind == Crash::MACHINE) {
             for (const auto& [name, file] : removed) {
-                if (random() % 2 == 0 && !survivors.contains(name)) {
+                // A replaced file draws nothing, so seeds mean what they did before replaces.
+                if ((file.replacedOffDrive || random() % 2 == 0) && !survivors.contains(name)) {
                     File back = afterAMachineCrash(file, random);
                     back.closed = true;
+                    back.replacedOffDrive = false;  // back under its name, a file like any other
                     survivors.emplace(name, std::make_shared<File>(std::move(back)));
                 }
             }

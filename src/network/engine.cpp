@@ -586,6 +586,20 @@ namespace order_book::network {
                 }
             }
             runtime::LogSurvey survey = runtime::surveyLog(*logStorage, checkpointStore(), *directory);
+            if (survey.placement && (!survey.placement->rewraps.empty() || !survey.placement->dropped.empty())) {
+                // Every tail is empty, so each moved book is rewrapped where its new shard's log
+                // ends, before any book exists; then the survey is taken again, on what it left.
+                for (const std::string& temporary : survey.checkpointTemporaries) {
+                    checkpointStore().remove(temporary);  // first, so a rewrap's own .tmp is free
+                }
+                runtime::changePlacement(checkpointStore(), *survey.placement);
+                for (const runtime::Rewrap& rewrap : survey.placement->rewraps) {
+                    diagnostics << prefix << "placement changed: " << rewrap.symbol.text() << " from shard " << rewrap.fromShard << " of "
+                                << rewrap.fromShards << " at " << rewrap.from << " to shard " << rewrap.toShard << " of " << rewrap.toShards
+                                << " at " << rewrap.to << std::endl;
+                }
+                survey = runtime::surveyLog(*logStorage, checkpointStore(), *directory);
+            }
             for (const std::string& temporary : survey.temporaries) {
                 logStorage->remove(temporary);
             }

@@ -779,6 +779,67 @@ void testAnInterruptedWrite() {
     expect(false, "over 20 seeds, an interrupted write's page is never lost");
 }
 
+// A replace renames over a file of that name in one step, on real files and in memory, and over
+// none as a rename does; a machine crash then leaves the old file or the new under the name,
+// never neither, and once the replace has returned uninterrupted, always the new.
+void testAReplace() {
+    const std::vector<std::byte> before(5, std::byte{0x11});
+    const std::vector<std::byte> after(3, std::byte{0x22});
+    const auto putFile = [](LogStorage& storage, const std::string& name, const std::vector<std::byte>& bytes) {
+        std::unique_ptr<LogFile> file = storage.create(name + ".tmp", Durability::MACHINE);
+        file->write(0, bytes);
+        file->flush();
+        file->rename(name);
+        file->close();
+    };
+    const fs::path directory = fs::temp_directory_path() / "order_book_log_writer_tests_replace";
+    fs::remove_all(directory);
+    fs::create_directories(directory);
+    {
+        FileLogStorage files(directory);
+        InMemoryLogStorage memory;
+        for (LogStorage* storage : {static_cast<LogStorage*>(&files), static_cast<LogStorage*>(&memory)}) {
+            putFile(*storage, "ckpt", before);
+            std::unique_ptr<LogFile> file = storage->create("ckpt.new", Durability::MACHINE);
+            file->write(0, after);
+            file->flush();
+            file->replace("ckpt");
+            file->close();
+            const std::unique_ptr<LogFile> read = storage->open("ckpt");
+            std::vector<std::byte> held(static_cast<std::size_t>(read->size()));
+            expect(read->read(0, held) == after.size() && held == after, "a replace leaves the new file under the name");
+            expect(storage->names() == std::vector<std::string>{"ckpt"}, "and only that name");
+            std::unique_ptr<LogFile> other = storage->create("free.new", Durability::MACHINE);
+            other->replace("free");
+            other->close();
+            expect(storage->names() == std::vector<std::string>{"ckpt", "free"}, "and over no file, it renames");
+        }
+    }
+    fs::remove_all(directory);
+
+    for (std::uint64_t seed = 1; seed <= 20; ++seed) {
+        InMemoryLogStorage storage;
+        putFile(storage, "ckpt", before);
+        std::unique_ptr<LogFile> file = storage.create("ckpt.new", Durability::MACHINE);
+        file->write(0, after);
+        file->flush();
+        InMemoryLogStorage settled(storage.contents());
+        storage.interruptWrites();
+        file->replace("ckpt");
+        storage.crash(InMemoryLogStorage::Crash::MACHINE, seed);
+        const std::optional<InMemoryLogStorage::File> held = storage.file("ckpt");
+        // Interrupted, the rename reached the OS alone, so the drive's directory still names the old.
+        expect(held.has_value() && held->bytes == before, "a machine crash leaves the old file under the name, never none");
+
+        std::unique_ptr<LogFile> again = settled.create("ckpt.tmp2", Durability::MACHINE);
+        again->write(0, after);
+        again->flush();
+        again->replace("ckpt");
+        settled.crash(InMemoryLogStorage::Crash::MACHINE, seed);
+        expect(settled.file("ckpt") && settled.file("ckpt")->bytes == after, "a replace that returned uninterrupted holds");
+    }
+}
+
 // A cut not yet flushed writes nothing, so a machine crash leaves the file at its old size or
 // its new one, never a mix; and a remove reaches the drive with the directory, at the next
 // rename, so until then a machine crash may bring the file back, as it was.
@@ -895,6 +956,7 @@ int main(int argc, char** argv) {
     testTheModelledCrashes();
     testAnInterruptedWrite();
     testCutsAndRemovesLandWhole();
+    testAReplace();
     testWatchingEachChange();
     std::cout << "log writer tests passed" << std::endl;
     return EXIT_SUCCESS;

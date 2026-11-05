@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <mutex>
 #include <optional>
@@ -62,11 +63,12 @@ public:
         return buffer.held;
     }
 
-    // Waits until the text holds this, or fails the test after a generous limit.
-    std::string waitFor(const std::string& wanted) {
+    // Waits until the text holds this, or fails the test after a generous limit, saying what
+    // `context` gives too, such as the run's diagnostics.
+    std::string waitFor(const std::string& wanted, const std::function<std::string()>& context = {}) {
         std::unique_lock<std::mutex> hold(buffer.guard);
         const bool found = buffer.changed.wait_for(hold, 30s, [&] { return buffer.held.find(wanted) != std::string::npos; });
-        expect(found, "waited too long for '" + wanted + "', with:\n" + buffer.held);
+        expect(found, "waited too long for '" + wanted + "', with:\n" + buffer.held + (context ? "\nand:\n" + context() : std::string()));
         return buffer.held;
     }
 
@@ -123,7 +125,7 @@ public:
     }
 
     std::uint16_t port() {
-        const std::string text = report.waitFor("\n");
+        const std::string text = report.waitFor("\n", [this] { return diagnostics.text(); });
         const std::size_t colon = text.rfind(':');
         expect(text.starts_with("listening 127.0.0.1:") && colon != std::string::npos, "the first line says where it listens:\n" + text);
         return static_cast<std::uint16_t>(std::stoul(text.substr(colon + 1)));
@@ -542,8 +544,10 @@ void testALoggedRun() {
     std::filesystem::remove(added);
 }
 
-// The lock, and the start's own refusals: another shard count or a moved symbol exits 4, and a
-// damaged log exits 5, each before anything listens, changing nothing.
+// The lock, and the start's own refusals: another shard count or a moved symbol exits 4 when the
+// last run did not leave every tail empty, and a damaged log exits 5, each before anything
+// listens, changing nothing. The run stops cleanly, then MSFT's checkpoint at its log's end is
+// removed, as a crash before the clean stop's last roll leaves it.
 void testRecoveryRefusals() {
     const std::filesystem::path list = writeList("recovery", "symbol,shard,orders,stops,levels\nAAPL,0,,,\nMSFT,1,,,\n");
     const std::filesystem::path logs = logDirectory("recovery");
@@ -563,17 +567,18 @@ void testRecoveryRefusals() {
         run.stop.request();
         expect(run.finish() == EngineExit::CLEAN_STOP, "and the first stops cleanly");
     }
+    expect(std::filesystem::remove(logs / "ckpt-MSFT-00000000000000000002.obckpt"), "MSFT's checkpoint at its log's end, removed");
     const std::vector<std::string> before = filesIn(logs);
-    const std::string placement = "and this build can't change placement while a log exists, so start on the old placement";
+    const std::string placement = "and the last run did not stop cleanly; restart on the old placement and stop cleanly first";
     runtime::EngineSettings three = settingsFor(list, 3);
     three.logDir = logs.string();
-    expect(exitsWith(three, "start refused: placement changed: the log was written by 2 shards and this start has 3, " + placement) ==
+    expect(exitsWith(three, "start refused: placement changed: the log was written by 2 shards and this start has 3 " + placement) ==
                EngineExit::PLACEMENT_CHANGED,
            "another shard count exits 4");
     const std::filesystem::path moved = writeList("recovery_moved", "symbol,shard,orders,stops,levels\nAAPL,0,,,\nMSFT,0,,,\n");
     runtime::EngineSettings movedSettings = settingsFor(moved, 2);
     movedSettings.logDir = logs.string();
-    expect(exitsWith(movedSettings, "start refused: placement changed: MSFT moved from shard 1 to shard 0, " + placement) ==
+    expect(exitsWith(movedSettings, "start refused: placement changed: MSFT moved from shard 1 to shard 0 " + placement) ==
                EngineExit::PLACEMENT_CHANGED,
            "a moved symbol exits 4");
     const std::filesystem::path off = writeList("recovery_off", "symbol,shard,orders,stops,levels\nAAPL,0,,,\n");
@@ -593,9 +598,8 @@ void testRecoveryRefusals() {
            "a damaged log exits 5");
     expect(filesIn(logs) == before, "changing nothing");
 
-    // From a matching thread's read of the log too: MSFT's second record names no command, under
-    // a checksum that chains, so it is the record and not a tear that is found, at its own
-    // position, though it lies before MSFT's checkpoint at the log's end and only its chain is read.
+    // From a matching thread's replay too: MSFT's second record names no command, under a
+    // checksum that chains, so it is the record and not a tear that is found, at its own position.
     std::ofstream(logs / "log-0000-00000000000000000000.oblog", std::ios::binary | std::ios::trunc) << aapl;
     std::string msft = bytesOf(logs / "log-0001-00000000000000000000.oblog");
     const std::size_t second = msft.size() - replay::logRecordBytes;
@@ -713,6 +717,68 @@ void testACleanStopThatLeavesABookUnpublished() {
     expect(std::filesystem::exists(logs / "ckpt-AAPL-00000000000000000005.obckpt"), "and its stop publishes AAPL at the end");
     std::filesystem::remove_all(logs);
     std::filesystem::remove(list);
+}
+
+// After a clean stop the placement may change: MSFT moves from shard 1 to shard 0, then the
+// engine goes to three shards, each start printing each book it rewraps and holding every order
+// the runs before it rested.
+void testAPlacementChange() {
+    const std::filesystem::path logs = logDirectory("placement");
+    const auto cancels = [](std::vector<std::pair<const char*, OrderId>> orders) {
+        Bytes stream = helloFrame();
+        std::uint64_t correlation = 100;
+        for (const auto& [symbol, id] : orders) {
+            Bytes frame(64);
+            frame.resize(encodeCommand(correlation++, *Symbol::parse(symbol), replay::CancelCommand{id}, frame));
+            stream.insert(stream.end(), frame.begin(), frame.end());
+        }
+        return stream;
+    };
+    const auto cancelled = [](const std::vector<BookEvent>& events) {
+        return std::count_if(events.begin(), events.end(), [](const BookEvent& event) { return std::holds_alternative<OrderCancelled>(event); });
+    };
+    struct Step {
+        std::string list;
+        std::uint32_t shards;
+        std::vector<std::string> rewraps;  // the lines its start prints, in order
+    };
+    const std::vector<Step> steps{
+        {"symbol,shard,orders,stops,levels\nAAPL,0,,,\nMSFT,1,,,\n", 2, {}},
+        {"symbol,shard,orders,stops,levels\nAAPL,0,,,\nMSFT,0,,,\n", 2, {"placement changed: MSFT from shard 1 of 2 at 3 to shard 0 of 2 at 2"}},
+        {"symbol,shard,orders,stops,levels\nAAPL,0,,,\nMSFT,2,,,\n", 3,
+         {"placement changed: AAPL from shard 0 of 2 at 3 to shard 0 of 3 at 3", "placement changed: MSFT from shard 0 of 2 at 3 to shard 2 of 3 at 0"}},
+    };
+    for (std::size_t step = 0; step < steps.size(); ++step) {
+        const std::filesystem::path list = writeList("placement_" + std::to_string(step), steps[step].list);
+        runtime::EngineSettings settings = settingsFor(list, steps[step].shards);
+        settings.logDir = logs.string();
+        settings.durability = runtime::Durability::PROCESS;
+        Run run(settings);
+        const std::uint16_t port = run.port();
+        if (step == 0) {
+            Bytes stream = helloFrame();
+            for (const Bytes& more : {commandsFor("MSFT", 3), commandsFor("AAPL", 2)}) {
+                stream.insert(stream.end(), more.begin(), more.end());
+            }
+            expect(talk(port, stream).size() == 5, "every command was answered");
+        } else if (step == 1) {
+            expect(cancelled(talk(port, cancels({{"MSFT", 3}}))) == 1, "MSFT's order 3 rests on its new shard");
+        } else {
+            expect(cancelled(talk(port, cancels({{"MSFT", 2}, {"AAPL", 1}}))) == 2, "MSFT's order 2 and AAPL's 1 rest under three shards");
+        }
+        run.stop.request();
+        expect(run.finish() == EngineExit::CLEAN_STOP, "step " + std::to_string(step) + " stops cleanly:\n" + run.diagnostics.text());
+        const std::string diagnostics = run.diagnostics.text();
+        std::size_t at = 0;
+        for (const std::string& line : steps[step].rewraps) {
+            at = diagnostics.find("order_book_engine: " + line + "\n", at);
+            expect(at != std::string::npos, "step " + std::to_string(step) + " prints '" + line + "':\n" + diagnostics);
+        }
+        expect(steps[step].rewraps.empty() == (diagnostics.find("placement changed") == std::string::npos),
+               "and only a change prints any:\n" + diagnostics);
+        std::filesystem::remove(list);
+    }
+    std::filesystem::remove_all(logs);
 }
 
 // What the log rebuilds differs from the live book: through the engine, exit 7, the symbol and
@@ -985,6 +1051,7 @@ int main() {
     testALoggedRunAcrossFiles();
     testACleanStopThatLeavesABookUnpublished();
     testACleanStopThatFindsADifference();
+    testAPlacementChange();
     testACheckpointDirectory();
     testLogRefusals();
     testRecoveryRefusals();

@@ -50,8 +50,9 @@ namespace order_book::runtime {
     // Publishes one checkpoint: writes <name>.tmp, reads it back and decodes it, which must give
     // the header and image written, flushes it, and renames it, which flushes the directory. A
     // storage failure, or a read-back that differs, throws LogStorageError, removing the .tmp and
-    // leaving every checkpoint already published in place.
-    void publishCheckpoint(LogStorage& storage, const CheckpointHeader& header, std::span<const std::byte> image);
+    // leaving every checkpoint already published in place. With replacing, the rename goes over a
+    // file of the name in one step, which only a placement change's rewrap does.
+    void publishCheckpoint(LogStorage& storage, const CheckpointHeader& header, std::span<const std::byte> image, bool replacing = false);
 
     // A new instrument's checkpoint (spec #58): an empty book at the shard's recovered log end,
     // published after the tail is cut and before the next file opens, so "never checkpointed" is
@@ -163,6 +164,9 @@ namespace order_book::runtime {
         // Saves a live image that differed; a failure is reported, and false.
         bool saveLive(std::uint32_t slot, std::uint32_t shardCount, std::uint64_t end, std::span<const std::byte> image);
         void countBehind();
+        // One try at finish's work: false if a pass was abandoned, so a book fell back and the
+        // work is to be made again.
+        bool finishOnce(std::uint64_t logEnd, const LiveImages& live);
         // Where a book stands: its newest checkpoint, or the first file that lists it.
         std::optional<std::uint64_t> standing(std::uint32_t slot) const;
         bool standsAt(std::uint32_t slot, const LogFileInfo& file) const;
@@ -185,6 +189,7 @@ namespace order_book::runtime {
         std::size_t behind = 0;
         RollCounts totals;
         std::vector<StoppedBook> atStop;     // by slot, from the last finish
+        bool rollAbandoned = false;          // the last roll gave a pass up, for a checkpoint that no longer reads
     };
 
     // What the clean stop's last roll needs of one shard: where its log ended, and the images its

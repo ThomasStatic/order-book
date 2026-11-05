@@ -40,6 +40,7 @@ EngineSeedConfig smallRun() {
     config.instruments = 4;
     config.commands = 2000;
     config.crashes = false;  // the crash tests ask for them
+    config.cleanStops = 0;   // and the clean stop tests for these
     return config;
 }
 
@@ -175,6 +176,78 @@ void testRollLinesChangeNoCommand() {
                    rest[i]->generated == alone[i].generated && rest[i]->fault == alone[i].fault,
                "and the same, in the same order");
     }
+}
+
+// CLEAN_STOP lines come from a source of their own too: as many as asked, each after a command
+// with a shard count from 1 to 4, and every other line is the same with or without them.
+void testCleanStopLinesChangeNoCommand() {
+    const std::vector<EngineCommand> alone = generateEngineStream(smallRun());
+    EngineSeedConfig stopping = smallRun();
+    stopping.cleanStops = 5;
+    const std::vector<EngineCommand> with = generateEngineStream(stopping);
+    std::vector<const EngineCommand*> rest;
+    std::size_t stops = 0;
+    std::size_t pinned = 0;
+    for (std::size_t i = 0; i < with.size(); ++i) {
+        if (with[i].action != EngineAction::CLEAN_STOP) {
+            rest.push_back(&with[i]);
+            continue;
+        }
+        ++stops;
+        expect(i > 0, "a clean stop only ever follows a line");
+        expect(with[i].shards >= 1 && with[i].shards <= 4, "on 1 to 4 shards, not " + std::to_string(with[i].shards));
+        pinned += with[i].pin ? 1 : 0;
+        expect(!with[i].pin || (*with[i].pin < with[i].shards && with[i].instrument < stopping.instruments), "a pin to one of its shards");
+    }
+    expect(stops == 5, "as many clean stops as asked, not " + std::to_string(stops));
+    expect(pinned > 0 && pinned < stops, "some pin an instrument, some don't: " + std::to_string(pinned));
+    expect(rest.size() == alone.size(), "every other line is still there");
+    for (std::size_t i = 0; i < alone.size(); ++i) {
+        expect(rest[i]->action == alone[i].action && rest[i]->instrument == alone[i].instrument &&
+                   rest[i]->generated == alone[i].generated && rest[i]->fault == alone[i].fault,
+               "and the same, in the same order");
+    }
+}
+
+// CLEAN_STOP lines prove a clean change works (spec #58's D6): runs with clean stops, crashes,
+// damage, and rolls all pass, and across seeds some clean stops change the shard count, so books
+// are rewrapped onto other shards and the runs go on from them.
+void testCleanStopsChangePlacement() {
+    std::size_t stops = 0;
+    std::size_t changes = 0;
+    std::size_t moves = 0;
+    std::size_t rewraps = 0;
+    for (std::uint64_t seed = 1; seed <= 6; ++seed) {
+        EngineSeedConfig config = smallRun();
+        config.seed = seed;
+        config.cleanStops = 3;
+        config.crashes = true;
+        const EngineRunResult result = runEngineSeed(config);
+        expect(result.passed(), "seed " + std::to_string(seed) + " with clean stops passes" +
+                                    (result.failure ? ": " + result.failure->reason : std::string()));
+        expect(result.stats.cleanStops == 3, "every CLEAN_STOP line stopped cleanly");
+        stops += result.stats.cleanStops;
+        changes += result.stats.placementChanges;
+        moves += result.stats.symbolMoves;
+        rewraps += result.stats.rewraps;
+    }
+    expect(stops == 18 && changes > 3 && moves > 0 && rewraps > changes,
+           "clean stops changed the count, moved a symbol under the same one, and rewrapped books: " + std::to_string(changes) +
+               " changes, " + std::to_string(moves) + " of them moves, " + std::to_string(rewraps) + " rewraps");
+}
+
+// What only the counters show, which no model sees and the witness meets only at the end, the
+// clean stop's comparison of live book against log catches first: the determinism check.
+void testAnInvisibleDriftFailsTheCleanStop() {
+    EngineSeedConfig config = smallRun();
+    config.cleanStops = 1;
+    config.restores = 0;  // which compare with the witness, and would catch it first
+    config.plantDivergenceBefore = 0;
+    config.cancelPlantedOrder = true;
+    const EngineRunResult result = runEngineSeed(config);
+    expect(!result.passed(), "a book that drifted from its log fails the run");
+    expect(result.failure->instrument == "I0" && result.failure->reason.find("the clean stop: clean stop incomplete: I0 differs at byte") == 0,
+           "at the clean stop, naming the book and the byte: " + result.failure->reason);
 }
 
 bool isCrash(const EngineCommand& line) {
@@ -374,6 +447,7 @@ int main() {
     testCrashLinesChangeNoCommand();
     testRestoreLinesChangeNoCommand();
     testRollLinesChangeNoCommand();
+    testCleanStopLinesChangeNoCommand();
     testConversion();
     testARunPassesAndExercisesEverything();
     testDamageMakesRecoveriesFallBack();
@@ -381,6 +455,8 @@ int main() {
     testADriftingBookIsCaught();
     testAnInvisibleDriftIsCaught();
     testACommandMissingFromTheLogIsCaught();
+    testAnInvisibleDriftFailsTheCleanStop();
+    testCleanStopsChangePlacement();
     testRunsSurviveTheirCrashes();
     testALostReleasedCommandIsCaught();
     std::cout << "engine harness tests passed" << std::endl;

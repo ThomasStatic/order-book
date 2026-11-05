@@ -317,6 +317,7 @@ private:
         void cut(std::uint64_t size) override { file->cut(size); }
         void close() override { file->close(); }
         void rename(const std::string& name) override { file->rename(name); }
+        void replace(const std::string& name) override { file->replace(name); }
 
     private:
         std::unique_ptr<LogFile> file;

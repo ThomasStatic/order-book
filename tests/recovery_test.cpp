@@ -6,11 +6,13 @@
 #include <exception>
 #include <functional>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -678,7 +680,8 @@ void testACrashAtEveryStepOfAStart() {
 }
 
 // The start's own checks, on the main thread: a symbol off the list, a changed shard count, and
-// a moved symbol; a new instrument is none of them.
+// a moved symbol, refused since every book's checkpoint stands at 0, short of its log's end; a
+// new instrument is none of them.
 void testWhatRefusesAStart() {
     InMemoryLogStorage storage;
     const InstrumentDirectory directory = twoShards();
@@ -689,13 +692,13 @@ void testWhatRefusesAStart() {
                 "log-0001-00000000000000000000.oblog names IBM, which is not on the instrument list", "a symbol off the list");
     expectError([&] { surveyLog(storage, InstrumentDirectory({on("AAPL", 0), on("MSFT", 0), on("IBM", 1)}, 3)); },
                 RecoveryError::Kind::PLACEMENT_CHANGED,
-                "the log was written by 2 shards and this start has 3, and this build can't change placement while a log exists, so start "
-                "on the old placement",
+                "the log was written by 2 shards and this start has 3 and the last run did not stop cleanly; restart on the old placement "
+                "and stop cleanly first",
                 "a changed shard count");
     expectError([&] { surveyLog(storage, InstrumentDirectory({on("AAPL", 0), on("MSFT", 1), on("IBM", 1)}, 2)); },
                 RecoveryError::Kind::PLACEMENT_CHANGED,
-                "MSFT moved from shard 0 to shard 1, and this build can't change placement while a log exists, so start on the old "
-                "placement",
+                "MSFT moved from shard 0 to shard 1 and the last run did not stop cleanly; restart on the old placement and stop cleanly "
+                "first",
                 "a moved symbol");
     const LogSurvey added = surveyLog(storage, InstrumentDirectory({on("AAPL", 0), on("MSFT", 0), on("IBM", 1), on("NVDA", 1)}, 2));
     expect(added.shards[1].size() == 1, "a new instrument moves nothing, so the start goes on");
@@ -948,8 +951,9 @@ void testWhatCheckpointsStop() {
         putFile(store.storage, name, encodeCheckpoint(moved, decoded.image));
         Shard shard(directory, 0);
         expectError([&] { recoverInto(store.storage, directory, shard); }, RecoveryError::Kind::PLACEMENT_CHANGED,
-                    "ckpt-AAPL-00000000000000000024.obckpt was written by shard 0 of 3, and this start places AAPL on shard 0 of 2, and "
-                    "this build can't change placement while a log exists, so start on the old placement",
+                    "ckpt-AAPL-00000000000000000024.obckpt was written by shard 0 of 3, and this start places AAPL on shard 0 of 2, though "
+                    "the logs' headers name this placement: a placement change was cut short, so start on the placement that checkpoint "
+                    "names to finish it",
                     "a checkpoint under another placement");
     }
 }
@@ -1046,6 +1050,306 @@ void testRetention() {
     }
 }
 
+// ---- Placement changes (D6b) ----------------------------------------------------------------
+
+// AAPL and MSFT on shard 0 with four commands, IBM on shard 1 with three, each stopped cleanly:
+// the log cut and closed, then the clean stop's last roll publishing every book at its log's end.
+struct StoppedCleanly {
+    InMemoryLogStorage storage;
+    std::vector<Placed> zero = commandsFor(2, 4);
+    std::vector<Placed> one = commandsFor(1, 3);
+};
+
+std::vector<std::byte> imageBytes(const OrderBook& book) {
+    std::vector<std::byte> image(book.imageSize());
+    static_cast<void>(book.writeImage(image));
+    return image;
+}
+
+void stopCleanly(StoppedCleanly& store, const InstrumentDirectory& directory) {
+    writeLog(store.storage, directory, 0, store.zero, true);
+    writeLog(store.storage, directory, 1, store.one, true);
+    for (const auto& [shard, commands, slots] : {std::tuple{0U, &store.zero, std::size_t{2}}, std::tuple{1U, &store.one, std::size_t{1}}}) {
+        std::vector<std::vector<std::byte>> images;
+        for (const OrderBook& book : witnessOf(slots, *commands)) {
+            images.push_back(imageBytes(book));
+        }
+        ShardRoller roller(store.storage, directory, shard, [](const std::string&) {});
+        roller.finish(commands->size(), images);
+        for (std::uint32_t slot = 0; slot < slots; ++slot) {
+            expect(roller.stopped(slot).outcome == StopOutcome::PUBLISHED, "the clean stop publishes every book at its log's end");
+        }
+    }
+}
+
+// Each instrument's image, by symbol, as the clean stop left it: what any later start must hold.
+std::map<std::string, std::vector<std::byte>> imagesBySymbol(const StoppedCleanly& store) {
+    const std::vector<OrderBook> zero = witnessOf(2, store.zero);
+    const std::vector<OrderBook> one = witnessOf(1, store.one);
+    return {{"AAPL", imageBytes(zero[0])}, {"MSFT", imageBytes(zero[1])}, {"IBM", imageBytes(one[0])}};
+}
+
+// A start as the engine makes it: the survey, the change if any, the survey again, then every
+// shard recovered, whose books must be the clean stop's.
+std::vector<RecoveredShard> startOn(InMemoryLogStorage& storage, const InstrumentDirectory& directory,
+                                    const std::map<std::string, std::vector<std::byte>>& expected, const std::string& what) {
+    LogSurvey survey = surveyLog(storage, directory);
+    for (const std::string& temporary : survey.checkpointTemporaries) {
+        storage.remove(temporary);
+    }
+    if (survey.placement) {
+        changePlacement(storage, *survey.placement);
+        survey = surveyLog(storage, directory);
+        expect(survey.placement && survey.placement->rewraps.empty() && survey.placement->dropped.empty(),
+               what + ": the survey again finds the change made");
+    }
+    std::vector<RecoveredShard> recovered;
+    for (std::uint32_t shard = 0; shard < directory.shardCount(); ++shard) {
+        Shard books(directory, shard);
+        recovered.push_back(recoverShard(storage, storage, directory, survey.shards[shard], survey.checkpoints[shard], books,
+                                         defaultBookCapacity, running));
+        for (std::uint32_t slot = 0; slot < books.size(); ++slot) {
+            const std::string symbol = books.books().symbol(slot).text();
+            expect(imageBytes(books.books().book(slot)) == expected.at(symbol), what + ": " + symbol + " is the clean stop's book");
+        }
+        expect(!books.checkInvariants(), what + ": shard " + std::to_string(shard) + " is sound");
+    }
+    return recovered;
+}
+
+CheckpointHeader headerOf(InMemoryLogStorage& storage, const std::string& name) {
+    const std::vector<std::byte> bytes = bytesOf(storage, name);
+    return std::get<DecodedCheckpoint>(decodeCheckpoint(bytes)).header;
+}
+
+std::vector<std::string> checkpointsOf(const InMemoryLogStorage& storage) {
+    std::vector<std::string> names = storage.names();
+    std::erase_if(names, [](const std::string& name) { return !name.starts_with("ckpt-"); });
+    return names;
+}
+
+// After a clean stop every book stands at its log's end, where the next run's first file begins,
+// so retention keeps the file before it: a crash that loses that first file's records, all of
+// them or with a torn first record, as a machine crash at process durability can, must still find
+// the log reaching the books, from the file that holds its last record.
+void testRetentionKeepsTheLastRecord() {
+    const InstrumentDirectory directory = twoShards();
+    for (const bool torn : {true, false}) {
+        StoppedCleanly store;
+        stopCleanly(store, directory);
+        // The next run's first file, at 4, and the one made ahead, retention at every book's 4.
+        writeLog(store.storage, directory, 0, commandsFor(2, 3), false, defaultLogFileBytes, Durability::PROCESS, 4);
+        Housekeeping trimming(store.storage, directory, Durability::PROCESS, defaultLogFileBytes);
+        trimming.retain(0, 4);
+        static_cast<void>(trimming.pass());
+        expect(store.storage.file(logFileName(0, 0)).has_value() && trimming.filesDeleted() == 0,
+               "the file before the writer's stays, holding the log's last record");
+        const std::uint64_t header = headerBytesOf(directory, 0);
+        const std::unique_ptr<LogFile> file = store.storage.open(logFileName(0, 4));
+        file->write(header, std::vector<std::byte>(3 * replay::logRecordBytes, std::byte{0}));
+        if (torn) {
+            file->write(header, std::vector<std::byte>(7, std::byte{0x3c}));  // a first record torn as it was written
+        }
+        file->close();
+        Shard shard(directory, 0);
+        const RecoveredShard recovered = recoverInto(store.storage, directory, shard);
+        expect(recovered.replayed == 4 && recovered.start == 4, "the log reaches the books, 4: " + std::to_string(recovered.replayed));
+        const std::map<std::string, std::vector<std::byte>> expected = imagesBySymbol(store);
+        expect(imageBytes(shard.books().book(0)) == expected.at("AAPL") && imageBytes(shard.books().book(1)) == expected.at("MSFT"),
+               "and the books are the clean stop's");
+    }
+}
+
+// The named case "placement change refused at start": one case per refusal, each exit 4 with
+// #34's message.
+void testAPlacementChangeRefused() {
+    const InstrumentDirectory directory = twoShards();
+    const InstrumentDirectory moved({on("AAPL", 0), on("MSFT", 1), on("IBM", 1)}, 2);
+    const std::string refused = "MSFT moved from shard 0 to shard 1 and the last run did not stop cleanly; restart on the old placement "
+                                "and stop cleanly first";
+    {
+        // A book whose checkpoint stands short of its log's end: a crash, or a stop that exited 7.
+        StoppedCleanly store;
+        writeLog(store.storage, directory, 0, store.zero, true);
+        writeLog(store.storage, directory, 1, store.one, true);
+        expectError([&] { surveyLog(store.storage, moved); }, RecoveryError::Kind::PLACEMENT_CHANGED, refused, "a tail not empty");
+    }
+    {
+        // A crash after a clean stop that left records past the checkpoints.
+        StoppedCleanly store;
+        stopCleanly(store, directory);
+        writeLog(store.storage, directory, 1, commandsFor(1, 2), false, defaultLogFileBytes, Durability::MACHINE, 3);
+        expectError([&] { surveyLog(store.storage, moved); }, RecoveryError::Kind::PLACEMENT_CHANGED, refused, "records past a checkpoint");
+    }
+    {
+        // A torn tail on a shard whose books stand at its last record.
+        StoppedCleanly store;
+        stopCleanly(store, directory);
+        const std::string last = logFileName(0, 0);
+        const std::uint64_t at = bytesOf(store.storage, last).size();
+        const std::unique_ptr<LogFile> file = store.storage.open(last);
+        file->write(at, std::vector<std::byte>(replay::logRecordBytes / 2, std::byte{0x5a}));
+        file->close();
+        expectError([&] { surveyLog(store.storage, moved); }, RecoveryError::Kind::PLACEMENT_CHANGED, refused, "a torn tail");
+    }
+    {
+        // A newest checkpoint that no longer decodes says nothing of where its tail ends.
+        StoppedCleanly store;
+        stopCleanly(store, directory);
+        damage(store.storage, checkpointFileName(*Symbol::parse("IBM"), 3));
+        expectError([&] { surveyLog(store.storage, moved); }, RecoveryError::Kind::PLACEMENT_CHANGED, refused, "a damaged checkpoint");
+    }
+    {
+        // A changed shard count names the counts.
+        StoppedCleanly store;
+        writeLog(store.storage, directory, 0, store.zero, true);
+        writeLog(store.storage, directory, 1, store.one, true);
+        expectError([&] { surveyLog(store.storage, InstrumentDirectory({on("AAPL", 0), on("MSFT", 0), on("IBM", 1)}, 3)); },
+                    RecoveryError::Kind::PLACEMENT_CHANGED,
+                    "the log was written by 2 shards and this start has 3 and the last run did not stop cleanly; restart on the old "
+                    "placement and stop cleanly first",
+                    "a changed count, the tail not empty");
+    }
+}
+
+// After a clean stop a change goes through: each moved book rewrapped at its new shard's log end,
+// every older checkpoint dropped, and every shard recovering the clean stop's books.
+void testAPlacementChangeAfterACleanStop() {
+    const InstrumentDirectory directory = twoShards();
+    {
+        // MSFT moves from shard 0, whose log ends at 4, to shard 1, whose ends at 3.
+        StoppedCleanly store;
+        stopCleanly(store, directory);
+        const InstrumentDirectory moved({on("AAPL", 0), on("MSFT", 1), on("IBM", 1)}, 2);
+        const LogSurvey survey = surveyLog(store.storage, moved);
+        expect(survey.placement && survey.placement->what == "MSFT moved from shard 0 to shard 1", "the survey names the move");
+        const std::vector<Rewrap>& rewraps = survey.placement->rewraps;
+        expect(rewraps.size() == 1 && rewraps[0].symbol == *Symbol::parse("MSFT") && rewraps[0].from == 4 && rewraps[0].fromShard == 0 &&
+                   rewraps[0].fromShards == 2 && rewraps[0].toShard == 1 && rewraps[0].toShards == 2 && rewraps[0].to == 3,
+               "MSFT is rewrapped from 4 on shard 0 to 3 on shard 1");
+        expect(survey.placement->dropped == std::vector<std::string>{"ckpt-AAPL-00000000000000000000.obckpt", "ckpt-MSFT-00000000000000000000.obckpt"},
+               "MSFT's checkpoint at 0 is dropped, and AAPL's, on the shard MSFT left, whose log after it holds MSFT's records");
+        const std::vector<RecoveredShard> recovered = startOn(store.storage, moved, imagesBySymbol(store), "a moved symbol");
+        expect(recovered[0].start == 4 && recovered[0].replayed == 4 && recovered[1].start == 3 && recovered[1].replayed == 3,
+               "each shard starts at its own log's end and replays nothing");
+        expect(checkpointsOf(store.storage) == std::vector<std::string>{"ckpt-AAPL-00000000000000000004.obckpt",
+                                                                         "ckpt-IBM-00000000000000000000.obckpt",
+                                                                         "ckpt-IBM-00000000000000000003.obckpt",
+                                                                         "ckpt-MSFT-00000000000000000003.obckpt"},
+               "IBM keeps its older checkpoint, on a shard that only gained a book");
+        const CheckpointHeader header = headerOf(store.storage, "ckpt-MSFT-00000000000000000003.obckpt");
+        expect(header.shardIndex == 1 && header.shardCount == 2 && header.position == 3, "MSFT's under shard 1 at 3");
+        // The new run's first files carry the new placement, and then nothing has changed.
+        writeLog(store.storage, moved, 0, {}, true, defaultLogFileBytes, Durability::MACHINE, 4);
+        writeLog(store.storage, moved, 1, {}, true, defaultLogFileBytes, Durability::MACHINE, 3);
+        expect(!surveyLog(store.storage, moved).placement, "the next start finds no change");
+        // And IBM can still fall back to its older one: shard 1's log from 0 holds IBM's records alone.
+        damage(store.storage, "ckpt-IBM-00000000000000000003.obckpt");
+        const std::vector<RecoveredShard> fallen = startOn(store.storage, moved, imagesBySymbol(store), "IBM's fall-back after the move");
+        expect(fallen[1].start == 0 && fallen[1].fellBack == 1, "IBM restores from 0 and replays shard 1's log");
+    }
+    {
+        // IBM leaves shard 1 for shard 0, so shard 1 holds no book: it reads its log past IBM's
+        // records and starts at its end, then and at every later start.
+        StoppedCleanly store;
+        stopCleanly(store, directory);
+        const InstrumentDirectory gathered({on("AAPL", 0), on("MSFT", 0), on("IBM", 0)}, 2);
+        const std::vector<RecoveredShard> recovered = startOn(store.storage, gathered, imagesBySymbol(store), "a shard left with no book");
+        expect(recovered[1].start == 3 && recovered[1].replayed == 3 && recovered[0].start == 4,
+               "shard 1, with no book, starts at its log's end, 3");
+        writeLog(store.storage, gathered, 0, {}, true, defaultLogFileBytes, Durability::MACHINE, 4);
+        writeLog(store.storage, gathered, 1, {}, true, defaultLogFileBytes, Durability::MACHINE, 3);
+        expect(!surveyLog(store.storage, gathered).placement, "the next start finds no change");
+        const std::vector<RecoveredShard> again = startOn(store.storage, gathered, imagesBySymbol(store), "the next start");
+        expect(again[1].start == 3 && again[1].replayed == 3, "and shard 1 starts at its end again");
+    }
+    {
+        // Three shards: AAPL stays on shard 0 at its own log's end, so its rewrap replaces a file of
+        // the same name; MSFT goes to shard 1, at 3; IBM to shard 2, which has no log, at 0.
+        StoppedCleanly store;
+        stopCleanly(store, directory);
+        const InstrumentDirectory three({on("AAPL", 0), on("MSFT", 1), on("IBM", 2)}, 3);
+        const LogSurvey survey = surveyLog(store.storage, three);
+        expect(survey.placement && survey.placement->what == "the log was written by 2 shards and this start has 3" &&
+                   survey.placement->rewraps.size() == 3,
+               "every book is rewrapped under the new count");
+        startOn(store.storage, three, imagesBySymbol(store), "three shards");
+        const std::vector<std::tuple<std::string, std::uint32_t, std::uint64_t>> placed{
+            {"ckpt-AAPL-00000000000000000004.obckpt", 0, 4}, {"ckpt-IBM-00000000000000000000.obckpt", 2, 0}, {"ckpt-MSFT-00000000000000000003.obckpt", 1, 3}};
+        expect(checkpointsOf(store.storage).size() == 3, "one checkpoint a book");
+        for (const auto& [name, shard, position] : placed) {
+            const CheckpointHeader header = headerOf(store.storage, name);
+            expect(header.shardCount == 3 && header.shardIndex == shard && header.position == position, name + " under its new shard of 3");
+        }
+    }
+    {
+        // One shard: IBM leaves shard 1, whose log no shard writes any more and none recovers.
+        StoppedCleanly store;
+        stopCleanly(store, directory);
+        const InstrumentDirectory one({on("AAPL", 0), on("MSFT", 0), on("IBM", 0)}, 1);
+        const std::vector<RecoveredShard> recovered = startOn(store.storage, one, imagesBySymbol(store), "one shard");
+        expect(recovered.size() == 1 && recovered[0].start == 4, "one shard, from its log's end");
+        expect(store.storage.file(logFileName(1, 0)).has_value(), "shard 1's log stays, unread");
+        expect(headerOf(store.storage, "ckpt-IBM-00000000000000000004.obckpt").shardIndex == 0, "IBM rewrapped at shard 0's end");
+        writeLog(store.storage, one, 0, {}, true, defaultLogFileBytes, Durability::MACHINE, 4);
+        const LogSurvey next = surveyLog(store.storage, one);
+        expect(!next.placement && next.shards.size() == 1, "and the next start finds no change, the old log set aside");
+    }
+}
+
+// A crash at every step of a start that changes placement, as an engine and a machine with three
+// seeds: the change itself, then each shard's recovery and its log writer's first file under the
+// new placement, so some shards' newest headers are new and others' old. The next start finds
+// the same change with less to do, or none, and recovers the clean stop's books.
+void testACrashAtEveryStepOfAPlacementChange() {
+    const InstrumentDirectory directory = twoShards();
+    StoppedCleanly store;
+    stopCleanly(store, directory);
+    const std::map<std::string, std::vector<std::byte>> expected = imagesBySymbol(store);
+    const InstrumentDirectory three({on("AAPL", 0), on("MSFT", 1), on("IBM", 2)}, 3);
+    std::vector<InMemoryLogStorage::Contents> steps{store.storage.contents()};
+    store.storage.watch([&steps](const InMemoryLogStorage::Contents& drive) { steps.push_back(drive); });
+    std::size_t changed = 0;  // the step that ends the change itself
+    {
+        changePlacement(store.storage, *surveyLog(store.storage, three).placement);
+        changed = steps.size() - 1;
+        const LogSurvey survey = surveyLog(store.storage, three);
+        Housekeeping housekeeping(store.storage, three, Durability::MACHINE, defaultLogFileBytes);
+        for (std::uint32_t shard = 0; shard < three.shardCount(); ++shard) {
+            Shard books(three, shard);
+            const RecoveredShard recovered =
+                recoverShard(store.storage, store.storage, three, survey.shards[shard], survey.checkpoints[shard], books, defaultBookCapacity, running);
+            static_cast<void>(housekeeping.first(shard, recovered.replayed));
+        }
+    }
+    store.storage.watch(nullptr);
+    expect(steps.size() > 15, "a start that changes placement is many steps: " + std::to_string(steps.size()));
+    for (std::size_t at = 0; at < steps.size(); ++at) {
+        for (const auto& [kind, seed] : {std::pair{InMemoryLogStorage::Crash::ENGINE, 0ULL}, std::pair{InMemoryLogStorage::Crash::MACHINE, 1ULL},
+                                         std::pair{InMemoryLogStorage::Crash::MACHINE, 2ULL}, std::pair{InMemoryLogStorage::Crash::MACHINE, 3ULL}}) {
+            InMemoryLogStorage crashed(steps[at]);
+            crashed.crash(kind, seed);
+            startOn(crashed, three, expected, "a crash at step " + std::to_string(at) + " of the change");
+        }
+    }
+
+    // Cut short once every book is rewrapped, and before any new log file: the logs' headers still
+    // name the old placement, so a start on it finds no change, and is refused at the first
+    // rewrapped checkpoint, sent on to the new one, which finishes the change.
+    InMemoryLogStorage cutShort(steps[changed]);
+    cutShort.crash(InMemoryLogStorage::Crash::ENGINE, 0);
+    const LogSurvey old = surveyLog(cutShort, directory);
+    expect(!old.placement, "the old placement's start sees no change");
+    Shard zero(directory, 0);
+    expectError([&] { recoverShard(cutShort, cutShort, directory, old.shards[0], old.checkpoints[0], zero, defaultBookCapacity, running); },
+                RecoveryError::Kind::PLACEMENT_CHANGED,
+                "ckpt-AAPL-00000000000000000004.obckpt was written by shard 0 of 3, and this start places AAPL on shard 0 of 2, though the "
+                "logs' headers name this placement: a placement change was cut short, so start on the placement that checkpoint names to "
+                "finish it",
+                "a start on the old placement after a change cut short");
+    startOn(cutShort, three, expected, "the start on the new placement, after one on the old");
+}
+
 int main() {
     // A recovery that throws where none should is a failure to report, not a crash.
     try {
@@ -1067,6 +1371,10 @@ int main() {
         testWhatCheckpointsStop();
         testANewInstrument();
         testRetention();
+        testRetentionKeepsTheLastRecord();
+        testAPlacementChangeRefused();
+        testAPlacementChangeAfterACleanStop();
+        testACrashAtEveryStepOfAPlacementChange();
     } catch (const std::exception& error) {
         std::cerr << "FAILED: an unexpected exception: " << error.what() << std::endl;
         return EXIT_FAILURE;

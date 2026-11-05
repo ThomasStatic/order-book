@@ -70,6 +70,10 @@ namespace order_book::engine_testing {
         // Every log file kept, so the end can replay each shard's whole log; otherwise each ROLL
         // lets housekeeping delete what no book's kept checkpoint needs.
         bool keepLog = false;
+        // How many CLEAN_STOP lines, each after a command picked from a source of their own, with
+        // a shard count from 1 to 4, and half of them a pin of one instrument to one of those
+        // shards, from the same source, so the other lines are the same whatever this is.
+        std::size_t cleanStops = 2;
     };
 
     enum class SymbolFault { NONE, UNKNOWN, MALFORMED };
@@ -81,10 +85,13 @@ namespace order_book::engine_testing {
     // restored, and the run goes on with the restored book (test-only: a running engine never
     // does this). ROLL: every shard's roll forward rolls the files its log writer has closed.
     // DAMAGE <symbol>: a byte of that book's newest checkpoint flipped, so a start falls back.
-    enum class EngineAction { COMMAND, LOG, CRASH_ENGINE, CRASH_MACHINE, RESTORE, ROLL, DAMAGE };
+    // CLEAN_STOP <shards> [<symbol> <shard>]: the whole clean stop, the byte comparison included,
+    // then a start on that many shards, the symbol pinned to that shard if one is given, which may
+    // change the placement.
+    enum class EngineAction { COMMAND, LOG, CRASH_ENGINE, CRASH_MACHINE, RESTORE, ROLL, DAMAGE, CLEAN_STOP };
 
-    // One line of a stream. An action's other fields mean nothing, but a machine crash's seed and
-    // a restore's instrument.
+    // One line of a stream. An action's other fields mean nothing, but a machine crash's seed, a
+    // restore's instrument, and a clean stop's shard count.
     struct EngineCommand {
         std::size_t instrument;
         randomized::Command generated;  // as the generator made it
@@ -92,6 +99,9 @@ namespace order_book::engine_testing {
         SymbolFault fault = SymbolFault::NONE;
         EngineAction action = EngineAction::COMMAND;
         std::uint64_t crashSeed = 0;
+        std::uint32_t shards = 0;
+        // CLEAN_STOP: the shard `instrument` is pinned to under the new placement, if any.
+        std::optional<std::uint32_t> pin;
     };
 
     // What the seed produces, generated ahead of the run on the models alone, so nothing in the
@@ -133,6 +143,10 @@ namespace order_book::engine_testing {
         std::size_t damages = 0;           // DAMAGE lines that flipped a byte
         std::size_t fellBack = 0;          // books a recovery restored from an older checkpoint
         std::uint64_t logFilesDeleted = 0; // what retention deleted
+        std::size_t cleanStops = 0;        // CLEAN_STOP lines run
+        std::size_t placementChanges = 0;  // of them, those that changed the shard count or moved a symbol
+        std::size_t symbolMoves = 0;       // of those, a pin moving a symbol under the same count
+        std::size_t rewraps = 0;           // books their starts rewrapped
     };
 
     struct EngineRunResult {
@@ -170,6 +184,15 @@ namespace order_book::engine_testing {
     // machine durability, and at process for an engine crash, each shard must keep every
     // command it had released. Every file is far below 1 MiB, so recovery cuts every hole a
     // crash leaves, and any stop fails the run.
+    //
+    // A CLEAN_STOP line runs the engine's clean stop: each log writer finished, the unused next
+    // files removed, each shard's live books captured and the last roll made, which must publish
+    // every book at its log's end. Then a start on the line's shard count, as the engine's does:
+    // the survey, the placement change and the survey again if there is one, every rewrapped
+    // checkpoint landing on its new shard, then recovery, which must lose nothing and replay
+    // nothing, and every book equal to its witness. After a change of placement an instrument's
+    // commands span two shards' logs, so the end checks each book's checkpoint and the log after
+    // it, not each whole log.
     EngineRunResult runEngineSeed(const EngineSeedConfig& config);
 
     struct ShardLogRecords {
@@ -179,8 +202,11 @@ namespace order_book::engine_testing {
     };
 
     // Every record of one shard's files in the storage, read back through CommandLogReader, never
-    // the encoder, file by file in the order their names give. Throws std::runtime_error if a file
-    // wasn't closed whole, doesn't read back, or doesn't start where the last one ended.
+    // the encoder, file by file in the order their names give. A file starting past where the last
+    // ended starts the log again: retention deleted the files between, and a machine crash brought
+    // back an older one whose removal had not reached the drive, which no recovery reads. Throws
+    // std::runtime_error if a file wasn't closed whole, doesn't read back, or starts before where
+    // the last one ended.
     ShardLogRecords readShardLog(const runtime::InMemoryLogStorage& storage, std::uint32_t shard);
 
 }  // namespace order_book::engine_testing
