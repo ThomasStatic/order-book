@@ -15,11 +15,14 @@ run record:
   gateway-threads=x
   active-connections=x
   idle-connections=x
+  socket-set=x
   spin-window=x
+  matching-cpu-share=x
   core-map=x
   pinned=x
   priority=x
   durability=x
+  log-files=x
   logs-share-drive=x
   book-capacity=x
   capacity-growths=MISSING

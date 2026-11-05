@@ -1,13 +1,16 @@
 #include "benchmark_log.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <future>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace order_book::benchmark {
 
@@ -56,19 +59,80 @@ RunDurability parseDurability(std::string_view name) {
     throw std::invalid_argument("unknown durability '" + std::string(name) + "' (known: none, process, machine)");
 }
 
+const char* logFileFillName(LogFileFill fill) {
+    return fill == LogFileFill::ZERO_FILLED ? "zero-filled" : "extended";
+}
+
+LogFileFill parseLogFileFill(std::string_view name) {
+    if (name == "extended") {
+        return LogFileFill::EXTENDED;
+    }
+    if (name == "zero-filled") {
+        return LogFileFill::ZERO_FILLED;
+    }
+    throw std::invalid_argument("unknown log files '" + std::string(name) + "' (known: extended, zero-filled)");
+}
+
+namespace {
+
+// A file whose extend writes the zeros, a mebibyte at a time, and flushes them.
+class ZeroFillingFile final : public runtime::LogFile {
+public:
+    explicit ZeroFillingFile(std::unique_ptr<runtime::LogFile> file) : inner(std::move(file)) {}
+
+    std::size_t read(std::uint64_t offset, std::span<std::byte> out) override { return inner->read(offset, out); }
+    std::uint64_t size() override { return inner->size(); }
+    void write(std::uint64_t offset, std::span<const std::byte> bytes) override { inner->write(offset, bytes); }
+    void flush() override { inner->flush(); }
+    void extend(std::uint64_t size) override {
+        const std::vector<std::byte> zeros(std::size_t{1} << 20, std::byte{0});
+        for (std::uint64_t at = inner->size(); at < size;) {
+            const std::uint64_t length = std::min<std::uint64_t>(zeros.size(), size - at);
+            inner->write(at, std::span<const std::byte>(zeros.data(), static_cast<std::size_t>(length)));
+            at += length;
+        }
+        inner->flush();
+    }
+    void cut(std::uint64_t size) override { inner->cut(size); }
+    void close() override { inner->close(); }
+    void rename(const std::string& name) override { inner->rename(name); }
+    void replace(const std::string& name) override { inner->replace(name); }
+
+private:
+    std::unique_ptr<runtime::LogFile> inner;
+};
+
+}  // namespace
+
+std::unique_ptr<runtime::LogFile> ZeroFillingLogStorage::open(const std::string& name) {
+    return std::make_unique<ZeroFillingFile>(inner->open(name));
+}
+
+std::unique_ptr<runtime::LogFile> ZeroFillingLogStorage::create(const std::string& name, runtime::Durability durability) {
+    return std::make_unique<ZeroFillingFile>(inner->create(name, durability));
+}
+
+std::unique_ptr<runtime::LogStorage> runLogStorage(const std::filesystem::path& directory, LogFileFill fill) {
+    auto files = std::make_unique<runtime::FileLogStorage>(directory);
+    if (fill == LogFileFill::EXTENDED) {
+        return files;
+    }
+    return std::make_unique<ZeroFillingLogStorage>(std::move(files));
+}
+
 std::filesystem::path defaultLogParent() {
     return std::filesystem::temp_directory_path();
 }
 
 RunLog::RunLog(const std::filesystem::path& parent, RunDurability durability, const runtime::InstrumentDirectory& directory,
-               LogRing& ring, std::uint64_t firstPosition, std::function<void()> setUpWriter)
+               LogRing& ring, std::uint64_t firstPosition, std::function<void()> setUpWriter, LogFileFill fill)
     : log(ring) {
     if (durability == RunDurability::NONE) {
         throw std::invalid_argument("a run with no log has no log writer");
     }
     where = freshLogDirectory(parent);
     try {
-        storage = std::make_unique<runtime::FileLogStorage>(where);
+        storage = runLogStorage(where, fill);
         housekeeping = std::make_unique<runtime::Housekeeping>(
             *storage, directory, durability == RunDurability::MACHINE ? runtime::Durability::MACHINE : runtime::Durability::PROCESS,
             runtime::defaultLogFileBytes);

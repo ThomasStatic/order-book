@@ -1,0 +1,44 @@
+== idle-echo, service time, small-book, closed-loop ==
+quotable: yes
+runs: 9, merged samples: 450000
+run record:
+  interval=idle-echo
+  time=service
+  load=closed-loop
+  target-rate=none
+  achieved-rate=not reported: a per-command timed run never reports throughput
+  workload=small-book
+  workload-fingerprint=9590172348927645550
+  generator-version=3
+  seed=42
+  shards=none, no engine
+  gateway-threads=none, one raw echo thread
+  active-connections=1
+  idle-connections=1024
+  socket-set=poll
+  spin-window=100us, the echo thread's
+  matching-cpu-share=none, no matching thread
+  core-map=sender 6, echo thread 10
+  pinned=yes
+  priority=high
+  durability=none, no log
+  log-files=none, no log
+  logs-share-drive=none, no log
+  book-capacity=none, no book runs
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.1
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=50000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 1744.9, over 10 us 393.1, over 100 us 1.5; max 426510 ns; lost 1.42%
+noise floor after: 10.0 s; gaps/s over 1 us 1777.5, over 10 us 418.0, over 100 us 2.2; max 469330 ns; lost 1.52%
+stat     merged ns      beyond  run median     run min     run max
+p50         562938      225000      562938      558737      571340
+p90         592345       45000      592345      575541      625953
+p99         819201        4500           -           -           -
+p99.9 not printed: 450 beyond, 1000 needed
+max        5123815           -     1752482      992301     5123815
+

@@ -1,0 +1,88 @@
+== durable-wait, response time, small-book, fixed at 10000/s ==
+quotable: no (1 runs, at least 9 needed)
+runs: 1, merged samples: 600000
+run record:
+  interval=durable-wait
+  time=response
+  load=fixed
+  target-rate=10000/s, as --rate gave
+  achieved-rate=10000/s
+  workload=small-book
+  workload-fingerprint=11291830874624789547
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=none, one producer thread in process
+  active-connections=none, one producer thread in process
+  idle-connections=none, one producer thread in process
+  socket-set=none, no sockets
+  spin-window=100us, the log writer's
+  matching-cpu-share=none, no matching thread
+  core-map=sender 6, log writer 8
+  pinned=yes
+  priority=high
+  durability=machine
+  log-files=zero-filled
+  logs-share-drive=none, no checkpoints: no roll-forward worker runs
+  book-capacity=none, no book runs
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.1
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=600000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 596.6, over 10 us 6.3, over 100 us 0.1; max 294933 ns; lost 0.10%
+noise floor after: 10.0 s; gaps/s over 1 us 608.1, over 10 us 7.3, over 100 us 0.1; max 316463 ns; lost 0.11%
+stat     merged ns      beyond  run median     run min     run max
+p50          43586      300000       43586       43586       43586
+p90          45949       60000       45949       45949       45949
+p99          71943        6000       71943       71943       71943
+p99.9 not printed: 600 beyond, 1000 needed
+max        1896266           -     1896266     1896266     1896266
+
+== driver lateness, small-book, fixed at 10000/s ==
+quotable: no (1 runs, at least 9 needed)
+runs: 1, merged samples: 600000
+run record:
+  interval=durable-wait
+  time=driver lateness
+  load=fixed
+  target-rate=10000/s
+  achieved-rate=10000/s
+  workload=small-book
+  workload-fingerprint=11291830874624789547
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=none, one producer thread in process
+  active-connections=none, one producer thread in process
+  idle-connections=none, one producer thread in process
+  socket-set=none, no sockets
+  spin-window=100us, the log writer's
+  matching-cpu-share=none, no matching thread
+  core-map=sender 6, log writer 8
+  pinned=yes
+  priority=high
+  durability=machine
+  log-files=zero-filled
+  logs-share-drive=none, no checkpoints: no roll-forward worker runs
+  book-capacity=none, no book runs
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.1
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=600000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 596.6, over 10 us 6.3, over 100 us 0.1; max 294933 ns; lost 0.10%
+noise floor after: 10.0 s; gaps/s over 1 us 608.1, over 10 us 7.3, over 100 us 0.1; max 316463 ns; lost 0.11%
+stat     merged ns      beyond  run median     run min     run max
+p50             11      300000          11          11          11  unresolved
+p90             19       60000          19          19          19  unresolved  noise
+p99             29        6000          29          29          29  unresolved  noise
+p99.9 not printed: 600 beyond, 1000 needed
+max        1796586           -     1796586     1796586     1796586
+

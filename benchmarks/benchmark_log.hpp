@@ -7,7 +7,9 @@
 #include <functional>
 #include <future>
 #include <memory>
+#include <string>
 #include <string_view>
+#include <vector>
 #include <thread>
 
 #include "order_book/runtime/doorbell.hpp"
@@ -31,6 +33,35 @@ enum class RunDurability { NONE, PROCESS, MACHINE };
 const char* durabilityName(RunDurability durability);
 // Throws std::invalid_argument on a name other than none, process, or machine.
 RunDurability parseDurability(std::string_view name);
+
+// How a run's log files are made: EXTENDED, as the engine makes them, past their written part
+// without writing it, or ZERO_FILLED, every byte written once as zeros and flushed before any
+// record, so no record write lands past the file's valid data. A measurement compares the two.
+enum class LogFileFill { EXTENDED, ZERO_FILLED };
+
+const char* logFileFillName(LogFileFill fill);
+// Throws std::invalid_argument on a name other than extended or zero-filled.
+LogFileFill parseLogFileFill(std::string_view name);
+
+// Storage over another whose files, when extended, are zero-filled instead: the bytes from the
+// file's size to the new one written as zeros, then flushed. Everything else passes through.
+class ZeroFillingLogStorage final : public runtime::LogStorage {
+public:
+    explicit ZeroFillingLogStorage(std::unique_ptr<runtime::LogStorage> files) : inner(std::move(files)) {}
+
+    std::unique_ptr<runtime::StorageLock> lock() override { return inner->lock(); }
+    std::vector<std::string> names() const override { return inner->names(); }
+    std::unique_ptr<runtime::LogFile> open(const std::string& name) override;
+    std::unique_ptr<runtime::LogFile> create(const std::string& name, runtime::Durability durability) override;
+    void remove(const std::string& name) override { inner->remove(name); }
+    std::string describe(const std::string& name) const override { return inner->describe(name); }
+
+private:
+    std::unique_ptr<runtime::LogStorage> inner;
+};
+
+// Real files in directory, which must exist, made as fill says.
+std::unique_ptr<runtime::LogStorage> runLogStorage(const std::filesystem::path& directory, LogFileFill fill);
 
 // The half of a shard's log a matching loop takes when it is built: the log ring, the writer's
 // doorbell, and the durable position, which a producer's hold reads. The writer comes later, once
@@ -63,7 +94,8 @@ public:
     // thread, for pinning it. Throws what stops the writer's first file, and std::invalid_argument
     // for NONE.
     RunLog(const std::filesystem::path& parent, RunDurability durability, const runtime::InstrumentDirectory& directory,
-           LogRing& ring, std::uint64_t firstPosition, std::function<void()> setUpWriter = {});
+           LogRing& ring, std::uint64_t firstPosition, std::function<void()> setUpWriter = {},
+           LogFileFill fill = LogFileFill::EXTENDED);
     ~RunLog();
 
     RunLog(const RunLog&) = delete;
@@ -76,7 +108,7 @@ public:
 
 private:
     std::filesystem::path where;
-    std::unique_ptr<runtime::FileLogStorage> storage;
+    std::unique_ptr<runtime::LogStorage> storage;
     std::unique_ptr<runtime::Housekeeping> housekeeping;
     LogRing& log;
     // A member, since the writer may still be inside set_value when the constructor's get returns.

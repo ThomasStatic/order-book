@@ -1,0 +1,10 @@
+row,title,run,count,maximum_ticks,p50_ticks,p90_ticks,p99_ticks,p99.9_ticks,sustained,ticks_per_nanosecond
+0,idle-echo, service time, small-book, closed-loop,1,50000,375492,23807,26367,44031,101887,yes,3.899991
+0,idle-echo, service time, small-book, closed-loop,2,50000,343941,23807,29055,42751,112639,yes,3.899991
+0,idle-echo, service time, small-book, closed-loop,3,50000,505206,24063,31871,49151,124415,yes,3.899991
+0,idle-echo, service time, small-book, closed-loop,4,50000,451464,23807,25983,43263,105471,yes,3.899991
+0,idle-echo, service time, small-book, closed-loop,5,50000,381927,24191,30591,46847,129023,yes,3.899991
+0,idle-echo, service time, small-book, closed-loop,6,50000,402324,24063,26111,43263,126975,yes,3.899991
+0,idle-echo, service time, small-book, closed-loop,7,50000,429507,24063,28031,43519,106495,yes,3.899991
+0,idle-echo, service time, small-book, closed-loop,8,50000,435825,24191,29951,44031,109055,yes,3.899991
+0,idle-echo, service time, small-book, closed-loop,9,50000,353067,23935,25727,41471,105983,yes,3.899991

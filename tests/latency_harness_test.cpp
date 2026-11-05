@@ -1,10 +1,12 @@
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -14,6 +16,10 @@
 
 #include "clock.hpp"
 #include "durable_wait_target.hpp"
+#include "idle_echo_target.hpp"
+#include "order_book/runtime/log_storage.hpp"
+#include "raw_write_target.hpp"
+#include "thread_setup.hpp"
 #include "histogram.hpp"
 #include "latency_report.hpp"
 #include "noise_floor.hpp"
@@ -542,6 +548,130 @@ void testADurableWaitLogsEveryRecordItTimes() {
     std::filesystem::remove_all(parent);
 }
 
+// A zero-filled file has every byte up to its size written, where an extended one has none.
+void testZeroFilledFilesWriteTheirZeros() {
+    namespace bench = order_book::benchmark;
+    namespace rt = order_book::runtime;
+    auto memory = std::make_unique<rt::InMemoryLogStorage>();
+    rt::InMemoryLogStorage& files = *memory;
+    bench::ZeroFillingLogStorage zeroing(std::move(memory));
+    const std::unique_ptr<rt::LogFile> file = zeroing.create("a", rt::Durability::MACHINE);
+    const std::vector<std::byte> header(10, std::byte{7});
+    file->write(0, header);
+    file->extend((std::uint64_t{3} << 20) + 5);
+    file->write(20, header);
+    const std::vector<std::byte> written = files.read("a", 0);
+    expect(written.size() == (std::size_t{3} << 20) + 5 && file->size() == written.size(), "every byte up to the size is written");
+    expect(std::all_of(written.begin() + 30, written.end(), [](std::byte b) { return b == std::byte{0}; }) && written[0] == std::byte{7} &&
+               written[25] == std::byte{7} && written[15] == std::byte{0},
+           "as zeros, past what was there, and the records still land");
+    file->close();
+    rt::InMemoryLogStorage plain;
+    const std::unique_ptr<rt::LogFile> extended = plain.create("b", rt::Durability::MACHINE);
+    extended->extend(1 << 20);
+    expect(plain.read("b", 0).empty() && extended->size() == (1u << 20), "an extended file writes nothing");
+    extended->close();
+}
+
+// Every record the raw loop times is in its file, at both levels and both fills, and the run's
+// directory is gone afterwards, whether or not its outcome was checked.
+void testARawWriteHoldsEveryRecordItTimes() {
+    namespace bench = order_book::benchmark;
+    const std::filesystem::path parent = std::filesystem::temp_directory_path() / "order_book_latency_harness_tests_raw";
+    std::filesystem::remove_all(parent);
+    std::filesystem::create_directories(parent);
+    const bench::Workload workload = bench::generateWorkload(bench::findWorkload("small-book"), 300, 42);
+    for (const bench::RunDurability durability : {bench::RunDurability::PROCESS, bench::RunDurability::MACHINE}) {
+        for (const bench::LogFileFill fill : {bench::LogFileFill::EXTENDED, bench::LogFileFill::ZERO_FILLED}) {
+            FakeClock clock;
+            RawWriteTarget target(workload, durability, parent, fill, 1 << 16);
+            const Histogram writes = runClosedLoop(workload.timedCount(), clock, target);
+            expect(writes.count() == workload.timedCount(), "one write per record");
+            target.checkOutcome();
+        }
+    }
+    {
+        FakeClock clock;
+        RawWriteTarget unchecked(workload, bench::RunDurability::PROCESS, parent, bench::LogFileFill::EXTENDED, 1 << 16);
+        static_cast<void>(unchecked(0, clock));
+    }
+    expect(std::filesystem::is_empty(parent), "every run's directory is deleted");
+    bool refused = false;
+    try {
+        RawWriteTarget none(workload, bench::RunDurability::NONE, parent, bench::LogFileFill::EXTENDED);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    expect(refused, "a raw write with no durability is refused");
+    std::filesystem::remove_all(parent);
+}
+
+// Real loopback sockets and a real echo thread: every message comes back as sent, on each socket
+// set this platform has, sleeping or looking, with idle connections beside it or none.
+void testAnIdleEchoSendsBackEveryMessage() {
+    namespace bench = order_book::benchmark;
+    const bench::Workload workload = bench::generateWorkload(bench::findWorkload("small-book"), 200, 42);
+#ifdef _WIN32
+    const EchoSockets other = EchoSockets::COMPLETION_PORT;
+    expect(!parseEchoSockets("epoll"), "no epoll on Windows");
+#else
+    const EchoSockets other = EchoSockets::EPOLL;
+    expect(!parseEchoSockets("completion-port"), "no completion ports on Linux");
+#endif
+    expect(parseEchoSockets("poll") == EchoSockets::POLL && parseEchoSockets(echoSocketsName(other)) == other && !parseEchoSockets("kqueue"),
+           "the names read back");
+    for (const EchoSockets sockets : {EchoSockets::POLL, other}) {
+        for (const std::size_t idle : {std::size_t{0}, std::size_t{16}}) {
+            for (const std::chrono::nanoseconds spin : {std::chrono::nanoseconds::zero(), order_book::runtime::defaultSpinWindow}) {
+                IdleEchoSetup setup;
+                setup.sockets = sockets;
+                setup.idleConnections = idle;
+                setup.spinWindow = spin;
+                FakeClock clock;
+                IdleEchoTarget target(workload, setup);
+                const Histogram echoes = runClosedLoop(workload.timedCount(), clock, target);
+                expect(echoes.count() == workload.timedCount(), "one exchange per command");
+                target.checkOutcome();
+            }
+        }
+        IdleEchoSetup setup;
+        setup.sockets = sockets;
+        setup.idleConnections = 4;
+        FakeClock clock;
+        IdleEchoTarget unchecked(workload, setup);  // stops its server unchecked, without hanging
+        static_cast<void>(unchecked(0, clock));
+    }
+    IdleEchoSetup failing;
+    failing.setUpServer = [] { throw std::runtime_error("refused"); };
+    IdleEchoTarget target(workload, failing);
+    bool threw = false;
+    try {
+        FakeClock clock;
+        static_cast<void>(target(0, clock));
+        target.checkOutcome();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    expect(threw, "a server that failed fails the exchange or the outcome, and never hangs it");
+}
+
+// A thread's CPU reading moves while it runs, and a share needs a span.
+void testAThreadsCpuTimeMoves() {
+    const ThreadCpuTime meter = ThreadCpuTime::ofCurrentThread();
+    const std::uint64_t before = meter.reading();
+    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(30);
+    while (std::chrono::steady_clock::now() < until) {
+    }
+    expect(meter.reading() > before, "30 ms of spinning uses CPU");
+    expect(!ThreadCpuTime::shareOf(5, 0.0, true, 1.0), "no share of an empty span");
+#ifdef _WIN32
+    expect(!ThreadCpuTime::shareOf(5, 10.0, false, 1.0), "on Windows a share needs the TSC");
+    expect(ThreadCpuTime::shareOf(50, 100.0, true, 2.0) == 0.25, "cycles at the TSC's rate over the span");
+#else
+    expect(ThreadCpuTime::shareOf(25, 100.0, false, 2.0) == 0.25, "the CPU clock's nanoseconds over the span");
+#endif
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -575,6 +705,10 @@ int main(int argc, char** argv) {
     testClosedLoopMayBeUnpinned();
     testUnknownRecordFieldIsRefused();
     testADurableWaitLogsEveryRecordItTimes();
+    testZeroFilledFilesWriteTheirZeros();
+    testARawWriteHoldsEveryRecordItTimes();
+    testAnIdleEchoSendsBackEveryMessage();
+    testAThreadsCpuTimeMoves();
     std::cout << "latency_harness_tests passed\n";
     return EXIT_SUCCESS;
 }

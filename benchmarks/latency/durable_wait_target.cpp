@@ -47,9 +47,10 @@ std::vector<replay::ReplayRecord> readLog(const std::filesystem::path& directory
 }  // namespace
 
 DurableWaitTarget::DurableWaitTarget(const benchmark::Workload& workload, benchmark::RunDurability durability,
-                                     const std::filesystem::path& logParent, std::function<void()> setUpWriter)
+                                     const std::filesystem::path& logParent, std::function<void()> setUpWriter,
+                                     benchmark::LogFileFill fill)
     : records_(benchmark::workloadRecords(workload, benchmark::instrumentSymbol(0))), directory_(oneInstrument(), 1) {
-    log_ = std::make_unique<benchmark::RunLog>(logParent, durability, directory_, ring_, 0, std::move(setUpWriter));
+    log_ = std::make_unique<benchmark::RunLog>(logParent, durability, directory_, ring_, 0, std::move(setUpWriter), fill);
 }
 
 DurableWaitTarget::~DurableWaitTarget() {

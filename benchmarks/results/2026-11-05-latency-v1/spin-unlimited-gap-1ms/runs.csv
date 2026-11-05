@@ -1,0 +1,19 @@
+row,title,run,count,maximum_ticks,p50_ticks,p90_ticks,p99_ticks,p99.9_ticks,sustained,ticks_per_nanosecond
+0,hand-off, response time, small-book, fixed at 1000/s,1,3000,2084126,3231,14079,23295,158719,yes,3.899995
+0,hand-off, response time, small-book, fixed at 1000/s,2,3000,14540129,3263,7007,16063,2883583,yes,3.899995
+0,hand-off, response time, small-book, fixed at 1000/s,3,3000,252018,3199,6111,13503,69119,yes,3.899995
+0,hand-off, response time, small-book, fixed at 1000/s,4,3000,337599,3103,5663,12479,25983,yes,3.899995
+0,hand-off, response time, small-book, fixed at 1000/s,5,3000,63009,3231,6015,11583,17663,yes,3.899995
+0,hand-off, response time, small-book, fixed at 1000/s,6,3000,3336986,3615,7711,15103,94207,yes,3.899995
+0,hand-off, response time, small-book, fixed at 1000/s,7,3000,4931062,3567,9023,19327,1507327,yes,3.899995
+0,hand-off, response time, small-book, fixed at 1000/s,8,3000,1046353,3487,7167,15679,288767,yes,3.899995
+0,hand-off, response time, small-book, fixed at 1000/s,9,3000,23692,3359,6431,12543,17663,yes,3.899995
+1,driver lateness, small-book, fixed at 1000/s,1,3000,9754,43,75,113,779,yes,3.899995
+1,driver lateness, small-book, fixed at 1000/s,2,3000,14516300,41,75,113,2867199,yes,3.899995
+1,driver lateness, small-book, fixed at 1000/s,3,3000,50315,41,74,111,3375,yes,3.899995
+1,driver lateness, small-book, fixed at 1000/s,4,3000,76784,41,75,111,5599,yes,3.899995
+1,driver lateness, small-book, fixed at 1000/s,5,3000,9604,41,74,110,2039,yes,3.899995
+1,driver lateness, small-book, fixed at 1000/s,6,3000,3318890,41,75,113,13759,yes,3.899995
+1,driver lateness, small-book, fixed at 1000/s,7,3000,4176183,43,75,111,19071,yes,3.899995
+1,driver lateness, small-book, fixed at 1000/s,8,3000,1030246,41,74,113,1511,yes,3.899995
+1,driver lateness, small-book, fixed at 1000/s,9,3000,3507,41,75,111,915,yes,3.899995

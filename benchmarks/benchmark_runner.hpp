@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -187,7 +188,8 @@ class MatchingThread {
 public:
     // Returns once the books are built, or rethrows what stopped them.
     MatchingThread(const std::vector<Workload>& workloads, runtime::Doorbell& doorbell, std::vector<runtime::RingPair> rings,
-                   std::function<void()> setUp = {}, std::optional<runtime::LogLink> log = std::nullopt);
+                   std::function<void()> setUp = {}, std::optional<runtime::LogLink> log = std::nullopt,
+                   std::chrono::nanoseconds spinWindow = runtime::defaultSpinWindow);
     ~MatchingThread();
 
     // Built before the constructor returns and left alone until the thread stops.
@@ -213,9 +215,11 @@ private:
 // marker.
 class QueueRun {
 public:
-    // setUpMatchingThread, if given, runs first on the matching thread, for pinning it.
+    // setUpMatchingThread, if given, runs first on the matching thread, for pinning it. The
+    // matching thread waits as the engine's does, spinning for spinWindow before it sleeps.
     explicit QueueRun(const std::vector<Workload>& workloads, std::function<void()> setUpMatchingThread = {},
-                      RunDurability durability = RunDurability::NONE, const std::filesystem::path& logParent = defaultLogParent());
+                      RunDurability durability = RunDurability::NONE, const std::filesystem::path& logParent = defaultLogParent(),
+                      std::chrono::nanoseconds spinWindow = runtime::defaultSpinWindow);
     // Stops the matching thread if finish has not.
     ~QueueRun();
 

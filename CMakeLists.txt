@@ -1334,6 +1334,8 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
     add_library(order_book_latency STATIC
         benchmarks/latency/durable_wait_target.cpp
         benchmarks/latency/handoff_target.cpp
+        benchmarks/latency/idle_echo_target.cpp
+        benchmarks/latency/raw_write_target.cpp
         benchmarks/latency/round_trip_target.cpp
         benchmarks/latency/clock.cpp
         benchmarks/latency/command_target.cpp
@@ -1346,6 +1348,9 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
     target_compile_features(order_book_latency PUBLIC cxx_std_20)
     target_include_directories(order_book_latency PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/latency)
     target_link_libraries(order_book_latency PUBLIC order_book_benchmarking)
+    if(WIN32)
+        target_link_libraries(order_book_latency PRIVATE ws2_32)  # the idle-connection echo
+    endif()
     order_book_enable_warnings(order_book_latency)
     order_book_enable_sanitizers(order_book_latency)
 
@@ -1419,6 +1424,22 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
                     --out-dir ${CMAKE_CURRENT_BINARY_DIR}/latency-smoke-durable-wait-response)
         set_tests_properties(latency_cli_smoke_durable_wait latency_cli_smoke_durable_wait_response PROPERTIES
             LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
+        # V1's rows: hand-off at a fixed rate with a matching thread that always sleeps, the raw
+        # write loop at a fixed rate, and the echo with idle connections beside it.
+        add_test(NAME latency_cli_smoke_handoff_spin
+            COMMAND order_book_latency_benchmarks --interval hand-off --time response --rate 2000 --spin-window 0
+                    --workload small-book --commands 300 --runs 2 --warmup 0 --noise-seconds 0 --allow-unoptimized
+                    --out-dir ${CMAKE_CURRENT_BINARY_DIR}/latency-smoke-handoff-spin)
+        add_test(NAME latency_cli_smoke_raw_write
+            COMMAND order_book_latency_benchmarks --interval raw-write --time response --rate 2000 --durability process
+                    --workload small-book --commands 300 --runs 2 --warmup 0 --noise-seconds 0 --allow-unoptimized
+                    --log-dir ${CMAKE_CURRENT_BINARY_DIR} --out-dir ${CMAKE_CURRENT_BINARY_DIR}/latency-smoke-raw-write)
+        add_test(NAME latency_cli_smoke_idle_echo
+            COMMAND order_book_latency_benchmarks --interval idle-echo --idle-connections 16 --workload small-book
+                    --commands 300 --runs 2 --warmup 0 --noise-seconds 0 --allow-unoptimized
+                    --out-dir ${CMAKE_CURRENT_BINARY_DIR}/latency-smoke-idle-echo)
+        set_tests_properties(latency_cli_smoke_handoff_spin latency_cli_smoke_raw_write latency_cli_smoke_idle_echo PROPERTIES
+            LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
         add_test(NAME latency_cli_smoke_response
             COMMAND order_book_latency_benchmarks --workload small-book --commands 500 --runs 2 --warmup 1
                     --time response --noise-seconds 0 --allow-unoptimized

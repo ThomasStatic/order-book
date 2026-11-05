@@ -1,0 +1,90 @@
+== durable-wait, response time, small-book, fixed at 10000/s ==
+quotable: no (5 runs, at least 9 needed; unpinned)
+runs: 5, merged samples: 3000000
+run record:
+  interval=durable-wait
+  time=response
+  load=fixed
+  target-rate=10000/s, as --rate gave
+  achieved-rate=10000/s
+  workload=small-book
+  workload-fingerprint=11291830874624789547
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=none, one producer thread in process
+  active-connections=none, one producer thread in process
+  idle-connections=none, one producer thread in process
+  socket-set=none, no sockets
+  spin-window=100us, the log writer's
+  matching-cpu-share=none, no matching thread
+  core-map=none
+  pinned=no
+  priority=high
+  durability=machine
+  log-files=zero-filled
+  logs-share-drive=none, no checkpoints: no roll-forward worker runs
+  book-capacity=none, no book runs
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.2
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=600000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 1439.7, over 10 us 74.1, over 100 us 0.2; max 117880 ns; lost 0.69%
+noise floor after: 10.0 s; gaps/s over 1 us 632.0, over 10 us 14.8, over 100 us 0.5; max 133160 ns; lost 0.16%
+unpinned
+stat     merged ns      beyond  run median     run min     run max
+p50          43585     1500000       43585       43323       43585
+p90          54613      300000       54613       54088       54613
+p99          82445       30000       82970       80870       84020  noise
+p99.9       213202        3000           -           -           -
+max       13356146           -     1905975      682460    13356146
+
+== driver lateness, small-book, fixed at 10000/s ==
+quotable: no (5 runs, at least 9 needed; unpinned)
+runs: 5, merged samples: 3000000
+run record:
+  interval=durable-wait
+  time=driver lateness
+  load=fixed
+  target-rate=10000/s
+  achieved-rate=10000/s
+  workload=small-book
+  workload-fingerprint=11291830874624789547
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=none, one producer thread in process
+  active-connections=none, one producer thread in process
+  idle-connections=none, one producer thread in process
+  socket-set=none, no sockets
+  spin-window=100us, the log writer's
+  matching-cpu-share=none, no matching thread
+  core-map=none
+  pinned=no
+  priority=high
+  durability=machine
+  log-files=zero-filled
+  logs-share-drive=none, no checkpoints: no roll-forward worker runs
+  book-capacity=none, no book runs
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.2
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=600000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 1439.7, over 10 us 74.1, over 100 us 0.2; max 117880 ns; lost 0.69%
+noise floor after: 10.0 s; gaps/s over 1 us 632.0, over 10 us 14.8, over 100 us 0.5; max 133160 ns; lost 0.16%
+unpinned
+stat     merged ns      beyond  run median     run min     run max
+p50             11     1500000          11          10          11  unresolved  noise
+p90             19      300000          19          19          19  unresolved  noise
+p99             29       30000          30          29          30  unresolved  noise
+p99.9       113953        3000           -           -           -
+max       13256406           -     1806095      582720    13256406
+

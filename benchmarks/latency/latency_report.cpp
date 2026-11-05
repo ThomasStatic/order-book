@@ -14,16 +14,16 @@ namespace {
 
 using benchmark::formatFixed;
 
-constexpr std::array<std::string_view, 28> recordFieldNames{
+constexpr std::array<std::string_view, 31> recordFieldNames{
     // The interval.
     "interval", "time", "load", "target-rate", "achieved-rate",
     // The workload.
     "workload", "workload-fingerprint", "generator-version", "seed",
     // The threads.
-    "shards", "gateway-threads", "active-connections", "idle-connections", "spin-window", "core-map", "pinned",
-    "priority",
+    "shards", "gateway-threads", "active-connections", "idle-connections", "socket-set", "spin-window",
+    "matching-cpu-share", "core-map", "pinned", "priority",
     // Durability.
-    "durability", "logs-share-drive",
+    "durability", "log-files", "logs-share-drive",
     // The books.
     "book-capacity", "capacity-growths",
     // The measurement.

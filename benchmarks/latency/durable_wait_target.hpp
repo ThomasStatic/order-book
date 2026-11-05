@@ -26,10 +26,10 @@ namespace order_book::latency {
 class DurableWaitTarget {
 public:
     // Starts the log writer, which runs setUpWriter first, for pinning it, on files in a fresh
-    // directory inside logParent, untimed. The workload is read here only. Throws
-    // std::invalid_argument for NONE, and what stops the first file being made.
+    // directory inside logParent, made as fill says, untimed. The workload is read here only.
+    // Throws std::invalid_argument for NONE, and what stops the first file being made.
     DurableWaitTarget(const benchmark::Workload& workload, benchmark::RunDurability durability, const std::filesystem::path& logParent,
-                      std::function<void()> setUpWriter = {});
+                      std::function<void()> setUpWriter = {}, benchmark::LogFileFill fill = benchmark::LogFileFill::EXTENDED);
     ~DurableWaitTarget();
 
     DurableWaitTarget(const DurableWaitTarget&) = delete;

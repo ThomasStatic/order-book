@@ -1,12 +1,15 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <vector>
 
 #include "benchmark_runner.hpp"
 #include "clock.hpp"
+#include "thread_setup.hpp"
 #include "timetable.hpp"
 #include "workload.hpp"
 
@@ -19,8 +22,14 @@ namespace order_book::latency {
 class HandOffTarget {
 public:
     // Starts the matching thread, which runs setUpMatchingThread, then builds and preloads the
-    // book, untimed. The workload must outlive the target.
-    HandOffTarget(const benchmark::Workload& workload, std::function<void()> setUpMatchingThread);
+    // book, untimed, and waits as the engine's does, spinning for spinWindow before it sleeps.
+    // The workload must outlive the target.
+    HandOffTarget(const benchmark::Workload& workload, std::function<void()> setUpMatchingThread,
+                  std::chrono::nanoseconds spinWindow = runtime::defaultSpinWindow);
+
+    // The matching thread's setup holds this target's address.
+    HandOffTarget(const HandOffTarget&) = delete;
+    HandOffTarget& operator=(const HandOffTarget&) = delete;
 
     template <typename DriverClock>
     Stamps operator()(std::size_t index, DriverClock& clock) {
@@ -38,8 +47,12 @@ public:
 
     std::uint64_t capacityGrowths() const { return 0; }  // checkOutcome refuses any growth
 
+    // The matching thread's CPU so far, as ThreadCpuTime reads it. Before checkOutcome.
+    std::uint64_t matchingCpu() const { return meter_->reading(); }
+
 private:
     std::vector<benchmark::Workload> workloads_;
+    std::optional<ThreadCpuTime> meter_;  // made on the matching thread, before the books
     benchmark::QueueRun run_;
 };
 

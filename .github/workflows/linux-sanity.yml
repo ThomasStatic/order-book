@@ -2,9 +2,10 @@ name: Linux sanity
 
 # Large effects only, on GitHub's shared runners, by hand. No Linux numbers are recorded for
 # v2.1.0 (spec #58): this asks only whether `machine` durability is a sane default on Linux,
-# and, from V1, whether `poll` loses to epoll by more than twice. Read Linux against the
-# Windows runner beside it, ratio against ratio, since a runner's disk is not the reference
-# machine's. The harness may mark a closed-loop row quotable, since closed-loop service time
+# and, from V1 (#96), whether `poll` loses to epoll by more than twice at 64 idle connections,
+# and whether the raw write-through loop, with no engine, stalls as the durable wait does. Read
+# Linux against the Windows runner beside it, ratio against ratio, since a runner's disk is not
+# the reference machine's. The harness may mark a closed-loop row quotable, since closed-loop service time
 # may run unpinned, but it can't tell a shared runner from the reference machine:
 # docs/LATENCY.md's claims rule refuses quoting any number from this workflow.
 on:
@@ -75,19 +76,27 @@ jobs:
           mkdir -p "$RUNNER_TEMP/logs"
 
       # The same rows on both runners: durable wait closed-loop at each level, its timetable at
-      # `machine`, and the round trip through the shipped engine at each level.
+      # `machine`, the round trip through the shipped engine at each level, the raw write-through
+      # loop closed-loop and beside the durable wait at 1,000 a second on extended and zero-filled
+      # files, and the idle-connection echo on poll and on the platform's other socket set (epoll,
+      # completion ports) at 0, 16, 64, 256, and 1,024 idle connections.
       - name: Run
         run: |
           if [ "${{ runner.os }}" = "Windows" ]; then
             program=./build/Release/order_book_latency_benchmarks.exe
+            other=completion-port
           else
             program=./build/order_book_latency_benchmarks
+            other=epoll
           fi
           row() {
             name=$1
             shift
             echo "::group::$name"
-            "$program" --workload small-book --runs 9 --warmup 1 --log-dir "$RUNNER_TEMP/logs" \
+            # The echo writes no log, and refuses --log-dir.
+            logs=(--log-dir "$RUNNER_TEMP/logs")
+            case "$name" in idle-echo-*) logs=() ;; esac
+            "$program" --workload small-book --runs 9 --warmup 1 "${logs[@]}" \
               --machine-record machine.txt --out-dir "results/$name" "$@"
             echo "::endgroup::"
           }
@@ -99,6 +108,21 @@ jobs:
           # default 2 s discard.
           row round-trip-machine --interval round-trip --durability machine --commands "$COMMANDS" --discard-seconds 0
           row round-trip-process --interval round-trip --durability process --commands "$COMMANDS" --discard-seconds 0
+          row raw-write-machine --interval raw-write --durability machine --commands "$COMMANDS"
+          # The durable wait and the raw loop at one fixed rate, on both kinds of file, so a stall
+          # only the engine shows stands out.
+          for fill in extended zero-filled; do
+            for interval in durable-wait raw-write; do
+              row "$interval-machine-$fill-at-1000" --interval "$interval" --durability machine --time response \
+                --rate 1000 --log-files "$fill" --commands "$LADDER_COMMANDS"
+            done
+          done
+          for sockets in poll "$other"; do
+            for idle in 0 16 64 256 1024; do
+              row "idle-echo-$sockets-$idle" --interval idle-echo --sockets "$sockets" --idle-connections "$idle" \
+                --commands "$COMMANDS"
+            done
+          done
 
       - name: Summarize
         if: always()

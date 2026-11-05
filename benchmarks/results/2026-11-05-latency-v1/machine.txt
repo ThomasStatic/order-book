@@ -1,0 +1,5 @@
+AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on
+31.8 GiB RAM
+WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system
+Windows 11 Pro 10.0.26200, power plan High performance
+Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal

@@ -456,10 +456,11 @@ void ShardRun::check() const {
 }
 
 MatchingThread::MatchingThread(const std::vector<Workload>& runWorkloads, runtime::Doorbell& doorbell,
-                               std::vector<runtime::RingPair> rings, std::function<void()> setUp, std::optional<runtime::LogLink> log)
+                               std::vector<runtime::RingPair> rings, std::function<void()> setUp, std::optional<runtime::LogLink> log,
+                               std::chrono::nanoseconds spinWindow)
     : workloads(&runWorkloads) {
     std::future<void> started = ready.get_future();
-    thread = std::thread([this, &doorbell, rings = std::move(rings), setUp = std::move(setUp), log] {
+    thread = std::thread([this, &doorbell, rings = std::move(rings), setUp = std::move(setUp), log, spinWindow] {
         // Everything a book's owner must do happens here, its build and destruction included.
         // Whatever can fail before the loop runs fails here, while the constructor is still
         // waiting to hear: once the loop runs, it always sends SHARD_STOPPED.
@@ -470,7 +471,7 @@ MatchingThread::MatchingThread(const std::vector<Workload>& runWorkloads, runtim
                 setUp();
             }
             built.emplace(*workloads);
-            loop.emplace(built->onThisThread(), doorbell, rings, runtime::defaultSpinWindow, std::function<void()>{}, log);
+            loop.emplace(built->onThisThread(), doorbell, rings, spinWindow, std::function<void()>{}, log);
         } catch (...) {
             ready.set_exception(std::current_exception());
             return;
@@ -538,14 +539,15 @@ void requireLogged(std::uint64_t logEnd, std::uint64_t first, std::size_t comman
 }  // namespace
 
 QueueRun::QueueRun(const std::vector<Workload>& runWorkloads, std::function<void()> setUpMatchingThread, RunDurability durability,
-                   const std::filesystem::path& logParent)
+                   const std::filesystem::path& logParent, std::chrono::nanoseconds spinWindow)
     : workloads(&runWorkloads),
       commands(runtime::defaultCommandRingSlots),
       responses(runtime::defaultResponseRingSlots),
       nextCommand(runWorkloads.size(), 0),
       counted(runWorkloads.size()),
       logRing(logRingFor(durability)),
-      matching(runWorkloads, doorbell, {runtime::RingPair{&commands, &responses}}, std::move(setUpMatchingThread), linkOf(logRing)) {
+      matching(runWorkloads, doorbell, {runtime::RingPair{&commands, &responses}}, std::move(setUpMatchingThread), linkOf(logRing),
+               spinWindow) {
     if (logRing) {
         try {
             logFirst = matching.books().firstTimedPosition();

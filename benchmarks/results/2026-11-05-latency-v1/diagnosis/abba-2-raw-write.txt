@@ -1,0 +1,88 @@
+== raw-write, response time, small-book, fixed at 10000/s ==
+quotable: no (1 runs, at least 9 needed)
+runs: 1, merged samples: 600000
+run record:
+  interval=raw-write
+  time=response
+  load=fixed
+  target-rate=10000/s, as --rate gave
+  achieved-rate=10000/s
+  workload=small-book
+  workload-fingerprint=11291830874624789547
+  generator-version=3
+  seed=42
+  shards=none, no engine
+  gateway-threads=none, one thread writing one file
+  active-connections=none, one thread writing one file
+  idle-connections=none, one thread writing one file
+  socket-set=none, no sockets
+  spin-window=none, no thread waits
+  matching-cpu-share=none, no matching thread
+  core-map=6
+  pinned=yes
+  priority=high
+  durability=machine
+  log-files=zero-filled
+  logs-share-drive=none, no checkpoints
+  book-capacity=none, no book runs
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.1
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=600000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 1688.8, over 10 us 115.5, over 100 us 0.7; max 125780 ns; lost 1.00%
+noise floor after: 10.0 s; gaps/s over 1 us 1762.1, over 10 us 209.2, over 100 us 9.8; max 393010 ns; lost 1.40%
+stat     merged ns      beyond  run median     run min     run max
+p50          42798      300000       42798       42798       42798
+p90          48574       60000       48574       48574       48574
+p99          78769        6000       78769       78769       78769  noise
+p99.9 not printed: 600 beyond, 1000 needed
+max        2346516           -     2346516     2346516     2346516
+
+== driver lateness, small-book, fixed at 10000/s ==
+quotable: no (1 runs, at least 9 needed)
+runs: 1, merged samples: 600000
+run record:
+  interval=raw-write
+  time=driver lateness
+  load=fixed
+  target-rate=10000/s
+  achieved-rate=10000/s
+  workload=small-book
+  workload-fingerprint=11291830874624789547
+  generator-version=3
+  seed=42
+  shards=none, no engine
+  gateway-threads=none, one thread writing one file
+  active-connections=none, one thread writing one file
+  idle-connections=none, one thread writing one file
+  socket-set=none, no sockets
+  spin-window=none, no thread waits
+  matching-cpu-share=none, no matching thread
+  core-map=6
+  pinned=yes
+  priority=high
+  durability=machine
+  log-files=zero-filled
+  logs-share-drive=none, no checkpoints
+  book-capacity=none, no book runs
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.1
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=600000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 1688.8, over 10 us 115.5, over 100 us 0.7; max 125780 ns; lost 1.00%
+noise floor after: 10.0 s; gaps/s over 1 us 1762.1, over 10 us 209.2, over 100 us 9.8; max 393010 ns; lost 1.40%
+stat     merged ns      beyond  run median     run min     run max
+p50             11      300000          11          11          11  unresolved  noise
+p90             19       60000          19          19          19  unresolved  noise
+p99           4332        6000        4332        4332        4332  noise
+p99.9 not printed: 600 beyond, 1000 needed
+max        2247006           -     2247006     2247006     2247006
+
