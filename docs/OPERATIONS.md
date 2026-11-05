@@ -70,7 +70,7 @@ Each thread pins and raises itself before the engine is ready. If the system ref
 
 ## Stopping
 
-A **first stop** starts the clean stop: the listener closes, along with any connection not yet taken on by its gateway thread, every command already queued is answered, once it is in the log if there is one, commands arriving after it are refused with `ENGINE_STOPPING`, each log writer finishes its file, and each gateway thread flushes what it owes for at most `--stop-grace` (5 s by default) before closing what's left. Then the stop report prints and the engine exits 0.
+A **first stop** starts the clean stop: the listener closes, along with any connection not yet taken on by its gateway thread, every command already queued is answered, once it is in the log if there is one, commands arriving after it are refused with `ENGINE_STOPPING`, each log writer finishes its file, and each gateway thread flushes what it owes for at most `--stop-grace` (5 s by default) before closing what's left. With a log, each matching thread then checks its books in full and writes their images, and the roll-forward workers roll each log to its end, the last short file included, and compare every book with its live one byte for byte, publishing a checkpoint at the log's end for each that matches. Then the stop report prints and the engine exits 0, or 7 if some book was not published. A clean stop therefore replays each shard's last file, and any closed file the workers had not reached, once more before it exits.
 
 A **second stop** exits at once with 8 and prints `order_book_engine: forced stop`. What was still queued gets no answer, and no stop report prints. Use it when a client that never reads holds the clean stop for the whole grace.
 
@@ -97,6 +97,7 @@ On Windows, closing the console window, logging off, or shutting down starts the
 | 4 | Start refused: `order_book_engine: start refused: placement changed: <what moved>` | Start on the old placement |
 | 5 | Recovery stopped: `order_book_engine: recovery stopped: shard <n> position <p> file <name>: <cause>` | Look at that file; the log is left as recovery found it |
 | 6 | Stopped before ready: `order_book_engine: stopped before ready` | Start again |
+| 7 | Clean stop finished, but a book was not published: `order_book_engine: clean stop incomplete: <symbol> <why>; the next start recovers from the log` | Investigate; the next start recovers that book from the log |
 | 8 | Forced stop: `order_book_engine: forced stop` | Start again: recovery does the rest |
 
 ### Checkpoints
@@ -105,11 +106,20 @@ A checkpoint is one book's image at a position in its shard's log, `ckpt-<symbol
 
 A checkpoint that can't be written, the drive full for instance, prints `order_book_engine: shard 0: checkpoint <name> not published: <why>; <symbol> stays at its last checkpoint`, and trading goes on; that book is rolled again when the next file closes. A pass that runs out of memory prints that it was lost and is made again then too. A log file or checkpoint that can't be read prints `order_book_engine: shard 0: roll forward stopped: <why>`, uncounted, and the next file's close tries again; a checkpoint that no longer decodes, met by a worker or by the next start, is removed, which is printed, and its book rolls on from its older one. The housekeeping thread deletes a closed log file once every book's older kept checkpoint stands at or past its end, so a start that falls back to an older checkpoint still finds the log back to it, and a shard normally holds about three files. `--keep-log` keeps every file. `--checkpoint-dir DIR` puts the checkpoints, with a lock of their own, in another directory, which must exist (`start refused: cannot use checkpoint directory <dir>: no such directory`) and needs `--log-dir`; it defaults to the log directory, and a separate drive keeps an image's flush off the log's writes.
 
-Code 7, a clean stop that couldn't publish a book, comes later, with the clean stop's comparison.
+### Exit 7: a clean stop that didn't publish a book
+
+A clean stop compares each live book with what the log rebuilds of it, byte for byte, which is the check that the engine is deterministic in a Release build. Each book not published prints one line, and the log stays the truth: the next start recovers that book from its last checkpoint and the log after it.
+
+- `clean stop incomplete: AAPL differs at byte 812, saved ckpt-AAPL-00000000000000000120.live; ...`: the live book drifted from its log, a bug. The live image is saved beside the checkpoints, in the checkpoint format, so `order_book_cli checkpoint describe` reads it; no start reads it. Keep it, and the log, for the report.
+- `clean stop incomplete: AAPL's image buffer could not be allocated; ...`: memory ran out at the stop, so nothing was compared.
+- `clean stop incomplete: AAPL's checkpoint at 120 could not be published; ...`: it matched, and writing it failed, as printed above it.
+- `clean stop incomplete: AAPL could not be rolled forward to the log's end, 120; ...`: an earlier checkpoint failed, or a pass was lost, as printed above it.
+
+A book whose live state breaks its own invariants at the stop, such as an index entry the book's orders don't match, aborts instead, naming the shard and symbol, since no image holds that state for a comparison to see.
 
 ### The stop report
 
-`key=value` lines on stdout after a clean stop, so a harness can parse them:
+`key=value` lines on stdout after a clean stop, one that exits 7 included, so a harness can parse them:
 
 ```text
 stopped
@@ -120,7 +130,7 @@ shard 1: log-end=40 result-growths=0 checkpoint-writes-failed=0 passes-lost=0 fi
 total: books=2 capacity-growths=2 checkpoint-writes-failed=0 passes-lost=0
 ```
 
-One `book` line per book, sorted by symbol, with the capacity it was warmed to and how many times it grew since ready, then a line per shard, with where its log ends, how many of its checkpoints failed to publish, how many passes were lost to memory, and how many closed log files some book still needs rolled, then the total last. A clean stop doesn't yet roll what is left, so a file that closed just before it may show as behind; a count that grows from run to run means the workers can't keep up. A book that grew needs a larger capacity in the list or the defaults.
+One `book` line per book, sorted by symbol, with the capacity it was warmed to and how many times it grew since ready, then a line per shard, with where its log ends, how many of its checkpoints failed to publish, how many passes were lost to memory, and how many log files some book still needs rolled, then the total last. A clean stop rolls what is left, so `files-behind` is 0 unless a book went unpublished. A book that grew needs a larger capacity in the list or the defaults.
 
 ### An abort
 

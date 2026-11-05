@@ -363,7 +363,8 @@ namespace order_book::runtime {
                     }
                     break;
                 }
-                stopRecovery(where(number, shard.nextPosition(), entry.name) + ": " + finding(error) +
+                // The record's own position, which a record before the replay's start has too.
+                stopRecovery(where(number, entry.firstPosition + inFile, entry.name) + ": " + finding(error) +
                      (tear ? ", in a file before the last, which its log writer flushed whole" : ""));
             }
         }

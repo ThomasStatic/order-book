@@ -451,9 +451,10 @@ void testALoggedRun() {
     }
     const std::vector<std::string> expected{"log-0000-00000000000000000000.oblog", "log-0001-00000000000000000000.oblog"};
     expect(logsIn(logs) == expected, "one log per shard, named for its first position");
-    expect(checkpointsIn(logs) == std::vector<std::string>{"ckpt-AAPL-00000000000000000000.obckpt", "ckpt-MSFT-00000000000000000000.obckpt"},
-           "and each new instrument's empty-book checkpoint, where the log began; no file closed, so no other");
-    expect(filesIn(logs).size() == 5 && std::filesystem::file_size(logs / "engine.lock") == 0, "and the lock file, empty");
+    expect(checkpointsIn(logs) == std::vector<std::string>{"ckpt-AAPL-00000000000000000000.obckpt", "ckpt-AAPL-00000000000000000003.obckpt",
+                                                          "ckpt-MSFT-00000000000000000000.obckpt", "ckpt-MSFT-00000000000000000005.obckpt"},
+           "and each new instrument's empty-book checkpoint, where the log began, and the clean stop's, where it ends");
+    expect(filesIn(logs).size() == 7 && std::filesystem::file_size(logs / "engine.lock") == 0, "and the lock file, empty");
     for (const auto& [name, symbol, count] : {std::tuple{expected[0], "AAPL", 3U}, std::tuple{expected[1], "MSFT", 5U}}) {
         const replay::ReplayInput input = replay::readCommandLogFile(logs / name);
         expect(!input.error, name + " reads to its end, with no torn tail");
@@ -488,16 +489,15 @@ void testALoggedRun() {
         run.stop.request();
         expect(run.finish() == EngineExit::CLEAN_STOP, "a recovered run stops cleanly");
         const std::string diagnostics = run.diagnostics.text();
-        // Each book from its empty checkpoint at 0, since no file closed in the first run.
-        expect(diagnostics.find("order_book_engine: shard 0: recovered books=1 replayed=3 tail-cut-bytes=0 from=0 fell-back=0\n"
-                                "order_book_engine: shard 1: recovered books=1 replayed=5 tail-cut-bytes=0 from=0 fell-back=0\n") !=
+        // Each book from the clean stop's checkpoint at its log's end, so nothing replays.
+        expect(diagnostics.find("order_book_engine: shard 0: recovered books=1 replayed=3 tail-cut-bytes=0 from=3 fell-back=0\n"
+                                "order_book_engine: shard 1: recovered books=1 replayed=5 tail-cut-bytes=0 from=5 fell-back=0\n") !=
                    std::string::npos,
                "each shard says what it recovered, in shard order:\n" + diagnostics);
         const std::string report = run.report.text();
-        // The first run's files are closed now, and the worker may not have reached them by the
-        // stop, since until D6 a clean stop does not roll what is left.
-        expect(report.find("shard 0: log-end=5 result-growths=0 checkpoint-writes-failed=0 passes-lost=0 files-behind=") != std::string::npos &&
-                   report.find("\nshard 1: log-end=6 result-growths=0 checkpoint-writes-failed=0 passes-lost=0 files-behind=") != std::string::npos,
+        // The clean stop rolls each log to its end, so nothing is behind.
+        expect(report.find("shard 0: log-end=5 result-growths=0 checkpoint-writes-failed=0 passes-lost=0 files-behind=0\n"
+                           "shard 1: log-end=6 result-growths=0 checkpoint-writes-failed=0 passes-lost=0 files-behind=0\n") != std::string::npos,
                "and each log goes on from where it ended:\n" + report);
         // MSFT declares room for 2 orders and holds 5 on 1 level, so recovery warms it to 8
         // orders, its own 3 stops, and its own 4 levels, more than 1.5 times its 1.
@@ -593,8 +593,9 @@ void testRecoveryRefusals() {
            "a damaged log exits 5");
     expect(filesIn(logs) == before, "changing nothing");
 
-    // From a matching thread's replay too: MSFT's second record names no command, under a
-    // checksum that chains, so it is the record and not a tear that is found.
+    // From a matching thread's read of the log too: MSFT's second record names no command, under
+    // a checksum that chains, so it is the record and not a tear that is found, at its own
+    // position, though it lies before MSFT's checkpoint at the log's end and only its chain is read.
     std::ofstream(logs / "log-0000-00000000000000000000.oblog", std::ios::binary | std::ios::trunc) << aapl;
     std::string msft = bytesOf(logs / "log-0001-00000000000000000000.oblog");
     const std::size_t second = msft.size() - replay::logRecordBytes;
@@ -641,10 +642,9 @@ void testALoggedRunAcrossFiles() {
         run.stop.request();
         expect(run.finish() == EngineExit::CLEAN_STOP, "a run across files stops cleanly");
         const std::string report = run.report.text();
-        // Until a clean stop rolls what is left (D6), a file closed just before the stop may not
-        // be rolled, so how many are behind depends on the worker.
-        expect(report.find("shard 0: log-end=4 result-growths=0 checkpoint-writes-failed=0 passes-lost=0 files-behind=") != std::string::npos &&
-                   report.find("\nshard 1: log-end=5 result-growths=0 checkpoint-writes-failed=0 passes-lost=0 files-behind=") != std::string::npos,
+        // The clean stop rolls whatever the worker had not reached, so nothing is behind.
+        expect(report.find("shard 0: log-end=4 result-growths=0 checkpoint-writes-failed=0 passes-lost=0 files-behind=0\n"
+                           "shard 1: log-end=5 result-growths=0 checkpoint-writes-failed=0 passes-lost=0 files-behind=0\n") != std::string::npos,
                "each shard's line gives where its log ends:\n" + report);
     }
     const std::vector<std::string> expected{"log-0000-00000000000000000000.oblog", "log-0000-00000000000000000002.oblog",
@@ -663,6 +663,103 @@ void testALoggedRunAcrossFiles() {
                    name + " holds its own positions, of its shard's instruments");
         }
     }
+    std::filesystem::remove_all(logs);
+    std::filesystem::remove(list);
+}
+
+// A clean stop that can't publish a book exits 7, naming it, and still prints its stop report;
+// the next start recovers that book from the log. AAPL's checkpoint at its log's end can't be
+// published, its name taken by a directory, so the rename meets a file already there.
+void testACleanStopThatLeavesABookUnpublished() {
+    const std::filesystem::path list = writeList("unpublished", "symbol,shard,orders,stops,levels\nAAPL,0,,,\nMSFT,0,,,\n");
+    const std::filesystem::path logs = logDirectory("unpublished");
+    runtime::EngineSettings settings = settingsFor(list, 1);
+    settings.logDir = logs.string();
+    settings.durability = runtime::Durability::PROCESS;
+    const std::filesystem::path squatter = logs / "ckpt-AAPL-00000000000000000005.obckpt";
+    {
+        Run run(settings);
+        Bytes stream = helloFrame();
+        for (const Bytes& more : {commandsFor("AAPL", 3), commandsFor("MSFT", 2)}) {
+            stream.insert(stream.end(), more.begin(), more.end());
+        }
+        expect(talk(run.port(), stream).size() == 5, "every command was answered");
+        std::filesystem::create_directory(squatter);
+        run.stop.request();
+        expect(run.finish() == EngineExit::NOT_PUBLISHED, "a clean stop with a book unpublished exits 7:\n" + run.diagnostics.text());
+        const std::string diagnostics = run.diagnostics.text();
+        expect(diagnostics.find("order_book_engine: clean stop incomplete: AAPL's checkpoint at 5 could not be published; the next start "
+                                "recovers from the log\n") != std::string::npos,
+               "naming the book:\n" + diagnostics);
+        expect(diagnostics.find("clean stop incomplete: MSFT") == std::string::npos, "and only that book:\n" + diagnostics);
+        expect(run.report.text().find("stopped\n") != std::string::npos &&
+                   run.report.text().find("shard 0: log-end=5 result-growths=0 checkpoint-writes-failed=1 passes-lost=0 files-behind=1\n") !=
+                       std::string::npos,
+               "the stop report still comes, counting the failed write and the file behind:\n" + run.report.text());
+    }
+    std::vector<std::string> checkpoints = checkpointsIn(logs);
+    expect(checkpoints == std::vector<std::string>{"ckpt-AAPL-00000000000000000000.obckpt", squatter.filename().string(),
+                                                   "ckpt-MSFT-00000000000000000000.obckpt", "ckpt-MSFT-00000000000000000005.obckpt"},
+           "MSFT published at the end, AAPL left at its empty checkpoint");
+    std::filesystem::remove(squatter);
+    {
+        Run run(settings);
+        static_cast<void>(run.port());
+        run.stop.request();
+        expect(run.finish() == EngineExit::CLEAN_STOP, "the next start recovers and stops cleanly:\n" + run.diagnostics.text());
+        expect(run.diagnostics.text().find("shard 0: recovered books=2 replayed=5 tail-cut-bytes=0 from=0 fell-back=0") != std::string::npos,
+               "AAPL from its checkpoint at 0, through the log:\n" + run.diagnostics.text());
+    }
+    expect(std::filesystem::exists(logs / "ckpt-AAPL-00000000000000000005.obckpt"), "and its stop publishes AAPL at the end");
+    std::filesystem::remove_all(logs);
+    std::filesystem::remove(list);
+}
+
+// What the log rebuilds differs from the live book: through the engine, exit 7, the symbol and
+// first differing byte named, and the live image saved as .live. With no hook into a live book,
+// it is the checkpoint the roll starts from that is changed, once the engine is ready: AAPL's
+// empty book at 0, rewritten with a next trade ID of 5, which no command reaches, since none
+// trades. The image's bytes 28 to 31 hold it (docs/checkpoint-format.md).
+void testACleanStopThatFindsADifference() {
+    const std::filesystem::path list = writeList("differs", "symbol,shard,orders,stops,levels\nAAPL,0,,,\n");
+    const std::filesystem::path logs = logDirectory("differs");
+    runtime::EngineSettings settings = settingsFor(list, 1);
+    settings.logDir = logs.string();
+    settings.durability = runtime::Durability::PROCESS;
+    Run run(settings);
+    const std::uint16_t port = run.port();
+    const std::filesystem::path empty = logs / "ckpt-AAPL-00000000000000000000.obckpt";
+    const std::string held = bytesOf(empty);
+    std::vector<std::byte> bytes(held.size());
+    std::transform(held.begin(), held.end(), bytes.begin(), [](char c) { return static_cast<std::byte>(c); });
+    const auto decoded = runtime::decodeCheckpoint(bytes);
+    const auto* checkpoint = std::get_if<runtime::DecodedCheckpoint>(&decoded);
+    expect(checkpoint != nullptr, "the start's empty checkpoint decodes");
+    std::vector<std::byte> image(checkpoint->image.begin(), checkpoint->image.end());
+    image[28] = std::byte{5};
+    const std::vector<std::byte> changed = runtime::encodeCheckpoint(checkpoint->header, image);
+    std::ofstream(empty, std::ios::binary | std::ios::trunc)
+        .write(reinterpret_cast<const char*>(changed.data()), static_cast<std::streamsize>(changed.size()));
+
+    Bytes stream = helloFrame();
+    const Bytes commands = commandsFor("AAPL", 3);  // buys at one price: nothing trades
+    stream.insert(stream.end(), commands.begin(), commands.end());
+    expect(talk(port, stream).size() == 3, "every command was answered");
+    run.stop.request();
+    expect(run.finish() == EngineExit::NOT_PUBLISHED, "a book that differs exits 7:\n" + run.diagnostics.text());
+    expect(run.diagnostics.text().find("order_book_engine: clean stop incomplete: AAPL differs at byte 28, saved "
+                                       "ckpt-AAPL-00000000000000000003.live; the next start recovers from the log\n") != std::string::npos,
+           "naming the symbol, the byte, and the file:\n" + run.diagnostics.text());
+    expect(run.report.text().find("stopped\n") != std::string::npos, "the stop report still prints");
+    expect(!std::filesystem::exists(logs / "ckpt-AAPL-00000000000000000003.obckpt"), "nothing published for AAPL at the end");
+    const std::string live = bytesOf(logs / "ckpt-AAPL-00000000000000000003.live");
+    std::vector<std::byte> liveBytes(live.size());
+    std::transform(live.begin(), live.end(), liveBytes.begin(), [](char c) { return static_cast<std::byte>(c); });
+    const auto saved = runtime::decodeCheckpoint(liveBytes);
+    const auto* savedCheckpoint = std::get_if<runtime::DecodedCheckpoint>(&saved);
+    expect(savedCheckpoint != nullptr && savedCheckpoint->header.position == 3 && savedCheckpoint->image.size() > 31 &&
+               savedCheckpoint->image[28] == std::byte{1},
+           "the .live file is a checkpoint at 3 of the live book, whose next trade ID is still 1");
     std::filesystem::remove_all(logs);
     std::filesystem::remove(list);
 }
@@ -687,7 +784,7 @@ void testACheckpointDirectory() {
         engine.stop.request();
         expect(engine.finish() == EngineExit::CLEAN_STOP, "a run with a checkpoint directory stops cleanly:\n" + engine.diagnostics.text());
         if (run == 1) {
-            expect(engine.diagnostics.text().find("shard 0: recovered books=1 replayed=2 tail-cut-bytes=0 from=0 fell-back=0") != std::string::npos,
+            expect(engine.diagnostics.text().find("shard 0: recovered books=1 replayed=2 tail-cut-bytes=0 from=2 fell-back=0") != std::string::npos,
                    "the restart restores from the checkpoint directory:\n" + engine.diagnostics.text());
         }
     }
@@ -886,6 +983,8 @@ void testSeveralGatewayThreads() {
 int main() {
     testALoggedRun();
     testALoggedRunAcrossFiles();
+    testACleanStopThatLeavesABookUnpublished();
+    testACleanStopThatFindsADifference();
     testACheckpointDirectory();
     testLogRefusals();
     testRecoveryRefusals();

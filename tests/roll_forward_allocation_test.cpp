@@ -17,6 +17,7 @@
 #include "order_book/command_log.hpp"
 #include "order_book/order_book.hpp"
 #include "order_book/runtime/checkpoint.hpp"
+#include "order_book/runtime/clean_stop.hpp"
 #include "order_book/runtime/log_files.hpp"
 #include "order_book/runtime/log_storage.hpp"
 #include "order_book/runtime/log_writer.hpp"
@@ -195,7 +196,95 @@ int main() {
             expect(failAt < 100000, "a roll makes a bounded number of allocations");
         }
         expect(failures > 100, "a roll makes many allocations to fail: " + std::to_string(failures));
-        std::cout << "roll_forward_allocation_tests passed: " << failures << " allocations failed in turn\n";
+
+        // A clean stop (D6): the live images, then the last roll, each with every allocation
+        // failed in turn. Ninety commands, stopped cleanly, so the last file is short.
+        const std::vector<Placed> stopped(commands.begin(), commands.begin() + 90);
+        InMemoryLogStorage stopLog;
+        {
+            const std::uint64_t fileBytes =
+                logFileShape(directory, 0, Durability::MACHINE, defaultLogFileBytes).headerBytes + 25 * replay::logRecordBytes;
+            Housekeeping housekeeping(stopLog, directory, Durability::MACHINE, fileBytes);
+            Ring<LogEntry> ring(4096);
+            DurablePosition durable(0);
+            LogWriter writer(housekeeping, 0, ring, durable, 0);
+            for (const Placed& placed : stopped) {
+                expect(ring.tryPush(LogEntry{placed.command, placed.slot, ControlKind::COMMAND}), "room in the log ring");
+            }
+            expect(ring.tryPush(LogEntry::stop()), "and the stop");
+            while (writer.pass() != 0 || housekeeping.pass() != 0) {
+            }
+            housekeeping.removeUnused();
+        }
+        Shard live(directory, 0);
+        for (const Placed& placed : stopped) {
+            live.process(placed.command, placed.slot);
+        }
+        const LiveImages images = captureLiveImages(live);
+        expect(images.has_value(), "the live images, failing nothing");
+        long captureFailures = 0;
+        for (long failAt = 0;; ++failAt) {
+            failed.store(false);
+            allocationsBeforeFailure.store(failAt);
+            const LiveImages got = captureLiveImages(live);  // noexcept: a throw would terminate
+            allocationsBeforeFailure.store(-1);
+            if (!failed.load()) {
+                expect(got == images, "a capture that fails nothing gives every image");
+                break;
+            }
+            ++captureFailures;
+            expect(!got, "allocation " + std::to_string(failAt) + " failed: the capture gives no images");
+        }
+        expect(captureFailures >= 4, "one buffer per book, and the vector holding them: " + std::to_string(captureFailures));
+
+        InMemoryLogStorage stopStart(stopLog.contents());
+        ShardRoller(stopStart, directory, 0, noReport).roll(50);
+        InMemoryLogStorage stopReference(stopStart.contents());
+        {
+            ShardRoller roller(stopReference, directory, 0, noReport);
+            roller.finish(90, images);
+            for (std::uint32_t slot = 0; slot < 3; ++slot) {
+                expect(roller.stopped(slot).outcome == StopOutcome::PUBLISHED, "an uninterrupted stop publishes every book");
+            }
+        }
+        const std::map<std::string, Bytes> stopFiles = filesOf(stopReference);
+        long finishFailures = 0;
+        for (long failAt = 0;; ++failAt) {
+            InMemoryLogStorage storage(stopStart.contents());
+            ShardRoller roller(storage, directory, 0, noReport);
+            failed.store(false);
+            allocationsBeforeFailure.store(failAt);
+            roller.finish(90, images);  // throws nothing
+            allocationsBeforeFailure.store(-1);
+            const std::string what = "the stop's allocation " + std::to_string(failAt) + " failed";
+            if (!failed.load()) {
+                expect(filesOf(storage) == stopFiles, "a stop that fails nothing is the reference");
+                break;
+            }
+            ++finishFailures;
+            expect(roller.counts().passesLost == 1, what + ": one lost pass is counted");
+            for (std::uint32_t slot = 0; slot < 3; ++slot) {
+                const StopOutcome outcome = roller.stopped(slot).outcome;
+                expect(outcome == StopOutcome::PUBLISHED || outcome == StopOutcome::NOT_ROLLED, what + ": a book is published or left");
+            }
+            for (const std::string& name : storage.names()) {
+                expect(!name.ends_with(".live"), what + ": nothing differs, so nothing is saved");
+            }
+            expectCheckpointsSound(storage, filesOf(stopStart), stopFiles, what);
+            // The next stop, at the same end, catches up.
+            InMemoryLogStorage restarted(storage.contents());
+            ShardRoller next(restarted, directory, 0, noReport);
+            next.finish(90, images);
+            for (std::uint32_t slot = 0; slot < 3; ++slot) {
+                expect(next.stopped(slot).outcome == StopOutcome::PUBLISHED, what + ": the next stop publishes every book");
+            }
+            ShardRoller(restarted, directory, 0, noReport);  // removes any .tmp, as a start does
+            expect(filesOf(restarted) == stopFiles, what + ": byte for byte");
+            expect(failAt < 100000, "a stop makes a bounded number of allocations");
+        }
+        expect(finishFailures > 50, "a stop's roll makes many allocations to fail: " + std::to_string(finishFailures));
+        std::cout << "roll_forward_allocation_tests passed: " << failures << " allocations of a roll, " << captureFailures
+                  << " of a capture, and " << finishFailures << " of a stop's roll failed in turn\n";
     } catch (const std::exception& error) {
         allocationsBeforeFailure.store(-1);
         std::cerr << "FAILED: unexpected exception: " << error.what() << std::endl;

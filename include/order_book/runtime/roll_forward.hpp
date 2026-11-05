@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "order_book/runtime/checkpoint.hpp"
+#include "order_book/runtime/clean_stop.hpp"
 #include "order_book/runtime/closed_log.hpp"
 #include "order_book/runtime/instruments.hpp"
 #include "order_book/runtime/log_storage.hpp"
@@ -99,6 +100,19 @@ namespace order_book::runtime {
         // passes made.
         std::size_t roll(std::uint64_t closedEnd, const std::atomic<bool>* stopping = nullptr);
 
+        // A clean stop's last roll (steps 4 and 5), once the log writer has cut, flushed, and
+        // closed the last file and the unused next one is gone: every closed file a book still
+        // needs, as roll does, then the last, short one, to logEnd, and each book's image there
+        // compared byte for byte with its live one. A book that matches is published at logEnd,
+        // or already stands there; one that differs is not, and its live image is saved as
+        // liveImageFileName, the log staying the truth. With no live images the closed files
+        // still roll, and nothing is published at logEnd. Never throws: what became of each book
+        // is in stopped(slot), and what went wrong is reported as it happens.
+        void finish(std::uint64_t logEnd, const LiveImages& live);
+
+        // What the last finish did with a slot's book; NOT_ROLLED before any.
+        const StoppedBook& stopped(std::uint32_t slot) const { return atStop.at(slot); }
+
         // Closed files, up to the last roll's closedEnd, that some book still needs.
         std::size_t filesBehind() const noexcept { return behind; }
 
@@ -128,8 +142,27 @@ namespace order_book::runtime {
             std::vector<std::uint32_t> slots;  // the books its header lists, by slot
         };
 
+        // A book's image at a file's end, made and proved, waiting to be published.
+        struct Ready {
+            std::uint32_t slot;
+            std::vector<std::byte> image;
+        };
+
         void readLogFiles(std::uint64_t closedEnd);
+        // The shard's last file, short of logEnd, if no roll knows it yet: ending at logEnd.
+        std::optional<LogFileInfo> lastFile(std::uint64_t logEnd);
+        LogFileInfo describe(const std::string& name, std::uint64_t firstPosition, std::uint64_t endPosition);
         void pass(const LogFileInfo& file, std::uint64_t end, const std::vector<bool>& needs);
+        // The images at end of every book that needs this file: restored, replayed, proved, or a
+        // book with no command in it rewrapped. Nothing is published.
+        std::vector<Ready> imagesAt(const LogFileInfo& file, std::uint64_t end, const std::vector<bool>& needs);
+        // The image of a book's newest checkpoint, falling back if it no longer decodes.
+        std::vector<std::byte> newestImage(std::uint32_t slot);
+        // Publishes a book's image at end; a failure is counted, reported, and leaves it behind.
+        bool publish(std::uint32_t slot, std::uint32_t shardCount, std::uint64_t end, std::span<const std::byte> image);
+        // Saves a live image that differed; a failure is reported, and false.
+        bool saveLive(std::uint32_t slot, std::uint32_t shardCount, std::uint64_t end, std::span<const std::byte> image);
+        void countBehind();
         // Where a book stands: its newest checkpoint, or the first file that lists it.
         std::optional<std::uint64_t> standing(std::uint32_t slot) const;
         bool standsAt(std::uint32_t slot, const LogFileInfo& file) const;
@@ -151,6 +184,14 @@ namespace order_book::runtime {
         std::vector<LogFileInfo> files;      // this shard's closed ones, by first position
         std::size_t behind = 0;
         RollCounts totals;
+        std::vector<StoppedBook> atStop;     // by slot, from the last finish
+    };
+
+    // What the clean stop's last roll needs of one shard: where its log ended, and the images its
+    // matching thread wrote of its live books, which must outlive the roll.
+    struct ShardAtStop {
+        std::uint64_t logEnd = 0;
+        const LiveImages* live = nullptr;
     };
 
     // A roll-forward worker (--roll-workers): its shards' rollers, made on the thread that starts
@@ -173,6 +214,10 @@ namespace order_book::runtime {
 
         // Passes until the ClosedLog stops: once, then each time a file closes.
         void run();
+
+        // A clean stop's last roll of each of its shards, through ShardRoller::finish, once run
+        // has returned. byShard is by shard number and covers every shard this worker rolls.
+        void finish(std::span<const ShardAtStop> byShard);
 
         const std::vector<std::uint32_t>& shards() const noexcept { return mine; }
         const ShardRoller& roller(std::size_t index) const { return *rollers.at(index); }

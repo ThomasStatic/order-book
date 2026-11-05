@@ -190,7 +190,7 @@ namespace order_book::runtime {
     ShardRoller::ShardRoller(LogStorage& logStorage, LogStorage& checkpointStorage, const InstrumentDirectory& instruments,
                              std::uint32_t shardIndex, Report reportTo)
         : logs(logStorage), checkpoints(checkpointStorage), directory(instruments), shard(shardIndex), report(std::move(reportTo)),
-          kept(directory.onShard(shardIndex).size()), firstListing(kept.size()) {
+          kept(directory.onShard(shardIndex).size()), firstListing(kept.size()), atStop(kept.size()) {
         // Each book's positions, newest first; a .tmp a crash left is removed, as at any start.
         std::vector<std::vector<std::uint64_t>> positions(kept.size());
         for (const std::string& name : checkpoints.names()) {
@@ -287,29 +287,50 @@ namespace order_book::runtime {
             if (!files.empty() && firstPosition <= files.back().firstPosition) {
                 continue;  // known
             }
-            const log_reading::FileHeader header = log_reading::readHeader(logs, name);
-            const auto* parsed = std::get_if<replay::LogHeader>(&header.parsed);
-            if (parsed == nullptr) {
-                throw PassAbandoned{"cannot read " + name + "'s header: " + std::get<replay::ParseError>(header.parsed).message};
-            }
-            LogFileInfo file;
-            file.name = name;
-            file.firstPosition = firstPosition;
-            file.endPosition = named[i + 1].first;
-            file.headerBytes = header.bytes;
-            file.shardCount = parsed->shardCount;
-            for (const Symbol& symbol : parsed->symbols) {
-                const std::optional<BookLocation> location = directory.find(symbol);
-                if (location && location->shard == shard) {
-                    file.slots.push_back(location->slot);
-                    // Where a book with no checkpoint stands: the first file that lists it.
-                    if (!firstListing[location->slot]) {
-                        firstListing[location->slot] = firstPosition;
-                    }
+            files.push_back(describe(name, firstPosition, named[i + 1].first));
+        }
+    }
+
+    ShardRoller::LogFileInfo ShardRoller::describe(const std::string& name, std::uint64_t firstPosition, std::uint64_t endPosition) {
+        const log_reading::FileHeader header = log_reading::readHeader(logs, name);
+        const auto* parsed = std::get_if<replay::LogHeader>(&header.parsed);
+        if (parsed == nullptr) {
+            throw PassAbandoned{"cannot read " + name + "'s header: " + std::get<replay::ParseError>(header.parsed).message};
+        }
+        LogFileInfo file;
+        file.name = name;
+        file.firstPosition = firstPosition;
+        file.endPosition = endPosition;
+        file.headerBytes = header.bytes;
+        file.shardCount = parsed->shardCount;
+        for (const Symbol& symbol : parsed->symbols) {
+            const std::optional<BookLocation> location = directory.find(symbol);
+            if (location && location->shard == shard) {
+                file.slots.push_back(location->slot);
+                // Where a book with no checkpoint stands: the first file that lists it.
+                if (!firstListing[location->slot]) {
+                    firstListing[location->slot] = firstPosition;
                 }
             }
-            files.push_back(std::move(file));
         }
+        return file;
+    }
+
+    std::optional<ShardRoller::LogFileInfo> ShardRoller::lastFile(std::uint64_t logEnd) {
+        // The newest file starting before the end, by name: a file starting at the end holds no
+        // record, and one past it was made ahead and never written.
+        std::optional<std::pair<std::uint64_t, std::string>> newest;
+        for (const std::string& name : logs.names()) {
+            const std::optional<LogFileNameParts> parts = parseLogFileName(name);
+            if (parts && !parts->temporary && parts->shard == shard && parts->firstPosition < logEnd &&
+                (!newest || parts->firstPosition > newest->first)) {
+                newest.emplace(parts->firstPosition, name);
+            }
+        }
+        if (!newest || (!files.empty() && newest->first <= files.back().firstPosition)) {
+            return std::nullopt;  // none, or known: a roll found it closed
+        }
+        return describe(newest->second, newest->first, logEnd);
     }
 
     std::optional<std::uint64_t> ShardRoller::standing(std::uint32_t slot) const {
@@ -375,6 +396,12 @@ namespace order_book::runtime {
             // roll tries again.
             say("roll forward stopped: ", error.what());
         }
+        countBehind();
+        totals.passes += made;
+        return made;
+    }
+
+    void ShardRoller::countBehind() {
         behind = 0;
         for (const LogFileInfo& file : files) {
             // Behind if a book it lists stands before its end.
@@ -385,11 +412,80 @@ namespace order_book::runtime {
             });
             behind += needed ? 1 : 0;
         }
-        totals.passes += made;
-        return made;
+    }
+
+    void ShardRoller::finish(std::uint64_t logEnd, const LiveImages& live) {
+        std::fill(atStop.begin(), atStop.end(), StoppedBook{.outcome = live ? StopOutcome::NOT_ROLLED : StopOutcome::NO_IMAGE});
+        // Every closed file first, each published at its own end, as any roll publishes it.
+        static_cast<void>(roll(logEnd));
+        if (!live) {
+            return;
+        }
+        try {
+            const std::optional<LogFileInfo> last = lastFile(logEnd);
+            // What the log rebuilds of each book at its end: the last file rolled, or, for a book
+            // already standing there, its newest checkpoint.
+            std::vector<std::optional<std::vector<std::byte>>> rolled(kept.size());
+            if (last) {
+                std::vector<bool> needs(kept.size());
+                bool any = false;
+                for (const std::uint32_t slot : last->slots) {
+                    needs[slot] = standsAt(slot, *last);
+                    any = any || needs[slot];
+                }
+                if (any) {
+                    for (Ready& book : imagesAt(*last, logEnd, needs)) {
+                        rolled[book.slot] = std::move(book.image);
+                    }
+                }
+            }
+            for (std::uint32_t slot = 0; slot < kept.size(); ++slot) {
+                if (!rolled[slot] && kept[slot].newest == logEnd) {
+                    rolled[slot] = newestImage(slot);
+                }
+            }
+            // Then each against its live book, publishing those that match.
+            for (std::uint32_t slot = 0; slot < kept.size(); ++slot) {
+                if (!rolled[slot]) {
+                    continue;  // NOT_ROLLED: it stands behind the last file, as a failure left it
+                }
+                const std::vector<std::byte>& fromLog = *rolled[slot];
+                const std::vector<std::byte>& liveImage = (*live)[slot];
+                const auto [logAt, liveAt] = std::mismatch(fromLog.begin(), fromLog.end(), liveImage.begin(), liveImage.end());
+                StoppedBook& book = atStop[slot];
+                if (logAt != fromLog.end() || liveAt != liveImage.end()) {
+                    book.outcome = StopOutcome::DIFFERS;
+                    book.differsAt = static_cast<std::uint64_t>(logAt - fromLog.begin());
+                    // The header is the one it would have been published under.
+                    const std::uint32_t shardCount = last ? last->shardCount : directory.shardCount();
+                    book.saved = saveLive(slot, shardCount, logEnd, liveImage);
+                } else if (kept[slot].newest == logEnd) {
+                    book.outcome = StopOutcome::PUBLISHED;
+                } else {
+                    book.outcome = publish(slot, last->shardCount, logEnd, fromLog) ? StopOutcome::PUBLISHED : StopOutcome::PUBLISH_FAILED;
+                }
+            }
+            if (last) {
+                files.push_back(*last);
+            }
+        } catch (const std::bad_alloc&) {
+            ++totals.passesLost;
+            say("the clean stop's last roll-forward pass was lost to bad_alloc", "");
+        } catch (const PassAbandoned& abandoned) {
+            say("the clean stop's last roll forward stopped: ", abandoned.why.c_str());
+        } catch (const LogStorageError& error) {
+            say("the clean stop's last roll forward stopped: ", error.what());
+        }
+        countBehind();
     }
 
     void ShardRoller::pass(const LogFileInfo& file, std::uint64_t end, const std::vector<bool>& needs) {
+        for (const Ready& book : imagesAt(file, end, needs)) {
+            static_cast<void>(publish(book.slot, file.shardCount, end, book.image));
+        }
+    }
+
+    std::vector<ShardRoller::Ready> ShardRoller::imagesAt(const LogFileInfo& file, std::uint64_t end, const std::vector<bool>& needs) {
         const std::span<const Instrument> instruments = directory.onShard(shard);
         // The books with commands in this file, restored on first use from their newest
         // checkpoint, or empty when they have none.
@@ -442,10 +538,6 @@ namespace order_book::runtime {
         }
 
         // Every image first, proved, then publishing, so a bad_alloc publishes nothing.
-        struct Ready {
-            std::uint32_t slot;
-            std::vector<std::byte> image;
-        };
         std::vector<Ready> ready;
         ready.reserve(file.slots.size());
         for (const std::uint32_t slot : file.slots) {
@@ -460,39 +552,71 @@ namespace order_book::runtime {
                 ready.push_back(Ready{slot, std::move(image)});
             } else if (kept[slot].newest) {
                 // No command: a new wrapper around the same image, with no restore.
-                const std::string name = checkpointFileName(symbol, *kept[slot].newest);
-                const std::vector<std::byte> bytes = readWhole(checkpoints, name);
-                const auto decoded = decodeCheckpoint(bytes);
-                const auto* checkpoint = std::get_if<DecodedCheckpoint>(&decoded);
-                if (checkpoint == nullptr) {
-                    fallBack(slot, name + " no longer decodes");
-                }
-                ready.push_back(Ready{slot, std::vector<std::byte>(checkpoint->image.begin(), checkpoint->image.end())});
+                ready.push_back(Ready{slot, newestImage(slot)});
             } else {
                 ready.push_back(Ready{slot, imageOf(OrderBook{})});
             }
         }
+        return ready;
+    }
 
-        for (const Ready& book : ready) {
-            const Symbol& symbol = instruments[book.slot].symbol;
-            Kept& held = kept[book.slot];
-            try {
-                publishCheckpoint(checkpoints, headerFor(symbol, file.shardCount, shard, end), book.image);
-            } catch (const LogStorageError& error) {
-                ++totals.writesFailed;
-                report("shard " + std::to_string(shard) + ": checkpoint " + checkpointFileName(symbol, end) + " not published: " +
-                       error.what() + "; " + symbol.text() + " stays at its last checkpoint");
-                continue;
-            }
-            ++totals.published;
-            // Nothing allocates from here to the removal, so a book published is always one the
-            // roller knows; a removal a bad_alloc cuts short stays pending for the next roll. None
-            // is pending here: each roll starts by retrying them, and a bad_alloc ends a roll.
-            held.superseded = held.older;
-            held.older = held.newest;
-            held.newest = end;
-            removeSuperseded(book.slot);
+    std::vector<std::byte> ShardRoller::newestImage(std::uint32_t slot) {
+        const std::string name = checkpointFileName(directory.onShard(shard)[slot].symbol, *kept[slot].newest);
+        const std::vector<std::byte> bytes = readWhole(checkpoints, name);
+        const auto decoded = decodeCheckpoint(bytes);
+        const auto* checkpoint = std::get_if<DecodedCheckpoint>(&decoded);
+        if (checkpoint == nullptr) {
+            fallBack(slot, name + " no longer decodes");
         }
+        return std::vector<std::byte>(checkpoint->image.begin(), checkpoint->image.end());
+    }
+
+    bool ShardRoller::publish(std::uint32_t slot, std::uint32_t shardCount, std::uint64_t end, std::span<const std::byte> image) {
+        const Symbol& symbol = directory.onShard(shard)[slot].symbol;
+        Kept& held = kept[slot];
+        try {
+            publishCheckpoint(checkpoints, headerFor(symbol, shardCount, shard, end), image);
+        } catch (const LogStorageError& error) {
+            ++totals.writesFailed;
+            report("shard " + std::to_string(shard) + ": checkpoint " + checkpointFileName(symbol, end) + " not published: " +
+                   error.what() + "; " + symbol.text() + " stays at its last checkpoint");
+            return false;
+        }
+        ++totals.published;
+        // Nothing allocates from here to the removal, so a book published is always one the
+        // roller knows; a removal a bad_alloc cuts short stays pending for the next roll. None
+        // is pending here: each roll starts by retrying them, and a bad_alloc ends a roll.
+        held.superseded = held.older;
+        held.older = held.newest;
+        held.newest = end;
+        removeSuperseded(slot);
+        return true;
+    }
+
+    bool ShardRoller::saveLive(std::uint32_t slot, std::uint32_t shardCount, std::uint64_t end, std::span<const std::byte> image) {
+        const Symbol& symbol = directory.onShard(shard)[slot].symbol;
+        const std::string name = liveImageFileName(symbol, end);
+        const std::vector<std::byte> bytes = encodeCheckpoint(headerFor(symbol, shardCount, shard, end), image);
+        try {
+            std::unique_ptr<LogFile> file;
+            try {
+                file = checkpoints.create(name, Durability::PROCESS);
+            } catch (const LogStorageError& error) {
+                if (error.kind() != LogStorageError::Kind::EXISTS) {
+                    throw;
+                }
+                // An earlier stop's at the same position, which this one replaces.
+                checkpoints.remove(name);
+                file = checkpoints.create(name, Durability::PROCESS);
+            }
+            file->write(0, bytes);
+            file->flush();
+            file->close();
+        } catch (const LogStorageError& error) {
+            report("shard " + std::to_string(shard) + ": cannot save " + name + ": " + error.what());
+            return false;
+        }
+        return true;
     }
 
     RollWorker::RollWorker(LogStorage& storage, const InstrumentDirectory& directory, const ClosedLog& closedLog,
@@ -535,6 +659,22 @@ namespace order_book::runtime {
                 }
             }
             closed.waitPast(seen);
+        }
+    }
+
+    void RollWorker::finish(std::span<const ShardAtStop> byShard) {
+        for (std::size_t index = 0; index < mine.size(); ++index) {
+            const ShardAtStop& stop = byShard[mine[index]];
+            try {
+                rollers[index]->finish(stop.logEnd, *stop.live);
+            } catch (const std::exception& error) {
+                // finish throws nothing it expects, so this is a report that failed: its books
+                // stay as finish left them, and the other shards still roll.
+                try {
+                    report(std::string("the clean stop's last roll forward stopped: ") + error.what());
+                } catch (const std::exception&) {
+                }
+            }
         }
     }
 

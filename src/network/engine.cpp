@@ -23,6 +23,7 @@
 #include "order_book/network/gateway_thread.hpp"
 #include "order_book/network/poll_socket_set.hpp"
 #include "order_book/runtime/abort_report.hpp"
+#include "order_book/runtime/clean_stop.hpp"
 #include "order_book/runtime/closed_log.hpp"
 #include "order_book/runtime/instruments.hpp"
 #include "order_book/runtime/log_files.hpp"
@@ -83,6 +84,9 @@ namespace order_book::network {
             std::vector<BookLine> books;
             std::uint64_t resultGrowths = 0;
             bool loopRan = false;  // the matching thread's: its loop tells the log writer to finish
+            // The clean stop's step 3, the matching thread's once its loop stops: with a log, its
+            // live books' images, for the roll forward to compare.
+            runtime::LiveImages live;
 
             // With a log. The matching thread alone writes the ring, the log writer alone reads it
             // and publishes the durable position, and the writer names its file once it made it.
@@ -264,6 +268,8 @@ namespace order_book::network {
             void runLogWriter(std::uint32_t number);
             void joinLogWriters();
             void startRollWorkers();
+            void stopRolling();
+            bool finishRolling();
             void joinRollWorkers();
             void finishHousekeeping();
             void startGateways();
@@ -271,6 +277,7 @@ namespace order_book::network {
             void sendStopMarkers(std::size_t thread);
             EngineExit waitForStop();
             void writeStopReport();
+            bool reportUnpublished();
             EngineExit forceStop(const std::string& why);
             void releaseGateways() {
                 gatewaysReleased.store(true, std::memory_order_seq_cst);
@@ -302,6 +309,12 @@ namespace order_book::network {
             std::unique_ptr<runtime::ClosedLog> closedLog;
             std::vector<std::unique_ptr<runtime::RollWorker>> rollWorkers;
             std::vector<std::thread> rollThreads;
+            // The clean stop's last roll: by shard, what each worker needs, filled in once every
+            // log writer is done, and whether the workers make it or end without it.
+            std::vector<runtime::ShardAtStop> atStop;
+            enum class FinalRoll { AWAITED, MADE, SKIPPED };
+            std::atomic<FinalRoll> finalRoll{FinalRoll::AWAITED};
+            std::atomic<std::uint32_t> rollsFinished{0};  // workers done with their last roll
             std::mutex diagnosticsLock;  // for what the workers print as it happens
             std::vector<std::vector<std::uint32_t>> newBooks;  // by shard, from recovery's start
             std::vector<std::vector<std::vector<std::uint64_t>>> bookCheckpoints;  // by shard, from recovery's start
@@ -384,6 +397,7 @@ namespace order_book::network {
             own.loopRan = true;
             own.ready.set_value();
             loop->run();
+            own.live = runtime::captureLiveImages(*shard, own.logRing != nullptr);
             // After the stop, with nothing left to allocate for.
             for (std::uint32_t slot = 0; slot < own.books.size(); ++slot) {
                 own.books[slot].growths = shard->books().book(slot).capacityGrowths() - growthsAtReady[slot];
@@ -463,20 +477,66 @@ namespace order_book::network {
                     throw Refusal{error.what()};
                 }
             }
+            atStop.resize(settings.shards);
             for (std::uint32_t worker = 0; worker < workers; ++worker) {
                 rollThreads.emplace_back([this, worker] {
                     gatewaysReleased.wait(false, std::memory_order_seq_cst);
                     rollWorkers[worker]->run();
+                    finalRoll.wait(FinalRoll::AWAITED, std::memory_order_seq_cst);
+                    if (finalRoll.load(std::memory_order_seq_cst) == FinalRoll::MADE) {
+                        try {
+                            rollWorkers[worker]->finish(atStop);
+                        } catch (...) {
+                            // RollWorker::finish throws nothing; a book it left unrolled says so.
+                        }
+                        rollsFinished.fetch_add(1, std::memory_order_seq_cst);
+                        happenings.fetch_add(1, std::memory_order_seq_cst);
+                        happenings.notify_all();
+                    }
                 });
             }
         }
 
-        // After the log writers, so the last file closed is the last one rolled; a pass under way
-        // finishes first, and none starts once the ClosedLog stops.
-        void Engine::joinRollWorkers() {
+        // A pass under way finishes first, and none starts once the ClosedLog stops.
+        void Engine::stopRolling() {
             if (closedLog) {
                 closedLog->stop();
             }
+        }
+
+        // The clean stop's steps 4 and 5, on each worker's thread, once every log writer has
+        // closed its last file and the unused next files are gone: each shard rolled to its
+        // log's end and compared with its live books. A second stop while they roll forces the
+        // stop at once, as it does any time before: false then, with the workers left running.
+        bool Engine::finishRolling() {
+            if (rollThreads.empty()) {
+                return true;
+            }
+            for (std::uint32_t number = 0; number < shards.size(); ++number) {
+                atStop[number] = runtime::ShardAtStop{shards[number]->logEnd, &shards[number]->live};
+            }
+            finalRoll.store(FinalRoll::MADE, std::memory_order_seq_cst);
+            finalRoll.notify_all();
+            for (;;) {
+                const std::uint32_t seen = happenings.load(std::memory_order_seq_cst);
+                if (stop.requests() >= 2) {
+                    return false;
+                }
+                if (rollsFinished.load(std::memory_order_seq_cst) == rollThreads.size()) {
+                    break;
+                }
+                happenings.wait(seen, std::memory_order_seq_cst);
+            }
+            joinRollWorkers();
+            return true;
+        }
+
+        // Ends each worker, with no last roll unless a clean stop asked for one.
+        void Engine::joinRollWorkers() {
+            stopRolling();
+            FinalRoll awaited = FinalRoll::AWAITED;
+            finalRoll.compare_exchange_strong(awaited, FinalRoll::SKIPPED, std::memory_order_seq_cst);
+            finalRoll.notify_all();
             for (std::thread& thread : rollThreads) {
                 if (thread.joinable()) {
                     thread.join();
@@ -788,10 +848,34 @@ namespace order_book::network {
             }
             // Each has written the rest, cut, flushed, and closed its file by now, or is about to.
             joinLogWriters();
-            joinRollWorkers();
+            stopRolling();
             finishHousekeeping();
+            if (!finishRolling()) {
+                return forceStop("forced stop");
+            }
+            const bool published = reportUnpublished();
             writeStopReport();
-            return EngineExit::CLEAN_STOP;
+            return published ? EngineExit::CLEAN_STOP : EngineExit::NOT_PUBLISHED;
+        }
+
+        // A line for each book the clean stop did not publish, in shard and slot order; true if
+        // there is none.
+        bool Engine::reportUnpublished() {
+            bool all = true;
+            for (const std::unique_ptr<runtime::RollWorker>& worker : rollWorkers) {
+                for (std::size_t index = 0; index < worker->shards().size(); ++index) {
+                    const std::uint32_t number = worker->shards()[index];
+                    const std::span<const runtime::Instrument> instruments = directory->onShard(number);
+                    for (std::uint32_t slot = 0; slot < instruments.size(); ++slot) {
+                        const runtime::StoppedBook& book = worker->roller(index).stopped(slot);
+                        if (const std::optional<std::string> line = runtime::formatStoppedBook(instruments[slot].symbol, shards[number]->logEnd, book)) {
+                            diagnostics << prefix << *line << std::endl;
+                            all = false;
+                        }
+                    }
+                }
+            }
+            return all;
         }
 
         EngineExit Engine::forceStop(const std::string& why) {
@@ -805,6 +889,9 @@ namespace order_book::network {
             if (closedLog) {
                 closedLog->stop();  // no worker starts another pass on an engine being abandoned
             }
+            FinalRoll awaited = FinalRoll::AWAITED;  // a last roll under way is left to finish or not
+            finalRoll.compare_exchange_strong(awaited, FinalRoll::SKIPPED, std::memory_order_seq_cst);
+            finalRoll.notify_all();
             for (const std::unique_ptr<GatewayRuntime>& gateway : gateways) {
                 if (gateway->thread.joinable()) {
                     gateway->thread.detach();

@@ -188,6 +188,7 @@ add_library(order_book_runtime STATIC
     src/runtime/abort_report.cpp
     src/runtime/book_set.cpp
     src/runtime/checkpoint.cpp
+    src/runtime/clean_stop.cpp
     src/runtime/engine_settings.cpp
     src/runtime/instruments.cpp
     src/runtime/log_files.cpp
@@ -684,6 +685,28 @@ if(BUILD_TESTING)
     add_test(NAME roll_forward_abort_proof
         COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:roll_forward_tests> -DARGS=abort-proof
                 "-DOUTPUT_REGEX=order book runtime: roll forward: shard 0 AAPL at 25: the image proof failed: restore refused it: NONZERO_RESERVED"
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
+
+    # A clean stop's last three steps (D6): live images, the comparison, and a crash at every step.
+    add_executable(clean_stop_tests
+        tests/clean_stop_test.cpp
+    )
+
+    target_compile_features(clean_stop_tests PRIVATE cxx_std_20)
+    target_link_libraries(clean_stop_tests PRIVATE order_book_runtime)
+    order_book_enable_warnings(clean_stop_tests)
+    order_book_enable_sanitizers(clean_stop_tests)
+    add_test(NAME clean_stop_tests COMMAND clean_stop_tests)
+    set_tests_properties(clean_stop_tests PROPERTIES TIMEOUT 600)
+    # What only the live book holds: an index entry's price or level handle broken, which no image
+    # shows, aborts the stop.
+    add_test(NAME clean_stop_abort_index
+        COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:clean_stop_tests> -DARGS=abort-index
+                "-DOUTPUT_REGEX=order book runtime: clean stop: shard 0 AAPL: the live book fails its check: INVALID_INDEX_ENTRY"
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
+    add_test(NAME clean_stop_abort_level_handle
+        COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:clean_stop_tests> -DARGS=abort-level-handle
+                "-DOUTPUT_REGEX=order book runtime: clean stop: shard 0 AAPL: the live book fails its check: "
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
 
     add_executable(shard_invariant_tests
