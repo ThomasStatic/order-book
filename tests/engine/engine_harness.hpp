@@ -101,7 +101,7 @@ namespace order_book::engine_testing {
         std::uint64_t crashSeed = 0;
         std::uint32_t shards = 0;
         // CLEAN_STOP: the shard `instrument` is pinned to under the new placement, if any.
-        std::optional<std::uint32_t> pin;
+        std::optional<std::uint32_t> pin = std::nullopt;  // initialized here, as GCC's -Wmissing-field-initializers wants
     };
 
     // What the seed produces, generated ahead of the run on the models alone, so nothing in the
