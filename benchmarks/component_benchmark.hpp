@@ -59,6 +59,26 @@ std::vector<ComponentResult> runLogGroup(const WorkloadComponentSettings& settin
 std::vector<ComponentResult> runEntryGroup(const WorkloadComponentSettings& settings);
 std::vector<ComponentResult> runWireGroup(const WorkloadComponentSettings& settings);
 
+// The images group: a book image's costs, by book size and by how scattered the book's nodes
+// are, since the cost is chasing them, not moving bytes. Books take a workload's shape, its
+// initial orders set to each size: deep-book's at each of deepBookOrders, over its 2000 levels
+// or half as many levels as orders if fewer, and mostly-resting's at mostlyRestingOrders. Each
+// in three states: restored (rebuilt from its own image, so compact, which is what a worker
+// starts from), aged (after agingCommands of the workload's own timed commands, so its size
+// moves as the workload's does), and shuffled (its preload rested in a random order, the worst
+// case). Operations: write-image, restore, check-invariants, and image-proof (restore, then
+// writeImage again and compare the bytes, the proof a checkpoint must pass), each one per
+// pass, with the caches evicted before each pass by walking evictionBytes.
+struct ImageSettings {
+    std::vector<std::size_t> deepBookOrders{1000, 10000, 100000, 1000000};
+    std::size_t mostlyRestingOrders = 1000000;
+    std::size_t agingCommands = 1000000;
+    std::size_t passes = 5;
+    std::size_t evictionBytes = 64 * 1024 * 1024;
+    std::uint64_t seed = 42;
+};
+std::vector<ComponentResult> runImageGroup(const ImageSettings& settings);
+
 // The controls that find the cause of a fall in scaling, each on the same threads as the run it
 // explains. If the CPU loop falls too, the cause is frequency. If only the walks fall, it is
 // the shared cache or memory.

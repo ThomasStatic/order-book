@@ -56,6 +56,9 @@ namespace order_book::engine_testing {
         // For testing the harness: the first crash also loses every file of shard 0's log but
         // its oldest, as a drive that lied about a flush would, and meets no write on its way.
         bool loseLogFilesAtFirstCrash = false;
+        // How many RESTORE lines, each after a command and for an instrument picked from a source
+        // of their own, so the other lines are the same whatever this is.
+        std::size_t restores = 10;
     };
 
     enum class SymbolFault { NONE, UNKNOWN, MALFORMED };
@@ -63,10 +66,13 @@ namespace order_book::engine_testing {
     // A line is a command, or an engine action. LOG: each shard's log writer does one write
     // through the in-memory LogStorage, so until then commands are unwritten. CRASH_ENGINE and
     // CRASH_MACHINE <seed>: the in-memory LogStorage models that crash, then every shard
-    // recovers and the run goes on.
-    enum class EngineAction { COMMAND, LOG, CRASH_ENGINE, CRASH_MACHINE };
+    // recovers and the run goes on. RESTORE <symbol>: that instrument's book is imaged and
+    // restored, and the run goes on with the restored book (test-only: a running engine never
+    // does this).
+    enum class EngineAction { COMMAND, LOG, CRASH_ENGINE, CRASH_MACHINE, RESTORE };
 
-    // One line of a stream. An action's other fields mean nothing, but a machine crash's seed.
+    // One line of a stream. An action's other fields mean nothing, but a machine crash's seed and
+    // a restore's instrument.
     struct EngineCommand {
         std::size_t instrument;
         randomized::Command generated;  // as the generator made it
@@ -108,6 +114,7 @@ namespace order_book::engine_testing {
         std::size_t crashes = 0;
         std::size_t lostToCrashes = 0;     // queued commands no recovery found
         std::uint64_t tailCutBytes = 0;    // what every recovery cut
+        std::size_t restores = 0;          // RESTORE lines run
     };
 
     struct EngineRunResult {
@@ -124,6 +131,10 @@ namespace order_book::engine_testing {
     // writer, then replaying each shard's files in order, each starting where the last ended, per
     // instrument through ReplayEngine, which must give a book equal to the witness, and checking
     // each Shard, durable position included.
+    //
+    // A RESTORE line requires the shard's book's image to equal its witness's, restore to rebuild
+    // it, and writeImage(restore(x)) == x, then puts the restored book in the shard, so restores
+    // compound.
     //
     // A CRASH line first notes, per shard, the durable position its responses were released up to.
     // A machine crash then has every shard's log writer meet it in one more write.

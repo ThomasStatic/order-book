@@ -5,8 +5,11 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
+#include <variant>
 #include <vector>
 
+#include "book_image.hpp"
 #include "cancellation_result.hpp"
 #include "invariants.hpp"
 #include "level_array.hpp"
@@ -494,5 +497,23 @@ namespace order_book {
         // Callable in every build. Public commands also run it on return when
         // invariantChecksAfterCommands is set (see invariants.hpp).
         InvariantResult checkInvariants() const noexcept;
+
+        // The book image (docs/checkpoint-format.md): every byte needed to rebuild this book
+        // exactly, and nothing else. The same book gives the same bytes on every platform.
+        //
+        // How many bytes writeImage needs, from the level and index sizes. O(1).
+        std::size_t imageSize() const noexcept;
+        // Writes the image into out and returns its length, or returns 0 if it does not fit,
+        // writing nothing past out either way. Checks the room left before each level, by that
+        // level's own order count, so even a broken book cannot overrun. Never allocates,
+        // throws, or does I/O; call it between commands, on the book's own thread.
+        std::size_t writeImage(std::span<std::byte> out) const noexcept;
+        // Rebuilds a book from an image, which it treats as untrusted: it refuses bad bytes,
+        // fields, order, and records that disagree with the header or each other, then runs
+        // checkInvariants in every build. It runs no command, makes no event, and never matches,
+        // so a crossing image is refused rather than traded. A bad image is a RestoreError, never
+        // an abort; std::bad_alloc propagates. The book's indexes are sized for the image, and it
+        // reports no capacity growths; reserve afterwards for more room.
+        static std::variant<OrderBook, RestoreError> restore(std::span<const std::byte> image);
     };
 }  // namespace order_book

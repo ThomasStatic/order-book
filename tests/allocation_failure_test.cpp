@@ -7,6 +7,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "order_book/order.hpp"
@@ -18,6 +19,7 @@
 namespace {
 long allocationsBeforeFailure = -1;  // negative = disarmed
 long allocationCount = 0;            // every allocation, failed or not, for tests that count them
+long liveAllocations = 0;            // allocated and not yet freed, for tests that look for leaks
 
 // MSVC's checked iterators allocate bookkeeping proxies inside noexcept container members
 // (e.g. vector's default constructor), so failing one calls std::terminate. The test only
@@ -40,16 +42,23 @@ void* operator new(std::size_t size) {
         --allocationsBeforeFailure;
     }
     if (void* memory = std::malloc(size == 0 ? 1 : size)) {
+        ++liveAllocations;
         return memory;
     }
     throw std::bad_alloc();
 }
 
 void operator delete(void* memory) noexcept {
+    if (memory != nullptr) {
+        --liveAllocations;
+    }
     std::free(memory);
 }
 
 void operator delete(void* memory, std::size_t) noexcept {
+    if (memory != nullptr) {
+        --liveAllocations;
+    }
     std::free(memory);
 }
 
@@ -983,6 +992,75 @@ void testRequestAllocatesLikeOrder() {
     }
 }
 
+// A book with levels on both sides, a partly filled order, and pending stops on both sides.
+OrderBook imagedBook() {
+    using order_book::OrderRequest;
+    using order_book::OrderType;
+    using order_book::TimeInForce;
+    OrderBook book{};
+    book.submitOrder(Order(1, 100, 5, 1, Side::SELL));
+    book.submitOrder(Order(2, 101, 4, 1, Side::SELL));
+    book.submitOrder(Order(3, 98, 6, 1, Side::BUY));
+    book.submitOrder(Order(4, 100, 2, 1, Side::BUY));
+    for (const OrderRequest& stop : {
+             OrderRequest{5, Side::BUY, 0, 1, OrderType::STOP, TimeInForce::IOC, 105},
+             OrderRequest{6, Side::BUY, 106, 1, OrderType::STOP_LIMIT, TimeInForce::GTC, 103},
+             OrderRequest{7, Side::SELL, 0, 2, OrderType::STOP, TimeInForce::FOK, 95},
+         }) {
+        book.submitOrder(stop);
+    }
+    return book;
+}
+
+void testWriteImageDoesNotAllocate() {
+    // With the very first allocation armed to fail, writing the image completes and the failure
+    // is never triggered.
+    const OrderBook book = imagedBook();
+    std::vector<std::byte> image(book.imageSize());
+    allocationsBeforeFailure = 0;
+    const std::size_t written = book.writeImage(image);
+    const bool stillArmed = allocationsBeforeFailure == 0;
+    allocationsBeforeFailure = -1;
+    expect(stillArmed, "writeImage should not allocate");
+    expect(written == image.size(), "writeImage should fill the buffer imageSize gave");
+}
+
+void testFailingRestoreLeaksNothing() {
+    // Each allocation restore makes, failed in turn: it throws std::bad_alloc and frees all it
+    // took, and once none fails it rebuilds the book exactly.
+    const OrderBook book = imagedBook();
+    std::vector<std::byte> image(book.imageSize());
+    book.writeImage(image);
+    int failures = 0;
+    for (long failAt = 0;; ++failAt) {
+        const long liveBefore = liveAllocations;
+        allocationsBeforeFailure = failAt;
+        bool threw = false;
+        try {
+            auto restored = OrderBook::restore(image);
+            const bool triggered = allocationsBeforeFailure == -1;
+            allocationsBeforeFailure = -1;
+            expect(!triggered, "a restore that saw its allocation fail should have thrown");
+            expect(std::holds_alternative<OrderBook>(restored), "restore should rebuild a good image");
+            std::vector<std::byte> again(image.size());
+            std::get<OrderBook>(restored).writeImage(again);
+            expect(again == image, "the restored book should write the same image");
+        } catch (const std::bad_alloc&) {
+            allocationsBeforeFailure = -1;
+            threw = true;
+            ++failures;
+        }
+        // Read before the message is built, since building it allocates.
+        const bool freedEverything = liveAllocations == liveBefore;
+        expect(freedEverything,
+               "restore failing at allocation " + std::to_string(failAt) + " should free everything it took");
+        if (!threw) {
+            break;
+        }
+    }
+    expect(failures > 3, "restore should allocate several times, each failed in turn");
+}
+
 }  // namespace
 
 int main() {
@@ -1020,6 +1098,8 @@ int main() {
         testCancelOrderDoesNotAllocate();
         testRequestAllocatesLikeOrder();
         testRequestRejectionsDoNotAllocate();
+        testWriteImageDoesNotAllocate();
+        testFailingRestoreLeaksNothing();
 
         std::cout << "allocation failure tests passed" << std::endl;
         return EXIT_SUCCESS;

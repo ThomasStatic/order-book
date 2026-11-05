@@ -45,6 +45,7 @@ namespace order_book::engine_testing {
             generation.commands = config.commands;
             generation.logWritePercent = 0;  // commands alone, as connections send them
             generation.crashes = false;
+            generation.restores = 0;
             return generation;
         }
 

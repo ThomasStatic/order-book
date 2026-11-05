@@ -40,6 +40,7 @@ namespace order_book::engine_testing {
         constexpr std::uint64_t faultStream = 0xC2B2AE3D27D4EB4FULL;
         constexpr std::uint64_t logStream = 0x165667B19E3779F9ULL;
         constexpr std::uint64_t crashStream = 0x27D4EB2F165667C5ULL;
+        constexpr std::uint64_t restoreStream = 0x85EBCA77C2B2AE63ULL;
         // Records in the log file of the shard with the most symbols, so a run rolls across many,
         // and a file spans two of a drive's pages, so a machine crash can tear a record or leave a
         // hole that valid records follow.
@@ -164,6 +165,10 @@ namespace order_book::engine_testing {
                     }
                     if (stream[index].action == EngineAction::CRASH_ENGINE || stream[index].action == EngineAction::CRASH_MACHINE) {
                         result.failure = crash(stream[index], index, result.stats);
+                        continue;
+                    }
+                    if (stream[index].action == EngineAction::RESTORE) {
+                        result.failure = restore(stream[index], index, result.stats);
                         continue;
                     }
                     result.failure = execute(stream[index], index, result.stats);
@@ -314,6 +319,37 @@ namespace order_book::engine_testing {
                     return failure(index, instrument, "the shard's book differs from the model: " + *difference);
                 }
                 return std::nullopt;
+            }
+
+            // A RESTORE line, as runEngineSeed's comment in engine_harness.hpp says.
+            std::optional<EngineFailure> restore(const EngineCommand& line, std::size_t index, EngineStats& stats) {
+                Instrument& instrument = instruments[line.instrument];
+                runtime::Shard& shard = *shards[instrument.location.shard];
+                const std::vector<std::byte> image = imageOf(shard.books().book(instrument.location.slot));
+                const std::vector<std::byte> witnessed = imageOf(instrument.witness);
+                if (image != witnessed) {
+                    const auto differs = std::mismatch(image.begin(), image.end(), witnessed.begin(), witnessed.end());
+                    return failure(index, instrument, "the shard's book's image differs from the witness's, first at byte " +
+                                                          std::to_string(differs.first - image.begin()));
+                }
+                auto restored = OrderBook::restore(image);
+                if (const auto* refused = std::get_if<RestoreError>(&restored)) {
+                    return failure(index, instrument, std::string("restore refused the shard's book's image: ") +
+                                                          restoreErrorCodeName(refused->code) + " at " +
+                                                          std::to_string(refused->offset) + ": " + refused->message);
+                }
+                if (imageOf(std::get<OrderBook>(restored)) != image) {
+                    return failure(index, instrument, "the restored book's image differs from the one it was restored from");
+                }
+                shard.replaceBook(instrument.location.slot, std::move(std::get<OrderBook>(restored)));
+                ++stats.restores;
+                return std::nullopt;
+            }
+
+            static std::vector<std::byte> imageOf(const OrderBook& book) {
+                std::vector<std::byte> image(book.imageSize());
+                image.resize(book.writeImage(image));
+                return image;
             }
 
             // A CRASH line, as runEngineSeed's comment in engine_harness.hpp says.
@@ -622,6 +658,18 @@ namespace order_book::engine_testing {
             }
             std::stable_sort(crashAfter.begin(), crashAfter.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
         }
+        // RESTORE lines, each after a command, from a source of their own.
+        std::mt19937_64 restores(config.seed ^ restoreStream);
+        std::vector<std::pair<std::size_t, EngineCommand>> restoreAfter;
+        if (config.commands != 0) {
+            for (std::size_t i = 0; i < config.restores; ++i) {
+                const auto after = static_cast<std::size_t>(restores() % config.commands);
+                const auto instrument = static_cast<std::size_t>(restores() % config.instruments);
+                restoreAfter.emplace_back(after, EngineCommand{instrument, Command{}, std::nullopt, SymbolFault::NONE, EngineAction::RESTORE});
+            }
+            std::stable_sort(restoreAfter.begin(), restoreAfter.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        }
+        std::size_t nextRestore = 0;
         std::size_t nextCrash = 0;
         std::vector<EngineCommand> stream;
         stream.reserve(config.commands);
@@ -641,6 +689,9 @@ namespace order_book::engine_testing {
             }
             while (nextCrash < crashAfter.size() && crashAfter[nextCrash].first == i) {
                 stream.push_back(crashAfter[nextCrash++].second);
+            }
+            while (nextRestore < restoreAfter.size() && restoreAfter[nextRestore].first == i) {
+                stream.push_back(restoreAfter[nextRestore++].second);
             }
         }
         return stream;

@@ -138,6 +138,7 @@ endfunction()
 add_library(order_book STATIC
     src/order_book.cpp
     src/order_book_invariants.cpp
+    src/book_image.cpp
     src/order.cpp
     src/trade.cpp
     src/submission_result.cpp
@@ -433,6 +434,16 @@ if(BUILD_TESTING)
     order_book_enable_warnings(capacity_tests)
     order_book_enable_sanitizers(capacity_tests)
     add_test(NAME capacity_tests COMMAND capacity_tests)
+
+    add_executable(checkpoint_tests
+        tests/checkpoint_test.cpp
+    )
+
+    target_compile_features(checkpoint_tests PRIVATE cxx_std_20)
+    target_link_libraries(checkpoint_tests PRIVATE order_book)
+    order_book_enable_warnings(checkpoint_tests)
+    order_book_enable_sanitizers(checkpoint_tests)
+    add_test(NAME checkpoint_tests COMMAND checkpoint_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/checkpoint)
 
     add_executable(event_tests
         tests/event_test.cpp

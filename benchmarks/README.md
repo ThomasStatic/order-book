@@ -188,8 +188,14 @@ Recorded results live in `results/`, one directory per session set, kept byte fo
 | | `check-entry` | One `checkEntry`, on a workload's real commands, already decoded |
 | `wire` | `frame-decode` | One `FrameReader::next` on a `Command` frame, in memory |
 | | `event-encode` | One `encodeEvent`, on the events those commands make |
+| `images` | `write-image` | One `writeImage` of a whole book, into a buffer sized beforehand |
+| | `restore` | One `OrderBook::restore` of that image; destroying the book is not timed |
+| | `check-invariants` | One `checkInvariants` of the book |
+| | `image-proof` | `restore`, then `writeImage` again and the bytes compared: a checkpoint's proof |
 | `controls` | `cpu-loop` | A loop touching no memory |
 | | `memory-walk` | A random cycle through memory, one cache line at a time, at 256 KiB, 8 MiB, and 256 MiB |
+
+The images group's books are `deep-book`'s shape at 1k, 10k, 100k, and 1M orders and `mostly-resting`'s at 1M, each `restored` (rebuilt from its own image, so compact), `aged` (after the workload's own 1M commands), and `shuffled` (its preload rested in a random order), with the caches evicted before each pass, since an image's cost is chasing a book's nodes. The `orders` and `levels` columns say what each book held.
 
 The controls run on every thread at once, on the same pinned cores as the run they explain. If the CPU loop falls as far as the run did, the cause is frequency. If only the walks fall, it is the shared cache or memory.
 

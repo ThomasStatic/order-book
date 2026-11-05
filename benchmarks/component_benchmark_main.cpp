@@ -31,7 +31,8 @@ constexpr int usageError = 2;
 constexpr int unoptimizedBuild = 3;
 
 constexpr std::string_view usageText =
-    "usage: order_book_component_benchmarks [--group capacity|controls|log|entry|wire]... [--size smoke|full]\n"
+    "usage: order_book_component_benchmarks [--group capacity|controls|log|entry|wire|images]...\n"
+    "                                       [--size smoke|full]\n"
     "                                       [--threads N] [--pin-cores A,B,...] [--priority normal|high]\n"
     "                                       [--csv FILE] [--allow-unoptimized]\n"
     "       order_book_component_benchmarks --help\n";
@@ -44,7 +45,8 @@ constexpr std::string_view helpText =
     "  --group NAME         capacity (growth, reserve, new levels), controls (a CPU-only loop and\n"
     "                       a memory walk at three sizes), log (encoding and reading a command log\n"
     "                       against CSV), entry (symbols, executeCommand, checkEntry), or wire (frame\n"
-    "                       decode, event frame encode); repeatable (default: all)\n"
+    "                       decode, event frame encode), or images (writeImage, restore, the\n"
+    "                       check, and the proof, by book size and state); repeatable (default: all)\n"
     "  --size SIZE          full (the default) or smoke, a tiny run for testing the program\n"
     "  --threads N          threads running the controls at once (default 1)\n"
     "  --pin-cores LIST     pin controls thread i to the i-th core listed\n"
@@ -66,6 +68,7 @@ struct Settings {
     bool log = false;
     bool entry = false;
     bool wire = false;
+    bool images = false;
     bool smoke = false;
     std::size_t threads = 1;
     std::vector<unsigned int> pinCores;
@@ -136,8 +139,10 @@ std::optional<std::string> parseArguments(const std::vector<std::string_view>& a
                 settings.entry = true;
             } else if (value == "wire") {
                 settings.wire = true;
+            } else if (value == "images") {
+                settings.images = true;
             } else {
-                return "unknown group '" + std::string(value) + "' (known: capacity, controls, log, entry, wire)";
+                return "unknown group '" + std::string(value) + "' (known: capacity, controls, log, entry, wire, images)";
             }
         } else if (arg == "--size") {
             if (value != "full" && value != "smoke") {
@@ -165,12 +170,13 @@ std::optional<std::string> parseArguments(const std::vector<std::string_view>& a
             settings.csvPath = std::string(value);
         }
     }
-    if (!settings.capacity && !settings.controls && !settings.log && !settings.entry && !settings.wire) {
+    if (!settings.capacity && !settings.controls && !settings.log && !settings.entry && !settings.wire && !settings.images) {
         settings.capacity = true;
         settings.controls = true;
         settings.log = true;
         settings.entry = true;
         settings.wire = true;
+        settings.images = true;
     }
     if (!settings.pinCores.empty() && settings.pinCores.size() != settings.threads) {
         return "--pin-cores lists " + std::to_string(settings.pinCores.size()) + " cores for " +
@@ -231,6 +237,19 @@ int runBenchmarks(const Settings& settings) {
     }
     if (settings.wire) {
         for (bench::ComponentResult& result : bench::runWireGroup(workloads)) {
+            results.push_back(std::move(result));
+        }
+    }
+    if (settings.images) {
+        bench::ImageSettings images;
+        if (settings.smoke) {
+            images.deepBookOrders = {200};
+            images.mostlyRestingOrders = 200;
+            images.agingCommands = 200;
+            images.passes = 1;
+            images.evictionBytes = 64 * 1024;
+        }
+        for (bench::ComponentResult& result : bench::runImageGroup(images)) {
             results.push_back(std::move(result));
         }
     }

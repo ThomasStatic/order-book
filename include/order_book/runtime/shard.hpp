@@ -65,6 +65,8 @@ namespace order_book::runtime {
         const BookSet& books() const noexcept { return bookSet; }
         // Warms a slot's book further, which recovery does once a book holds what it replayed.
         void reserve(std::uint32_t slot, const BookCapacity& capacity) { bookSet.reserve(slot, capacity); }
+        // Puts a book OrderBook::restore rebuilt on this thread in a slot, as BookSet::replace does.
+        void replaceBook(std::uint32_t slot, OrderBook book) noexcept { bookSet.replace(slot, std::move(book)); }
         std::size_t size() const noexcept { return bookSet.size(); }
 
         std::uint64_t nextPosition() const noexcept { return nextLogPosition; }

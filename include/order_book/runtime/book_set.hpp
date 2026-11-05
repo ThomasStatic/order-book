@@ -42,6 +42,11 @@ namespace order_book::runtime {
         // Warms this slot's book further, as OrderBook::reserve does, with its strong guarantee.
         void reserve(std::uint32_t slot, const BookCapacity& capacity);
 
+        // Puts a book in this slot in place of the one there, which is destroyed: a book that
+        // OrderBook::restore rebuilt on this thread. Never allocates. The new book has only the
+        // room restore gave it, not the warmth this set built, so reserve the slot again for more.
+        void replace(std::uint32_t slot, OrderBook book) noexcept;
+
     private:
         void checkCaller(const char* call, std::uint32_t slot) const;
 

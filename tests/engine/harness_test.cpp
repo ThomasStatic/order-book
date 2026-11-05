@@ -93,8 +93,11 @@ void testASeedFixesItsStream() {
 void testLogLinesChangeNoCommand() {
     EngineSeedConfig plain = smallRun();
     plain.logWritePercent = 0;
+    plain.restores = 0;
+    EngineSeedConfig logging = smallRun();
+    logging.restores = 0;
     const std::vector<EngineCommand> without = generateEngineStream(plain);
-    const std::vector<EngineCommand> with = generateEngineStream(smallRun());
+    const std::vector<EngineCommand> with = generateEngineStream(logging);
     expect(without.size() == plain.commands, "with none asked for, every line is a command");
     std::vector<const EngineCommand*> commands;
     std::size_t logs = 0;
@@ -112,6 +115,35 @@ void testLogLinesChangeNoCommand() {
         expect(commands[i]->instrument == without[i].instrument && commands[i]->generated == without[i].generated &&
                    commands[i]->fault == without[i].fault,
                "and they are the same commands in the same order");
+    }
+}
+
+// RESTORE lines come from a source of their own too: as many as asked, each after a command,
+// for instruments spread across the run, and every other line is the same with or without them.
+void testRestoreLinesChangeNoCommand() {
+    EngineSeedConfig plain = smallRun();
+    plain.restores = 0;
+    const std::vector<EngineCommand> alone = generateEngineStream(plain);
+    const std::vector<EngineCommand> with = generateEngineStream(smallRun());
+    std::vector<const EngineCommand*> rest;
+    std::vector<bool> restored(smallRun().instruments, false);
+    std::size_t restores = 0;
+    for (std::size_t i = 0; i < with.size(); ++i) {
+        if (with[i].action != EngineAction::RESTORE) {
+            rest.push_back(&with[i]);
+            continue;
+        }
+        ++restores;
+        expect(i > 0, "a restore only ever follows a line");
+        restored.at(with[i].instrument) = true;
+    }
+    expect(restores == smallRun().restores, "as many restores as asked, not " + std::to_string(restores));
+    expect(std::count(restored.begin(), restored.end(), true) > 1, "for more than one instrument");
+    expect(rest.size() == alone.size(), "every other line is still there");
+    for (std::size_t i = 0; i < alone.size(); ++i) {
+        expect(rest[i]->action == alone[i].action && rest[i]->instrument == alone[i].instrument &&
+                   rest[i]->generated == alone[i].generated && rest[i]->fault == alone[i].fault,
+               "and the same, in the same order");
     }
 }
 
@@ -230,6 +262,7 @@ void testARunPassesAndExercisesEverything() {
     expect(result.stats.logWrites > 2 * smallRun().commands * smallRun().logWritePercent / 100 / 3,
            "in many writes, on LOG lines and full log rings");
     expect(result.stats.logFiles > 4 * smallRun().shards, "across many log files on each shard, each starting where the last ended");
+    expect(result.stats.restores == smallRun().restores, "every RESTORE line restored a book");
 }
 
 void testEverySpreadAndShardCountPasses() {
@@ -282,6 +315,7 @@ int main() {
     testASeedFixesItsStream();
     testLogLinesChangeNoCommand();
     testCrashLinesChangeNoCommand();
+    testRestoreLinesChangeNoCommand();
     testConversion();
     testARunPassesAndExercisesEverything();
     testEverySpreadAndShardCountPasses();

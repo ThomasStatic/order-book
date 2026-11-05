@@ -347,6 +347,7 @@ namespace order_book::engine_testing {
         generation.commands = config.commands;
         generation.logWritePercent = 0;  // its log writers are actors of their own
         generation.crashes = false;
+        generation.restores = 0;
         return runStepperSchedule(config, generateEngineStream(generation));
     }
 

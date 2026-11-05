@@ -8,7 +8,7 @@ All code is in namespace `order_book`, with headers in `include/order_book/` and
 
 Read the matching note in `docs/internals/` before changing that area, and update it in the same commit as the change:
 
-- `engine.md`: read before changing `src/` or `include/`. Types, sequence numbers, `PriceLevel`, `OrderBook`, the index, the node pool, matching, results, events, invariants, errors.
+- `engine.md`: read before changing `src/` or `include/`. Types, sequence numbers, `PriceLevel`, `OrderBook`, the index, the node pool, matching, results, events, invariants, the book image, errors.
 - `order-behaviors.md`: `OrderRequest`, expiry, IOC, FOK, market, post-only, self-trade prevention, pending stops, cascades, cancel-replace.
 - `testing.md`: CTest names, CMake options, what each suite covers, consistency helpers, allocation-failure tests.
 - `randomized-tests.md`: the command generator, profiles, `ReferenceBook`, `CommandReplayer`, saved regressions, `generatorVersion`.

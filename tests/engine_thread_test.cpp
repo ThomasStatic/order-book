@@ -102,6 +102,7 @@ void testALogNoConnectionSentIsRefused() {
     generation.commands = 400;
     generation.logWritePercent = 0;
     generation.crashes = false;
+    generation.restores = 0;
     const ConnectionStreams streams = connectionStreams(shape, generateEngineStream(generation));
     expect(streams.bytes.size() == 8, "two connections on each of 4 instruments");
     std::map<std::string, std::vector<order_book::replay::Command>> logged;

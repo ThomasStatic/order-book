@@ -300,6 +300,26 @@ void testEncodeLogRecord() {
            "encoding a record");
 }
 
+// A book image, of levels on both sides and a pending stop, into a buffer sized beforehand.
+void testWriteImage() {
+    WarmBook warm;
+    for (OrderId id = 1; id <= 20; ++id) {
+        const bool buying = id % 2 == 1;
+        warm.book.submitOrder(request(id, buying ? Side::BUY : Side::SELL, (buying ? 90 : 110) + id % 5, 3), warm.submitted);
+    }
+    OrderRequest stop = request(30, Side::BUY, 0, 1);
+    stop.type = OrderType::STOP;
+    stop.timeInForce = TimeInForce::IOC;
+    stop.stopPrice = 120;
+    warm.book.submitOrder(stop, warm.submitted);
+    std::vector<std::byte> image(warm.book.imageSize());
+    std::size_t written = 0;
+    const std::size_t calls = heapCallsOf([&] { written = warm.book.writeImage(image); });
+    expect(calls == 0, "writing a book's image made " + std::to_string(calls) + " heap calls");
+    expect(written == image.size() && warm.book.pendingStopCount() == 1 && warm.book.activeOrderCount() == 20,
+           "the image holds every order and the stop");
+}
+
 // Unused when automatic checks are on, since main then skips.
 [[maybe_unused]] void runAll() {
     testTheCountSeesAHeapCall();
@@ -312,6 +332,7 @@ void testEncodeLogRecord() {
     testEveryWorkloadThroughItsRings();
     testRings();
     testEncodeLogRecord();
+    testWriteImage();
 }
 
 }  // namespace

@@ -47,6 +47,11 @@ namespace order_book::runtime {
         books[slot].reserve(capacity);
     }
 
+    void BookSet::replace(std::uint32_t slot, OrderBook book) noexcept {
+        checkCaller("replace", slot);
+        books[slot] = std::move(book);
+    }
+
     const OrderBook& BookSet::book(std::uint32_t slot) const {
         checkCaller("book", slot);
         return books[slot];

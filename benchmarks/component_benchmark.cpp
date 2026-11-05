@@ -1,11 +1,13 @@
 #include "component_benchmark.hpp"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
 #include <exception>
 #include <latch>
 #include <limits>
+#include <optional>
 #include <random>
 #include <span>
 #include <sstream>
@@ -14,6 +16,7 @@
 #include <thread>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "benchmark_report.hpp"
 #include "benchmark_runner.hpp"
@@ -418,7 +421,148 @@ std::vector<std::int64_t> runTogether(const ControlSettings& settings, Body body
     return elapsed;
 }
 
+// ---- The images group --------------------------------------------------------------------
+
+// Writes and reads every cache line of a buffer larger than the caches, untimed, so the next
+// pass starts from memory.
+void evictCaches(std::size_t bytes) {
+    static std::vector<std::uint64_t> buffer;
+    buffer.resize(bytes / sizeof(std::uint64_t));
+    std::uint64_t sum = 0;
+    for (std::size_t i = 0; i < buffer.size(); i += cacheLine / sizeof(std::uint64_t)) {
+        buffer[i] += i;
+        sum += buffer[i];
+    }
+    controlSink = controlSink + sum;
+}
+
+// A v1 workload's command on a book, which must do as the workload predicts.
+void applyCommand(OrderBook& book, const BenchmarkCommand& command) {
+    if (command.type == CommandType::SUBMIT) {
+        if (book.submitOrder(Order(command.orderId, command.price, command.quantity, 1, command.side)).getStatus() ==
+            SubmissionStatus::REJECTED) {
+            throw std::runtime_error("images: the book refused a workload's order");
+        }
+    } else if (!book.cancelOrder(command.orderId).isSuccess()) {
+        throw std::runtime_error("images: the book could not cancel a workload's order");
+    }
+}
+
+std::vector<std::byte> imageOf(const OrderBook& book) {
+    std::vector<std::byte> image(book.imageSize());
+    if (book.writeImage(image) != image.size()) {
+        throw std::runtime_error("images: writeImage did not fill imageSize bytes");
+    }
+    return image;
+}
+
+OrderBook restoredFrom(std::span<const std::byte> image) {
+    auto restored = OrderBook::restore(image);
+    if (const auto* error = std::get_if<RestoreError>(&restored)) {
+        throw std::runtime_error(std::string("images: restore refused a book's own image: ") + error->message);
+    }
+    return std::move(std::get<OrderBook>(restored));
+}
+
+// One operation on one state's book, one per pass, the caches evicted before each.
+template <typename Operation>
+ComponentResult imageResult(const char* operation, const std::string& workload, const char* state, const OrderBook& book,
+                            const ImageSettings& settings, Operation run) {
+    ComponentResult result{operation, workload, state, book.activeOrderCount(), book.holding().levels, settings.passes, 0,
+                           settings.passes};
+    for (std::size_t pass = 0; pass < settings.passes; ++pass) {
+        evictCaches(settings.evictionBytes);
+        result.elapsedNanoseconds += run();
+    }
+    return result;
+}
+
+void addImageResults(std::vector<ComponentResult>& results, const std::string& workload, const char* state,
+                     const OrderBook& book, const ImageSettings& settings) {
+    const std::vector<std::byte> image = imageOf(book);
+    std::vector<std::byte> out(image.size());
+    results.push_back(imageResult("write-image", workload, state, book, settings, [&] {
+        const Clock::time_point start = Clock::now();
+        const std::size_t written = book.writeImage(out);
+        const Clock::time_point stop = Clock::now();
+        if (written != out.size()) {
+            throw std::runtime_error("images: writeImage did not fill its buffer");
+        }
+        return nanosecondsBetween(start, stop);
+    }));
+    results.push_back(imageResult("restore", workload, state, book, settings, [&] {
+        const Clock::time_point start = Clock::now();
+        auto restored = OrderBook::restore(image);
+        const Clock::time_point stop = Clock::now();
+        if (!std::holds_alternative<OrderBook>(restored)) {
+            throw std::runtime_error("images: restore refused a book's own image");
+        }
+        return nanosecondsBetween(start, stop);  // the restored book is destroyed untimed
+    }));
+    results.push_back(imageResult("check-invariants", workload, state, book, settings, [&] {
+        const Clock::time_point start = Clock::now();
+        const InvariantResult checked = book.checkInvariants();
+        const Clock::time_point stop = Clock::now();
+        if (!checked.isValid()) {
+            throw std::runtime_error("images: a book failed its own check");
+        }
+        return nanosecondsBetween(start, stop);
+    }));
+    results.push_back(imageResult("image-proof", workload, state, book, settings, [&] {
+        const Clock::time_point start = Clock::now();
+        std::optional<OrderBook> proved;
+        bool same = false;
+        {
+            auto restored = OrderBook::restore(image);
+            if (auto* rebuilt = std::get_if<OrderBook>(&restored)) {
+                same = rebuilt->writeImage(out) == image.size() && out == image;
+                proved.emplace(std::move(*rebuilt));
+            }
+        }
+        const Clock::time_point stop = Clock::now();
+        if (!same) {
+            throw std::runtime_error("images: a book's image did not prove");
+        }
+        return nanosecondsBetween(start, stop);
+    }));
+}
+
+void addShapeResults(std::vector<ComponentResult>& results, const char* name, std::size_t orders,
+                     const ImageSettings& settings) {
+    WorkloadConfig config = findWorkload(name);
+    config.initialOrders = orders;
+    config.targetLevels = static_cast<unsigned int>(std::min<std::size_t>(config.targetLevels, orders / 2));
+    const Workload workload = generateWorkload(config, settings.agingCommands, settings.seed);
+
+    OrderBook preloaded;
+    preloadBook(preloaded, workload);
+    addImageResults(results, name, "restored", restoredFrom(imageOf(preloaded)), settings);
+
+    OrderBook shuffled;
+    shuffled.reserve(BookCapacity{workload.preload.size(), 0, config.targetLevels});
+    std::vector<BenchmarkCommand> preload = workload.preload;
+    std::shuffle(preload.begin(), preload.end(), std::mt19937_64(settings.seed));
+    for (const BenchmarkCommand& command : preload) {
+        applyCommand(shuffled, command);
+    }
+    addImageResults(results, name, "shuffled", shuffled, settings);
+
+    for (const BenchmarkCommand& command : workload.timed) {
+        applyCommand(preloaded, command);
+    }
+    addImageResults(results, name, "aged", preloaded, settings);
+}
+
 }  // namespace
+
+std::vector<ComponentResult> runImageGroup(const ImageSettings& settings) {
+    std::vector<ComponentResult> results;
+    for (const std::size_t orders : settings.deepBookOrders) {
+        addShapeResults(results, "deep-book", orders, settings);
+    }
+    addShapeResults(results, "mostly-resting", settings.mostlyRestingOrders, settings);
+    return results;
+}
 
 double ComponentResult::nanosecondsPerOperation() const {
     return operations == 0 ? 0.0 : static_cast<double>(elapsedNanoseconds) / static_cast<double>(operations);

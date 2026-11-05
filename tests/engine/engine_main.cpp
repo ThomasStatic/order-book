@@ -158,6 +158,7 @@ bool runSchedule(const StepperConfig& config, const std::optional<std::vector<st
         generation.commands = config.commands;
         generation.logWritePercent = 0;  // its log writers are actors of their own
         generation.crashes = false;
+        generation.restores = 0;
         const std::vector<EngineCommand> all = generateEngineStream(generation);
         std::vector<EngineCommand> kept;
         for (const std::size_t index : *lines) {
