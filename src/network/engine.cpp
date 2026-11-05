@@ -780,6 +780,9 @@ namespace order_book::network {
             // Whatever is still running is left to the process's exit: nothing here waits for it.
             forced = true;
             stop.onRequest({});
+            if (closedLog) {
+                closedLog->stop();  // no worker starts another pass on an engine being abandoned
+            }
             for (const std::unique_ptr<GatewayRuntime>& gateway : gateways) {
                 if (gateway->thread.joinable()) {
                     gateway->thread.detach();

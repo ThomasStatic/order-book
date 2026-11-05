@@ -667,7 +667,8 @@ if(BUILD_TESTING)
     order_book_enable_warnings(roll_forward_tests)
     order_book_enable_sanitizers(roll_forward_tests)
     add_test(NAME roll_forward_tests COMMAND roll_forward_tests)
-    set_tests_properties(roll_forward_tests PROPERTIES LABELS threaded)  # a worker thread follows a writer
+    set_tests_properties(roll_forward_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)  # a worker thread follows a writer
+
     # A bad_alloc at each allocation of a roll in turn: skipped under MSVC's debug iterators.
     add_executable(roll_forward_allocation_tests
         tests/roll_forward_allocation_test.cpp

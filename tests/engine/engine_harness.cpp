@@ -18,10 +18,13 @@
 #include "order_book/network/entry_check.hpp"
 #include "order_book/replay_engine.hpp"
 #include "order_book/replay_instruments.hpp"
+#include "order_book/runtime/checkpoint.hpp"
+#include "order_book/runtime/closed_log.hpp"
 #include "order_book/runtime/instruments.hpp"
 #include "order_book/runtime/log_storage.hpp"
 #include "order_book/runtime/log_writer.hpp"
 #include "order_book/runtime/recovery.hpp"
+#include "order_book/runtime/roll_forward.hpp"
 #include "order_book/runtime/shard.hpp"
 
 namespace order_book::engine_testing {
@@ -41,6 +44,7 @@ namespace order_book::engine_testing {
         constexpr std::uint64_t logStream = 0x165667B19E3779F9ULL;
         constexpr std::uint64_t crashStream = 0x27D4EB2F165667C5ULL;
         constexpr std::uint64_t restoreStream = 0x85EBCA77C2B2AE63ULL;
+        constexpr std::uint64_t rollStream = 0x94D049BB133111EBULL;
         // Records in the log file of the shard with the most symbols, so a run rolls across many,
         // and a file spans two of a drive's pages, so a machine crash can tear a record or leave a
         // hole that valid records follow.
@@ -105,8 +109,9 @@ namespace order_book::engine_testing {
         // One shard's log: its ring, as the matching thread fills it, its durable position, and
         // its log writer on the run's in-memory storage.
         struct ShardLog {
-            ShardLog(runtime::Housekeeping& housekeeping, std::uint32_t shard, std::size_t records, std::uint64_t firstPosition = 0)
-                : ring(records), writer(housekeeping, shard, ring, durable, firstPosition) {}
+            ShardLog(runtime::Housekeeping& housekeeping, std::uint32_t shard, std::size_t records, runtime::ClosedLog& closed,
+                     std::uint64_t firstPosition = 0)
+                : ring(records), writer(housekeeping, shard, ring, durable, firstPosition, &closed) {}
 
             runtime::Ring<runtime::LogEntry> ring;
             runtime::DurablePosition durable;
@@ -139,12 +144,20 @@ namespace order_book::engine_testing {
                   lock(storage.lock()),
                   housekeeping(makeHousekeeping()),
                   logged(seedConfig.shards),
-                  released(seedConfig.shards, 0) {
+                  released(seedConfig.shards, 0),
+                  closed(std::make_unique<runtime::ClosedLog>(seedConfig.shards)) {
+                // As the engine starts on an empty directory: every instrument is new, and gets an
+                // empty-book checkpoint before its shard's first file.
+                for (std::size_t i = 0; i < config.instruments; ++i) {
+                    const Symbol symbol = symbolOf(i);
+                    runtime::publishEmptyCheckpoint(storage, symbol, config.shards, directory.find(symbol)->shard, 0);
+                }
                 for (std::uint32_t shard = 0; shard < config.shards; ++shard) {
                     shards.push_back(std::make_unique<runtime::Shard>(directory, shard, config.shardCapacity));
-                    logs.push_back(std::make_unique<ShardLog>(*housekeeping, shard, config.logRingRecords));
+                    logs.push_back(std::make_unique<ShardLog>(*housekeeping, shard, config.logRingRecords, *closed));
                     shards.back()->watchDurablePosition(logs.back()->durable);
                 }
+                makeRollers();
                 instruments.reserve(config.instruments);
                 for (std::size_t i = 0; i < config.instruments; ++i) {
                     const Symbol symbol = symbolOf(i);
@@ -169,6 +182,10 @@ namespace order_book::engine_testing {
                     }
                     if (stream[index].action == EngineAction::RESTORE) {
                         result.failure = restore(stream[index], index, result.stats);
+                        continue;
+                    }
+                    if (stream[index].action == EngineAction::ROLL) {
+                        result.failure = roll(index, result.stats);
                         continue;
                     }
                     result.failure = execute(stream[index], index, result.stats);
@@ -346,6 +363,79 @@ namespace order_book::engine_testing {
                 return std::nullopt;
             }
 
+            // A worker's rollers, as made at a start: leftover .tmp files go, and each book's
+            // checkpoints are read.
+            void makeRollers() {
+                rollers.clear();
+                for (std::uint32_t shard = 0; shard < config.shards; ++shard) {
+                    rollers.push_back(std::make_unique<runtime::ShardRoller>(storage, directory, shard, [](const std::string&) {}));
+                }
+            }
+
+            // A ROLL line, as runEngineSeed's comment in engine_harness.hpp says.
+            std::optional<EngineFailure> roll(std::size_t index, EngineStats& stats) {
+                ++stats.rolls;
+                for (std::uint32_t shard = 0; shard < config.shards; ++shard) {
+                    runtime::ShardRoller& roller = *rollers[shard];
+                    const std::uint64_t before = roller.counts().published;
+                    stats.rollPasses += roller.roll(closed->end(shard));
+                    stats.checkpoints += static_cast<std::size_t>(roller.counts().published - before);
+                    if (roller.counts().writesFailed != 0 || roller.counts().passesLost != 0) {
+                        return EngineFailure{index, "", "shard " + std::to_string(shard) + "'s roll forward failed a write or lost a pass"};
+                    }
+                }
+                for (const Instrument& instrument : instruments) {
+                    const std::optional<std::uint64_t> at = rollers[instrument.location.shard]->position(instrument.location.slot);
+                    if (!at) {
+                        return failure(index, instrument, "the book has no checkpoint, though its empty one was published at the start");
+                    }
+                    const std::vector<std::byte> file = storage.read(runtime::checkpointFileName(instrument.symbol, *at), 0);
+                    if (const std::optional<runtime::CheckpointFault> fault = runtime::verifyCheckpoint(file)) {
+                        return failure(index, instrument, "its newest checkpoint does not verify: " +
+                                                              runtime::formatCheckpointFault(runtime::checkpointFileName(instrument.symbol, *at), *fault));
+                    }
+                }
+                return std::nullopt;
+            }
+
+            // Each book's newest checkpoint, restored, then the logged commands from its position
+            // replayed on it, must give the witness's image: what recovery from checkpoints will do.
+            std::optional<EngineFailure> checkCheckpoints(std::size_t index) {
+                for (const Instrument& instrument : instruments) {
+                    const std::uint32_t shard = instrument.location.shard;
+                    const std::optional<std::uint64_t> at = rollers[shard]->position(instrument.location.slot);
+                    if (!at) {
+                        return failure(index, instrument, "the book has no checkpoint");
+                    }
+                    if (*at > logged[shard].size()) {
+                        return failure(index, instrument, "a checkpoint at " + std::to_string(*at) + " stands past its shard's log end, " +
+                                                              std::to_string(logged[shard].size()));
+                    }
+                    const std::vector<std::byte> file = storage.read(runtime::checkpointFileName(instrument.symbol, *at), 0);
+                    const auto decoded = runtime::decodeCheckpoint(file);
+                    const auto* checkpoint = std::get_if<runtime::DecodedCheckpoint>(&decoded);
+                    if (checkpoint == nullptr) {
+                        return failure(index, instrument, "its newest checkpoint does not decode");
+                    }
+                    auto restored = OrderBook::restore(checkpoint->image);
+                    if (std::holds_alternative<RestoreError>(restored)) {
+                        return failure(index, instrument, "its newest checkpoint does not restore");
+                    }
+                    OrderBook& book = std::get<OrderBook>(restored);
+                    for (std::size_t position = static_cast<std::size_t>(*at); position < logged[shard].size(); ++position) {
+                        const Logged& entry = logged[shard][position];
+                        if (entry.instrument == static_cast<std::size_t>(&instrument - instruments.data())) {
+                            static_cast<void>(replay::executeCommand(book, entry.bookCommand));
+                        }
+                    }
+                    if (imageOf(book) != imageOf(instrument.witness)) {
+                        return failure(index, instrument, "its checkpoint at " + std::to_string(*at) +
+                                                              ", with the log after it, does not give the witness's image");
+                    }
+                }
+                return std::nullopt;
+            }
+
             static std::vector<std::byte> imageOf(const OrderBook& book) {
                 std::vector<std::byte> image(book.imageSize());
                 image.resize(book.writeImage(image));
@@ -377,6 +467,7 @@ namespace order_book::engine_testing {
                 // Everything the dead engine had, its log writers before the housekeeping they take
                 // files from.
                 logs.clear();
+                rollers.clear();
                 housekeeping.reset();
                 shards.clear();
                 lock.reset();
@@ -426,11 +517,13 @@ namespace order_book::engine_testing {
                         return failure(index, instrument, "after the crash, the shard's book differs from the witness: " + *difference);
                     }
                 }
+                closed = std::make_unique<runtime::ClosedLog>(config.shards);
                 for (std::uint32_t shard = 0; shard < config.shards; ++shard) {
-                    logs.push_back(std::make_unique<ShardLog>(*housekeeping, shard, config.logRingRecords, recovered[shard].replayed));
+                    logs.push_back(std::make_unique<ShardLog>(*housekeeping, shard, config.logRingRecords, *closed, recovered[shard].replayed));
                     shards[shard]->watchDurablePosition(logs.back()->durable);
                 }
-                return std::nullopt;
+                makeRollers();
+                return checkCheckpoints(index);
             }
 
             // A drive that lied: every file of shard 0's but its oldest gone.
@@ -527,6 +620,9 @@ namespace order_book::engine_testing {
                         return EngineFailure{index, "", error.what()};
                     }
                 }
+                if (std::optional<EngineFailure> failed = checkCheckpoints(index)) {
+                    return failed;
+                }
                 const std::vector<replay::InstrumentRecords> grouped = replay::groupBySymbol(records);
                 for (const Instrument& instrument : instruments) {
                     const auto found = std::find_if(grouped.begin(), grouped.end(),
@@ -557,6 +653,8 @@ namespace order_book::engine_testing {
             std::vector<std::uint64_t> released;      // by shard: how far responses were released
             bool leftUnlogged = false;
             bool crashedOnce = false;
+            std::unique_ptr<runtime::ClosedLog> closed;  // what each log writer has closed
+            std::vector<std::unique_ptr<runtime::ShardRoller>> rollers;  // by shard
         };
     }  // namespace
 
@@ -669,6 +767,16 @@ namespace order_book::engine_testing {
             }
             std::stable_sort(restoreAfter.begin(), restoreAfter.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
         }
+        // ROLL lines, each after a command, from a source of their own.
+        std::mt19937_64 rolls(config.seed ^ rollStream);
+        std::vector<std::size_t> rollAfter;
+        if (config.commands != 0) {
+            for (std::size_t i = 0; i < config.rolls; ++i) {
+                rollAfter.push_back(static_cast<std::size_t>(rolls() % config.commands));
+            }
+            std::sort(rollAfter.begin(), rollAfter.end());
+        }
+        std::size_t nextRoll = 0;
         std::size_t nextRestore = 0;
         std::size_t nextCrash = 0;
         std::vector<EngineCommand> stream;
@@ -692,6 +800,10 @@ namespace order_book::engine_testing {
             }
             while (nextRestore < restoreAfter.size() && restoreAfter[nextRestore].first == i) {
                 stream.push_back(restoreAfter[nextRestore++].second);
+            }
+            while (nextRoll < rollAfter.size() && rollAfter[nextRoll] == i) {
+                ++nextRoll;
+                stream.push_back(EngineCommand{0, Command{}, std::nullopt, SymbolFault::NONE, EngineAction::ROLL});
             }
         }
         return stream;

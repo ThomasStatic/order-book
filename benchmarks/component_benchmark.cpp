@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdint>
 #include <exception>
+#include <filesystem>
 #include <latch>
 #include <limits>
 #include <optional>
@@ -18,6 +19,7 @@
 #include <variant>
 #include <vector>
 
+#include "benchmark_log.hpp"
 #include "benchmark_report.hpp"
 #include "benchmark_runner.hpp"
 #include "order_book/command.hpp"
@@ -28,7 +30,14 @@
 #include "order_book/order_book.hpp"
 #include "order_book/order_index.hpp"
 #include "order_book/replay_parser.hpp"
+#include "order_book/image_header.hpp"
+#include "order_book/runtime/checkpoint.hpp"
+#include "order_book/runtime/durability.hpp"
 #include "order_book/runtime/instruments.hpp"
+#include "order_book/runtime/log_files.hpp"
+#include "order_book/runtime/log_storage.hpp"
+#include "order_book/runtime/log_writer.hpp"
+#include "order_book/runtime/roll_forward.hpp"
 #include "order_book/submission_result.hpp"
 #include "workload.hpp"
 
@@ -553,7 +562,144 @@ void addShapeResults(std::vector<ComponentResult>& results, const char* name, st
     addImageResults(results, name, "aged", preloaded, settings);
 }
 
+// A directory of the durability group's own, removed with everything in it once done.
+class ScratchDirectory {
+public:
+    explicit ScratchDirectory(const std::filesystem::path& parent)
+        : where(freshLogDirectory(parent.empty() ? defaultLogParent() : parent)) {}
+    ScratchDirectory(const ScratchDirectory&) = delete;
+    ScratchDirectory& operator=(const ScratchDirectory&) = delete;
+    ~ScratchDirectory() {
+        std::error_code ignored;
+        std::filesystem::remove_all(where, ignored);
+    }
+    const std::filesystem::path& path() const noexcept { return where; }
+
+private:
+    std::filesystem::path where;
+};
+
+void throwOnReport(const std::string& line) {
+    throw std::runtime_error("durability: " + line);
+}
+
+ComponentResult publishResult(std::size_t orders, const DurabilitySettings& settings) {
+    WorkloadConfig config = findWorkload("deep-book");
+    config.initialOrders = orders;
+    config.targetLevels = static_cast<unsigned int>(std::min<std::size_t>(config.targetLevels, orders / 2));
+    OrderBook book;
+    preloadBook(book, generateWorkload(config, 1, settings.seed));
+    const std::vector<std::byte> image = imageOf(book);
+
+    const ScratchDirectory directory(settings.logParent);
+    runtime::FileLogStorage storage(directory.path().string());
+    runtime::CheckpointHeader header;
+    header.shardCount = 1;
+    header.symbol = componentSymbol();
+    ComponentResult result{"publish-checkpoint", "deep-book", "log-drive", book.activeOrderCount(), book.holding().levels,
+                           settings.publishPasses, 0, settings.publishPasses};
+    for (std::size_t pass = 0; pass < settings.publishPasses; ++pass) {
+        header.position = pass + 1;
+        const Clock::time_point start = Clock::now();
+        runtime::publishCheckpoint(storage, header, image);
+        result.elapsedNanoseconds += nanosecondsBetween(start, Clock::now());
+        storage.remove(runtime::checkpointFileName(header.symbol, header.position));
+    }
+    return result;
+}
+
+ComponentResult rollResult(const DurabilitySettings& settings) {
+    if (settings.instruments == 0) {
+        throw std::invalid_argument("durability: a roll pass needs instruments");
+    }
+    std::vector<runtime::Instrument> list;
+    for (std::size_t i = 0; i < settings.instruments; ++i) {
+        list.push_back(runtime::Instrument{instrumentSymbol(i), 0, std::nullopt, std::nullopt, std::nullopt});
+    }
+    const runtime::InstrumentDirectory instruments(list, 1);
+    const runtime::LogFileShape shape = runtime::logFileShape(instruments, 0, runtime::Durability::PROCESS, runtime::defaultLogFileBytes);
+    const std::size_t records = settings.fileRecords != 0 ? settings.fileRecords : static_cast<std::size_t>(shape.records);
+    const std::uint64_t fileBytes = shape.headerBytes + records * replay::logRecordBytes;
+
+    const ScratchDirectory directory(settings.logParent);
+    runtime::FileLogStorage storage(directory.path().string());
+    for (std::size_t i = 0; i < settings.instruments; ++i) {
+        runtime::publishEmptyCheckpoint(storage, instrumentSymbol(i), 1, 0, 0);
+    }
+    {
+        // One full file and the next made ahead, so the first is closed, written book by book,
+        // each with a stream of its own, so only one book's commands are in memory at a time.
+        runtime::Housekeeping housekeeping(storage, instruments, runtime::Durability::PROCESS, fileBytes);
+        runtime::Ring<runtime::LogEntry> ring(65536);
+        runtime::DurablePosition durable(0);
+        runtime::LogWriter writer(housekeeping, 0, ring, durable, 0);
+        const auto drain = [&] {
+            while (writer.pass() != 0 || housekeeping.pass() != 0) {
+            }
+        };
+        const WorkloadConfig config = findWorkload(settings.workload);
+        for (std::size_t i = 0; i < settings.instruments; ++i) {
+            const std::size_t share = records / settings.instruments + (i + 1 == settings.instruments ? records % settings.instruments : 0);
+            const std::vector<replay::ReplayRecord> commands =
+                workloadRecords(generateWorkload(config, share, settings.seed + i), instrumentSymbol(i));
+            const auto slot = instruments.find(instrumentSymbol(i))->slot;
+            for (std::size_t c = 0; c < share; ++c) {
+                const runtime::LogEntry entry{commands[c].command, slot, runtime::ControlKind::COMMAND};
+                while (!ring.tryPush(entry)) {
+                    drain();
+                }
+            }
+        }
+        drain();
+        if (durable.load() != records) {
+            throw std::runtime_error("durability: the log file holds " + std::to_string(durable.load()) + " commands, not " +
+                                     std::to_string(records));
+        }
+    }
+
+    ComponentResult result{"roll-pass", settings.workload, "closed-file", 0, 0, settings.rollPasses, 0, settings.rollPasses * records};
+    for (std::size_t pass = 0; pass < settings.rollPasses; ++pass) {
+        runtime::ShardRoller roller(storage, instruments, 0, throwOnReport);  // reads the empty checkpoints, untimed
+        const Clock::time_point start = Clock::now();
+        const std::size_t made = roller.roll(records);
+        result.elapsedNanoseconds += nanosecondsBetween(start, Clock::now());
+        if (made != 1 || roller.counts().published != settings.instruments) {
+            throw std::runtime_error("durability: a roll pass did not publish every book once");
+        }
+        // Every book back at its empty checkpoint for the next pass, counting what they held.
+        result.orders = 0;
+        result.levels = 0;
+        for (std::size_t i = 0; i < settings.instruments; ++i) {
+            const std::string name = runtime::checkpointFileName(instrumentSymbol(i), records);
+            const std::unique_ptr<runtime::LogFile> file = storage.open(name);
+            std::vector<std::byte> bytes(static_cast<std::size_t>(file->size()));
+            static_cast<void>(file->read(0, bytes));
+            file->close();
+            const auto decoded = runtime::decodeCheckpoint(bytes);
+            const auto* checkpoint = std::get_if<runtime::DecodedCheckpoint>(&decoded);
+            if (checkpoint == nullptr) {
+                throw std::runtime_error("durability: a rolled checkpoint does not decode");
+            }
+            if (const std::optional<ImageHeader> image = readImageHeader(checkpoint->image)) {
+                result.orders += image->orders;
+                result.levels = std::max<std::size_t>(result.levels, std::max(image->bidLevels, image->askLevels));
+            }
+            storage.remove(name);
+        }
+    }
+    return result;
+}
+
 }  // namespace
+
+std::vector<ComponentResult> runDurabilityGroup(const DurabilitySettings& settings) {
+    std::vector<ComponentResult> results;
+    for (const std::size_t orders : settings.deepBookOrders) {
+        results.push_back(publishResult(orders, settings));
+    }
+    results.push_back(rollResult(settings));
+    return results;
+}
 
 std::vector<ComponentResult> runImageGroup(const ImageSettings& settings) {
     std::vector<ComponentResult> results;

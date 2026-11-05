@@ -27,6 +27,7 @@
 #include "order_book/network/tcp.hpp"
 #include "order_book/network/wire_codec.hpp"
 #include "order_book/order_book.hpp"
+#include "order_book/runtime/checkpoint.hpp"
 #include "order_book/runtime/engine_settings.hpp"
 #include "order_book/runtime/instruments.hpp"
 #include "order_book/runtime/log_files.hpp"
@@ -505,8 +506,37 @@ void testALoggedRun() {
                                                     "log-0001-00000000000000000005.oblog"},
            "each shard's next run is in a new file, named for where its log ended");
     expect(bytesOf(logs / expected[0]) == before, "leaving the first run's files as they were");
+
+    // A third run adds IBM on shard 1, whose log ended at 6: a new instrument, named in no log
+    // header and with no checkpoint, gets an empty book's where that shard's log ends.
+    const std::filesystem::path added = writeList("logged-added", "symbol,shard,orders,stops,levels\nAAPL,0,,,\nMSFT,1,2,3,4\nIBM,1,,,\n");
+    settings.instruments = added.string();
+    {
+        Run run(settings);
+        static_cast<void>(run.port());  // once listening, so every shard published what it had to
+        run.stop.request();
+        const EngineExit exit = run.finish();
+        expect(exit == EngineExit::CLEAN_STOP,
+               "a run with a new instrument stops cleanly, exit " + std::to_string(static_cast<int>(exit)) + ":\n" + run.diagnostics.text());
+    }
+    std::vector<std::string> ibm = checkpointsIn(logs);
+    std::erase_if(ibm, [](const std::string& name) { return !name.starts_with("ckpt-IBM-"); });
+    expect(ibm == std::vector<std::string>{"ckpt-IBM-00000000000000000006.obckpt"}, "IBM's one checkpoint, at shard 1's log end");
+    const std::string held = bytesOf(logs / ibm[0]);
+    std::vector<std::byte> bytes(held.size());
+    std::transform(held.begin(), held.end(), bytes.begin(), [](char c) { return static_cast<std::byte>(c); });
+    const auto decoded = runtime::decodeCheckpoint(bytes);
+    const auto* checkpoint = std::get_if<runtime::DecodedCheckpoint>(&decoded);
+    expect(checkpoint != nullptr && checkpoint->header.shardIndex == 1 && checkpoint->header.shardCount == 2,
+           "of shard 1 of 2");
+    const OrderBook empty;
+    std::vector<std::byte> emptyImage(empty.imageSize());
+    static_cast<void>(empty.writeImage(emptyImage));
+    expect(checkpoint != nullptr && std::equal(checkpoint->image.begin(), checkpoint->image.end(), emptyImage.begin(), emptyImage.end()),
+           "an empty book's image");
     std::filesystem::remove_all(logs);
     std::filesystem::remove(list);
+    std::filesystem::remove(added);
 }
 
 // The lock, and the start's own refusals: another shard count or a moved symbol exits 4, and a

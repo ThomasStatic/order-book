@@ -23,11 +23,12 @@ namespace order_book::runtime {
         std::size_t shards() const noexcept { return count; }
 
         // Where the shard's writer starts, every file before it closed. Never allocates.
-        void started(std::uint32_t shard, std::uint64_t position) noexcept { closed(shard, position); }
+        void started(std::uint32_t shard, std::uint64_t position) { closed(shard, position); }
 
         // The writer flushed and closed a full file ending here, then wakes any waiting worker.
-        // Never allocates or throws.
-        void closed(std::uint32_t shard, std::uint64_t end) noexcept {
+        // Never allocates; a lock that fails throws std::system_error, which the writer's own
+        // failure handling turns into an abort.
+        void closed(std::uint32_t shard, std::uint64_t end) {
             ends[shard].store(end, std::memory_order_release);
             {
                 const std::lock_guard<std::mutex> held(lock);

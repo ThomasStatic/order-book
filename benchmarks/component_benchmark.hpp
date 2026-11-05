@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <string>
 #include <vector>
@@ -78,6 +79,26 @@ struct ImageSettings {
     std::uint64_t seed = 42;
 };
 std::vector<ComponentResult> runImageGroup(const ImageSettings& settings);
+
+// The durability group: what checkpoints cost the log's drive and a worker, in a fresh directory
+// under logParent, which should be on the log's drive. publish-checkpoint: one checkpoint
+// published through FileLogStorage (written to .tmp, flushed, read back, renamed, which flushes
+// the directory), by image size: deep-book's preloaded book at each of deepBookOrders.
+// roll-pass: one roll-forward pass over a real closed log file of fileRecords commands, which
+// instruments books of workload share, each with a stream of its own written in turn by a real
+// LogWriter: every book restored from its empty checkpoint, replayed, proved, and published at
+// the file's end, so ns_per_op is per command. Recovery from a checkpoint comes with D5.
+struct DurabilitySettings {
+    std::vector<std::size_t> deepBookOrders{1000, 10000, 100000, 1000000};
+    std::size_t publishPasses = 5;
+    std::size_t fileRecords = 0;  // 0: as many as a default 256 MiB log file holds, 6.7M
+    std::size_t instruments = 8;
+    std::string workload = "matching-heavy-request";
+    std::size_t rollPasses = 3;
+    std::uint64_t seed = 42;
+    std::filesystem::path logParent;  // empty: the system's temporary directory
+};
+std::vector<ComponentResult> runDurabilityGroup(const DurabilitySettings& settings);
 
 // The controls that find the cause of a fall in scaling, each on the same threads as the run it
 // explains. If the CPU loop falls too, the cause is frequency. If only the walks fall, it is

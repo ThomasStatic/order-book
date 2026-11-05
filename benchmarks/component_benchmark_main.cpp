@@ -31,10 +31,10 @@ constexpr int usageError = 2;
 constexpr int unoptimizedBuild = 3;
 
 constexpr std::string_view usageText =
-    "usage: order_book_component_benchmarks [--group capacity|controls|log|entry|wire|images]...\n"
+    "usage: order_book_component_benchmarks [--group capacity|controls|log|entry|wire|images|durability]...\n"
     "                                       [--size smoke|full]\n"
     "                                       [--threads N] [--pin-cores A,B,...] [--priority normal|high]\n"
-    "                                       [--csv FILE] [--allow-unoptimized]\n"
+    "                                       [--log-dir DIR] [--csv FILE] [--allow-unoptimized]\n"
     "       order_book_component_benchmarks --help\n";
 
 constexpr std::string_view helpText =
@@ -45,12 +45,16 @@ constexpr std::string_view helpText =
     "  --group NAME         capacity (growth, reserve, new levels), controls (a CPU-only loop and\n"
     "                       a memory walk at three sizes), log (encoding and reading a command log\n"
     "                       against CSV), entry (symbols, executeCommand, checkEntry), or wire (frame\n"
-    "                       decode, event frame encode), or images (writeImage, restore, the\n"
-    "                       check, and the proof, by book size and state); repeatable (default: all)\n"
+    "                       decode, event frame encode), images (writeImage, restore, the\n"
+    "                       check, and the proof, by book size and state), or durability\n"
+    "                       (publishing a checkpoint by image size, and a roll-forward pass over a\n"
+    "                       closed log file); repeatable (default: all)\n"
     "  --size SIZE          full (the default) or smoke, a tiny run for testing the program\n"
     "  --threads N          threads running the controls at once (default 1)\n"
     "  --pin-cores LIST     pin controls thread i to the i-th core listed\n"
     "  --priority LEVEL     normal (the default) or high, on the controls' threads\n"
+    "  --log-dir DIR        where the durability group's files go: the log's drive (default: the\n"
+    "                       system's temporary directory)\n"
     "  --csv FILE           write the results as CSV\n"
     "  --allow-unoptimized  run even in a build with assertions, automatic invariant checks, or a\n"
     "                       sanitizer; its numbers are not meaningful\n"
@@ -69,7 +73,9 @@ struct Settings {
     bool entry = false;
     bool wire = false;
     bool images = false;
+    bool durability = false;
     bool smoke = false;
+    std::optional<std::string> logDir;
     std::size_t threads = 1;
     std::vector<unsigned int> pinCores;
     bool highPriority = false;
@@ -121,7 +127,7 @@ std::optional<std::string> parseArguments(const std::vector<std::string_view>& a
             continue;
         }
         if (arg != "--group" && arg != "--size" && arg != "--threads" && arg != "--pin-cores" &&
-            arg != "--priority" && arg != "--csv") {
+            arg != "--priority" && arg != "--csv" && arg != "--log-dir") {
             return "unknown option '" + std::string(arg) + "'";
         }
         if (i + 1 == args.size()) {
@@ -141,8 +147,10 @@ std::optional<std::string> parseArguments(const std::vector<std::string_view>& a
                 settings.wire = true;
             } else if (value == "images") {
                 settings.images = true;
+            } else if (value == "durability") {
+                settings.durability = true;
             } else {
-                return "unknown group '" + std::string(value) + "' (known: capacity, controls, log, entry, wire, images)";
+                return "unknown group '" + std::string(value) + "' (known: capacity, controls, log, entry, wire, images, durability)";
             }
         } else if (arg == "--size") {
             if (value != "full" && value != "smoke") {
@@ -166,17 +174,21 @@ std::optional<std::string> parseArguments(const std::vector<std::string_view>& a
                 return "unknown priority '" + std::string(value) + "' (known: normal, high)";
             }
             settings.highPriority = value == "high";
+        } else if (arg == "--log-dir") {
+            settings.logDir = std::string(value);
         } else {
             settings.csvPath = std::string(value);
         }
     }
-    if (!settings.capacity && !settings.controls && !settings.log && !settings.entry && !settings.wire && !settings.images) {
+    if (!settings.capacity && !settings.controls && !settings.log && !settings.entry && !settings.wire && !settings.images &&
+        !settings.durability) {
         settings.capacity = true;
         settings.controls = true;
         settings.log = true;
         settings.entry = true;
         settings.wire = true;
         settings.images = true;
+        settings.durability = true;
     }
     if (!settings.pinCores.empty() && settings.pinCores.size() != settings.threads) {
         return "--pin-cores lists " + std::to_string(settings.pinCores.size()) + " cores for " +
@@ -250,6 +262,22 @@ int runBenchmarks(const Settings& settings) {
             images.evictionBytes = 64 * 1024;
         }
         for (bench::ComponentResult& result : bench::runImageGroup(images)) {
+            results.push_back(std::move(result));
+        }
+    }
+    if (settings.durability) {
+        bench::DurabilitySettings durability;
+        if (settings.logDir) {
+            durability.logParent = *settings.logDir;
+        }
+        if (settings.smoke) {
+            durability.deepBookOrders = {200};
+            durability.publishPasses = 1;
+            durability.fileRecords = 2000;
+            durability.instruments = 2;
+            durability.rollPasses = 1;
+        }
+        for (bench::ComponentResult& result : bench::runDurabilityGroup(durability)) {
             results.push_back(std::move(result));
         }
     }

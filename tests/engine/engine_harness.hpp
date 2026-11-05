@@ -59,6 +59,10 @@ namespace order_book::engine_testing {
         // How many RESTORE lines, each after a command and for an instrument picked from a source
         // of their own, so the other lines are the same whatever this is.
         std::size_t restores = 10;
+        // How many ROLL lines, each after a command picked from a source of their own, so the
+        // other lines are the same whatever this is. Each rolls every shard's closed files, so the
+        // files closed since the last are a worker's backlog.
+        std::size_t rolls = 20;
     };
 
     enum class SymbolFault { NONE, UNKNOWN, MALFORMED };
@@ -68,8 +72,8 @@ namespace order_book::engine_testing {
     // CRASH_MACHINE <seed>: the in-memory LogStorage models that crash, then every shard
     // recovers and the run goes on. RESTORE <symbol>: that instrument's book is imaged and
     // restored, and the run goes on with the restored book (test-only: a running engine never
-    // does this).
-    enum class EngineAction { COMMAND, LOG, CRASH_ENGINE, CRASH_MACHINE, RESTORE };
+    // does this). ROLL: every shard's roll forward rolls the files its log writer has closed.
+    enum class EngineAction { COMMAND, LOG, CRASH_ENGINE, CRASH_MACHINE, RESTORE, ROLL };
 
     // One line of a stream. An action's other fields mean nothing, but a machine crash's seed and
     // a restore's instrument.
@@ -115,6 +119,9 @@ namespace order_book::engine_testing {
         std::size_t lostToCrashes = 0;     // queued commands no recovery found
         std::uint64_t tailCutBytes = 0;    // what every recovery cut
         std::size_t restores = 0;          // RESTORE lines run
+        std::size_t rolls = 0;             // ROLL lines run
+        std::size_t rollPasses = 0;        // closed files they rolled, on every shard
+        std::size_t checkpoints = 0;       // checkpoints they published
     };
 
     struct EngineRunResult {
@@ -135,6 +142,13 @@ namespace order_book::engine_testing {
     // A RESTORE line requires the shard's book's image to equal its witness's, restore to rebuild
     // it, and writeImage(restore(x)) == x, then puts the restored book in the shard, so restores
     // compound.
+    //
+    // The run starts as the engine does on an empty directory, with every instrument's empty-book
+    // checkpoint at 0. A ROLL line rolls each shard through a ShardRoller as a worker would, to the
+    // end its log writer last closed, through a ClosedLog, and every checkpoint it publishes must
+    // verify, with no write failed and no pass lost. After every crash, and at the end, each book's
+    // newest checkpoint must stand at or before its shard's log end, and restoring it and replaying
+    // the logged commands from its position must give the witness's image, byte for byte.
     //
     // A CRASH line first notes, per shard, the durable position its responses were released up to.
     // A machine crash then has every shard's log writer meet it in one more write.

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <limits>
 #include <new>
 #include <stdexcept>
@@ -149,8 +150,8 @@ namespace order_book::runtime {
         }
         try {
             file->write(0, bytes);
-            file->flush();
-            // Proved as the file holds it: what reads back must decode to what was meant.
+            // Proved as the file holds it, then flushed: what reads back must decode to what was
+            // meant. The image itself was proved before it was written, and a failure there aborts.
             std::vector<std::byte> back(bytes.size());
             const std::size_t got = file->read(0, back);
             const auto decoded = decodeCheckpoint(std::span<const std::byte>(back).first(got));
@@ -160,6 +161,7 @@ namespace order_book::runtime {
                 throw LogStorageError(LogStorageError::Kind::FAILED, "cannot publish " + name + ": " + temporary +
                                                                          " does not read back as written");
             }
+            file->flush();
             file->rename(name);
         } catch (...) {
             try {
@@ -211,6 +213,12 @@ namespace order_book::runtime {
                 const auto decoded = decodeCheckpoint(file);
                 const auto* checkpoint = std::get_if<DecodedCheckpoint>(&decoded);
                 if (checkpoint == nullptr || checkpoint->header.symbol != symbol || checkpoint->header.position != position) {
+                    // Its book falls back to an older one and rolls to this position again, which
+                    // a file in the way would refuse for ever, since a rename never replaces one.
+                    const std::string name = checkpointFileName(symbol, position);
+                    storage.remove(name);
+                    report("shard " + std::to_string(shard) + ": " + name + " does not decode as its name says; removed, so " +
+                           symbol.text() + " rolls from its older checkpoint");
                     continue;
                 }
                 (kept[slot].newest ? kept[slot].older : kept[slot].newest) = position;
@@ -287,9 +295,26 @@ namespace order_book::runtime {
         }
     }
 
+    std::optional<std::uint64_t> ShardRoller::standing(std::uint32_t slot) const {
+        return kept[slot].newest ? kept[slot].newest : firstListing[slot];
+    }
+
     bool ShardRoller::standsAt(std::uint32_t slot, const LogFileInfo& file) const {
-        const std::optional<std::uint64_t> at = kept[slot].newest ? kept[slot].newest : firstListing[slot];
-        return at == file.firstPosition;
+        return standing(slot) == file.firstPosition;
+    }
+
+    void ShardRoller::fallBack(std::uint32_t slot, const std::string& why) {
+        kept[slot].newest = kept[slot].older;
+        kept[slot].older.reset();
+        throw PassAbandoned{why + "; " + directory.onShard(shard)[slot].symbol.text() + " falls back to its older checkpoint"};
+    }
+
+    void ShardRoller::say(const std::string& lead, const char* what) noexcept {
+        try {
+            report("shard " + std::to_string(shard) + ": " + lead + what);
+        } catch (...) {
+            // Memory is short, or the report failed: the counts still hold what happened.
+        }
     }
 
     std::size_t ShardRoller::roll(std::uint64_t closedEnd, const std::atomic<bool>* stopping) {
@@ -318,20 +343,20 @@ namespace order_book::runtime {
             }
         } catch (const std::bad_alloc&) {
             ++totals.passesLost;
-            try {
-                report("shard " + std::to_string(shard) + ": a roll-forward pass was lost to bad_alloc; the next roll makes it again");
-            } catch (const std::bad_alloc&) {
-                // Counted, if not said: memory is still short.
-            }
+            say("a roll-forward pass was lost to bad_alloc; the next roll makes it again", "");
         } catch (const PassAbandoned& abandoned) {
-            report("shard " + std::to_string(shard) + ": roll forward stopped: " + abandoned.why);
+            say("roll forward stopped: ", abandoned.why.c_str());
+        } catch (const LogStorageError& error) {
+            // A read that failed, since a failed publish is caught where it happens: the next
+            // roll tries again.
+            say("roll forward stopped: ", error.what());
         }
         behind = 0;
         for (const LogFileInfo& file : files) {
             // Behind if a book it lists stands before its end.
             const std::uint64_t end = file.endPosition;
             const bool needed = std::any_of(file.slots.begin(), file.slots.end(), [this, end](std::uint32_t slot) {
-                const std::optional<std::uint64_t> at = kept[slot].newest ? kept[slot].newest : firstListing[slot];
+                const std::optional<std::uint64_t> at = standing(slot);
                 return at && *at < end;
             });
             behind += needed ? 1 : 0;
@@ -361,10 +386,7 @@ namespace order_book::runtime {
                     if (!restored || std::holds_alternative<RestoreError>(*restored)) {
                         // Bad since it was read: fall back to the older one, from which the next
                         // roll starts.
-                        kept[slot].newest = kept[slot].older;
-                        kept[slot].older.reset();
-                        throw PassAbandoned{name + " no longer restores; " + instruments[slot].symbol.text() +
-                                            " falls back to its older checkpoint"};
+                        fallBack(slot, name + " no longer restores");
                     }
                     books[slot].emplace(std::move(std::get<OrderBook>(*restored)));
                 }
@@ -419,9 +441,7 @@ namespace order_book::runtime {
                 const auto decoded = decodeCheckpoint(bytes);
                 const auto* checkpoint = std::get_if<DecodedCheckpoint>(&decoded);
                 if (checkpoint == nullptr) {
-                    kept[slot].newest = kept[slot].older;
-                    kept[slot].older.reset();
-                    throw PassAbandoned{name + " no longer decodes; " + symbol.text() + " falls back to its older checkpoint"};
+                    fallBack(slot, name + " no longer decodes");
                 }
                 ready.push_back(Ready{slot, std::vector<std::byte>(checkpoint->image.begin(), checkpoint->image.end())});
             } else {
@@ -452,11 +472,11 @@ namespace order_book::runtime {
     }
 
     RollWorker::RollWorker(LogStorage& storage, const InstrumentDirectory& directory, const ClosedLog& closedLog,
-                           std::vector<std::uint32_t> shards, ShardRoller::Report report)
-        : closed(closedLog), mine(std::move(shards)) {
+                           std::vector<std::uint32_t> shards, ShardRoller::Report reportTo)
+        : closed(closedLog), mine(std::move(shards)), report(reportTo) {
         rollers.reserve(mine.size());
         for (const std::uint32_t shard : mine) {
-            rollers.push_back(std::make_unique<ShardRoller>(storage, directory, shard, report));
+            rollers.push_back(std::make_unique<ShardRoller>(storage, directory, shard, reportTo));
         }
     }
 
@@ -472,7 +492,15 @@ namespace order_book::runtime {
         while (!closed.stopping().load(std::memory_order_relaxed)) {
             // Read before the pass, so a file closed during it wakes the wait at once.
             const std::uint64_t seen = closed.generation();
-            pass();
+            try {
+                pass();
+            } catch (const std::exception& error) {
+                // roll catches what it expects; anything else ends this pass, not the engine.
+                try {
+                    report(std::string("roll forward stopped: ") + error.what());
+                } catch (const std::exception&) {
+                }
+            }
             closed.waitPast(seen);
         }
     }

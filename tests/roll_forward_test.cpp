@@ -402,6 +402,110 @@ void testAnExtraCheckpointGoesAtStart() {
     expect(std::find(names.begin(), names.end(), checkpointFileName(symbolOf("AAPL"), 25)) != names.end(), "the older kept one is not");
 }
 
+// A checkpoint that no longer decodes goes when a roller is made, so its book, falling back to
+// its older one, can publish at that position again: a rename never replaces a file.
+void testAnUndecodableCheckpointGoesAtStart() {
+    const InstrumentDirectory directory = directoryOf();
+    const std::vector<Placed> commands = commandsFor(commandCount);
+    InMemoryLogStorage storage;
+    writeLog(storage, directory, commands);
+    InMemoryLogStorage reference(storage.contents());
+    rollerOf(reference, directory).roll(commandCount);
+
+    rollerOf(storage, directory).roll(50);
+    const std::string damaged = checkpointFileName(symbolOf("AAPL"), 50);
+    Bytes bytes = storage.read(damaged, 0);
+    bytes[100] ^= std::byte{1};
+    storage.remove(damaged);
+    {
+        const std::unique_ptr<LogFile> file = storage.create(damaged, Durability::PROCESS);
+        file->write(0, bytes);
+        file->close();
+    }
+    std::vector<std::string> reports;
+    ShardRoller roller = rollerOf(storage, directory, &reports);
+    expect(roller.position(0) == 25 && roller.position(1) == 50, "AAPL falls back to its older checkpoint, MSFT stays");
+    expect(reports.size() == 1 && reports[0].find(damaged + " does not decode") != std::string::npos,
+           "and the damaged one is reported" + (reports.empty() ? std::string() : ": " + reports[0]));
+    roller.roll(commandCount);
+    expect(roller.counts().writesFailed == 0 && roller.position(0) == 100, "AAPL rolls past where its damaged one stood");
+    expectPublishedAreWitnesses(storage, commands, "after a damaged checkpoint");
+    expect(filesOf(storage) == filesOf(reference), "and the store catches up byte for byte");
+}
+
+// A store whose log files can't be opened, as a drive gone bad would leave it.
+class UnreadableLogStorage final : public LogStorage {
+public:
+    explicit UnreadableLogStorage(LogStorage& inner) : held(inner) {}
+
+    std::unique_ptr<StorageLock> lock() override { return held.lock(); }
+    std::vector<std::string> names() const override { return held.names(); }
+    std::unique_ptr<LogFile> open(const std::string& name) override {
+        if (name.ends_with(".oblog")) {
+            throw LogStorageError(LogStorageError::Kind::FAILED, "cannot open " + name + ": the drive is gone");
+        }
+        return held.open(name);
+    }
+    std::unique_ptr<LogFile> create(const std::string& name, Durability durability) override { return held.create(name, durability); }
+    void remove(const std::string& name) override { held.remove(name); }
+    std::string describe(const std::string& name) const override { return held.describe(name); }
+
+private:
+    LogStorage& held;
+};
+
+// A read that fails is reported and ends the roll, so the engine trades on, and the next roll,
+// on a store that reads again, catches up.
+void testAFailedReadIsReported() {
+    const InstrumentDirectory directory = directoryOf();
+    InMemoryLogStorage storage;
+    writeLog(storage, directory, commandsFor(commandCount));
+    InMemoryLogStorage reference(storage.contents());
+    rollerOf(reference, directory).roll(commandCount);
+
+    UnreadableLogStorage unreadable(storage);
+    std::vector<std::string> reports;
+    ShardRoller failing(unreadable, directory, 0, [&reports](const std::string& line) { reports.push_back(line); });
+    expect(failing.roll(commandCount) == 0 && reports.size() == 1 && reports[0].find("the drive is gone") != std::string::npos,
+           "a read that fails is reported, not thrown" + (reports.empty() ? std::string() : ": " + reports[0]));
+    rollerOf(storage, directory).roll(commandCount);
+    expect(filesOf(storage) == filesOf(reference), "and a later roll catches up");
+}
+
+// A new instrument's empty checkpoint, crashed at every step of publishing it: the symbol is
+// still new, with nothing but perhaps a .tmp, or has its checkpoint whole.
+void testACrashAtEveryStepOfAnEmptyCheckpoint() {
+    InMemoryLogStorage storage;
+    std::vector<InMemoryLogStorage::Contents> steps;
+    storage.watch([&steps](const InMemoryLogStorage::Contents& drive) { steps.push_back(drive); });
+    publishEmptyCheckpoint(storage, symbolOf("NEW"), 2, 1, 40);
+    storage.watch(nullptr);
+    expect(steps.size() >= 3, "a create, a write, a flush, and a rename at least");
+    const std::string name = checkpointFileName(symbolOf("NEW"), 40);
+    bool sawNew = false;
+    bool sawPublished = false;
+    for (std::size_t at = 0; at < steps.size(); ++at) {
+        for (const auto& [kind, seed] : {std::pair{InMemoryLogStorage::Crash::ENGINE, 0ULL}, std::pair{InMemoryLogStorage::Crash::MACHINE, 1ULL},
+                                         std::pair{InMemoryLogStorage::Crash::MACHINE, 2ULL}}) {
+            InMemoryLogStorage crashed(steps[at]);
+            crashed.crash(kind, seed);
+            const std::vector<std::string> names = crashed.names();
+            if (std::find(names.begin(), names.end(), name) == names.end()) {
+                sawNew = true;
+                continue;
+            }
+            sawPublished = true;
+            const Bytes file = crashed.read(name, 0);
+            const auto decoded = decodeCheckpoint(file);
+            const auto* checkpoint = std::get_if<DecodedCheckpoint>(&decoded);
+            expect(!verifyCheckpoint(file) && checkpoint != nullptr && checkpoint->header.position == 40 &&
+                       checkpoint->header.shardIndex == 1 && Bytes(checkpoint->image.begin(), checkpoint->image.end()) == witnessImages({}, 0)[0],
+                   "after step " + std::to_string(at) + ", a published empty checkpoint is whole");
+        }
+    }
+    expect(sawNew && sawPublished, "some crash leaves the symbol new, and some its checkpoint published");
+}
+
 // ---- Rolling a shard ---------------------------------------------------------------------
 
 void testRollingAShard() {
@@ -625,6 +729,9 @@ int main(int argc, char** argv) {
         testAReadBackThatDiffersIsNotPublished();
         testOnlyClosedFilesAreOpened();
         testAnExtraCheckpointGoesAtStart();
+        testAnUndecodableCheckpointGoesAtStart();
+        testAFailedReadIsReported();
+        testACrashAtEveryStepOfAnEmptyCheckpoint();
         testRollingAShard();
         testAFailedWriteWaits();
         testACrashAtEveryStepOfPublishing();

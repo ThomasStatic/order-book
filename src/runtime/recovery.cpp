@@ -4,11 +4,9 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <istream>
 #include <memory>
 #include <optional>
 #include <span>
-#include <streambuf>
 #include <string>
 #include <string_view>
 #include <variant>

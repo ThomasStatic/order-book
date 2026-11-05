@@ -20,7 +20,8 @@
 // Rolling checkpoints forward from the log (ADR 0014, spec #58's D4b): a shard's books are made
 // from their last checkpoints and the closed log files after them, away from the matching
 // thread, which never reads or pauses for one. Plain objects over LogStorage, so a worker thread,
-// the engine harness, and tests all run the same pass.
+// the engine harness, and tests all run the same pass. Not public API. See
+// docs/internals/runtime.md.
 namespace order_book::runtime {
 
     // ckpt-<symbol>-<position, 20 digits>.obckpt: the prefix keeps a symbol such as AUX, CON, or NUL,
@@ -45,8 +46,8 @@ namespace order_book::runtime {
     // the live book shares.
     void requireProvedImage(std::span<const std::byte> image, std::string_view what);
 
-    // Publishes one checkpoint: writes <name>.tmp, flushes it, reads it back and decodes it, which
-    // must give the header and image written, and renames it, which flushes the directory. A
+    // Publishes one checkpoint: writes <name>.tmp, reads it back and decodes it, which must give
+    // the header and image written, flushes it, and renames it, which flushes the directory. A
     // storage failure, or a read-back that differs, throws LogStorageError, removing the .tmp and
     // leaving every checkpoint already published in place.
     void publishCheckpoint(LogStorage& storage, const CheckpointHeader& header, std::span<const std::byte> image);
@@ -67,7 +68,10 @@ namespace order_book::runtime {
 
     // One shard's roll forward. It reads the store's checkpoint names once, when made, and keeps
     // each book's two newest positions from then on, which is all it publishes or removes: one
-    // instance per shard per store, on one thread at a time.
+    // instance per shard per store, on one thread at a time. When made, as at a start, it removes
+    // its books' leftover .tmp files, any checkpoint that does not decode as its name says, and
+    // any older than a book's two. A storage failure there throws LogStorageError; during a roll
+    // it is reported and the next roll tries again.
     //
     // A pass rolls one closed file: the books standing at its first position are restored, if
     // they have commands in it, on first use; every command is replayed on them; each one rolled
@@ -116,7 +120,14 @@ namespace order_book::runtime {
 
         void readLogFiles(std::uint64_t closedEnd);
         void pass(const LogFileInfo& file, std::uint64_t end, const std::vector<bool>& needs);
+        // Where a book stands: its newest checkpoint, or the first file that lists it.
+        std::optional<std::uint64_t> standing(std::uint32_t slot) const;
         bool standsAt(std::uint32_t slot, const LogFileInfo& file) const;
+        // The book's newest checkpoint no longer reads: the older becomes its newest, and the
+        // pass is abandoned, to be made again from there.
+        [[noreturn]] void fallBack(std::uint32_t slot, const std::string& why);
+        // A report that never throws, for what a catch says.
+        void say(const std::string& lead, const char* what) noexcept;
         void removeSuperseded(std::uint32_t slot);
 
         LogStorage& storage;
@@ -153,6 +164,7 @@ namespace order_book::runtime {
     private:
         const ClosedLog& closed;
         std::vector<std::uint32_t> mine;
+        ShardRoller::Report report;
         std::vector<std::unique_ptr<ShardRoller>> rollers;  // by index in mine
     };
 

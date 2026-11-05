@@ -2,6 +2,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
@@ -788,6 +789,28 @@ void testCapacityGroup() {
     expectThrows([&] { runCapacityGroup(settings); }, "a count that does not fill the index is refused");
 }
 
+// Publishing by image size, then one roll pass over a closed file of every record, per command,
+// in a directory of its own that is gone after.
+void testDurabilityGroup() {
+    DurabilitySettings settings;
+    settings.deepBookOrders = {100, 300};
+    settings.publishPasses = 2;
+    settings.fileRecords = 600;
+    settings.instruments = 3;
+    settings.rollPasses = 2;
+    settings.logParent = std::filesystem::temp_directory_path() / "order_book_durability_group_test";
+    std::filesystem::remove_all(settings.logParent);
+    std::filesystem::create_directories(settings.logParent);
+    const std::vector<ComponentResult> results = runDurabilityGroup(settings);
+    expect((operationsOf(results) == std::vector<std::string>{"publish-checkpoint", "publish-checkpoint", "roll-pass"}),
+           "the durability group's operations, in order");
+    expect(results[0].orders == 100 && results[1].orders == 300 && results[1].operations == 2, "a publish per pass, by book size");
+    expect(results[2].operations == 1200 && results[2].passes == 2 && results[2].orders > 0,
+           "a roll pass counts every command of its file, each pass");
+    expect(std::filesystem::is_empty(settings.logParent), "and leaves nothing behind");
+    std::filesystem::remove_all(settings.logParent);
+}
+
 void testControlGroup() {
     ControlSettings settings;
     settings.threads = 2;
@@ -844,6 +867,7 @@ int main() {
     testBuildInfo();
     testComponentCsv();
     testCapacityGroup();
+    testDurabilityGroup();
     testControlGroup();
 
     std::cout << "benchmark harness tests passed" << std::endl;
