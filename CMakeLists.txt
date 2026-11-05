@@ -48,6 +48,14 @@ endif()
 function(order_book_enable_warnings target_name)
     if(MSVC)
         target_compile_options(${target_name} PRIVATE /W4)
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+            # clang-cl: Clang's own warnings beside /W4, so a Windows build catches what CI's Linux
+            # Clang jobs would. Not -Wall, which clang-cl reads as -Weverything. Tests that skip
+            # themselves under MSVC's debug iterators leave their cases unused in Debug, which
+            # only this compiler sees and which means nothing.
+            target_compile_options(${target_name} PRIVATE -Wextra -Wpedantic -Wconversion -Wshadow
+                                                          -Wno-unneeded-internal-declaration)
+        endif()
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(${target_name} PRIVATE
             -Wall

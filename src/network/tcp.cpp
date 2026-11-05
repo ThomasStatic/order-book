@@ -179,7 +179,8 @@ namespace order_book::network {
     void TcpSocket::setNonBlocking() const {
 #ifdef _WIN32
         u_long on = 1;
-        if (ioctlsocket(native(held), FIONBIO, &on) != 0) {
+        // The SDK's FIONBIO is an unsigned long, which ioctlsocket takes as a long.
+        if (ioctlsocket(native(held), static_cast<long>(FIONBIO), &on) != 0) {
             fail("ioctlsocket");
         }
 #else
