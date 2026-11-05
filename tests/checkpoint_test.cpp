@@ -139,10 +139,11 @@ void expectRoundTrip(const OrderBook& book, OrderId highestId, const std::string
 
 // ---- The format, written from docs/checkpoint-format.md ------------------------------------
 
+// The values these cases use; the format defines the rest.
 constexpr std::uint8_t buy = 1, sell = 2;
-constexpr std::uint8_t typeLimit = 1, typeMarket = 2, typeStop = 3, typeStopLimit = 4;
-constexpr std::uint8_t gtc = 1, ioc = 2, fok = 3;
-constexpr std::uint8_t cancelResting = 1, cancelIncoming = 2, cancelBoth = 3;
+constexpr std::uint8_t typeStop = 3, typeStopLimit = 4;
+constexpr std::uint8_t gtc = 1, ioc = 2;
+constexpr std::uint8_t cancelResting = 1, cancelBoth = 3;
 constexpr std::uint8_t fillNone = 1, fillPartial = 2, fillFilled = 3;
 
 void put8(Bytes& bytes, std::size_t offset, std::uint8_t value) {
