@@ -1089,8 +1089,12 @@ void testFailingRestoreLeaksNothing() {
             threw = true;
             ++failures;
         }
-        // Read before the message is built, since building it allocates.
-        const bool freedEverything = liveAllocations == liveBefore;
+        // Read before the message is built, since building it allocates. Only after a throw:
+        // then everything restore took was freed inside the library as it unwound. A restore
+        // that succeeds is destroyed here, through OrderBook's inline destructor, and Clang
+        // treats the standard library's allocation calls as builtins that touch no visible
+        // memory, so it may read this count before those frees run.
+        const bool freedEverything = !threw || liveAllocations == liveBefore;
         if (!freedEverything) {
             // What is still live, numbered from the first allocation restore made.
             for (std::size_t i = 0; i < trackedCount; ++i) {
