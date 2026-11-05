@@ -58,6 +58,17 @@ namespace order_book::runtime {
         // below size(). Checked builds record the slot and position first.
         void process(const replay::Command& command, std::uint32_t slot);
 
+        // A record its book already holds, as recovery from checkpoints passes one: the position
+        // moves on, the command counts as taken, and nothing runs.
+        void skip() noexcept {
+            ++nextLogPosition;
+            ++taken;
+        }
+
+        // Where the log starts for this shard, for recovery, which knows it only once each book is
+        // restored. Before any command is taken: it throws std::logic_error after one.
+        void startAt(std::uint64_t firstPosition);
+
         const replay::CommandResult& result() const noexcept { return lastResult; }
         // How many commands made the reused result reach the heap, since it was built: zero for a
         // shard whose results stayed inside what it reserved.

@@ -1,5 +1,7 @@
 #include "order_book/runtime/shard.hpp"
 
+#include <stdexcept>
+
 namespace order_book::runtime {
 
     Shard::Shard(const InstrumentDirectory& directory, std::uint32_t shardNumber, const BookCapacity& defaults,
@@ -15,6 +17,14 @@ namespace order_book::runtime {
                    result.replacement().getGeneratedTrades().capacity() + result.replacement().getEvents().capacity();
         }
     }  // namespace
+
+    void Shard::startAt(std::uint64_t firstPosition) {
+        if (taken != 0) {
+            throw std::logic_error("Shard::startAt after a command was taken");
+        }
+        logStart = firstPosition;
+        nextLogPosition = firstPosition;
+    }
 
     void Shard::process(const replay::Command& command, std::uint32_t slot) {
         if constexpr (invariantChecksAfterCommands) {

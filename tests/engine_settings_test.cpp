@@ -114,6 +114,14 @@ void testEveryFlag() {
     expect(logged.logFileSize == 3 * 1024 * 1024, "the log file size, a size");
     expect(parsed(required({"--roll-workers", "3"})).rollWorkers == 3, "the roll-forward workers, a count");
     expect(usage(required({"--roll-workers", "some"})) == "--roll-workers needs a number, not 'some'", "and nothing else");
+    const EngineSettings stored = parsed(required({"--checkpoint-dir", "ckpts here", "--keep-log"}));
+    expect(stored.checkpointDir == "ckpts here" && stored.keepLog, "the checkpoint directory, as given, and --keep-log, a flag");
+    expect(parsed(required()).checkpointDir.empty() && !parsed(required()).keepLog, "by default the log's directory, and the log trimmed");
+    expect(usage(required({"--checkpoint-dir", ""})) == "--checkpoint-dir needs a directory, not ''", "an empty one is refused");
+    expect(usage(required({"--keep-log", "--keep-log"})) == "'--keep-log' was given twice", "a flag given twice");
+    const std::string storedLine = formatEngineSettings(stored);
+    expect(storedLine.find(" --log-dir logs --checkpoint-dir ckpts here --keep-log --durability ") != std::string::npos,
+           "the record prints both when given:\n" + storedLine);
     expect(usage(required({"--log-file-size", "big"})) == "--log-file-size needs a size: digits, then K, M, or G if you like, not 'big'",
            "and nothing else");
     expect(parsed(required({"--durability", "machine"})).durability == Durability::MACHINE, "machine, said outright");

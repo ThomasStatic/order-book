@@ -95,9 +95,11 @@ void testLogLinesChangeNoCommand() {
     plain.logWritePercent = 0;
     plain.restores = 0;
     plain.rolls = 0;
+    plain.damages = 0;
     EngineSeedConfig logging = smallRun();
     logging.restores = 0;
     logging.rolls = 0;
+    logging.damages = 0;
     const std::vector<EngineCommand> without = generateEngineStream(plain);
     const std::vector<EngineCommand> with = generateEngineStream(logging);
     expect(without.size() == plain.commands, "with none asked for, every line is a command");
@@ -197,12 +199,17 @@ void testCrashLinesChangeNoCommand() {
         std::vector<const EngineCommand*> rest;
         std::size_t crashes = 0;
         for (std::size_t i = 0; i < with.size(); ++i) {
+            const bool crashesDamage = with[i].action == EngineAction::DAMAGE && i + 1 < with.size() && isCrash(with[i + 1]);
+            if (crashesDamage) {
+                continue;  // a crash's own DAMAGE line, just before it
+            }
             if (!isCrash(with[i])) {
                 rest.push_back(&with[i]);
                 continue;
             }
+            expect(i > 1, "a crash only ever follows a line");
+            expect(with[i - 1].action == EngineAction::DAMAGE, "a crash follows its own DAMAGE line");
             ++crashes;
-            expect(i > 0, "a crash only ever follows a line");
             sawEngine = sawEngine || with[i].action == EngineAction::CRASH_ENGINE;
             sawMachine = sawMachine || with[i].action == EngineAction::CRASH_MACHINE;
         }
@@ -289,11 +296,30 @@ void testARunPassesAndExercisesEverything() {
     expect(result.stats.recordsLogged == result.stats.queued, "every queued command reached its shard's log");
     expect(result.stats.logWrites > 2 * smallRun().commands * smallRun().logWritePercent / 100 / 3,
            "in many writes, on LOG lines and full log rings");
-    expect(result.stats.logFiles > 4 * smallRun().shards, "across many log files on each shard, each starting where the last ended");
+    expect(result.stats.logFiles + result.stats.logFilesDeleted > 4 * smallRun().shards,
+           "across many log files on each shard, each starting where the last ended");
+    expect(result.stats.logFilesDeleted > 0, "and retention deleted some no book needed");
     expect(result.stats.restores == smallRun().restores, "every RESTORE line restored a book");
     expect(result.stats.rolls == smallRun().rolls && result.stats.rollPasses > smallRun().shards * 2,
            "every ROLL line rolled, and between them many closed files, " + std::to_string(result.stats.rollPasses));
     expect(result.stats.checkpoints > result.stats.rollPasses, "each pass publishing every book of its file");
+}
+
+// DAMAGE lines make recoveries fall back to older checkpoints, so books on one shard recover at
+// different positions; across seeds some must, and each run still passes.
+void testDamageMakesRecoveriesFallBack() {
+    std::size_t damaged = 0;
+    std::size_t fellBack = 0;
+    for (std::uint64_t seed = 1; seed <= 3; ++seed) {
+        EngineSeedConfig config;  // long enough that books keep older checkpoints by the crash
+        config.seed = seed;
+        const EngineRunResult result = runEngineSeed(config);
+        expect(result.passed(), "seed " + std::to_string(seed) + " with DAMAGE lines passes" +
+                                    (result.failure ? ": " + result.failure->reason : std::string()));
+        damaged += result.stats.damages;
+        fellBack += result.stats.fellBack;
+    }
+    expect(damaged > 3 && fellBack > 0, "damage flipped bytes, and some recovery fell back: " + std::to_string(fellBack));
 }
 
 void testEverySpreadAndShardCountPasses() {
@@ -350,6 +376,7 @@ int main() {
     testRollLinesChangeNoCommand();
     testConversion();
     testARunPassesAndExercisesEverything();
+    testDamageMakesRecoveriesFallBack();
     testEverySpreadAndShardCountPasses();
     testADriftingBookIsCaught();
     testAnInvisibleDriftIsCaught();

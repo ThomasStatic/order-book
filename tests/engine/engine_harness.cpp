@@ -45,6 +45,7 @@ namespace order_book::engine_testing {
         constexpr std::uint64_t crashStream = 0x27D4EB2F165667C5ULL;
         constexpr std::uint64_t restoreStream = 0x85EBCA77C2B2AE63ULL;
         constexpr std::uint64_t rollStream = 0x94D049BB133111EBULL;
+        constexpr std::uint64_t damageStream = 0xBF58476D1CE4E5B9ULL;
         // Records in the log file of the shard with the most symbols, so a run rolls across many,
         // and a file spans two of a drive's pages, so a machine crash can tear a record or leave a
         // hole that valid records follow.
@@ -111,7 +112,7 @@ namespace order_book::engine_testing {
         struct ShardLog {
             ShardLog(runtime::Housekeeping& housekeeping, std::uint32_t shard, std::size_t records, runtime::ClosedLog& closed,
                      std::uint64_t firstPosition = 0)
-                : ring(records), writer(housekeeping, shard, ring, durable, firstPosition, &closed) {}
+                : ring(records), durable(firstPosition), writer(housekeeping, shard, ring, durable, firstPosition, &closed) {}
 
             runtime::Ring<runtime::LogEntry> ring;
             runtime::DurablePosition durable;
@@ -186,6 +187,10 @@ namespace order_book::engine_testing {
                     }
                     if (stream[index].action == EngineAction::ROLL) {
                         result.failure = roll(index, result.stats);
+                        continue;
+                    }
+                    if (stream[index].action == EngineAction::DAMAGE) {
+                        damage(stream[index], result.stats);
                         continue;
                     }
                     result.failure = execute(stream[index], index, result.stats);
@@ -375,19 +380,33 @@ namespace order_book::engine_testing {
             // A ROLL line, as runEngineSeed's comment in engine_harness.hpp says.
             std::optional<EngineFailure> roll(std::size_t index, EngineStats& stats) {
                 ++stats.rolls;
+                std::vector<std::optional<std::uint64_t>> before;
+                for (const Instrument& instrument : instruments) {
+                    before.push_back(rollers[instrument.location.shard]->position(instrument.location.slot));
+                }
                 for (std::uint32_t shard = 0; shard < config.shards; ++shard) {
                     runtime::ShardRoller& roller = *rollers[shard];
-                    const std::uint64_t before = roller.counts().published;
+                    const std::uint64_t published = roller.counts().published;
                     stats.rollPasses += roller.roll(closed->end(shard));
-                    stats.checkpoints += static_cast<std::size_t>(roller.counts().published - before);
+                    stats.checkpoints += static_cast<std::size_t>(roller.counts().published - published);
+                    if (const std::optional<std::uint64_t> floor = roller.retentionFloor(); floor && !config.keepLog) {
+                        housekeeping->retain(shard, *floor);
+                    }
                     if (roller.counts().writesFailed != 0 || roller.counts().passesLost != 0) {
                         return EngineFailure{index, "", "shard " + std::to_string(shard) + "'s roll forward failed a write or lost a pass"};
                     }
                 }
-                for (const Instrument& instrument : instruments) {
+                const std::uint64_t deleted = housekeeping->filesDeleted();
+                housekeeping->pass();
+                stats.logFilesDeleted += housekeeping->filesDeleted() - deleted;
+                for (std::size_t i = 0; i < instruments.size(); ++i) {
+                    const Instrument& instrument = instruments[i];
                     const std::optional<std::uint64_t> at = rollers[instrument.location.shard]->position(instrument.location.slot);
                     if (!at) {
                         return failure(index, instrument, "the book has no checkpoint, though its empty one was published at the start");
+                    }
+                    if (at == before[i]) {
+                        continue;  // not published by this roll: a DAMAGE line may have flipped a byte of it
                     }
                     const std::vector<std::byte> file = storage.read(runtime::checkpointFileName(instrument.symbol, *at), 0);
                     if (const std::optional<runtime::CheckpointFault> fault = runtime::verifyCheckpoint(file)) {
@@ -403,20 +422,34 @@ namespace order_book::engine_testing {
             std::optional<EngineFailure> checkCheckpoints(std::size_t index) {
                 for (const Instrument& instrument : instruments) {
                     const std::uint32_t shard = instrument.location.shard;
-                    const std::optional<std::uint64_t> at = rollers[shard]->position(instrument.location.slot);
+                    std::vector<std::uint64_t> positions;
+                    for (const std::string& name : storage.names()) {
+                        const std::optional<runtime::CheckpointFileNameParts> parts = runtime::parseCheckpointFileName(name);
+                        if (parts && !parts->temporary && parts->symbol == instrument.symbol) {
+                            positions.push_back(parts->position);
+                        }
+                    }
+                    std::sort(positions.rbegin(), positions.rend());
+                    std::optional<std::uint64_t> at;
+                    std::vector<std::byte> file;
+                    std::optional<runtime::DecodedCheckpoint> found;
+                    for (const std::uint64_t position : positions) {
+                        file = storage.read(runtime::checkpointFileName(instrument.symbol, position), 0);
+                        const auto decoded = runtime::decodeCheckpoint(file);
+                        if (const auto* good = std::get_if<runtime::DecodedCheckpoint>(&decoded)) {
+                            at = position;
+                            found = *good;
+                            break;
+                        }
+                    }
                     if (!at) {
-                        return failure(index, instrument, "the book has no checkpoint");
+                        return failure(index, instrument, "the book has no checkpoint that decodes");
                     }
                     if (*at > logged[shard].size()) {
                         return failure(index, instrument, "a checkpoint at " + std::to_string(*at) + " stands past its shard's log end, " +
                                                               std::to_string(logged[shard].size()));
                     }
-                    const std::vector<std::byte> file = storage.read(runtime::checkpointFileName(instrument.symbol, *at), 0);
-                    const auto decoded = runtime::decodeCheckpoint(file);
-                    const auto* checkpoint = std::get_if<runtime::DecodedCheckpoint>(&decoded);
-                    if (checkpoint == nullptr) {
-                        return failure(index, instrument, "its newest checkpoint does not decode");
-                    }
+                    const runtime::DecodedCheckpoint* checkpoint = &*found;
                     auto restored = OrderBook::restore(checkpoint->image);
                     if (std::holds_alternative<RestoreError>(restored)) {
                         return failure(index, instrument, "its newest checkpoint does not restore");
@@ -434,6 +467,33 @@ namespace order_book::engine_testing {
                     }
                 }
                 return std::nullopt;
+            }
+
+            // A DAMAGE line: a byte of the book's newest checkpoint flipped, if an older one stands to
+            // fall back to, so the next start, or the roller's next restore, does.
+            void damage(const EngineCommand& line, EngineStats& stats) {
+                const Instrument& instrument = instruments[line.instrument];
+                std::vector<std::uint64_t> positions;
+                for (const std::string& name : storage.names()) {
+                    const std::optional<runtime::CheckpointFileNameParts> parts = runtime::parseCheckpointFileName(name);
+                    if (parts && !parts->temporary && parts->symbol == instrument.symbol) {
+                        positions.push_back(parts->position);
+                    }
+                }
+                if (positions.size() < 2) {
+                    return;  // nothing to fall back to: a start would stop
+                }
+                const std::string name = runtime::checkpointFileName(instrument.symbol, *std::max_element(positions.begin(), positions.end()));
+                std::vector<std::byte> bytes = storage.read(name, 0);
+                bytes[bytes.size() / 2] ^= std::byte{0x40};
+                // Renamed into place, so the damage survives a machine crash as a drive's would.
+                const std::unique_ptr<runtime::LogFile> file = storage.create(name + ".damaged", runtime::Durability::PROCESS);
+                file->write(0, bytes);
+                file->flush();
+                storage.remove(name);
+                file->rename(name);
+                file->close();
+                ++stats.damages;
             }
 
             static std::vector<std::byte> imageOf(const OrderBook& book) {
@@ -480,10 +540,13 @@ namespace order_book::engine_testing {
                     for (const std::string& temporary : survey.temporaries) {
                         storage.remove(temporary);
                     }
+                    for (const std::string& temporary : survey.checkpointTemporaries) {
+                        storage.remove(temporary);
+                    }
                     for (std::uint32_t shard = 0; shard < config.shards; ++shard) {
                         shards.push_back(std::make_unique<runtime::Shard>(directory, shard, config.shardCapacity));
-                        recovered.push_back(
-                            runtime::recoverShard(storage, directory, survey.shards[shard], *shards.back(), config.shardCapacity, neverStopping));
+                        recovered.push_back(runtime::recoverShard(storage, storage, directory, survey.shards[shard], survey.checkpoints[shard],
+                                                                  *shards.back(), config.shardCapacity, neverStopping));
                     }
                 } catch (const runtime::RecoveryError& error) {
                     // Every file is far below 1 MiB, so every hole a crash leaves is cut: no
@@ -494,6 +557,7 @@ namespace order_book::engine_testing {
                 const bool promised = !machine || config.durability == runtime::Durability::MACHINE;
                 for (std::uint32_t shard = 0; shard < config.shards; ++shard) {
                     const std::uint64_t survived = recovered[shard].replayed;
+                    stats.fellBack += recovered[shard].fellBack;
                     stats.tailCutBytes += recovered[shard].tailCutBytes;
                     if (survived > logged[shard].size()) {
                         return EngineFailure{index, "", "shard " + std::to_string(shard) + " recovered " + std::to_string(survived) +
@@ -606,15 +670,17 @@ namespace order_book::engine_testing {
                 // The next files no writer took, as a clean stop removes them.
                 housekeeping->removeUnused();
                 std::vector<replay::ReplayRecord> records;
+                bool wholeLog = true;  // unless retention deleted the start of some shard's
                 for (std::uint32_t shard = 0; shard < logs.size(); ++shard) {
                     try {
                         const ShardLogRecords read = readShardLog(storage, shard);
                         stats.logFiles += read.files;
                         records.insert(records.end(), read.records.begin(), read.records.end());
-                        if (read.records.size() != logs[shard]->writer.nextPosition()) {
+                        wholeLog = wholeLog && read.firstPosition == 0;
+                        if (read.firstPosition + read.records.size() != logs[shard]->writer.nextPosition()) {
                             return EngineFailure{index, "", "shard " + std::to_string(shard) + "'s files end at " +
-                                                                std::to_string(read.records.size()) + ", not its log's end, " +
-                                                                std::to_string(logs[shard]->writer.nextPosition())};
+                                                                std::to_string(read.firstPosition + read.records.size()) +
+                                                                ", not its log's end, " + std::to_string(logs[shard]->writer.nextPosition())};
                         }
                     } catch (const std::runtime_error& error) {
                         return EngineFailure{index, "", error.what()};
@@ -622,6 +688,9 @@ namespace order_book::engine_testing {
                 }
                 if (std::optional<EngineFailure> failed = checkCheckpoints(index)) {
                     return failed;
+                }
+                if (!wholeLog) {
+                    return std::nullopt;  // each book's checkpoint and the log after it gave the witness, above
                 }
                 const std::vector<replay::InstrumentRecords> grouped = replay::groupBySymbol(records);
                 for (const Instrument& instrument : instruments) {
@@ -674,7 +743,7 @@ namespace order_book::engine_testing {
             }
             std::istringstream input(std::string(reinterpret_cast<const char*>(file->bytes.data()), file->bytes.size()), std::ios::binary);
             replay::CommandLogReader reader(input);
-            const std::uint64_t position = read.records.size();
+            std::uint64_t position = read.firstPosition + read.records.size();
             for (;;) {
                 const replay::ReadResult next = reader.next();
                 if (const auto* record = std::get_if<replay::ReplayRecord>(&next)) {
@@ -684,6 +753,10 @@ namespace order_book::engine_testing {
                 } else {
                     break;
                 }
+            }
+            if (read.files == 1 && reader.header() != nullptr) {
+                read.firstPosition = reader.header()->firstPosition;  // retention may have deleted those before it
+                position = read.firstPosition;
             }
             if (reader.header() == nullptr || reader.header()->firstPosition != position) {
                 throw std::runtime_error(name + " doesn't start where the last file ended, " + std::to_string(position));
@@ -776,6 +849,17 @@ namespace order_book::engine_testing {
             }
             std::sort(rollAfter.begin(), rollAfter.end());
         }
+        // DAMAGE lines, each after a command, for an instrument, from a source of their own.
+        std::mt19937_64 damages(config.seed ^ damageStream);
+        std::vector<std::pair<std::size_t, std::size_t>> damageAfter;
+        if (config.commands != 0) {
+            for (std::size_t i = 0; i < config.damages; ++i) {
+                const auto after = static_cast<std::size_t>(damages() % config.commands);
+                damageAfter.emplace_back(after, static_cast<std::size_t>(damages() % config.instruments));
+            }
+            std::stable_sort(damageAfter.begin(), damageAfter.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        }
+        std::size_t nextDamage = 0;
         std::size_t nextRoll = 0;
         std::size_t nextRestore = 0;
         std::size_t nextCrash = 0;
@@ -796,6 +880,12 @@ namespace order_book::engine_testing {
                 stream.push_back(EngineCommand{0, generated, std::nullopt, SymbolFault::NONE, EngineAction::LOG});
             }
             while (nextCrash < crashAfter.size() && crashAfter[nextCrash].first == i) {
+                if (config.damages != 0) {
+                    // One just before every crash too, which the roller has no pass to heal first,
+                    // so the recovery falls back and books on a shard stand at different positions.
+                    stream.push_back(EngineCommand{static_cast<std::size_t>(damages() % config.instruments), Command{}, std::nullopt,
+                                                   SymbolFault::NONE, EngineAction::DAMAGE});
+                }
                 stream.push_back(crashAfter[nextCrash++].second);
             }
             while (nextRestore < restoreAfter.size() && restoreAfter[nextRestore].first == i) {
@@ -804,6 +894,9 @@ namespace order_book::engine_testing {
             while (nextRoll < rollAfter.size() && rollAfter[nextRoll] == i) {
                 ++nextRoll;
                 stream.push_back(EngineCommand{0, Command{}, std::nullopt, SymbolFault::NONE, EngineAction::ROLL});
+            }
+            while (nextDamage < damageAfter.size() && damageAfter[nextDamage].first == i) {
+                stream.push_back(EngineCommand{damageAfter[nextDamage++].second, Command{}, std::nullopt, SymbolFault::NONE, EngineAction::DAMAGE});
             }
         }
         return stream;

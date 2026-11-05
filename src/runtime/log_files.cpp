@@ -1,5 +1,6 @@
 #include "order_book/runtime/log_files.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -171,7 +172,72 @@ namespace order_book::runtime {
             changed.notify_all();
             ++made;
         }
+        for (std::uint32_t shard = 0; shard < shards.size(); ++shard) {
+            std::uint64_t floor = 0;
+            {
+                const std::lock_guard<std::mutex> held(lock);
+                if (!pruneWanted(shards[shard])) {
+                    continue;
+                }
+                floor = shards[shard].floor;
+            }
+            const std::uint64_t before = deleted.load(std::memory_order_relaxed);
+            prune(shard, floor);
+            made += static_cast<std::size_t>(deleted.load(std::memory_order_relaxed) - before);
+            {
+                // Even if a deletion failed: it is tried again once the floor next rises, not in a
+                // loop, which would only print the same failure.
+                const std::lock_guard<std::mutex> held(lock);
+                shards[shard].pruned = std::max(shards[shard].pruned, floor);
+            }
+        }
         return made;
+    }
+
+    bool Housekeeping::prune(std::uint32_t shard, std::uint64_t floor) {
+        std::vector<std::pair<std::uint64_t, std::string>> files;
+        try {
+            for (const std::string& name : logStorage.names()) {
+                const std::optional<LogFileNameParts> parts = parseLogFileName(name);
+                if (parts && !parts->temporary && parts->shard == shard) {
+                    files.emplace_back(parts->firstPosition, name);
+                }
+            }
+        } catch (const std::exception& failure) {
+            std::fprintf(stderr, "order book runtime: housekeeping: cannot list shard %u's log files: %s\n", static_cast<unsigned int>(shard),
+                         failure.what());
+            return false;
+        }
+        std::sort(files.begin(), files.end());
+        bool whole = true;
+        for (std::size_t i = 0; i + 1 < files.size() && files[i + 1].first <= floor; ++i) {
+            try {
+                logStorage.remove(files[i].second);
+                deleted.fetch_add(1, std::memory_order_relaxed);
+            } catch (const std::exception& failure) {
+                // Not fatal: the file only takes room, and the next pass tries again.
+                std::fprintf(stderr, "order book runtime: housekeeping: cannot delete %s: %s\n", files[i].second.c_str(), failure.what());
+                whole = false;
+            }
+        }
+        return whole;
+    }
+
+    void Housekeeping::retain(std::uint32_t shard, std::uint64_t floor) {
+        {
+            const std::lock_guard<std::mutex> held(lock);
+            ShardFiles& files = shards.at(shard);
+            if (floor <= files.floor) {
+                return;
+            }
+            files.floor = floor;
+        }
+        changed.notify_all();
+    }
+
+    void Housekeeping::keepEveryFile() noexcept {
+        const std::lock_guard<std::mutex> held(lock);
+        keepLog = true;
     }
 
     // Looks for a stop before every pass, so a stop that comes first makes nothing.
@@ -184,7 +250,7 @@ namespace order_book::runtime {
                         return true;
                     }
                     for (const ShardFiles& shard : shards) {
-                        if (wanted(shard)) {
+                        if (wanted(shard) || pruneWanted(shard)) {
                             return true;
                         }
                     }

@@ -17,10 +17,12 @@
 #include "order_book/command.hpp"
 #include "order_book/command_log.hpp"
 #include "order_book/order_book.hpp"
+#include "order_book/runtime/checkpoint.hpp"
 #include "order_book/runtime/log_files.hpp"
 #include "order_book/runtime/log_storage.hpp"
 #include "order_book/runtime/log_writer.hpp"
 #include "order_book/runtime/recovery.hpp"
+#include "order_book/runtime/roll_forward.hpp"
 #include "order_book/runtime/shard.hpp"
 #include "order_book/xxh64.hpp"
 
@@ -80,12 +82,35 @@ std::uint64_t fileBytesFor(const InstrumentDirectory& directory, std::uint32_t s
     return logFileShape(directory, shard, Durability::MACHINE, defaultLogFileBytes).headerBytes + records * replay::logRecordBytes;
 }
 
+// What an engine's first start publishes before its first file: an empty book's checkpoint for
+// each of the shard's instruments that has none, at where the log begins.
+void publishEmpties(LogStorage& storage, const InstrumentDirectory& directory, std::uint32_t shard, std::uint64_t position) {
+    const std::vector<std::string> names = storage.names();
+    for (const Instrument& instrument : directory.onShard(shard)) {
+        const bool has = std::any_of(names.begin(), names.end(), [&instrument](const std::string& name) {
+            const std::optional<CheckpointFileNameParts> parts = parseCheckpointFileName(name);
+            return parts && !parts->temporary && parts->symbol == instrument.symbol;  // a .tmp holds nothing a start reads
+        });
+        if (!has) {
+            publishEmptyCheckpoint(storage, instrument.symbol, directory.shardCount(), shard, position);
+        }
+    }
+}
+
+// The log's files, a file being made included, not the checkpoints beside them.
+std::vector<std::string> logNames(const LogStorage& storage) {
+    std::vector<std::string> names = storage.names();
+    std::erase_if(names, [](const std::string& name) { return !namedLikeALogFile(name); });
+    return names;
+}
+
 // A shard's log as the engine writes it: housekeeping makes each file and the next one ahead,
 // and the log writer writes every command. A clean stop finishes the last file and removes the
 // unused next one; otherwise both stay as a crash leaves them.
 void writeLog(LogStorage& storage, const InstrumentDirectory& directory, std::uint32_t shard, const std::vector<Placed>& commands,
               bool cleanStop, std::uint64_t fileBytes = defaultLogFileBytes, Durability durability = Durability::MACHINE,
               std::uint64_t firstPosition = 0) {
+    publishEmpties(storage, directory, shard, firstPosition);
     Housekeeping housekeeping(storage, directory, durability, fileBytes);
     Ring<LogEntry> ring(4096);
     DurablePosition durable(firstPosition);
@@ -145,7 +170,7 @@ const std::atomic<bool> running{false};
 RecoveredShard recover(LogStorage& storage, const InstrumentDirectory& directory, std::uint32_t number, Shard& shard,
                        const std::atomic<bool>& stopping = running) {
     const LogSurvey survey = surveyLog(storage, directory);
-    return recoverShard(storage, directory, survey.shards.at(number), shard, defaultBookCapacity, stopping);
+    return recoverShard(storage, storage, directory, survey.shards.at(number), survey.checkpoints.at(number), shard, defaultBookCapacity, stopping);
 }
 
 // The error a call throws, which it must.
@@ -188,7 +213,7 @@ void testNothingToRecover() {
            "an empty directory holds nothing for either shard");
     expect(survey.named.empty(), "and names no symbol");
     Shard shard(directory, 0);
-    const RecoveredShard recovered = recoverShard(storage, directory, survey.shards[0], shard, defaultBookCapacity, running);
+    const RecoveredShard recovered = recoverShard(storage, storage, directory, survey.shards[0], survey.checkpoints[0], shard, defaultBookCapacity, running);
     expect(recovered.replayed == 0 && recovered.tailCutBytes == 0 && recovered.filesRemoved == 0, "and a shard recovers nothing");
     expect(recovered.warmed.size() == 2 && recovered.warmed[0].orders == defaultBookCapacity.orders &&
                recovered.warmed[1].levels == defaultBookCapacity.levels,
@@ -201,7 +226,7 @@ void testACleanLogReplays() {
     const InstrumentDirectory directory = twoShards();
     const std::vector<Placed> commands = commandsFor(2, 30);
     writeLog(storage, directory, 0, commands, true, fileBytesFor(directory, 0, 8));
-    const std::vector<std::string> before = storage.names();
+    const std::vector<std::string> before = logNames(storage);
     expect(before.size() == 4, "thirty records in files of eight is four files");
     const LogSurvey survey = surveyLog(storage, directory);
     expect(survey.shards[0].size() == 4 && survey.shards[0][3] == LogFileEntry{logFileName(0, 24), 24} && survey.shards[1].empty(),
@@ -210,11 +235,11 @@ void testACleanLogReplays() {
            "and the symbols their headers name, sorted, once each: shard 0's, not IBM");
 
     Shard shard(directory, 0);
-    const RecoveredShard recovered = recoverShard(storage, directory, survey.shards[0], shard, defaultBookCapacity, running);
+    const RecoveredShard recovered = recoverShard(storage, storage, directory, survey.shards[0], survey.checkpoints[0], shard, defaultBookCapacity, running);
     expect(recovered.replayed == 30 && shard.nextPosition() == 30, "every record replayed, so the shard goes on from 30");
     expect(recovered.tailCutBytes == 0 && recovered.filesRemoved == 0, "with nothing to cut or remove");
     expectBooksEqual(shard, witnessOf(2, commands), "a clean log");
-    expect(storage.names() == before, "and every file stays");
+    expect(logNames(storage) == before, "and every file stays");
     expect(!shard.checkInvariants(), "the shard is sound");
 }
 
@@ -231,7 +256,7 @@ void testATornTailIsCut() {
         writeLog(storage, directory, 0, commands, false, fileBytesFor(directory, 0, 4));
         const std::string last = logFileName(0, 4);
         const std::uint64_t header = logFileShape(directory, 0, Durability::MACHINE, defaultLogFileBytes).headerBytes;
-        expect(storage.names() == std::vector<std::string>{logFileName(0, 0), last, logFileName(0, 8)}, what + ": a full file, the last, and the next");
+        expect(logNames(storage) == std::vector<std::string>{logFileName(0, 0), last, logFileName(0, 8)}, what + ": a full file, the last, and the next");
         const std::vector<std::byte> torn(20, std::byte{0xab});
         if (tear == Tear::IN_THE_TAIL) {
             storage.open(last)->write(header + 2 * replay::logRecordBytes, torn);
@@ -242,7 +267,7 @@ void testATornTailIsCut() {
         Shard shard(directory, 0);
         const RecoveredShard recovered = recover(storage, directory, 0, shard);
         expect(recovered.replayed == 6, what + ": every whole record replays");
-        expect(recovered.filesRemoved == 1 && storage.names() == std::vector<std::string>{logFileName(0, 0), last},
+        expect(recovered.filesRemoved == 1 && logNames(storage) == std::vector<std::string>{logFileName(0, 0), last},
                what + ": the next file, with no records, is removed");
         // Only what a write reached counts: a zero tail alone drops nothing anyone wrote.
         const std::uint64_t dropped = tear == Tear::NONE ? 0 : torn.size();
@@ -262,10 +287,10 @@ void testOnlyEmptyFiles() {
     InMemoryLogStorage storage;
     const InstrumentDirectory directory = twoShards();
     writeLog(storage, directory, 1, {}, false);
-    expect(storage.names().size() == 2, "a crash before any command leaves the first file and the next");
+    expect(logNames(storage).size() == 2, "a crash before any command leaves the first file and the next");
     Shard shard(directory, 1);
     const RecoveredShard recovered = recover(storage, directory, 1, shard);
-    expect(recovered.replayed == 0 && recovered.filesRemoved == 2 && storage.names().empty(), "both go, and the shard starts at 0");
+    expect(recovered.replayed == 0 && recovered.filesRemoved == 2 && logNames(storage).empty(), "both go, and the shard starts at 0");
 }
 
 void testWhatStopsAShard() {
@@ -302,9 +327,9 @@ void testWhatStopsAShard() {
         storage.remove(logFileName(0, 0));
         Shard shard(directory, 0);
         expectError([&] { recover(storage, directory, 0, shard); }, RecoveryError::Kind::RECOVERY_STOPPED,
-                    "shard 0 position 0 file log-0000-00000000000000000004.oblog: the log starts at position 4, and this build recovers "
-                    "only from position 0",
-                    "a missing first file");
+                    "shard 0 position 0 file log-0000-00000000000000000004.oblog: a gap: the oldest book's checkpoint stands at position 0, "
+                    "and the log starts at 4",
+                    "a missing first file, which the books' checkpoints at 0 still need");
     }
     {
         InMemoryLogStorage storage;
@@ -479,7 +504,7 @@ void testAHoleNearTheEndIsCut() {
     storage.open(logFileName(0, 8))->write(header, std::vector<std::byte>(replay::logRecordBytes, std::byte{0}));
     Shard shard(directory, 0);
     const RecoveredShard recovered = recover(storage, directory, 0, shard);
-    expect(recovered.replayed == 8 && storage.names() == std::vector<std::string>{logFileName(0, 0), logFileName(0, 4)},
+    expect(recovered.replayed == 8 && logNames(storage) == std::vector<std::string>{logFileName(0, 0), logFileName(0, 4)},
            "a hole at the first record leaves the file nothing, so it is removed with the next file made ahead");
     Housekeeping housekeeping(storage, directory, Durability::MACHINE, fileBytesFor(directory, 0, 4));
     expect(housekeeping.first(0, recovered.replayed).name == logFileName(0, 8), "and a new one starts where it began");
@@ -530,8 +555,11 @@ std::uint64_t restartAfter(const Step& step, InMemoryLogStorage::Crash kind, std
     for (const std::string& temporary : survey.temporaries) {
         storage.remove(temporary);
     }
+    for (const std::string& temporary : survey.checkpointTemporaries) {
+        storage.remove(temporary);
+    }
     Shard shard(directory, 0);
-    const RecoveredShard recovered = recoverShard(storage, directory, survey.shards[0], shard, defaultBookCapacity, running);
+    const RecoveredShard recovered = recoverShard(storage, storage, directory, survey.shards[0], survey.checkpoints[0], shard, defaultBookCapacity, running);
     const std::uint64_t survived = recovered.replayed;
     expect(survived <= commands.size(), what + ": no more survives than was written");
     if (durability == Durability::MACHINE || kind == InMemoryLogStorage::Crash::ENGINE) {
@@ -573,6 +601,7 @@ void crashAtEachStep(const std::vector<Step>& steps, Durability durability, cons
 void writeInSteps(LogStorage& storage, const InstrumentDirectory& directory, Durability durability, std::uint64_t fileBytes,
                   const std::vector<Placed>& commands, std::size_t first, DurablePosition& durable) {
     constexpr std::size_t perWrite = 7;
+    publishEmpties(storage, directory, 0, first);
     Housekeeping housekeeping(storage, directory, durability, fileBytes);
     Ring<LogEntry> ring(16);
     LogWriter writer(housekeeping, 0, ring, durable, first);
@@ -627,7 +656,7 @@ void testACrashAtEveryStepOfAStart() {
         const std::uint64_t header = headerBytesOf(directory, 0);
         storage.open(logFileName(0, 30))->write(header + 10 * replay::logRecordBytes, std::vector<std::byte>(20, std::byte{0xab}));
         putFile(storage, logFileName(0, 60) + ".tmp", {std::byte{1}});
-        expect(storage.names().size() == 4, "two files with records, the next one made ahead, and one being made");
+        expect(logNames(storage).size() == 4, "two files with records, the next one made ahead, and one being made");
 
         DurablePosition durable;
         std::vector<Step> steps;
@@ -639,7 +668,7 @@ void testACrashAtEveryStepOfAStart() {
                 storage.remove(temporary);
             }
             Shard shard(directory, 0);
-            const RecoveredShard recovered = recoverShard(storage, directory, survey.shards[0], shard, defaultBookCapacity, running);
+            const RecoveredShard recovered = recoverShard(storage, storage, directory, survey.shards[0], survey.checkpoints[0], shard, defaultBookCapacity, running);
             expect(recovered.replayed == before && recovered.filesRemoved == 1 && recovered.tailCutBytes == 20,
                    "the start recovers the earlier run's forty, cutting its torn tail");
         }
@@ -737,6 +766,286 @@ void testAStopInterrupts() {
 
 }  // namespace
 
+
+// ---- Recovery from checkpoints (D5) ---------------------------------------------------------
+
+// Shard 0's log of thirty commands in files of eight, left running, then rolled: each book keeps
+// checkpoints at 16 and 24, and the file at 24, still being written, holds the last six.
+// Each book trades within itself, buys and sells alternating on it, so a record run twice where it
+// should be skipped re-adds an order that had traded away, which the image shows.
+std::vector<Placed> tradingCommandsFor(std::size_t count) {
+    std::vector<Placed> placed;
+    for (std::size_t i = 1; i <= count; ++i) {
+        const auto slot = static_cast<std::uint32_t>(i % 2);
+        if (i % 5 == 0) {
+            placed.push_back(Placed{slot, replay::CancelCommand{static_cast<OrderId>(i - 2)}});
+            continue;
+        }
+        replay::AddCommand add{};
+        add.orderId = static_cast<OrderId>(i);
+        add.side = (i / 2) % 2 == 0 ? Side::BUY : Side::SELL;
+        add.price = static_cast<Price>(100 + (i * 7) % 3);
+        add.quantity = static_cast<Quantity>(1 + i % 3);
+        placed.push_back(Placed{slot, add});
+    }
+    return placed;
+}
+
+struct Checkpointed {
+    InMemoryLogStorage storage;
+    std::vector<Placed> commands = tradingCommandsFor(30);
+};
+
+void checkpointed(Checkpointed& store, const InstrumentDirectory& directory) {
+    writeLog(store.storage, directory, 0, store.commands, false, fileBytesFor(directory, 0, 8));
+    ShardRoller roller(store.storage, directory, 0, [](const std::string&) {});
+    expect(roller.roll(store.commands.size()) == 3 && roller.position(0) == 24 && roller.position(1) == 24,
+           "the three closed files rolled: each book at 24");
+}
+
+void damage(InMemoryLogStorage& storage, const std::string& name) {
+    std::vector<std::byte> bytes = bytesOf(storage, name);
+    bytes[bytes.size() / 2] ^= std::byte{1};
+    putFile(storage, name, bytes);
+}
+
+// Byte for byte, so a command run twice shows even where the book refused it, in the sequence
+// numbers and trade IDs the image holds.
+void expectImagesEqual(const Shard& shard, const std::vector<OrderBook>& witness, const std::string& what) {
+    for (std::uint32_t slot = 0; slot < witness.size(); ++slot) {
+        const OrderBook& book = shard.books().book(slot);
+        std::vector<std::byte> mine(book.imageSize());
+        std::vector<std::byte> theirs(witness[slot].imageSize());
+        static_cast<void>(book.writeImage(mine));
+        static_cast<void>(witness[slot].writeImage(theirs));
+        expect(mine == theirs, what + ": slot " + std::to_string(slot) + "'s image is the witness's");
+    }
+}
+
+RecoveredShard recoverInto(LogStorage& storage, const InstrumentDirectory& directory, Shard& shard) {
+    const LogSurvey survey = surveyLog(storage, directory);
+    return recoverShard(storage, storage, directory, survey.shards[0], survey.checkpoints[0], shard, defaultBookCapacity, running);
+}
+
+void testBooksRestoreFromCheckpoints() {
+    const InstrumentDirectory directory = twoShards();
+    Checkpointed store;
+    checkpointed(store, directory);
+    const LogSurvey survey = surveyLog(store.storage, directory);
+    expect(survey.checkpoints[0][0] == std::vector<std::uint64_t>{24, 16} && survey.checkpoints[0][1] == std::vector<std::uint64_t>{24, 16},
+           "the survey finds each book's checkpoints, newest first");
+    expect(survey.newBooks[0].empty() && survey.newBooks[1] == std::vector<std::uint32_t>{0}, "and IBM, named nowhere, new");
+    Shard shard(directory, 0);
+    const RecoveredShard recovered = recoverInto(store.storage, directory, shard);
+    expect(recovered.start == 24 && recovered.restoredFrom == std::vector<std::uint64_t>{24, 24} && recovered.fellBack == 0,
+           "each book from its newest, so the replay starts at 24");
+    expect(recovered.replayed == 30 && shard.commandsTaken() == 6, "and takes the last six");
+    expectBooksEqual(shard, witnessOf(2, store.commands), "restored and replayed");
+    expectImagesEqual(shard, witnessOf(2, store.commands), "restored and replayed");
+    expect(!shard.checkInvariants(), "the shard is sound");
+
+    // A missing file before the oldest book's checkpoint is not needed.
+    store.storage.remove(logFileName(0, 0));
+    Shard without(directory, 0);
+    expectBooksEqual(without, witnessOf(2, {}), "a new shard holds nothing");
+    recoverInto(store.storage, directory, without);
+    expectBooksEqual(without, witnessOf(2, store.commands), "a file no book needs, gone, changes nothing");
+}
+
+// The fallback DAMAGE gives: AAPL's newest doesn't decode, so it restores from 16, and the shard
+// replays from there, skipping MSFT's records before its 24.
+void testBooksOnOneShardAtDifferentPositions() {
+    const InstrumentDirectory directory = twoShards();
+    Checkpointed store;
+    checkpointed(store, directory);
+    damage(store.storage, checkpointFileName(*Symbol::parse("AAPL"), 24));
+    Shard shard(directory, 0);
+    const RecoveredShard recovered = recoverInto(store.storage, directory, shard);
+    expect(recovered.restoredFrom == std::vector<std::uint64_t>{16, 24} && recovered.start == 16 && recovered.fellBack == 1,
+           "AAPL from its older checkpoint, MSFT from its newest");
+    expect(recovered.replayed == 30 && shard.commandsTaken() == 14, "the replay takes all fourteen from 16, running some");
+    expectBooksEqual(shard, witnessOf(2, store.commands), "books at different positions recover");
+    expectImagesEqual(shard, witnessOf(2, store.commands), "books at different positions recover");
+    expect(!shard.checkInvariants(), "and the shard is sound");
+
+    // With the file at 16 gone, the fallback needs it: a gap.
+    store.storage.remove(logFileName(0, 16));
+    Shard gap(directory, 0);
+    expectError([&] { recoverInto(store.storage, directory, gap); }, RecoveryError::Kind::RECOVERY_STOPPED,
+                "shard 0 position 16 file log-0000-00000000000000000024.oblog: a gap: the file before it ends at position 16, and this one "
+                "starts at 24",
+                "a file the oldest book needs, gone");
+}
+
+void testWhatCheckpointsStop() {
+    const InstrumentDirectory directory = twoShards();
+    {
+        Checkpointed store;
+        checkpointed(store, directory);
+        store.storage.remove(checkpointFileName(*Symbol::parse("MSFT"), 16));
+        store.storage.remove(checkpointFileName(*Symbol::parse("MSFT"), 24));
+        expectError([&] { surveyLog(store.storage, directory); }, RecoveryError::Kind::RECOVERY_STOPPED,
+                    "shard 0 symbol MSFT: a log file's header names it, and no checkpoint holds it: a lost checkpoint", "a lost checkpoint");
+    }
+    {
+        Checkpointed store;
+        checkpointed(store, directory);
+        publishEmptyCheckpoint(store.storage, *Symbol::parse("ZZZ"), 2, 0, 0);
+        expectError([&] { surveyLog(store.storage, directory); }, RecoveryError::Kind::START_REFUSED,
+                    "ckpt-ZZZ-00000000000000000000.obckpt names ZZZ, which is not on the instrument list", "a checkpoint off the list");
+    }
+    {
+        Checkpointed store;
+        checkpointed(store, directory);
+        publishEmptyCheckpoint(store.storage, *Symbol::parse("AAPL"), 2, 0, 40);
+        Shard shard(directory, 0);
+        expectError([&] { recoverInto(store.storage, directory, shard); }, RecoveryError::Kind::RECOVERY_STOPPED,
+                    "shard 0 position 40 symbol AAPL: its checkpoint stands past the log's end, 30: the disk lost data it had confirmed",
+                    "a checkpoint past the log's end");
+        // Even one that doesn't decode: its name says the disk had the log that far.
+        damage(store.storage, checkpointFileName(*Symbol::parse("AAPL"), 40));
+        Shard damaged(directory, 0);
+        expectError([&] { recoverInto(store.storage, directory, damaged); }, RecoveryError::Kind::RECOVERY_STOPPED,
+                    "shard 0 position 40 symbol AAPL: its checkpoint stands past the log's end, 30: the disk lost data it had confirmed",
+                    "a damaged checkpoint past the log's end");
+    }
+    {
+        // Only an empty file left, starting past the books: the log between is gone.
+        Checkpointed store;
+        checkpointed(store, directory);
+        for (const std::string& name : logNames(store.storage)) {
+            store.storage.remove(name);
+        }
+        Housekeeping housekeeping(store.storage, directory, Durability::MACHINE, fileBytesFor(directory, 0, 8));
+        static_cast<void>(housekeeping.first(0, 100));
+        Shard shard(directory, 0);
+        expectError([&] { recoverInto(store.storage, directory, shard); }, RecoveryError::Kind::RECOVERY_STOPPED,
+                    "shard 0 position 24 file log-0000-00000000000000000100.oblog: a gap: the oldest book's checkpoint stands at position 24, "
+                    "and the log starts at 100",
+                    "an empty file past the books, and nothing between");
+    }
+    {
+        Checkpointed store;
+        checkpointed(store, directory);
+        damage(store.storage, checkpointFileName(*Symbol::parse("AAPL"), 24));
+        damage(store.storage, checkpointFileName(*Symbol::parse("AAPL"), 16));
+        Shard shard(directory, 0);
+        const RecoveryError error = errorFrom([&] { recoverInto(store.storage, directory, shard); }, "no checkpoint restores");
+        const std::string text = error.what();
+        expect(error.kind() == RecoveryError::Kind::RECOVERY_STOPPED &&
+                   text.starts_with("shard 0 symbol AAPL: no checkpoint restores: ckpt-AAPL-00000000000000000024.obckpt: CHECKSUM_MISMATCH at ") &&
+                   text.find("; ckpt-AAPL-00000000000000000016.obckpt: CHECKSUM_MISMATCH at ") != std::string::npos,
+               "neither checkpoint restores, and each says why: " + text);
+    }
+    {
+        Checkpointed store;
+        checkpointed(store, directory);
+        const std::string name = checkpointFileName(*Symbol::parse("AAPL"), 24);
+        const std::vector<std::byte> bytes = bytesOf(store.storage, name);
+        const auto decoded = std::get<DecodedCheckpoint>(decodeCheckpoint(bytes));
+        CheckpointHeader moved = decoded.header;
+        moved.shardCount = 3;
+        putFile(store.storage, name, encodeCheckpoint(moved, decoded.image));
+        Shard shard(directory, 0);
+        expectError([&] { recoverInto(store.storage, directory, shard); }, RecoveryError::Kind::PLACEMENT_CHANGED,
+                    "ckpt-AAPL-00000000000000000024.obckpt was written by shard 0 of 3, and this start places AAPL on shard 0 of 2, and "
+                    "this build can't change placement while a log exists, so start on the old placement",
+                    "a checkpoint under another placement");
+    }
+}
+
+// An instrument added to the list, named in no header and with no checkpoint, is new: an empty
+// book, which the log writer then gives a checkpoint.
+void testANewInstrument() {
+    const InstrumentDirectory directory = twoShards();
+    Checkpointed store;
+    checkpointed(store, directory);
+    const InstrumentDirectory added({on("AAPL", 0), on("MSFT", 0), on("NEW", 0), on("IBM", 1)}, 2);
+    const LogSurvey survey = surveyLog(store.storage, added);
+    expect(survey.newBooks[0] == std::vector<std::uint32_t>{2} && survey.checkpoints[0][2].empty(), "NEW, in slot 2, is new");
+    Shard shard(added, 0);
+    const RecoveredShard recovered =
+        recoverShard(store.storage, store.storage, added, survey.shards[0], survey.checkpoints[0], shard, defaultBookCapacity, running);
+    expect(recovered.restoredFrom == std::vector<std::uint64_t>{24, 24, 24} && shard.books().book(2).activeOrderCount() == 0,
+           "an empty book, standing where the replay starts");
+}
+
+// Retention: housekeeping deletes each closed file that ends at or before the oldest checkpoint
+// any book keeps, and a crash at every step of deleting them still recovers the whole run.
+void testRetention() {
+    const InstrumentDirectory directory = twoShards();
+    {
+        Checkpointed store;
+        checkpointed(store, directory);
+        ShardRoller roller(store.storage, directory, 0, [](const std::string&) {});
+        expect(roller.retentionFloor() == 16, "each book's older checkpoint stands at 16");
+        Housekeeping keeping(store.storage, directory, Durability::MACHINE, fileBytesFor(directory, 0, 8));
+        keeping.keepEveryFile();
+        keeping.retain(0, 16);
+        expect(keeping.pass() == 0 && keeping.filesDeleted() == 0, "with --keep-log nothing goes");
+    }
+    Checkpointed store;
+    checkpointed(store, directory);
+    const InMemoryLogStorage::Contents before = store.storage.contents();
+    std::vector<InMemoryLogStorage::Contents> steps;
+    store.storage.watch([&steps](const InMemoryLogStorage::Contents& drive) { steps.push_back(drive); });
+    Housekeeping housekeeping(store.storage, directory, Durability::MACHINE, fileBytesFor(directory, 0, 8));
+    housekeeping.retain(0, 16);
+    expect(housekeeping.pass() == 2 && housekeeping.filesDeleted() == 2, "the files at 0 and 8 go");
+    store.storage.watch(nullptr);
+    expect(logNames(store.storage) == std::vector<std::string>{logFileName(0, 16), logFileName(0, 24), logFileName(0, 32)},
+           "the file the older checkpoints need stays, with the one being written and the one made ahead");
+    housekeeping.retain(0, 8);
+    expect(housekeeping.pass() == 0, "a lower floor changes nothing");
+    expect(steps.size() == 2, "each deletion is a step");
+
+    steps.insert(steps.begin(), before);
+
+    // And a whole roll with its retention, crashed at every step: each checkpoint published, the
+    // superseded one removed, and each log file deleted, interleaved as a worker and the
+    // housekeeping thread leave them.
+    {
+        InMemoryLogStorage rolled;
+        writeLog(rolled, directory, 0, store.commands, false, fileBytesFor(directory, 0, 8));
+        rolled.watch([&steps](const InMemoryLogStorage::Contents& drive) { steps.push_back(drive); });
+        ShardRoller roller(rolled, directory, 0, [](const std::string&) {});
+        Housekeeping trimming(rolled, directory, Durability::MACHINE, fileBytesFor(directory, 0, 8));
+        for (const std::uint64_t closedEnd : {8U, 16U, 24U, 30U}) {
+            roller.roll(closedEnd);
+            trimming.retain(0, *roller.retentionFloor());
+            trimming.pass();
+        }
+        rolled.watch(nullptr);
+        expect(trimming.filesDeleted() == 2 && roller.position(0) == 24, "rolled to 24, retention deleting the files at 0 and 8");
+    }
+    expect(steps.size() > 30, "the whole roll and its retention are many steps: " + std::to_string(steps.size()));
+    for (std::size_t at = 0; at < steps.size(); ++at) {
+        for (const auto& [kind, seed] : {std::pair{InMemoryLogStorage::Crash::ENGINE, 0ULL}, std::pair{InMemoryLogStorage::Crash::MACHINE, 1ULL},
+                                         std::pair{InMemoryLogStorage::Crash::MACHINE, 2ULL}, std::pair{InMemoryLogStorage::Crash::MACHINE, 3ULL}}) {
+            InMemoryLogStorage crashed(steps[at]);
+            crashed.crash(kind, seed);
+            Shard shard(directory, 0);
+            recoverInto(crashed, directory, shard);
+            expectBooksEqual(shard, witnessOf(2, store.commands), "a crash after deletion step " + std::to_string(at) + " recovers the whole run");
+            // And the fallback still has what it needs, where AAPL has an older checkpoint to fall to.
+            std::vector<std::uint64_t> aapl;
+            for (const std::string& name : crashed.names()) {
+                const std::optional<CheckpointFileNameParts> parts = parseCheckpointFileName(name);
+                if (parts && !parts->temporary && parts->symbol == *Symbol::parse("AAPL")) {
+                    aapl.push_back(parts->position);
+                }
+            }
+            if (aapl.size() < 2) {
+                continue;
+            }
+            damage(crashed, checkpointFileName(*Symbol::parse("AAPL"), *std::max_element(aapl.begin(), aapl.end())));
+            Shard fallback(directory, 0);
+            recoverInto(crashed, directory, fallback);
+            expectImagesEqual(fallback, witnessOf(2, store.commands), "and so does AAPL's fallback to its older checkpoint");
+        }
+    }
+}
+
 int main() {
     // A recovery that throws where none should is a failure to report, not a crash.
     try {
@@ -753,6 +1062,11 @@ int main() {
         testWhatRefusesAStart();
         testWarming();
         testAStopInterrupts();
+        testBooksRestoreFromCheckpoints();
+        testBooksOnOneShardAtDifferentPositions();
+        testWhatCheckpointsStop();
+        testANewInstrument();
+        testRetention();
     } catch (const std::exception& error) {
         std::cerr << "FAILED: an unexpected exception: " << error.what() << std::endl;
         return EXIT_FAILURE;

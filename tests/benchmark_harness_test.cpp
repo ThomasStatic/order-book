@@ -802,11 +802,12 @@ void testDurabilityGroup() {
     std::filesystem::remove_all(settings.logParent);
     std::filesystem::create_directories(settings.logParent);
     const std::vector<ComponentResult> results = runDurabilityGroup(settings);
-    expect((operationsOf(results) == std::vector<std::string>{"publish-checkpoint", "publish-checkpoint", "roll-pass"}),
+    expect((operationsOf(results) == std::vector<std::string>{"publish-checkpoint", "publish-checkpoint", "roll-pass", "recover"}),
            "the durability group's operations, in order");
     expect(results[0].orders == 100 && results[1].orders == 300 && results[1].operations == 2, "a publish per pass, by book size");
     expect(results[2].operations == 1200 && results[2].passes == 2 && results[2].orders > 0,
            "a roll pass counts every command of its file, each pass");
+    expect(results[3].operations == 1200 && results[3].state == "checkpoint-and-one-file", "and recovery every command it replays");
     expect(std::filesystem::is_empty(settings.logParent), "and leaves nothing behind");
     std::filesystem::remove_all(settings.logParent);
 }

@@ -63,6 +63,13 @@ namespace order_book::engine_testing {
         // other lines are the same whatever this is. Each rolls every shard's closed files, so the
         // files closed since the last are a worker's backlog.
         std::size_t rolls = 20;
+        // How many DAMAGE lines, each after a command and for an instrument picked from a source
+        // of their own. Each flips a byte in that book's newest checkpoint, if it has an older one
+        // to fall back to.
+        std::size_t damages = 3;
+        // Every log file kept, so the end can replay each shard's whole log; otherwise each ROLL
+        // lets housekeeping delete what no book's kept checkpoint needs.
+        bool keepLog = false;
     };
 
     enum class SymbolFault { NONE, UNKNOWN, MALFORMED };
@@ -73,7 +80,8 @@ namespace order_book::engine_testing {
     // recovers and the run goes on. RESTORE <symbol>: that instrument's book is imaged and
     // restored, and the run goes on with the restored book (test-only: a running engine never
     // does this). ROLL: every shard's roll forward rolls the files its log writer has closed.
-    enum class EngineAction { COMMAND, LOG, CRASH_ENGINE, CRASH_MACHINE, RESTORE, ROLL };
+    // DAMAGE <symbol>: a byte of that book's newest checkpoint flipped, so a start falls back.
+    enum class EngineAction { COMMAND, LOG, CRASH_ENGINE, CRASH_MACHINE, RESTORE, ROLL, DAMAGE };
 
     // One line of a stream. An action's other fields mean nothing, but a machine crash's seed and
     // a restore's instrument.
@@ -122,6 +130,9 @@ namespace order_book::engine_testing {
         std::size_t rolls = 0;             // ROLL lines run
         std::size_t rollPasses = 0;        // closed files they rolled, on every shard
         std::size_t checkpoints = 0;       // checkpoints they published
+        std::size_t damages = 0;           // DAMAGE lines that flipped a byte
+        std::size_t fellBack = 0;          // books a recovery restored from an older checkpoint
+        std::uint64_t logFilesDeleted = 0; // what retention deleted
     };
 
     struct EngineRunResult {
@@ -162,8 +173,9 @@ namespace order_book::engine_testing {
     EngineRunResult runEngineSeed(const EngineSeedConfig& config);
 
     struct ShardLogRecords {
-        std::vector<replay::ReplayRecord> records;  // from position 0, in order
+        std::vector<replay::ReplayRecord> records;  // from firstPosition, in order
         std::size_t files = 0;
+        std::uint64_t firstPosition = 0;  // the first file's, past what retention deleted
     };
 
     // Every record of one shard's files in the storage, read back through CommandLogReader, never

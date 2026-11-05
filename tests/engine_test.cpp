@@ -31,6 +31,7 @@
 #include "order_book/runtime/engine_settings.hpp"
 #include "order_book/runtime/instruments.hpp"
 #include "order_book/runtime/log_files.hpp"
+#include "order_book/runtime/log_storage.hpp"
 #include "order_book/runtime/thread_placement.hpp"
 #include "order_book/xxh64.hpp"
 
@@ -487,8 +488,10 @@ void testALoggedRun() {
         run.stop.request();
         expect(run.finish() == EngineExit::CLEAN_STOP, "a recovered run stops cleanly");
         const std::string diagnostics = run.diagnostics.text();
-        expect(diagnostics.find("order_book_engine: shard 0: recovered books=1 replayed=3 tail-cut-bytes=0\n"
-                                "order_book_engine: shard 1: recovered books=1 replayed=5 tail-cut-bytes=0\n") != std::string::npos,
+        // Each book from its empty checkpoint at 0, since no file closed in the first run.
+        expect(diagnostics.find("order_book_engine: shard 0: recovered books=1 replayed=3 tail-cut-bytes=0 from=0 fell-back=0\n"
+                                "order_book_engine: shard 1: recovered books=1 replayed=5 tail-cut-bytes=0 from=0 fell-back=0\n") !=
+                   std::string::npos,
                "each shard says what it recovered, in shard order:\n" + diagnostics);
         const std::string report = run.report.text();
         // The first run's files are closed now, and the worker may not have reached them by the
@@ -622,6 +625,7 @@ void testALoggedRunAcrossFiles() {
     const std::filesystem::path logs = logDirectory("logged_files");
     runtime::EngineSettings settings = settingsFor(list, 2);
     settings.logDir = logs.string();
+    settings.keepLog = true;  // every file read back below, whatever the workers have rolled
     const runtime::InstrumentDirectory directory(
         {runtime::Instrument{*Symbol::parse("AAPL"), 0, std::nullopt, std::nullopt, std::nullopt},
          runtime::Instrument{*Symbol::parse("MSFT"), 1, std::nullopt, std::nullopt, std::nullopt}},
@@ -665,6 +669,81 @@ void testALoggedRunAcrossFiles() {
 
 // Every log setting that can't run refuses the start, and a start refused or stopped after its
 // logs were made leaves the directory as it found it.
+// --checkpoint-dir: checkpoints, and a lock of their own, in another directory, from which a
+// restart recovers; the log's directory holds only the log.
+void testACheckpointDirectory() {
+    const std::filesystem::path list = writeList("checkpoint_dir", "symbol,shard,orders,stops,levels\nAAPL,0,,,\nMSFT,1,,,\n");
+    const std::filesystem::path logs = logDirectory("checkpoint_dir_log");
+    const std::filesystem::path checkpoints = logDirectory("checkpoint_dir_ckpt");
+    runtime::EngineSettings settings = settingsFor(list, 2);
+    settings.logDir = logs.string();
+    settings.checkpointDir = checkpoints.string();
+    for (int run = 0; run < 2; ++run) {
+        Run engine(settings);
+        Bytes stream = helloFrame();
+        const Bytes more = commandsFor("AAPL", 2);
+        stream.insert(stream.end(), more.begin(), more.end());
+        expect(talk(engine.port(), stream).size() == 2, "every command was answered");
+        engine.stop.request();
+        expect(engine.finish() == EngineExit::CLEAN_STOP, "a run with a checkpoint directory stops cleanly:\n" + engine.diagnostics.text());
+        if (run == 1) {
+            expect(engine.diagnostics.text().find("shard 0: recovered books=1 replayed=2 tail-cut-bytes=0 from=0 fell-back=0") != std::string::npos,
+                   "the restart restores from the checkpoint directory:\n" + engine.diagnostics.text());
+        }
+    }
+    expect(checkpointsIn(logs).empty() && !logsIn(logs).empty(), "the log's directory holds only the log");
+    // The restart's worker may have rolled the first run's closed file too, so each book has one or two.
+    const std::vector<std::string> held = checkpointsIn(checkpoints);
+    for (const char* symbol : {"ckpt-AAPL-", "ckpt-MSFT-"}) {
+        expect(std::any_of(held.begin(), held.end(), [symbol](const std::string& name) { return name.starts_with(symbol); }),
+               std::string("and the checkpoint directory the checkpoints: ") + symbol);
+    }
+    expect(std::filesystem::exists(checkpoints / "engine.lock"), "with a lock of its own");
+
+    // The log's own directory, named again, shares its lock: one directory, one lock.
+    {
+        // In a store of its own, since the log above keeps its checkpoints elsewhere.
+        const std::filesystem::path both = logDirectory("checkpoint_dir_same");
+        runtime::EngineSettings shared = settings;
+        shared.logDir = both.string();
+        shared.checkpointDir = both.string();
+        for (int run = 0; run < 2; ++run) {
+            Run same(shared);
+            static_cast<void>(same.port());
+            same.stop.request();
+            expect(same.finish() == EngineExit::CLEAN_STOP,
+                   "a checkpoint directory that is the log's takes no second lock:\n" + same.diagnostics.text());
+        }
+        expect(!checkpointsIn(both).empty(), "and holds the checkpoints beside the log");
+        std::filesystem::remove_all(both);
+    }
+    // A checkpoint directory another holds refuses the start.
+    settings.checkpointDir = checkpoints.string();
+    {
+        runtime::FileLogStorage other(checkpoints.string());
+        const std::unique_ptr<runtime::StorageLock> otherLock = other.lock();
+        StopSource stop;
+        WatchedStream report;
+        WatchedStream diagnostics;
+        expect(runEngine(settings, stop, report, diagnostics) == EngineExit::START_REFUSED &&
+                   diagnostics.text().find(" is locked: another engine or command is using ") != std::string::npos,
+               "a locked checkpoint directory refuses the start:\n" + diagnostics.text());
+    }
+    {
+        runtime::EngineSettings logless = settingsFor(list, 2);
+        logless.checkpointDir = checkpoints.string();
+        expect(refusedWith(logless, "--checkpoint-dir needs --log-dir, since there are no checkpoints without a log") == EngineExit::START_REFUSED,
+               "a checkpoint directory with no log is refused");
+    }
+    settings.checkpointDir = (checkpoints / "missing").string();
+    expect(refusedWith(settings, "cannot use checkpoint directory " + settings.checkpointDir + ": no such directory") ==
+               EngineExit::START_REFUSED,
+           "a checkpoint directory that doesn't exist refuses the start");
+    std::filesystem::remove_all(logs);
+    std::filesystem::remove_all(checkpoints);
+    std::filesystem::remove(list);
+}
+
 void testLogRefusals() {
     const std::filesystem::path list = writeList("log_refusals", "symbol,shard,orders,stops,levels\nAAPL,0,,,\nMSFT,1,,,\n");
     const std::filesystem::path logs = logDirectory("refusals");
@@ -807,6 +886,7 @@ void testSeveralGatewayThreads() {
 int main() {
     testALoggedRun();
     testALoggedRunAcrossFiles();
+    testACheckpointDirectory();
     testLogRefusals();
     testRecoveryRefusals();
     testACleanStop();

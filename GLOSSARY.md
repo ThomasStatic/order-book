@@ -231,7 +231,7 @@ Rebuilding a book from a book image, without running any command.
 _Avoid_: load, recover
 
 **Recovery**:
-Bringing the books back after a stop or crash: restoring each from its checkpoint, then replaying the command log after it. Until checkpoints exist, every book replays its shard's whole log from position 0.
+Bringing the books back after a stop or crash: restoring each from its checkpoint, its newest that restores or the older one, then replaying the command log after it, each shard from its oldest book's position, skipping each command a book's checkpoint already holds.
 _Avoid_: restore, restart
 
 ## The gateway

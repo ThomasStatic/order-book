@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <exception>
@@ -37,6 +38,8 @@
 #include "order_book/runtime/log_files.hpp"
 #include "order_book/runtime/log_storage.hpp"
 #include "order_book/runtime/log_writer.hpp"
+#include "order_book/runtime/recovery.hpp"
+#include "order_book/runtime/shard.hpp"
 #include "order_book/runtime/roll_forward.hpp"
 #include "order_book/submission_result.hpp"
 #include "workload.hpp"
@@ -608,7 +611,7 @@ ComponentResult publishResult(std::size_t orders, const DurabilitySettings& sett
     return result;
 }
 
-ComponentResult rollResult(const DurabilitySettings& settings) {
+std::vector<ComponentResult> rollResults(const DurabilitySettings& settings) {
     if (settings.instruments == 0) {
         throw std::invalid_argument("durability: a roll pass needs instruments");
     }
@@ -627,8 +630,9 @@ ComponentResult rollResult(const DurabilitySettings& settings) {
         runtime::publishEmptyCheckpoint(storage, instrumentSymbol(i), 1, 0, 0);
     }
     {
-        // One full file and the next made ahead, so the first is closed, written book by book,
-        // each with a stream of its own, so only one book's commands are in memory at a time.
+        // Two full files and the next made ahead, so both are closed, written book by book, each
+        // with a stream of its own, so only one book's commands are in memory at a time. The
+        // first is rolled; recovery restores at its end and replays the second.
         runtime::Housekeeping housekeeping(storage, instruments, runtime::Durability::PROCESS, fileBytes);
         runtime::Ring<runtime::LogEntry> ring(65536);
         runtime::DurablePosition durable(0);
@@ -639,7 +643,8 @@ ComponentResult rollResult(const DurabilitySettings& settings) {
         };
         const WorkloadConfig config = findWorkload(settings.workload);
         for (std::size_t i = 0; i < settings.instruments; ++i) {
-            const std::size_t share = records / settings.instruments + (i + 1 == settings.instruments ? records % settings.instruments : 0);
+            const std::size_t share =
+                2 * records / settings.instruments + (i + 1 == settings.instruments ? 2 * records % settings.instruments : 0);
             const std::vector<replay::ReplayRecord> commands =
                 workloadRecords(generateWorkload(config, share, settings.seed + i), instrumentSymbol(i));
             const auto slot = instruments.find(instrumentSymbol(i))->slot;
@@ -651,9 +656,9 @@ ComponentResult rollResult(const DurabilitySettings& settings) {
             }
         }
         drain();
-        if (durable.load() != records) {
-            throw std::runtime_error("durability: the log file holds " + std::to_string(durable.load()) + " commands, not " +
-                                     std::to_string(records));
+        if (durable.load() != 2 * records) {
+            throw std::runtime_error("durability: the log files hold " + std::to_string(durable.load()) + " commands, not " +
+                                     std::to_string(2 * records));
         }
     }
 
@@ -687,7 +692,25 @@ ComponentResult rollResult(const DurabilitySettings& settings) {
             storage.remove(name);
         }
     }
-    return result;
+
+    // recover: from each book's checkpoint at the first file's end, plus the second file, as a
+    // start does: the survey, then the shard's recovery, on a shard built untimed.
+    runtime::ShardRoller(storage, instruments, 0, throwOnReport).roll(records);
+    ComponentResult recovered{"recover", settings.workload, "checkpoint-and-one-file", result.orders, result.levels, settings.rollPasses, 0,
+                              settings.rollPasses * records};
+    const std::atomic<bool> running{false};
+    for (std::size_t pass = 0; pass < settings.rollPasses; ++pass) {
+        runtime::Shard shard(instruments, 0);
+        const Clock::time_point start = Clock::now();
+        const runtime::LogSurvey survey = runtime::surveyLog(storage, instruments);
+        const runtime::RecoveredShard done = runtime::recoverShard(storage, storage, instruments, survey.shards[0], survey.checkpoints[0], shard,
+                                                                   runtime::defaultBookCapacity, running);
+        recovered.elapsedNanoseconds += nanosecondsBetween(start, Clock::now());
+        if (done.start != records || done.replayed != 2 * records) {
+            throw std::runtime_error("durability: recovery did not restore at the first file's end and replay the second");
+        }
+    }
+    return {result, recovered};
 }
 
 }  // namespace
@@ -697,7 +720,9 @@ std::vector<ComponentResult> runDurabilityGroup(const DurabilitySettings& settin
     for (const std::size_t orders : settings.deepBookOrders) {
         results.push_back(publishResult(orders, settings));
     }
-    results.push_back(rollResult(settings));
+    for (ComponentResult& result : rollResults(settings)) {
+        results.push_back(std::move(result));
+    }
     return results;
 }
 

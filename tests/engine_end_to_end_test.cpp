@@ -110,7 +110,8 @@ public:
         const std::vector<std::string> arguments{"--instruments", list.string(), "--shards", std::to_string(shards), "--listen",
                                                  "127.0.0.1:0", "--gateway-threads", std::to_string(gatewayThreads), "--log-dir",
                                                  logs.string(), "--durability", durability, "--log-file-size", logFileSize,
-                                                 "--stop-on-stdin-close"};
+                                                 // so the directory still replays from position 0, as the checks below need
+                                                 "--keep-log", "--stop-on-stdin-close"};
         // Windows releases a killed process's file lock in its own time, so a restart may find
         // the lock still held for a moment; nothing else is retried.
         for (int attempt = 0;; ++attempt) {

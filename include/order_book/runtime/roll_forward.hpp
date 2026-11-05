@@ -77,14 +77,19 @@ namespace order_book::runtime {
     // they have commands in it, on first use; every command is replayed on them; each one rolled
     // is proved; and every one is published at the file's end, a book with no command getting a
     // new wrapper around the same image. A failed proof aborts, since the worker's book and the
-    // live one ran the same commands through the same code. Until checkpoints are recovered from
-    // (D5), a book with no checkpoint is an empty book at the first file whose header lists it.
+    // live one ran the same commands through the same code. A book with no checkpoint is an empty
+    // book at the first file whose header lists it, which only tests reach: a start refuses a
+    // listed instrument a header names that no checkpoint holds, and gives a new one an empty
+    // book's checkpoint. A newest checkpoint that no longer restores is removed, and the book
+    // falls back to its older one, from which the next roll starts.
     class ShardRoller {
     public:
         // Called with each failure as it happens: a checkpoint not published, or a pass lost.
         using Report = std::function<void(const std::string&)>;
 
         ShardRoller(LogStorage& storage, const InstrumentDirectory& directory, std::uint32_t shard, Report report);
+        // With checkpoints in a store of their own (--checkpoint-dir): the log is read from logs.
+        ShardRoller(LogStorage& logs, LogStorage& checkpoints, const InstrumentDirectory& directory, std::uint32_t shard, Report report);
 
         // Rolls every closed file a book of this shard needs, oldest first, each at most once,
         // where a file is closed once the next one starts at or before closedEnd. A book whose
@@ -101,6 +106,11 @@ namespace order_book::runtime {
 
         // A book's newest checkpoint position, or nothing if it has none yet.
         std::optional<std::uint64_t> position(std::uint32_t slot) const;
+
+        // How far back the log must reach: the oldest checkpoint any book keeps, since a start
+        // falls back to it if a newest fails; nothing while some book stands nowhere. A closed
+        // log file ending at or before it is needed by nothing.
+        std::optional<std::uint64_t> retentionFloor() const;
 
     private:
         struct Kept {
@@ -130,7 +140,8 @@ namespace order_book::runtime {
         void say(const std::string& lead, const char* what) noexcept;
         void removeSuperseded(std::uint32_t slot);
 
-        LogStorage& storage;
+        LogStorage& logs;
+        LogStorage& checkpoints;
         const InstrumentDirectory& directory;
         std::uint32_t shard;
         Report report;
@@ -151,6 +162,11 @@ namespace order_book::runtime {
         // read before the worker runs. A storage failure throws LogStorageError.
         RollWorker(LogStorage& storage, const InstrumentDirectory& directory, const ClosedLog& closed, std::vector<std::uint32_t> shards,
                    ShardRoller::Report report);
+        // Told, after each shard's roll, its retention floor, for the housekeeping to delete what
+        // no book needs.
+        using Rolled = std::function<void(std::uint32_t shard, std::uint64_t floor)>;
+        RollWorker(LogStorage& logs, LogStorage& checkpoints, const InstrumentDirectory& directory, const ClosedLog& closed,
+                   std::vector<std::uint32_t> shards, ShardRoller::Report report, Rolled rolled);
 
         // One roll of each of its shards, at the end its log writer last closed. Returns the passes.
         std::size_t pass();
@@ -165,6 +181,7 @@ namespace order_book::runtime {
         const ClosedLog& closed;
         std::vector<std::uint32_t> mine;
         ShardRoller::Report report;
+        Rolled rolled;
         std::vector<std::unique_ptr<ShardRoller>> rollers;  // by index in mine
     };
 

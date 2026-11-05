@@ -98,6 +98,7 @@ namespace order_book::network {
             // Recovery's, with a log. The main thread finds the files, the matching thread replays
             // them, and the log writer, told where the log ended, makes the next file there.
             std::vector<runtime::LogFileEntry> logFiles;
+            std::vector<std::vector<std::uint64_t>> checkpoints;  // by slot, newest first
             std::promise<std::uint64_t> recovered;  // where the log ended, or why recovery failed
             std::future<std::uint64_t> logEnded;    // its future, taken before either thread starts
             bool recoveredTold = false;             // the matching thread's
@@ -149,6 +150,9 @@ namespace order_book::network {
             }
             if (!std::has_single_bit(settings.logRing)) {
                 return Refusal{"--log-ring must be a power of two, not " + std::to_string(settings.logRing)};
+            }
+            if (!settings.checkpointDir.empty() && settings.logDir.empty()) {
+                return Refusal{"--checkpoint-dir needs --log-dir, since there are no checkpoints without a log"};
             }
             if (!settings.pinLogWriters.empty() && settings.logDir.empty()) {
                 return Refusal{"--pin-log-writers needs --log-dir, since there are no log writers without a log"};
@@ -230,7 +234,7 @@ namespace order_book::network {
                     for (const std::unique_ptr<ShardRuntime>& shard : shards) {
                         for (const std::string& name : shard->emptiesPublished) {
                             try {
-                                logStorage->remove(name);
+                                checkpointStore().remove(name);
                             } catch (const runtime::LogStorageError&) {
                                 // An empty book where the log ends, true whatever the next start finds.
                             }
@@ -287,6 +291,10 @@ namespace order_book::network {
             std::unique_ptr<runtime::InstrumentDirectory> directory;
             std::unique_ptr<runtime::LogStorage> logStorage;  // with --log-dir
             std::unique_ptr<runtime::StorageLock> logLock;    // held for the engine's life
+            // With --checkpoint-dir naming another directory, and its own lock; otherwise the log's.
+            std::unique_ptr<runtime::LogStorage> checkpointStorage;
+            std::unique_ptr<runtime::StorageLock> checkpointLock;
+            runtime::LogStorage& checkpointStore() { return checkpointStorage ? *checkpointStorage : *logStorage; }
             std::unique_ptr<runtime::Housekeeping> housekeeping;  // with --log-dir
             std::thread housekeeper;  // once every shard is ready, unpinned, and running once released
             // With --log-dir: what each log writer has closed, and the roll-forward workers, made once
@@ -296,6 +304,7 @@ namespace order_book::network {
             std::vector<std::thread> rollThreads;
             std::mutex diagnosticsLock;  // for what the workers print as it happens
             std::vector<std::vector<std::uint32_t>> newBooks;  // by shard, from recovery's start
+            std::vector<std::vector<std::vector<std::uint64_t>>> bookCheckpoints;  // by shard, from recovery's start
             std::vector<std::unique_ptr<ShardRuntime>> shards;
             std::vector<std::unique_ptr<GatewayRuntime>> gateways;  // thread 0's sockets listen
             std::unique_ptr<ConnectionHandOff> handOff;
@@ -337,8 +346,12 @@ namespace order_book::network {
                 if (own.logRing) {
                     // Replays the log, warms each book, and cuts a torn tail, before the log
                     // writer makes the next file where the log ended.
-                    own.recovery = runtime::recoverShard(*logStorage, *directory, own.logFiles, *shard, defaults, stopRequested);
+                    own.recovery = runtime::recoverShard(*logStorage, checkpointStore(), *directory, own.logFiles, own.checkpoints, *shard,
+                                                         defaults, stopRequested);
                     own.recoveredTold = true;
+                    // Everything recovered is durable: the shard starts at the oldest book's
+                    // checkpoint, and the durable position may not stand below it.
+                    own.durable.publish(own.recovery.replayed);
                     own.recovered.set_value(own.recovery.replayed);
                 }
                 std::vector<runtime::RingPair> rings;
@@ -393,7 +406,7 @@ namespace order_book::network {
                 own.emptiesPublished.reserve(own.newBooks.size());
                 for (const std::uint32_t slot : own.newBooks) {
                     own.emptiesPublished.push_back(runtime::checkpointFileName(instruments[slot].symbol, first));
-                    runtime::publishEmptyCheckpoint(*logStorage, instruments[slot].symbol, settings.shards, number, first);
+                    runtime::publishEmptyCheckpoint(checkpointStore(), instruments[slot].symbol, settings.shards, number, first);
                 }
                 own.logName = runtime::logFileName(number, first);
                 writer.emplace(*housekeeping, number, *own.logRing, own.durable, first, closedLog.get());
@@ -439,11 +452,13 @@ namespace order_book::network {
                     own.push_back(shard);
                 }
                 try {
-                    rollWorkers.push_back(std::make_unique<runtime::RollWorker>(*logStorage, *directory, *closedLog, std::move(own),
-                                                                               [this](const std::string& line) {
-                                                                                   const std::lock_guard<std::mutex> held(diagnosticsLock);
-                                                                                   diagnostics << prefix << line << std::endl;
-                                                                               }));
+                    rollWorkers.push_back(std::make_unique<runtime::RollWorker>(
+                        *logStorage, checkpointStore(), *directory, *closedLog, std::move(own),
+                        [this](const std::string& line) {
+                            const std::lock_guard<std::mutex> held(diagnosticsLock);
+                            diagnostics << prefix << line << std::endl;
+                        },
+                        [this](std::uint32_t shard, std::uint64_t floor) { housekeeping->retain(shard, floor); }));
                 } catch (const runtime::LogStorageError& error) {
                     throw Refusal{error.what()};
                 }
@@ -494,34 +509,36 @@ namespace order_book::network {
             } catch (const runtime::LogStorageError& error) {
                 throw Refusal{error.what()};
             }
-            runtime::LogSurvey survey = runtime::surveyLog(*logStorage, *directory);
-            for (const std::string& temporary : survey.temporaries) {
-                logStorage->remove(temporary);
-            }
-            housekeeping = std::make_unique<runtime::Housekeeping>(*logStorage, *directory, settings.durability, settings.logFileSize);
-            logFiles = std::move(survey.shards);
-            // A listed instrument with no checkpoint, named in no log header, is new. Until
-            // checkpoints are recovered from (D5), one a header names but no checkpoint holds is
-            // rolled from the first file that names it.
-            std::vector<runtime::Symbol> checkpointed;
-            for (const std::string& name : logStorage->names()) {
-                if (const std::optional<runtime::CheckpointFileNameParts> parts = runtime::parseCheckpointFileName(name);
-                    parts && !parts->temporary) {
-                    checkpointed.push_back(parts->symbol);
+            if (!settings.checkpointDir.empty()) {
+                std::error_code error;
+                const bool same = std::filesystem::equivalent(settings.checkpointDir, settings.logDir, error);
+                if (error) {
+                    throw Refusal{"cannot compare checkpoint directory " + settings.checkpointDir + " with log directory " + settings.logDir +
+                                  ": " + error.message()};
                 }
-            }
-            std::sort(checkpointed.begin(), checkpointed.end());
-            newBooks.resize(settings.shards);
-            for (std::uint32_t shard = 0; shard < settings.shards; ++shard) {
-                const std::span<const runtime::Instrument> instruments = directory->onShard(shard);
-                for (std::uint32_t slot = 0; slot < instruments.size(); ++slot) {
-                    const runtime::Symbol& symbol = instruments[slot].symbol;
-                    if (!std::binary_search(survey.named.begin(), survey.named.end(), symbol) &&
-                        !std::binary_search(checkpointed.begin(), checkpointed.end(), symbol)) {
-                        newBooks[shard].push_back(slot);
+                if (!same) {
+                    checkpointStorage = std::make_unique<runtime::FileLogStorage>(settings.checkpointDir);
+                    try {
+                        checkpointLock = checkpointStorage->lock();
+                    } catch (const runtime::LogStorageError& failure) {
+                        throw Refusal{failure.what()};
                     }
                 }
             }
+            runtime::LogSurvey survey = runtime::surveyLog(*logStorage, checkpointStore(), *directory);
+            for (const std::string& temporary : survey.temporaries) {
+                logStorage->remove(temporary);
+            }
+            for (const std::string& temporary : survey.checkpointTemporaries) {
+                checkpointStore().remove(temporary);
+            }
+            housekeeping = std::make_unique<runtime::Housekeeping>(*logStorage, *directory, settings.durability, settings.logFileSize);
+            if (settings.keepLog) {
+                housekeeping->keepEveryFile();
+            }
+            logFiles = std::move(survey.shards);
+            bookCheckpoints = std::move(survey.checkpoints);
+            newBooks = std::move(survey.newBooks);
             closedLog = std::make_unique<runtime::ClosedLog>(settings.shards);
         }
 
@@ -536,6 +553,7 @@ namespace order_book::network {
                 if (logged) {
                     shards.back()->logFiles = std::move(logFiles[number]);
                     shards.back()->newBooks = std::move(newBooks[number]);
+                    shards.back()->checkpoints = std::move(bookCheckpoints[number]);
                     shards.back()->logEnded = shards.back()->recovered.get_future();
                 }
                 started.push_back(shards.back()->ready.get_future());
@@ -593,6 +611,9 @@ namespace order_book::network {
                 if (!std::filesystem::is_directory(settings.logDir, error)) {
                     throw Refusal{"cannot use log directory " + settings.logDir + ": no such directory"};
                 }
+                if (!settings.checkpointDir.empty() && !std::filesystem::is_directory(settings.checkpointDir, error)) {
+                    throw Refusal{"cannot use checkpoint directory " + settings.checkpointDir + ": no such directory"};
+                }
                 if (const std::uint64_t least = runtime::leastLogFileBytes(*directory); settings.logFileSize < least) {
                     throw Refusal{"--log-file-size must be at least " + std::to_string(least) +
                                   " bytes, the largest shard's header and one record, not " + std::to_string(settings.logFileSize)};
@@ -642,7 +663,8 @@ namespace order_book::network {
                 for (std::uint32_t number = 0; number < shards.size(); ++number) {
                     const runtime::RecoveredShard& recovered = shards[number]->recovery;
                     diagnostics << prefix << "shard " << number << ": recovered books=" << recovered.warmed.size()
-                                << " replayed=" << recovered.replayed << " tail-cut-bytes=" << recovered.tailCutBytes << std::endl;
+                                << " replayed=" << recovered.replayed << " tail-cut-bytes=" << recovered.tailCutBytes
+                                << " from=" << recovered.start << " fell-back=" << recovered.fellBack << std::endl;
                 }
             }
             if (closedLog) {

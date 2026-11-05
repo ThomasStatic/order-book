@@ -14,7 +14,9 @@
 
 #include "order_book/command_log.hpp"
 #include "order_book/replay_parser.hpp"
+#include "order_book/runtime/checkpoint.hpp"
 #include "order_book/runtime/log_writer.hpp"
+#include "order_book/runtime/roll_forward.hpp"
 #include "log_file_reader.hpp"
 
 namespace order_book::runtime {
@@ -96,7 +98,7 @@ namespace order_book::runtime {
 
     }  // namespace
 
-    LogSurvey surveyLog(LogStorage& storage, const InstrumentDirectory& directory) {
+    LogSurvey surveyLog(LogStorage& storage, LogStorage& checkpointStore, const InstrumentDirectory& directory) {
         struct Found {
             LogFileNameParts name;
             std::string file;
@@ -139,6 +141,48 @@ namespace order_book::runtime {
                                         file.file + " names " + symbol.text() + ", which is not on the instrument list");
                 }
             }
+            survey.named.insert(survey.named.end(), file.header.symbols.begin(), file.header.symbols.end());
+        }
+        std::sort(survey.named.begin(), survey.named.end());
+        survey.named.erase(std::unique(survey.named.begin(), survey.named.end()), survey.named.end());
+
+        // Each book's checkpoints, by name: a symbol off the list refuses the start, as in a header.
+        survey.checkpoints.resize(directory.shardCount());
+        survey.newBooks.resize(directory.shardCount());
+        for (std::uint32_t shard = 0; shard < directory.shardCount(); ++shard) {
+            survey.checkpoints[shard].resize(directory.onShard(shard).size());
+        }
+        for (const std::string& name : checkpointStore.names()) {
+            const std::optional<CheckpointFileNameParts> parts = parseCheckpointFileName(name);
+            if (!parts) {
+                continue;
+            }
+            if (parts->temporary) {
+                survey.checkpointTemporaries.push_back(name);
+                continue;
+            }
+            const std::optional<BookLocation> location = directory.find(parts->symbol);
+            if (!location) {
+                throw RecoveryError(RecoveryError::Kind::START_REFUSED,
+                                    name + " names " + parts->symbol.text() + ", which is not on the instrument list");
+            }
+            survey.checkpoints[location->shard][location->slot].push_back(parts->position);
+        }
+        // A listed instrument with no checkpoint that a header names lost one; named nowhere, new.
+        for (std::uint32_t shard = 0; shard < directory.shardCount(); ++shard) {
+            const std::span<const Instrument> instruments = directory.onShard(shard);
+            for (std::uint32_t slot = 0; slot < instruments.size(); ++slot) {
+                std::vector<std::uint64_t>& positions = survey.checkpoints[shard][slot];
+                std::sort(positions.rbegin(), positions.rend());
+                if (!positions.empty()) {
+                    continue;
+                }
+                if (std::binary_search(survey.named.begin(), survey.named.end(), instruments[slot].symbol)) {
+                    stopRecovery("shard " + std::to_string(shard) + " symbol " + instruments[slot].symbol.text() +
+                                 ": a log file's header names it, and no checkpoint holds it: a lost checkpoint");
+                }
+                survey.newBooks[shard].push_back(slot);
+            }
         }
         for (std::size_t i = 0; i < found.size(); ++i) {
             const bool newest = i + 1 == found.size() || found[i + 1].name.shard != found[i].name.shard;
@@ -162,17 +206,79 @@ namespace order_book::runtime {
         }
         for (const Found& file : found) {
             survey.shards[file.name.shard].push_back(LogFileEntry{file.file, file.name.firstPosition});
-            survey.named.insert(survey.named.end(), file.header.symbols.begin(), file.header.symbols.end());
         }
-        std::sort(survey.named.begin(), survey.named.end());
-        survey.named.erase(std::unique(survey.named.begin(), survey.named.end()), survey.named.end());
         return survey;
     }
 
-    RecoveredShard recoverShard(LogStorage& storage, const InstrumentDirectory& directory, const std::vector<LogFileEntry>& files,
+    RecoveredShard recoverShard(LogStorage& storage, LogStorage& checkpointStore, const InstrumentDirectory& directory,
+                                const std::vector<LogFileEntry>& files, const std::vector<std::vector<std::uint64_t>>& bookCheckpoints,
                                 Shard& shard, const BookCapacity& defaults, const std::atomic<bool>& stopping) {
         const std::uint32_t number = shard.books().shard();
+        const std::span<const Instrument> instruments = directory.onShard(number);
         RecoveredShard recovered;
+
+        // Each book from its newest checkpoint that restores, or an older one.
+        recovered.restoredFrom.assign(instruments.size(), 0);
+        std::optional<std::uint64_t> oldest;
+        for (std::uint32_t slot = 0; slot < instruments.size(); ++slot) {
+            const std::vector<std::uint64_t> none;
+            const std::vector<std::uint64_t>& positions = slot < bookCheckpoints.size() ? bookCheckpoints[slot] : none;
+            if (positions.empty()) {
+                continue;  // new: an empty book, which nothing in the log names
+            }
+            const Symbol& symbol = instruments[slot].symbol;
+            std::string why;
+            bool restored = false;
+            for (const std::uint64_t position : positions) {
+                const std::string name = checkpointFileName(symbol, position);
+                std::vector<std::byte> bytes;
+                {
+                    const std::unique_ptr<LogFile> file = checkpointStore.open(name);
+                    bytes.resize(static_cast<std::size_t>(file->size()));
+                    bytes.resize(file->read(0, bytes));
+                }
+                const auto decoded = decodeCheckpoint(bytes);
+                const auto* checkpoint = std::get_if<DecodedCheckpoint>(&decoded);
+                std::string fault;
+                if (checkpoint == nullptr) {
+                    const CheckpointError& error = std::get<CheckpointError>(decoded);
+                    fault = std::string(checkpointErrorCodeName(error.code)) + " at " + std::to_string(error.offset) + ": " + error.message;
+                } else if (checkpoint->header.symbol != symbol || checkpoint->header.position != position) {
+                    fault = "its header says " + checkpoint->header.symbol.text() + " at " + std::to_string(checkpoint->header.position);
+                } else if (checkpoint->header.shardCount != directory.shardCount() || checkpoint->header.shardIndex != number) {
+                    throw RecoveryError(RecoveryError::Kind::PLACEMENT_CHANGED,
+                                        name + " was written by shard " + std::to_string(checkpoint->header.shardIndex) + " of " +
+                                            std::to_string(checkpoint->header.shardCount) + ", and this start places " + symbol.text() +
+                                            " on shard " + std::to_string(number) + " of " + std::to_string(directory.shardCount()) +
+                                            std::string(placementRule));
+                } else {
+                    std::variant<OrderBook, RestoreError> book = OrderBook::restore(checkpoint->image);
+                    if (const auto* error = std::get_if<RestoreError>(&book)) {
+                        fault = std::string(restoreErrorCodeName(error->code)) + " at " + std::to_string(error->offset) + ": " + error->message;
+                    } else {
+                        shard.replaceBook(slot, std::move(std::get<OrderBook>(book)));
+                        recovered.restoredFrom[slot] = position;
+                        oldest = oldest ? std::min(*oldest, position) : position;
+                        restored = true;
+                        break;
+                    }
+                }
+                why += (why.empty() ? "" : "; ") + name + ": " + fault;
+            }
+            if (!restored) {
+                stopRecovery("shard " + std::to_string(number) + " symbol " + symbol.text() + ": no checkpoint restores: " + why);
+            }
+            if (recovered.restoredFrom[slot] != positions.front()) {
+                ++recovered.fellBack;
+            }
+        }
+        recovered.start = oldest.value_or(0);
+        for (std::uint32_t slot = 0; slot < instruments.size(); ++slot) {
+            if (slot >= bookCheckpoints.size() || bookCheckpoints[slot].empty()) {
+                recovered.restoredFrom[slot] = recovered.start;
+            }
+        }
+        shard.startAt(recovered.start);
         std::vector<LogFileEntry> kept = files;
         while (!kept.empty()) {
             const std::optional<std::uint64_t> dropped = droppedWithoutARecord(storage, kept.back());
@@ -195,16 +301,25 @@ namespace order_book::runtime {
             std::optional<std::string> holeFinding;  // what the reader said, for a hole valid records follow
         };
         std::optional<Cut> cut;
-        for (std::size_t i = 0; i < kept.size(); ++i) {
+        // The files before the one the oldest book stands in are not needed, and may be gone.
+        std::size_t first = 0;
+        while (first + 1 < kept.size() && kept[first + 1].firstPosition <= recovered.start) {
+            ++first;
+        }
+        const LogFileEntry* earliest = !kept.empty() ? &kept[first] : !files.empty() ? &files.front() : nullptr;
+        if (earliest != nullptr && earliest->firstPosition > recovered.start) {
+            // Files with no record count too: a log that resumes past the oldest book lost what lay between.
+            stopRecovery(where(number, recovered.start, earliest->name) + ": a gap: the oldest book's checkpoint stands at position " +
+                         std::to_string(recovered.start) + ", and the log starts at " + std::to_string(earliest->firstPosition));
+        }
+        // Where the log ends so far: with no file holding a record, where the first trailing file
+        // removed began, or 0 with no file at all.
+        std::uint64_t logEnd = !kept.empty() ? kept[first].firstPosition : files.empty() ? 0 : files.front().firstPosition;
+        for (std::size_t i = first; i < kept.size(); ++i) {
             const LogFileEntry& entry = kept[i];
-            const std::uint64_t expected = shard.nextPosition();
-            if (entry.firstPosition != expected) {
-                if (i == 0) {
-                    stopRecovery(where(number, 0, entry.name) + ": the log starts at position " + std::to_string(entry.firstPosition) +
-                         ", and this build recovers only from position 0");
-                }
-                stopRecovery(where(number, expected, entry.name) + ": a gap: the file before it ends at position " + std::to_string(expected) +
-                     ", and this one starts at " + std::to_string(entry.firstPosition));
+            if (i != first && entry.firstPosition != logEnd) {
+                stopRecovery(where(number, logEnd, entry.name) + ": a gap: the file before it ends at position " + std::to_string(logEnd) +
+                             ", and this one starts at " + std::to_string(entry.firstPosition));
             }
             LogFileReader reader(storage, entry.name);
             for (std::uint64_t inFile = 0;; ++inFile) {
@@ -213,12 +328,21 @@ namespace order_book::runtime {
                 }
                 replay::ReadResult result = reader.next();
                 if (const auto* record = std::get_if<replay::ReplayRecord>(&result)) {
+                    const std::uint64_t position = entry.firstPosition + inFile;
+                    logEnd = position + 1;
+                    if (position < recovered.start) {
+                        continue;  // before every book's checkpoint
+                    }
                     const std::optional<BookLocation> location = directory.find(record->symbol);
                     if (!location || location->shard != number) {
                         stopRecovery(where(number, shard.nextPosition(), entry.name) + " symbol " + record->symbol.text() + " command " +
                              replay::formatReplayRow(*record) + ": the record names an instrument this shard doesn't hold");
                     }
-                    shard.process(record->command, location->slot);
+                    if (position < recovered.restoredFrom[location->slot]) {
+                        shard.skip();  // its book's checkpoint holds it already
+                    } else {
+                        shard.process(record->command, location->slot);
+                    }
                     continue;
                 }
                 if (std::holds_alternative<replay::EndOfInput>(result)) {
@@ -256,12 +380,25 @@ namespace order_book::runtime {
             }
         }
 
+        // No book may stand past what the log holds: the disk lost data it had confirmed.
+        // Every checkpoint counts, one that didn't decode included: its name says the disk had the log
+        // that far.
+        for (std::uint32_t slot = 0; slot < instruments.size(); ++slot) {
+            const std::uint64_t newest = slot < bookCheckpoints.size() && !bookCheckpoints[slot].empty()
+                                             ? std::max(bookCheckpoints[slot].front(), recovered.restoredFrom[slot])
+                                             : recovered.restoredFrom[slot];
+            if (newest > logEnd) {
+                stopRecovery("shard " + std::to_string(number) + " position " + std::to_string(newest) + " symbol " +
+                             instruments[slot].symbol.text() + ": its checkpoint stands past the log's end, " + std::to_string(logEnd) +
+                             ": the disk lost data it had confirmed");
+            }
+        }
+
         if (const std::optional<ShardViolation> violation = shard.checkInvariants()) {
             stopRecovery("shard " + std::to_string(number) + " position " + std::to_string(shard.nextPosition()) + " symbol " +
                  shard.books().symbol(violation->slot).text() + ": replay left a book broken: " + violation->message);
         }
 
-        const std::span<const Instrument> instruments = directory.onShard(number);
         recovered.warmed.reserve(instruments.size());
         for (std::uint32_t slot = 0; slot < instruments.size(); ++slot) {
             const BookCapacity declared = capacityOf(instruments[slot], defaults);

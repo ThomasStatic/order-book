@@ -24,6 +24,7 @@
 #include "order_book/runtime/log_files.hpp"
 #include "order_book/runtime/log_storage.hpp"
 #include "order_book/runtime/log_writer.hpp"
+#include "order_book/runtime/roll_forward.hpp"
 #include "order_book/symbol.hpp"
 
 #if defined(__linux__)
@@ -168,6 +169,10 @@ void writeEarlierLog(const std::filesystem::path& logs) {
     runtime::FileLogStorage storage(logs);
     runtime::Housekeeping housekeeping(storage, directory, runtime::Durability::PROCESS, runtime::defaultLogFileBytes);
     for (std::uint32_t shard = 0; shard < 2; ++shard) {
+        // As that run's first start did: each instrument's empty checkpoint before its first file.
+        for (const runtime::Instrument& instrument : directory.onShard(shard)) {
+            runtime::publishEmptyCheckpoint(storage, instrument.symbol, 2, shard, 0);
+        }
         runtime::Ring<runtime::LogEntry> ring(64);
         runtime::DurablePosition durable;
         runtime::LogWriter writer(housekeeping, shard, ring, durable);
@@ -212,7 +217,7 @@ long failEachStartAllocation(const std::filesystem::path& list, const std::optio
     }
     const std::map<std::string, std::string> before = logs ? logsIn(*logs) : std::map<std::string, std::string>{};
     if (earlier) {
-        expect(before.size() == 2, "the earlier run left a log for each shard");
+        expect(before.size() == 4, "the earlier run left a log for each shard and each instrument's empty checkpoint");
     }
 
     long refusals = 0;

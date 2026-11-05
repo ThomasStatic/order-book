@@ -185,11 +185,15 @@ namespace order_book::runtime {
     }
 
     ShardRoller::ShardRoller(LogStorage& logStorage, const InstrumentDirectory& instruments, std::uint32_t shardIndex, Report reportTo)
-        : storage(logStorage), directory(instruments), shard(shardIndex), report(std::move(reportTo)),
+        : ShardRoller(logStorage, logStorage, instruments, shardIndex, std::move(reportTo)) {}
+
+    ShardRoller::ShardRoller(LogStorage& logStorage, LogStorage& checkpointStorage, const InstrumentDirectory& instruments,
+                             std::uint32_t shardIndex, Report reportTo)
+        : logs(logStorage), checkpoints(checkpointStorage), directory(instruments), shard(shardIndex), report(std::move(reportTo)),
           kept(directory.onShard(shardIndex).size()), firstListing(kept.size()) {
         // Each book's positions, newest first; a .tmp a crash left is removed, as at any start.
         std::vector<std::vector<std::uint64_t>> positions(kept.size());
-        for (const std::string& name : storage.names()) {
+        for (const std::string& name : checkpoints.names()) {
             const std::optional<CheckpointFileNameParts> parts = parseCheckpointFileName(name);
             if (!parts) {
                 continue;
@@ -199,7 +203,7 @@ namespace order_book::runtime {
                 continue;
             }
             if (parts->temporary) {
-                storage.remove(name);
+                checkpoints.remove(name);
                 continue;
             }
             positions[location->slot].push_back(parts->position);
@@ -209,14 +213,14 @@ namespace order_book::runtime {
             std::sort(positions[slot].rbegin(), positions[slot].rend());
             const Symbol& symbol = directory.onShard(shard)[slot].symbol;
             for (const std::uint64_t position : positions[slot]) {
-                const std::vector<std::byte> file = readWhole(storage, checkpointFileName(symbol, position));
+                const std::vector<std::byte> file = readWhole(checkpoints, checkpointFileName(symbol, position));
                 const auto decoded = decodeCheckpoint(file);
                 const auto* checkpoint = std::get_if<DecodedCheckpoint>(&decoded);
                 if (checkpoint == nullptr || checkpoint->header.symbol != symbol || checkpoint->header.position != position) {
                     // Its book falls back to an older one and rolls to this position again, which
                     // a file in the way would refuse for ever, since a rename never replaces one.
                     const std::string name = checkpointFileName(symbol, position);
-                    storage.remove(name);
+                    checkpoints.remove(name);
                     report("shard " + std::to_string(shard) + ": " + name + " does not decode as its name says; removed, so " +
                            symbol.text() + " rolls from its older checkpoint");
                     continue;
@@ -229,7 +233,7 @@ namespace order_book::runtime {
             // Two are kept: anything older, which a removal a crash undid can leave, goes.
             for (const std::uint64_t position : positions[slot]) {
                 if (kept[slot].older && position < *kept[slot].older) {
-                    storage.remove(checkpointFileName(symbol, position));
+                    checkpoints.remove(checkpointFileName(symbol, position));
                 }
             }
         }
@@ -242,7 +246,7 @@ namespace order_book::runtime {
         }
         const std::string name = checkpointFileName(directory.onShard(shard)[slot].symbol, *held.superseded);
         try {
-            storage.remove(name);
+            checkpoints.remove(name);
             held.superseded.reset();
         } catch (const LogStorageError& error) {
             held.superseded.reset();  // left for the next start to remove
@@ -254,11 +258,24 @@ namespace order_book::runtime {
         return kept.at(slot).newest;
     }
 
+    std::optional<std::uint64_t> ShardRoller::retentionFloor() const {
+        std::optional<std::uint64_t> floor;
+        for (std::uint32_t slot = 0; slot < kept.size(); ++slot) {
+            // A book's oldest kept checkpoint, which a start falls back to if the newest fails.
+            const std::optional<std::uint64_t> oldest = kept[slot].older ? kept[slot].older : standing(slot);
+            if (!oldest) {
+                return std::nullopt;  // a book standing nowhere yet needs every file
+            }
+            floor = floor ? std::min(*floor, *oldest) : *oldest;
+        }
+        return floor;
+    }
+
     void ShardRoller::readLogFiles(std::uint64_t closedEnd) {
         // This shard's files by first position, from their names alone: a file still being
         // written, or made ahead, is never opened here, since Windows lets a file have one handle.
         std::vector<std::pair<std::uint64_t, std::string>> named;
-        for (const std::string& name : storage.names()) {
+        for (const std::string& name : logs.names()) {
             const std::optional<LogFileNameParts> parts = parseLogFileName(name);
             if (parts && !parts->temporary && parts->shard == shard) {
                 named.emplace_back(parts->firstPosition, name);
@@ -270,7 +287,7 @@ namespace order_book::runtime {
             if (!files.empty() && firstPosition <= files.back().firstPosition) {
                 continue;  // known
             }
-            const log_reading::FileHeader header = log_reading::readHeader(storage, name);
+            const log_reading::FileHeader header = log_reading::readHeader(logs, name);
             const auto* parsed = std::get_if<replay::LogHeader>(&header.parsed);
             if (parsed == nullptr) {
                 throw PassAbandoned{"cannot read " + name + "'s header: " + std::get<replay::ParseError>(header.parsed).message};
@@ -304,6 +321,13 @@ namespace order_book::runtime {
     }
 
     void ShardRoller::fallBack(std::uint32_t slot, const std::string& why) {
+        // Removed, as a start would remove it, since its book will publish at its position again
+        // and a rename never replaces a file.
+        try {
+            checkpoints.remove(checkpointFileName(directory.onShard(shard)[slot].symbol, *kept[slot].newest));
+        } catch (const LogStorageError&) {
+            // The next start removes it.
+        }
         kept[slot].newest = kept[slot].older;
         kept[slot].older.reset();
         throw PassAbandoned{why + "; " + directory.onShard(shard)[slot].symbol.text() + " falls back to its older checkpoint"};
@@ -376,7 +400,7 @@ namespace order_book::runtime {
                     books[slot].emplace();
                 } else {
                     const std::string name = checkpointFileName(instruments[slot].symbol, *kept[slot].newest);
-                    const std::vector<std::byte> bytes = readWhole(storage, name);
+                    const std::vector<std::byte> bytes = readWhole(checkpoints, name);
                     const auto decoded = decodeCheckpoint(bytes);
                     const auto* checkpoint = std::get_if<DecodedCheckpoint>(&decoded);
                     std::optional<std::variant<OrderBook, RestoreError>> restored;
@@ -395,7 +419,7 @@ namespace order_book::runtime {
         };
 
         const std::uint64_t records = end - file.firstPosition;
-        log_reading::LogFileReader reader(storage, file.name, file.headerBytes + records * replay::logRecordBytes);
+        log_reading::LogFileReader reader(logs, file.name, file.headerBytes + records * replay::logRecordBytes);
         std::uint64_t recordsRead = 0;
         for (;;) {
             replay::ReadResult result = reader.next();
@@ -437,7 +461,7 @@ namespace order_book::runtime {
             } else if (kept[slot].newest) {
                 // No command: a new wrapper around the same image, with no restore.
                 const std::string name = checkpointFileName(symbol, *kept[slot].newest);
-                const std::vector<std::byte> bytes = readWhole(storage, name);
+                const std::vector<std::byte> bytes = readWhole(checkpoints, name);
                 const auto decoded = decodeCheckpoint(bytes);
                 const auto* checkpoint = std::get_if<DecodedCheckpoint>(&decoded);
                 if (checkpoint == nullptr) {
@@ -453,7 +477,7 @@ namespace order_book::runtime {
             const Symbol& symbol = instruments[book.slot].symbol;
             Kept& held = kept[book.slot];
             try {
-                publishCheckpoint(storage, headerFor(symbol, file.shardCount, shard, end), book.image);
+                publishCheckpoint(checkpoints, headerFor(symbol, file.shardCount, shard, end), book.image);
             } catch (const LogStorageError& error) {
                 ++totals.writesFailed;
                 report("shard " + std::to_string(shard) + ": checkpoint " + checkpointFileName(symbol, end) + " not published: " +
@@ -473,10 +497,14 @@ namespace order_book::runtime {
 
     RollWorker::RollWorker(LogStorage& storage, const InstrumentDirectory& directory, const ClosedLog& closedLog,
                            std::vector<std::uint32_t> shards, ShardRoller::Report reportTo)
-        : closed(closedLog), mine(std::move(shards)), report(reportTo) {
+        : RollWorker(storage, storage, directory, closedLog, std::move(shards), std::move(reportTo), {}) {}
+
+    RollWorker::RollWorker(LogStorage& logStorage, LogStorage& checkpointStorage, const InstrumentDirectory& directory,
+                           const ClosedLog& closedLog, std::vector<std::uint32_t> shards, ShardRoller::Report reportTo, Rolled rolledTo)
+        : closed(closedLog), mine(std::move(shards)), report(reportTo), rolled(std::move(rolledTo)) {
         rollers.reserve(mine.size());
         for (const std::uint32_t shard : mine) {
-            rollers.push_back(std::make_unique<ShardRoller>(storage, directory, shard, reportTo));
+            rollers.push_back(std::make_unique<ShardRoller>(logStorage, checkpointStorage, directory, shard, reportTo));
         }
     }
 
@@ -484,6 +512,11 @@ namespace order_book::runtime {
         std::size_t made = 0;
         for (std::size_t index = 0; index < mine.size() && !closed.stopping().load(std::memory_order_relaxed); ++index) {
             made += rollers[index]->roll(closed.end(mine[index]), &closed.stopping());
+            if (rolled) {
+                if (const std::optional<std::uint64_t> floor = rollers[index]->retentionFloor()) {
+                    rolled(mine[index], *floor);
+                }
+            }
         }
         return made;
     }

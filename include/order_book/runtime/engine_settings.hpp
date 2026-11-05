@@ -47,6 +47,9 @@ namespace order_book::runtime {
         // in process can give, runs with no log, so a response waits for nothing: the in-process
         // tests that need no files.
         std::string logDir;
+        // Where checkpoints go, with a lock of their own; empty means the log directory.
+        std::string checkpointDir;
+        bool keepLog = false;  // --keep-log: no log file is ever deleted
         Durability durability = Durability::MACHINE;
         std::size_t logFileSize = defaultLogFileBytes;  // the most bytes per log file
         std::size_t logRing = defaultLogRingRecords;  // records per shard

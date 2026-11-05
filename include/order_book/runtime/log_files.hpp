@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -78,8 +79,19 @@ namespace order_book::runtime {
         // and says whether it is made.
         bool waitForNext(std::uint32_t shard);
 
-        // Makes every next file wanted, and returns how many. A failure aborts, naming the file.
+        // Makes every next file wanted, then deletes what retention allows, and returns how many
+        // files it made and deleted. A file that can't be made aborts, naming it; one that can't
+        // be deleted is printed and tried again once the shard's floor next rises.
         std::size_t pass();
+
+        // Retention (spec #58's D5): every closed file of the shard ending at or before floor,
+        // which no book's kept checkpoint needs, goes on a later pass. A file is closed once the
+        // next one starts at or before floor, so the writer's file, the one made ahead, and the
+        // shard's last are never deleted. A floor below one given before changes nothing.
+        void retain(std::uint32_t shard, std::uint64_t floor);
+        // --keep-log: delete nothing, whatever retain says.
+        void keepEveryFile() noexcept;
+        std::uint64_t filesDeleted() const noexcept { return deleted.load(std::memory_order_relaxed); }
         // Passes until stop, sleeping while no file is wanted.
         void run();
         void stop();
@@ -94,9 +106,14 @@ namespace order_book::runtime {
             bool started = false;
             std::uint64_t nextPosition = 0;  // the first position of the next file to make
             std::optional<MadeLogFile> next;
+            std::uint64_t floor = 0;   // retention's: files ending at or before it may go
+            std::uint64_t pruned = 0;  // the floor every file below which is gone
         };
 
         bool wanted(const ShardFiles& shard) const noexcept { return shard.started && !shard.next; }
+        bool pruneWanted(const ShardFiles& shard) const noexcept { return !keepLog && shard.floor > shard.pruned; }
+        // Deletes the shard's closed files ending at or before floor; whether every one went.
+        bool prune(std::uint32_t shard, std::uint64_t floor);
 
         LogStorage& logStorage;
         std::vector<LogFileShape> shapes;  // by shard
@@ -104,6 +121,8 @@ namespace order_book::runtime {
         std::condition_variable changed;
         std::vector<ShardFiles> shards;  // by shard, under the lock
         bool stopping = false;           // under the lock
+        bool keepLog = false;            // under the lock
+        std::atomic<std::uint64_t> deleted{0};
     };
 
 }  // namespace order_book::runtime

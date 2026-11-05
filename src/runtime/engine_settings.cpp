@@ -15,6 +15,7 @@ namespace order_book::runtime {
             "                         [--max-connections N] [--gateway-threads M] [--high-water-mark SIZE] [--hard-limit SIZE]\n"
             "                         [--stop-grace TIME] [--stop-on-stdin-close]\n"
             "                         [--durability machine|process] [--log-file-size SIZE] [--log-ring RECORDS] [--roll-workers N]\n"
+            "                         [--checkpoint-dir DIR] [--keep-log]\n"
             "                         [--pin-matching CORES] [--pin-gateway CORES] [--pin-log-writers CORES]\n"
             "                         [--thread-priority normal|high]\n"
             "       order_book_engine --help\n";
@@ -137,6 +138,10 @@ namespace order_book::runtime {
             if (!seen.insert(flag).second) {
                 return UsageError{"'" + std::string(flag) + "' was given twice"};
             }
+            if (flag == "--keep-log") {
+                settings.keepLog = true;
+                continue;
+            }
             if (flag == "--stop-on-stdin-close") {
                 settings.stopOnStdinClose = true;
                 continue;
@@ -155,7 +160,8 @@ namespace order_book::runtime {
                                                               : nullptr;
             const bool known = size != nullptr || flag == "--instruments" || flag == "--shards" || flag == "--gateway-threads" || flag == "--roll-workers" || flag == "--listen" ||
                                flag == "--spin-window" || flag == "--stop-grace" || flag == "--pin-matching" || flag == "--pin-gateway" ||
-                               flag == "--pin-log-writers" || flag == "--thread-priority" || flag == "--log-dir" || flag == "--durability";
+                               flag == "--pin-log-writers" || flag == "--thread-priority" || flag == "--log-dir" || flag == "--durability" ||
+                               flag == "--checkpoint-dir";
             if (!known) {
                 return UsageError{"unknown option '" + std::string(flag) + "'"};
             }
@@ -171,11 +177,11 @@ namespace order_book::runtime {
                 *size = *parsed;
             } else if (flag == "--instruments") {
                 settings.instruments = std::string(value);
-            } else if (flag == "--log-dir") {
+            } else if (flag == "--log-dir" || flag == "--checkpoint-dir") {
                 if (value.empty()) {
                     return needs(flag, "a directory", value);
                 }
-                settings.logDir = std::string(value);
+                (flag == "--log-dir" ? settings.logDir : settings.checkpointDir) = std::string(value);
             } else if (flag == "--durability") {
                 if (value != "machine" && value != "process") {
                     return needs(flag, "machine or process", value);
@@ -267,6 +273,12 @@ namespace order_book::runtime {
                            " --stop-grace " + formatTime(settings.stopGrace);
         if (!settings.logDir.empty()) {
             line += " --log-dir " + settings.logDir;
+        }
+        if (!settings.checkpointDir.empty()) {
+            line += " --checkpoint-dir " + settings.checkpointDir;
+        }
+        if (settings.keepLog) {
+            line += " --keep-log";
         }
         line += settings.durability == Durability::MACHINE ? " --durability machine" : " --durability process";
         line += " --log-file-size " + formatSize(settings.logFileSize);
