@@ -2,6 +2,7 @@ usage: order_book_cli replay <path>... [--trades] [--events] [--book] [--validat
                                        [--symbol SYM] [--no-statistics]
        order_book_cli convert <path>... --out <path> [--symbol SYM]
        order_book_cli send <file> --connect ADDR:PORT [--symbol SYM]
+       order_book_cli checkpoint describe|verify <file>
        order_book_cli demo
        order_book_cli --help
 
@@ -16,6 +17,12 @@ commands:
                      directory make --out a directory of commands-<symbol>.csv
   send <file>        send the file's commands to a running order_book_engine and print
                      its answers as replay --events --no-statistics prints the file
+  checkpoint describe <file>
+                     print a checkpoint file's two headers (docs/checkpoint-format.md),
+                     checking nothing past its first bytes
+  checkpoint verify <file>
+                     check a checkpoint file's checksum, then rebuild its book from the
+                     image; print ok, or the first fault's byte offset, code, and message
   demo               print the events of a short scripted session
   help               print this help
 
@@ -40,9 +47,10 @@ send options, in any order before or after the file:
 
 exit status:
   0  replayed to the end, even if the book rejected some commands; or help printed;
-     for send, every command answered
+     for send, every command answered; for checkpoint, the file described or verified
   1  input error: the file can't be opened or read, or is malformed (what ran before
-     the error is still printed); for send, also no connection
+     the error is still printed); for send, also no connection; for checkpoint, not a
+     checkpoint file, or one verify refuses
   2  usage error
   3  engine failure: the book threw, or failed an invariant check; for send, the
      connection was lost or the engine sent ProtocolError before every command was

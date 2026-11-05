@@ -9,6 +9,7 @@
 #include <variant>
 #include <vector>
 
+#include "order_book/image_header.hpp"
 #include "order_book/little_endian.hpp"
 #include "order_book/order_book.hpp"
 
@@ -417,6 +418,30 @@ namespace order_book {
             return request;
         }
     }  // namespace
+
+    std::optional<ImageHeader> readImageHeader(std::span<const std::byte> image) noexcept {
+        if (image.size() < headerBytes) {
+            return std::nullopt;
+        }
+        ImageHeader fields;
+        fields.imageVersion = load32(image, header::version);
+        fields.minimumReaderVersion = load32(image, header::minimumReader);
+        fields.headerBytes = load32(image, header::headerSize);
+        fields.levelRecordBytes = load32(image, header::levelSize);
+        fields.orderRecordBytes = load32(image, header::orderSize);
+        fields.stopRecordBytes = load32(image, header::stopSize);
+        fields.nextSequenceNumber = load32(image, header::nextSequence);
+        fields.nextTradeId = load32(image, header::nextTrade);
+        fields.lastTradePrice = load32(image, header::lastTrade);
+        fields.bidLevels = load32(image, header::bidLevels);
+        fields.askLevels = load32(image, header::askLevels);
+        fields.orders = load32(image, header::orders);
+        fields.stops = load32(image, header::stops);
+        fields.orderIndexSize = load32(image, header::orderIndex);
+        fields.stopIndexSize = load32(image, header::stopIndex);
+        fields.reserved = load32(image, header::reserved);
+        return fields;
+    }
 
     std::size_t OrderBook::imageSize() const noexcept {
         return headerBytes + levelBytes * (bids.size() + asks.size()) + orderBytes * orderIndex.size() +

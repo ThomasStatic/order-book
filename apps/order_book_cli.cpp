@@ -1,7 +1,11 @@
+#include <cstddef>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <set>
 #include <span>
@@ -28,6 +32,7 @@
 #include "order_book/replay_inputs.hpp"
 #include "order_book/replay_instruments.hpp"
 #include "order_book/replay_summary.hpp"
+#include "order_book/runtime/checkpoint.hpp"
 #include "order_book/runtime/engine_settings.hpp"
 #include "order_book/symbol.hpp"
 
@@ -48,6 +53,7 @@ namespace {
         "                                       [--symbol SYM] [--no-statistics]\n"
         "       order_book_cli convert <path>... --out <path> [--symbol SYM]\n"
         "       order_book_cli send <file> --connect ADDR:PORT [--symbol SYM]\n"
+        "       order_book_cli checkpoint describe|verify <file>\n"
         "       order_book_cli demo\n"
         "       order_book_cli --help\n";
 
@@ -63,6 +69,12 @@ namespace {
         "                     directory make --out a directory of commands-<symbol>.csv\n"
         "  send <file>        send the file's commands to a running order_book_engine and print\n"
         "                     its answers as replay --events --no-statistics prints the file\n"
+        "  checkpoint describe <file>\n"
+        "                     print a checkpoint file's two headers (docs/checkpoint-format.md),\n"
+        "                     checking nothing past its first bytes\n"
+        "  checkpoint verify <file>\n"
+        "                     check a checkpoint file's checksum, then rebuild its book from the\n"
+        "                     image; print ok, or the first fault's byte offset, code, and message\n"
         "  demo               print the events of a short scripted session\n"
         "  help               print this help\n"
         "\n"
@@ -87,9 +99,10 @@ namespace {
         "\n"
         "exit status:\n"
         "  0  replayed to the end, even if the book rejected some commands; or help printed;\n"
-        "     for send, every command answered\n"
+        "     for send, every command answered; for checkpoint, the file described or verified\n"
         "  1  input error: the file can't be opened or read, or is malformed (what ran before\n"
-        "     the error is still printed); for send, also no connection\n"
+        "     the error is still printed); for send, also no connection; for checkpoint, not a\n"
+        "     checkpoint file, or one verify refuses\n"
         "  2  usage error\n"
         "  3  engine failure: the book threw, or failed an invariant check; for send, the\n"
         "     connection was lost or the engine sent ProtocolError before every command was\n"
@@ -554,6 +567,77 @@ namespace {
         }
         return stream.end() == order_book::network::ConnectionEnd::REFUSED ? someRefused : EXIT_SUCCESS;
     }
+
+    // The whole file, or nothing if it can't be opened or read.
+    std::optional<std::vector<std::byte>> readWholeFile(const std::string& path) {
+        std::ifstream file(path, std::ios::binary);
+        if (!file) {
+            return std::nullopt;
+        }
+        const std::string text{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+        if (file.bad()) {
+            return std::nullopt;
+        }
+        std::vector<std::byte> bytes(text.size());
+        if (!text.empty()) {  // an empty vector's data() may be null, which memcpy must not get
+            std::memcpy(bytes.data(), text.data(), text.size());
+        }
+        return bytes;
+    }
+
+    // args are what follows "checkpoint". One file, read whole, with no lock: a published
+    // checkpoint never changes.
+    int checkpointCommand(const std::vector<std::string_view>& args) {
+        namespace runtime = order_book::runtime;
+        if (args.empty()) {
+            return usage("checkpoint needs a command: describe or verify");
+        }
+        const std::string_view command = args[0];
+        if (command != "describe" && command != "verify") {
+            return usage("unknown checkpoint command '" + std::string(command) + "'; expected describe or verify");
+        }
+        std::vector<std::string_view> files;
+        bool optionsEnded = false;
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            const std::string_view arg = args[i];
+            if (!optionsEnded && arg == "--") {
+                optionsEnded = true;
+            } else if (!optionsEnded && arg.starts_with('-')) {
+                return usage("unknown option '" + std::string(arg) + "'");
+            } else {
+                files.push_back(arg);
+            }
+        }
+        const std::string name = "checkpoint " + std::string(command);
+        if (files.empty()) {
+            return usage(name + " needs a file to read");
+        }
+        if (files.size() > 1) {
+            return usage(name + " takes one file, not " + std::to_string(files.size()));
+        }
+
+        const std::string path(files[0]);
+        const std::optional<std::vector<std::byte>> file = readWholeFile(path);
+        if (!file) {
+            std::cerr << path << ": cannot open checkpoint file\n";
+            return inputError;
+        }
+        if (command == "describe") {
+            const auto described = runtime::describeCheckpoint(*file);
+            if (const auto* error = std::get_if<runtime::CheckpointError>(&described)) {
+                std::cerr << runtime::formatCheckpointFault(path, {error->code, error->offset, error->message}) << '\n';
+                return inputError;
+            }
+            std::cout << runtime::formatCheckpointDescription(std::get<runtime::CheckpointDescription>(described));
+            return EXIT_SUCCESS;
+        }
+        if (const std::optional<runtime::CheckpointFault> fault = runtime::verifyCheckpoint(*file)) {
+            std::cerr << runtime::formatCheckpointFault(path, *fault) << '\n';
+            return inputError;
+        }
+        std::cout << "ok\n";
+        return EXIT_SUCCESS;
+    }
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -587,6 +671,9 @@ int main(int argc, char** argv) {
     }
     if (command == "send") {
         return sendCommand(rest);
+    }
+    if (command == "checkpoint") {
+        return checkpointCommand(rest);
     }
     if (command == "demo" || command == "help") {
         if (!rest.empty()) {

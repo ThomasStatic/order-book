@@ -187,6 +187,7 @@ find_package(Threads REQUIRED)
 add_library(order_book_runtime STATIC
     src/runtime/abort_report.cpp
     src/runtime/book_set.cpp
+    src/runtime/checkpoint.cpp
     src/runtime/engine_settings.cpp
     src/runtime/instruments.cpp
     src/runtime/log_files.cpp
@@ -440,7 +441,7 @@ if(BUILD_TESTING)
     )
 
     target_compile_features(checkpoint_tests PRIVATE cxx_std_20)
-    target_link_libraries(checkpoint_tests PRIVATE order_book)
+    target_link_libraries(checkpoint_tests PRIVATE order_book_runtime)
     order_book_enable_warnings(checkpoint_tests)
     order_book_enable_sanitizers(checkpoint_tests)
     add_test(NAME checkpoint_tests COMMAND checkpoint_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/checkpoint)
@@ -920,6 +921,47 @@ if(BUILD_TESTING)
         ARGS send valid/v3_two_instruments.csv --symbol AAPL --connect 127.0.0.1:9000 EXIT 2 STDERR usage_send_symbol_on_v3.stderr)
     order_book_add_replay_cli_test(send_missing_file
         ARGS send no_such_file.csv --symbol AAPL --connect 127.0.0.1:9000 EXIT 1 STDERR missing_file.stderr)
+    # checkpoint describe and verify, on the golden files tests/checkpoint/make_golden.py writes:
+    # one case per exit of each, and one per usage error.
+    order_book_add_replay_cli_test(checkpoint_describe
+        ARGS checkpoint describe ../checkpoint/files/resting.obckpt EXIT 0 STDOUT checkpoint_describe_resting.stdout)
+    order_book_add_replay_cli_test(checkpoint_describe_extended
+        ARGS checkpoint describe ../checkpoint/files/extended.obckpt EXIT 0 STDOUT checkpoint_describe_extended.stdout)
+    order_book_add_replay_cli_test(checkpoint_describe_bad_checksum
+        ARGS checkpoint describe ../checkpoint/files/bad_checksum.obckpt EXIT 0 STDOUT checkpoint_describe_bad_checksum.stdout)
+    order_book_add_replay_cli_test(checkpoint_describe_wrong_magic
+        ARGS checkpoint describe ../checkpoint/images/resting.image EXIT 1 STDERR checkpoint_wrong_magic.stderr)
+    order_book_add_replay_cli_test(checkpoint_describe_short
+        ARGS checkpoint describe ../checkpoint/files/short.obckpt EXIT 1 STDERR checkpoint_describe_short.stderr)
+    order_book_add_replay_cli_test(checkpoint_describe_missing
+        ARGS checkpoint describe no_such_file.obckpt EXIT 1 STDERR checkpoint_missing.stderr)
+    order_book_add_replay_cli_test(checkpoint_verify
+        ARGS checkpoint verify ../checkpoint/files/resting.obckpt EXIT 0 STDOUT checkpoint_verify_ok.stdout)
+    order_book_add_replay_cli_test(checkpoint_verify_extended
+        ARGS checkpoint verify -- ../checkpoint/files/extended.obckpt EXIT 0 STDOUT checkpoint_verify_ok.stdout)
+    order_book_add_replay_cli_test(checkpoint_verify_bad_checksum
+        ARGS checkpoint verify ../checkpoint/files/bad_checksum.obckpt EXIT 1 STDERR checkpoint_verify_bad_checksum.stderr)
+    order_book_add_replay_cli_test(checkpoint_verify_bad_image
+        ARGS checkpoint verify ../checkpoint/files/bad_image.obckpt EXIT 1 STDERR checkpoint_verify_bad_image.stderr)
+    order_book_add_replay_cli_test(checkpoint_verify_wrong_magic
+        ARGS checkpoint verify ../checkpoint/images/resting.image EXIT 1 STDERR checkpoint_wrong_magic.stderr)
+    order_book_add_replay_cli_test(checkpoint_verify_short
+        ARGS checkpoint verify ../checkpoint/files/short.obckpt EXIT 1 STDERR checkpoint_verify_short.stderr)
+    order_book_add_replay_cli_test(checkpoint_verify_zero_bytes
+        ARGS checkpoint verify ../checkpoint/files/zero_bytes.obckpt EXIT 1 STDERR checkpoint_zero_bytes.stderr)
+    order_book_add_replay_cli_test(checkpoint_describe_zero_bytes
+        ARGS checkpoint describe ../checkpoint/files/zero_bytes.obckpt EXIT 1 STDERR checkpoint_zero_bytes.stderr)
+    order_book_add_replay_cli_test(checkpoint_verify_missing
+        ARGS checkpoint verify no_such_file.obckpt EXIT 1 STDERR checkpoint_missing.stderr)
+    order_book_add_replay_cli_test(usage_checkpoint_no_command ARGS checkpoint EXIT 2 STDERR usage_checkpoint_no_command.stderr)
+    order_book_add_replay_cli_test(usage_checkpoint_unknown_command
+        ARGS checkpoint roll ../checkpoint/files/resting.obckpt EXIT 2 STDERR usage_checkpoint_unknown_command.stderr)
+    order_book_add_replay_cli_test(usage_checkpoint_no_file ARGS checkpoint verify EXIT 2 STDERR usage_checkpoint_no_file.stderr)
+    order_book_add_replay_cli_test(usage_checkpoint_two_files
+        ARGS checkpoint describe ../checkpoint/files/resting.obckpt ../checkpoint/files/empty.obckpt
+        EXIT 2 STDERR usage_checkpoint_two_files.stderr)
+    order_book_add_replay_cli_test(usage_checkpoint_unknown_option
+        ARGS checkpoint verify --book ../checkpoint/files/resting.obckpt EXIT 2 STDERR usage_checkpoint_unknown_option.stderr)
 
     # Randomized command testing: seeded streams of submissions and cancellations, each command
     # checked against the book's invariants and a reference model. The harness is a library so

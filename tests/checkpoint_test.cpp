@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -11,6 +12,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -18,14 +20,20 @@
 #include "order_book/book_event.hpp"
 #include "order_book/book_image.hpp"
 #include "order_book/event_format.hpp"
+#include "order_book/image_header.hpp"
 #include "order_book/order_book.hpp"
 #include "order_book/order_request.hpp"
 #include "order_book/replace_request.hpp"
+#include "order_book/runtime/checkpoint.hpp"
+#include "order_book/symbol.hpp"
+#include "order_book/xxh64.hpp"
 
 // The book image (docs/checkpoint-format.md) through OrderBook's public API: golden samples,
 // writeImage(restore(x)) == x, continuation at every command boundary, one refusal per code, a
 // byte sweep, and writeImage's span. Expected bytes come from the format document, through
-// make_golden.py or the builder below, never from writeImage.
+// make_golden.py or the builder below, never from writeImage. Then the checkpoint file that wraps
+// an image, through the runtime's codec: golden files, round trips, one refusal per code, every
+// bit flipped and every truncation refused, and verify and describe.
 namespace {
 
 using namespace order_book;
@@ -740,6 +748,418 @@ void testRestoredBookCarriesOn() {
     expect(book.checkInvariants().isValid(), "and stays sound");
 }
 
+// ---- The checkpoint file, the runtime's wrapper around an image ----------------------------
+
+using runtime::DecodedCheckpoint;
+using runtime::CheckpointError;
+using runtime::CheckpointErrorCode;
+using runtime::CheckpointHeader;
+
+replay::Symbol symbolOf(std::string_view text) {
+    const std::optional<replay::Symbol> symbol = replay::Symbol::parse(text);
+    expect(symbol.has_value(), "a test symbol parses: " + std::string(text));
+    return *symbol;
+}
+
+CheckpointHeader headerOf(std::string_view symbol, std::uint64_t position, std::uint32_t shardCount,
+                          std::uint32_t shardIndex, std::uint16_t major = 2, std::uint16_t minor = 1,
+                          std::uint16_t patch = 0) {
+    CheckpointHeader header;
+    header.engineMajor = major;
+    header.engineMinor = minor;
+    header.enginePatch = patch;
+    header.shardCount = shardCount;
+    header.shardIndex = shardIndex;
+    header.position = position;
+    header.symbol = symbolOf(symbol);
+    return header;
+}
+
+std::string describe(const CheckpointError& error) {
+    return std::string(runtime::checkpointErrorCodeName(error.code)) + " at " + std::to_string(error.offset) + ": " +
+           error.message;
+}
+
+DecodedCheckpoint decoded(std::span<const std::byte> file, const std::string& what) {
+    auto result = runtime::decodeCheckpoint(file);
+    if (const auto* error = std::get_if<CheckpointError>(&result)) {
+        expect(false, what + ": decodeCheckpoint refused a good file: " + describe(*error));
+    }
+    return std::get<DecodedCheckpoint>(result);
+}
+
+bool sameBytes(std::span<const std::byte> left, std::span<const std::byte> right) {
+    return left.size() == right.size() && std::equal(left.begin(), left.end(), right.begin());
+}
+
+// The files make_golden.py writes from the format document, each with the image it wraps.
+struct GoldenFile {
+    const char* name;
+    const char* image;
+    CheckpointHeader header;
+};
+
+std::vector<GoldenFile> goldenFiles() {
+    return {
+        {"resting", "resting", headerOf("AAPL", 12345, 4, 2)},
+        {"empty", "empty", headerOf("BRK.B", 0, 1, 0)},
+        {"maximal", "maximal", headerOf("ZZZZZZZZ", 0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFU, 0xFFFFFFFEU, 0xFFFF, 0xFFFF, 0xFFFF)},
+    };
+}
+
+void testCheckpointGoldenFiles(const std::filesystem::path& root) {
+    for (const GoldenFile& golden : goldenFiles()) {
+        const std::string what = std::string("golden file ") + golden.name;
+        const Bytes image = readFile(root / "images" / (std::string(golden.image) + ".image"));
+        const Bytes file = readFile(root / "files" / (std::string(golden.name) + ".obckpt"));
+        expect(runtime::encodeCheckpoint(golden.header, image) == file, what + ": encodeCheckpoint gives the hand-listed bytes");
+        const DecodedCheckpoint checkpoint = decoded(file, what);
+        expect(checkpoint.header == golden.header, what + ": decoding gives the header written");
+        expect(sameBytes(checkpoint.image, image), what + ": decoding gives the image written");
+    }
+}
+
+CheckpointError refusedFile(std::span<const std::byte> file, const std::string& what) {
+    auto result = runtime::decodeCheckpoint(file);
+    expect(std::holds_alternative<CheckpointError>(result), what + ": decodeCheckpoint accepted a bad file");
+    return std::get<CheckpointError>(std::move(result));
+}
+
+void expectFileRefusal(std::span<const std::byte> file, CheckpointErrorCode code, std::size_t offset, const std::string& what) {
+    const CheckpointError error = refusedFile(file, what);
+    expect(error.code == code && error.offset == offset,
+           what + ": expected " + runtime::checkpointErrorCodeName(code) + " at " + std::to_string(offset) + ", got " +
+               describe(error));
+    expect(!error.message.empty(), what + ": the refusal has a message");
+}
+
+// The same bytes with the checksum written again over everything before it, so a fault stands
+// behind a checksum that passes. XXH64 itself is held to the specification's vectors in
+// command_log_tests.
+Bytes sealed(Bytes file) {
+    const std::size_t body = file.size() - runtime::checkpointChecksumBytes;
+    put64(file, body, replay::xxh64(std::span<const std::byte>(file).first(body)));
+    return file;
+}
+
+Bytes with32(Bytes file, std::size_t offset, std::uint32_t value) {
+    put32(file, offset, value);
+    return sealed(std::move(file));
+}
+
+Bytes with64(Bytes file, std::size_t offset, std::uint64_t value) {
+    put64(file, offset, value);
+    return sealed(std::move(file));
+}
+
+// The resting golden file's image followed by these bytes as sections, its checksum resealed.
+Bytes withTrailing(const Bytes& file, const Bytes& sections) {
+    Bytes out(file.begin(), file.end() - static_cast<std::ptrdiff_t>(runtime::checkpointChecksumBytes));
+    out.insert(out.end(), sections.begin(), sections.end());
+    out.resize(out.size() + runtime::checkpointChecksumBytes);
+    return sealed(std::move(out));
+}
+
+Bytes sectionBytes(std::uint32_t type, std::uint32_t reserved, std::uint64_t length, std::size_t payload) {
+    Bytes bytes(16 + payload, std::byte{0x5A});
+    put32(bytes, 0, type);
+    put32(bytes, 4, reserved);
+    put64(bytes, 8, length);
+    return bytes;
+}
+
+void testCheckpointRefusals(const std::filesystem::path& root) {
+    const Bytes good = readFile(root / "files" / "resting.obckpt");
+    const std::size_t size = good.size();  // 280: a 64-byte header, a 208-byte image, the checksum
+    const std::size_t checksumAt = size - 8;
+    const std::size_t imageEnd = 64 + 208;
+
+    expectFileRefusal({}, CheckpointErrorCode::BAD_MAGIC, 0, "an empty file");
+    expectFileRefusal(std::span<const std::byte>(good).first(7), CheckpointErrorCode::BAD_MAGIC, 0, "7 bytes of the magic");
+    {
+        Bytes textMode = good;  // a text-mode copy turns \r\n into \n
+        textMode.erase(textMode.begin() + 6);
+        expectFileRefusal(textMode, CheckpointErrorCode::BAD_MAGIC, 0, "a text-mode copy");
+    }
+    expectFileRefusal(std::span<const std::byte>(good).first(71), CheckpointErrorCode::TOO_SHORT, 71,
+                      "one byte short of a header and a checksum");
+
+    expectFileRefusal(readFile(root / "files" / "bad_checksum.obckpt"), CheckpointErrorCode::CHECKSUM_MISMATCH, checksumAt,
+                      "an image byte changed");
+    expectFileRefusal(std::span<const std::byte>(good).first(size - 1), CheckpointErrorCode::CHECKSUM_MISMATCH, checksumAt - 1,
+                      "the last byte cut off");
+    {
+        Bytes lengthened = good;  // a wrong length field fails the checksum before it is read
+        put64(lengthened, 56, 209);
+        expectFileRefusal(lengthened, CheckpointErrorCode::CHECKSUM_MISMATCH, checksumAt, "a length field changed alone");
+    }
+
+    expectFileRefusal(with32(good, 8, 0), CheckpointErrorCode::UNSUPPORTED_VERSION, 8, "format version 0");
+    expectFileRefusal(with32(good, 12, 2), CheckpointErrorCode::UNSUPPORTED_VERSION, 12, "minimum reader version 2");
+    expectFileRefusal(with32(good, 12, 0), CheckpointErrorCode::UNSUPPORTED_VERSION, 12, "minimum reader version 0");
+    expectFileRefusal(with32(with32(good, 8, 2), 12, 2), CheckpointErrorCode::UNSUPPORTED_VERSION, 12,
+                      "format 2 with minimum reader version 2");
+
+    expectFileRefusal(with32(good, 16, 63), CheckpointErrorCode::SIZE_BELOW_KNOWN, 16, "a header of 63 bytes");
+
+    expectFileRefusal(with32(good, 16, 273), CheckpointErrorCode::LENGTH_MISMATCH, 16, "a header past the checksum");
+    expectFileRefusal(with64(good, 56, 209), CheckpointErrorCode::LENGTH_MISMATCH, 56, "an image past the checksum");
+    expectFileRefusal(with64(good, 56, 0xFFFFFFFFFFFFFFFFULL), CheckpointErrorCode::LENGTH_MISMATCH, 56,
+                      "an image length that would wrap");
+    expectFileRefusal(with64(good, 56, 207), CheckpointErrorCode::LENGTH_MISMATCH, imageEnd - 1,
+                      "one byte after the image, too few for a section");
+    expectFileRefusal(withTrailing(good, sectionBytes(1, 0, 3, 2)), CheckpointErrorCode::LENGTH_MISMATCH, imageEnd + 8,
+                      "a section past the checksum");
+    expectFileRefusal(withTrailing(good, Bytes(15)), CheckpointErrorCode::LENGTH_MISMATCH, imageEnd,
+                      "15 bytes after the image");
+
+    {
+        Bytes reserved = good;
+        put8(reserved, 26, 1);
+        expectFileRefusal(sealed(reserved), CheckpointErrorCode::NONZERO_RESERVED, 26, "the first reserved field");
+    }
+    {
+        Bytes reserved = good;
+        put8(reserved, 27, 0x80);
+        expectFileRefusal(sealed(reserved), CheckpointErrorCode::NONZERO_RESERVED, 26, "the first reserved field's top byte");
+    }
+    expectFileRefusal(with32(good, 36, 1), CheckpointErrorCode::NONZERO_RESERVED, 36, "the second reserved field");
+    expectFileRefusal(withTrailing(good, sectionBytes(1, 1, 0, 0)), CheckpointErrorCode::NONZERO_RESERVED, imageEnd + 4,
+                      "a section's reserved field");
+
+    expectFileRefusal(with32(good, 28, 0), CheckpointErrorCode::INVALID_SHARD, 28, "a shard count of 0");
+    expectFileRefusal(with32(good, 32, 4), CheckpointErrorCode::INVALID_SHARD, 32, "a shard index equal to the count");
+
+    expectFileRefusal(with64(good, 48, 0), CheckpointErrorCode::INVALID_SYMBOL, 48, "a symbol of zero bytes");
+    {
+        Bytes lower = good;
+        put8(lower, 48, static_cast<std::uint8_t>('a'));
+        expectFileRefusal(sealed(lower), CheckpointErrorCode::INVALID_SYMBOL, 48, "a lower-case symbol");
+    }
+
+    // The checks run in the order the format gives, so the first fault is the one reported.
+    {
+        Bytes several = good;
+        put32(several, 8, 0);
+        put32(several, 28, 0);
+        put64(several, 48, 0);
+        expectFileRefusal(sealed(several), CheckpointErrorCode::UNSUPPORTED_VERSION, 8, "the version before the fields");
+    }
+    {
+        Bytes several = good;
+        put64(several, 56, 209);
+        put32(several, 36, 1);
+        expectFileRefusal(sealed(several), CheckpointErrorCode::LENGTH_MISMATCH, 56, "the length before the fields");
+    }
+
+    // A later writer's file: format 2 readable by 1, a longer header, and sections of types this
+    // reader does not know, which it skips.
+    const Bytes extendedFile = readFile(root / "files" / "extended.obckpt");  // the image is a view into it
+    const DecodedCheckpoint extended = decoded(extendedFile, "golden file extended");
+    expect(extended.header == headerOf("ES-Z26", 77, 2, 1), "golden file extended: decoding gives its header");
+    expect(sameBytes(extended.image, readFile(root / "images" / "stops.image")),
+           "golden file extended: the image is found past the longer header, and the sections skipped");
+    decoded(withTrailing(good, sectionBytes(0xFFFFFFFFU, 0, 0, 0)), "an empty section of an unknown type");
+}
+
+// decodeCheckpoint(encodeCheckpoint(h, x)) gives h and x back, for books' own images and for
+// every header field at its extremes, and the image still restores to the same bytes.
+void testCheckpointRoundTrips() {
+    const std::pair<OrderBook, CheckpointHeader> cases[] = {
+        {OrderBook{}, headerOf("A", 0, 1, 0, 0, 0, 0)},
+        {restingSample(), headerOf("MSFT", 1, 2, 1)},
+        {stopsSample(), headerOf("BRK.B", 0x8000000000000000ULL, 0xFFFFFFFFU, 0)},
+        {maximalSample(), headerOf("ES-Z26", 0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFU, 0xFFFFFFFEU, 0xFFFF, 0xFFFF, 0xFFFF)},
+    };
+    for (const auto& [book, header] : cases) {
+        const std::string what = "round trip of " + header.symbol.text();
+        const Bytes image = imageOf(book);
+        const Bytes file = runtime::encodeCheckpoint(header, image);
+        expect(file.size() == 64 + image.size() + 8, what + ": a header, the image, and a checksum");
+        const DecodedCheckpoint checkpoint = decoded(file, what);
+        expect(checkpoint.header == header, what + ": the header comes back");
+        expect(sameBytes(checkpoint.image, image), what + ": the image comes back");
+        expect(imageOf(restored(checkpoint.image, what)) == image, what + ": and restores to the same bytes");
+    }
+}
+
+// Any one bit changed, anywhere, and any length cut off, is refused, and by the check that should
+// catch it: the magic's for its 8 bytes, the checksum's for every byte after them, since the
+// checksum covers every byte before it and is read before any field.
+void testCheckpointDamage(const std::filesystem::path& root) {
+    for (const char* name : {"empty", "resting"}) {
+        const Bytes good = readFile(root / "files" / (std::string(name) + ".obckpt"));
+        const std::size_t checksumAt = good.size() - 8;
+        for (std::size_t offset = 0; offset < good.size(); ++offset) {
+            for (unsigned int bit = 0; bit < 8; ++bit) {
+                Bytes flipped = good;
+                flipped[offset] ^= static_cast<std::byte>(1U << bit);
+                const std::string what = std::string(name) + ": bit " + std::to_string(bit) + " of byte " + std::to_string(offset);
+                if (offset < 8) {
+                    expectFileRefusal(flipped, CheckpointErrorCode::BAD_MAGIC, 0, what);
+                } else {
+                    expectFileRefusal(flipped, CheckpointErrorCode::CHECKSUM_MISMATCH, checksumAt, what);
+                }
+            }
+        }
+        for (std::size_t length = 0; length < good.size(); ++length) {
+            const std::string what = std::string(name) + ": cut to " + std::to_string(length) + " bytes";
+            const std::span<const std::byte> cut = std::span<const std::byte>(good).first(length);
+            if (length < 8) {
+                expectFileRefusal(cut, CheckpointErrorCode::BAD_MAGIC, 0, what);
+            } else if (length < 72) {
+                expectFileRefusal(cut, CheckpointErrorCode::TOO_SHORT, length, what);
+            } else {
+                expectFileRefusal(cut, CheckpointErrorCode::CHECKSUM_MISMATCH, length - 8, what);
+            }
+        }
+    }
+}
+
+// verify runs the wrapper's checks, then restore, and reports a fault at its offset in the file.
+void testVerifyCheckpoint(const std::filesystem::path& root) {
+    const auto fault = [&root](const char* name) {
+        return runtime::verifyCheckpoint(readFile(root / "files" / (std::string(name) + ".obckpt")));
+    };
+    for (const char* name : {"resting", "empty", "maximal", "extended"}) {
+        const std::optional<runtime::CheckpointFault> found = fault(name);
+        expect(!found, std::string("verify passes golden file ") + name + (found ? ": " + found->message : ""));
+    }
+
+    const std::optional<runtime::CheckpointFault> checksum = fault("bad_checksum");
+    expect(checksum && checksum->code == runtime::CheckpointFault::Code{CheckpointErrorCode::CHECKSUM_MISMATCH} &&
+               checksum->offset == 272,
+           "verify reports the wrapper's fault");
+    expect(checksum && runtime::formatCheckpointFault("x.obckpt", *checksum) ==
+                           "x.obckpt: 272: CHECKSUM_MISMATCH: the checksum is not that of the bytes before it",
+           "a fault prints as path, offset, code, and message");
+
+    // The image's reserved header word, at 60 in the image, is 124 in a file whose header is 64.
+    const std::optional<runtime::CheckpointFault> image = fault("bad_image");
+    expect(image && image->code == runtime::CheckpointFault::Code{RestoreErrorCode::NONZERO_RESERVED} && image->offset == 124,
+           "verify reports restore's fault at its offset in the file");
+    expect(image && runtime::formatCheckpointFault("bad_image.obckpt", *image) ==
+                        "bad_image.obckpt: 124: NONZERO_RESERVED: the header's reserved bytes are not 0",
+           "restore's fault prints with restore's code and message");
+    // And at 132 behind a 72-byte header.
+    const std::optional<runtime::CheckpointFault> extended =
+        runtime::verifyCheckpoint(with32(readFile(root / "files" / "extended.obckpt"), 72 + 60, 1));
+    expect(extended && extended->code == runtime::CheckpointFault::Code{RestoreErrorCode::NONZERO_RESERVED} &&
+               extended->offset == 132,
+           "restore's offset is moved by the stated header size");
+}
+
+// describe reads both headers and checks nothing past the magic: a damaged file still describes.
+void testDescribeCheckpoint(const std::filesystem::path& root) {
+    const std::string resting =
+        "file-bytes: 280\n"
+        "format-version: 1\n"
+        "minimum-reader-version: 1\n"
+        "header-bytes: 64\n"
+        "engine-version: 2.1.0\n"
+        "reserved-at-26: 0\n"
+        "shard-count: 4\n"
+        "shard-index: 2\n"
+        "reserved-at-36: 0\n"
+        "position: 12345\n"
+        "symbol: AAPL\n"
+        "image-bytes: 208\n"
+        "image-version: 1\n"
+        "image-minimum-reader-version: 1\n"
+        "image-header-bytes: 64\n"
+        "level-record-bytes: 16\n"
+        "order-record-bytes: 24\n"
+        "stop-record-bytes: 32\n"
+        "next-sequence-number: 6\n"
+        "next-trade-id: 2\n"
+        "last-trade-price: 100\n"
+        "bid-levels: 2\n"
+        "ask-levels: 1\n"
+        "orders: 4\n"
+        "stops: 0\n"
+        "order-index-size: 4\n"
+        "stop-index-size: 0\n"
+        "image-reserved: 0\n"
+        "checksum: not checked\n";
+    const auto describedText = [](std::span<const std::byte> file, const std::string& what) {
+        auto result = runtime::describeCheckpoint(file);
+        if (const auto* error = std::get_if<CheckpointError>(&result)) {
+            expect(false, what + ": describe refused: " + describe(*error));
+        }
+        return runtime::formatCheckpointDescription(std::get<runtime::CheckpointDescription>(result));
+    };
+    const Bytes good = readFile(root / "files" / "resting.obckpt");
+    const std::string text = describedText(good, "describe resting");
+    expect(text == resting, "describe resting prints both headers:\n" + text);
+
+    // Damage past the magic is printed, not judged.
+    std::string changed = resting;
+    changed.replace(changed.find("last-trade-price: 100"), 21, "last-trade-price: 101");
+    expect(describedText(readFile(root / "files" / "bad_checksum.obckpt"), "describe bad_checksum") == changed,
+           "a bad checksum still describes");
+    {
+        Bytes odd = good;
+        put64(odd, 48, 0x000000006C707041ULL);  // "Appl" then zeros: not a symbol
+        const std::string oddText = describedText(odd, "describe a bad symbol");
+        expect(oddText.find("symbol: not a symbol: 41 70 70 6c 00 00 00 00\n") != std::string::npos,
+               "a symbol that is not one prints as its bytes:\n" + oddText);
+    }
+    {
+        const std::string cut = describedText(std::span<const std::byte>(good).first(127), "describe a cut file");
+        expect(cut.find("file-bytes: 127\n") == 0 && cut.find("image-version") == std::string::npos &&
+                   cut.find("image-header: past the end of the file\nchecksum: not checked\n") != std::string::npos,
+               "an image header past the end is said to be:\n" + cut);
+        const std::string whole = describedText(std::span<const std::byte>(good).first(128), "describe a file cut after the image header");
+        expect(whole.find("stop-index-size: 0\n") != std::string::npos, "64 bytes of image header describe");
+    }
+
+    const auto refusal = [](std::span<const std::byte> file) {
+        auto result = runtime::describeCheckpoint(file);
+        expect(std::holds_alternative<CheckpointError>(result), "describe refuses");
+        return std::get<CheckpointError>(result);
+    };
+    // The image header is read where the stated header size puts it.
+    {
+        auto extended = runtime::describeCheckpoint(readFile(root / "files" / "extended.obckpt"));
+        const auto* description = std::get_if<runtime::CheckpointDescription>(&extended);
+        expect(description && description->headerBytes == 72 && description->image &&
+                   description->image == readImageHeader(readFile(root / "images" / "stops.image")),
+               "describe reads the image header past a 72-byte header");
+    }
+
+    const CheckpointError notOne = refusal(readFile(root / "images" / "resting.image"));
+    expect(notOne.code == CheckpointErrorCode::BAD_MAGIC && notOne.offset == 0, "describe refuses another kind of file");
+    const CheckpointError shortFile = refusal(std::span<const std::byte>(good).first(63));
+    expect(shortFile.code == CheckpointErrorCode::TOO_SHORT && shortFile.offset == 63, "describe needs a whole header");
+}
+
+// The image's header as stored, checking nothing, for describe.
+void testReadImageHeader(const std::filesystem::path& root) {
+    const Bytes image = readFile(root / "images" / "stops.image");
+    const std::optional<ImageHeader> header = readImageHeader(image);
+    ImageHeader expected;
+    expected.imageVersion = 1;
+    expected.minimumReaderVersion = 1;
+    expected.headerBytes = 64;
+    expected.levelRecordBytes = 16;
+    expected.orderRecordBytes = 24;
+    expected.stopRecordBytes = 32;
+    expected.nextSequenceNumber = 8;
+    expected.nextTradeId = 2;
+    expected.lastTradePrice = 100;
+    expected.bidLevels = 0;
+    expected.askLevels = 1;
+    expected.orders = 1;
+    expected.stops = 5;
+    expected.orderIndexSize = 1;
+    expected.stopIndexSize = 5;
+    expected.reserved = 0;
+    expect(header == expected, "readImageHeader gives the stops sample's fields");
+    expect(!readImageHeader(std::span<const std::byte>(image).first(63)), "fewer than 64 bytes hold no header");
+    Bytes odd(64, std::byte{0xFF});
+    expect(readImageHeader(odd) && readImageHeader(odd)->reserved == 0xFFFFFFFFU, "and it checks nothing");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -757,6 +1177,13 @@ int main(int argc, char** argv) {
         testRestoredBookCarriesOn();
         testReserveTopsUpARestoredBook();
         testContinuation();
+        testCheckpointGoldenFiles(argv[1]);
+        testCheckpointRefusals(argv[1]);
+        testCheckpointRoundTrips();
+        testCheckpointDamage(argv[1]);
+        testReadImageHeader(argv[1]);
+        testVerifyCheckpoint(argv[1]);
+        testDescribeCheckpoint(argv[1]);
     } catch (const std::exception& error) {
         std::cerr << "FAILED: unexpected exception: " << error.what() << std::endl;
         return EXIT_FAILURE;

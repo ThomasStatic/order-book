@@ -1,2 +1,3 @@
-# Golden book images, compared byte for byte.
+# Golden book images and checkpoint files, compared byte for byte.
 *.image -text
+*.obckpt -text

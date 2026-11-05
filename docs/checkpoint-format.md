@@ -1,6 +1,73 @@
 # Checkpoint format
 
-A checkpoint is one book's image at that book's own log position ([ADR 0009](adr/0009-a-checkpoint-is-one-books-image-at-its-own-log-position.md)). This document specifies the book image byte for byte, so it can be read without this code. The file that wraps an image, with its symbol, position, and checksum, comes with roll-forward and is not specified yet.
+A checkpoint is one book's image at that book's own log position ([ADR 0009](adr/0009-a-checkpoint-is-one-books-image-at-its-own-log-position.md)). This document specifies the checkpoint file and the book image it wraps byte for byte, so either can be read without this code. The two are layers with their own versions: the matching library owns the image and judges it alone (`OrderBook::restore`), and the runtime owns the file around it (`encodeCheckpoint`, `decodeCheckpoint` in `runtime/checkpoint.hpp`).
+
+## Checkpoint file
+
+One file holds one instrument's book. Everything is little-endian.
+
+### Header, 64 bytes
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 8 | magic, `OBCKPT\r\n` (`4F 42 43 4B 50 54 0D 0A`), so a text-mode copy fails at once |
+| 8 | 4 | format version (1) |
+| 12 | 4 | minimum reader version (1) |
+| 16 | 4 | header bytes (64) |
+| 20 | 2 | writing engine's major version |
+| 22 | 2 | minor version |
+| 24 | 2 | patch version |
+| 26 | 2 | reserved, 0 |
+| 28 | 4 | shard count, never 0 |
+| 32 | 4 | shard index, below the shard count |
+| 36 | 4 | reserved, 0 |
+| 40 | 8 | log position |
+| 48 | 8 | symbol: 1 to 8 of `A-Z`, `0-9`, `.`, `-`, right-padded with spaces, as in the [command log](command-log-format.md) |
+| 56 | 8 | image bytes |
+
+Then, at header bytes:
+
+1. the book image, image bytes long;
+2. zero or more sections, each a `u32` type, a `u32` reserved 0, a `u64` length, and that many bytes (format 1 writes none);
+3. an XXH64 (seed 0, `u64`) of every byte before it, the [command log](command-log-format.md#checksum)'s hash.
+
+So a file `encodeCheckpoint` writes, format 1 with no section, is exactly 64 + image bytes + 8 long. A reader still accepts sections in any file, format 1 included, and skips them.
+
+- **Position.** Every command for this symbol before the position is in the image, and none at or after it, counted as the shard's log counts them ([position](command-log-format.md#position)).
+- **Shard.** A position means something only in its own shard's log, so the file records the placement it was written under. Comparing it with the current placement shows a change, so no placement table is needed, and a file stands alone: after a clean stop with a new placement, any shard can restore it.
+- **Engine version.** Recorded, not enforced.
+
+### Extension
+
+As in the image, with the file's own version pair. The header can gain trailing fields, which its stated size lets an older reader skip: the image starts at the stated header bytes, whatever lies between. A field an older reader must not ignore raises the minimum reader version, so that reader refuses the file rather than rebuild the wrong book. A section of a type the reader doesn't know is skipped by its length; format 1 knows none, so it skips every section. `decodeCheckpoint` reads any format version whose minimum reader version is 1, and `encodeCheckpoint` writes format 1 at 64 header bytes with no section.
+
+### Decoding
+
+`decodeCheckpoint` checks the wrapper and returns the header and a view of the image. It checks the image's length but not its bytes, which `restore` judges. Each refusal has a code (an open set: codes are only appended) and the offset of the first byte of the field at fault. The checks run in this order, so a file with several faults reports the first:
+
+1. The magic.
+2. The length: fewer than 72 bytes, a header and a checksum.
+3. The checksum, before any field is trusted, so a truncation and a bad length field fail the same check.
+4. The versions, then the stated header size, then the lengths: the header, the image, and each section in turn, which together must end exactly at the checksum.
+5. The header's fields by offset: reserved (26), shard count (28), shard index (32), reserved (36), symbol (48); then each section's reserved word, in file order.
+
+| Code | Offset | Refused |
+|---|---|---|
+| `BAD_MAGIC` | 0 | first 8 bytes other than the magic, or fewer than 8 bytes |
+| `TOO_SHORT` | the file's length | fewer than 72 bytes |
+| `CHECKSUM_MISMATCH` | the checksum, at length − 8 | a checksum other than the XXH64 of the bytes before it |
+| `UNSUPPORTED_VERSION` | 8 or 12 | a format version of 0 (8), or a minimum reader version other than 1 (12) |
+| `SIZE_BELOW_KNOWN` | 16 | header bytes below 64 |
+| `LENGTH_MISMATCH` | 16, 56, or a section's | header bytes past the checksum (16); an image past it (56); after the image, fewer than 16 bytes before the checksum (where they start), or a section whose length runs past it (its length field) |
+| `NONZERO_RESERVED` | 26, 36, or a section's reserved word | reserved bytes that are not 0 |
+| `INVALID_SHARD` | 28 or 32 | a shard count of 0 (28), or a shard index not below it (32) |
+| `INVALID_SYMBOL` | 48 | symbol bytes that are not a symbol, all zeros among them |
+
+### Verifying and describing
+
+`verifyCheckpoint` decodes, then runs `restore` on the image: a file verifies if it would restore. A refusal from `restore` is reported with its own code and message, and its offset moved into the file by the image's start, the stated header bytes. `order_book_cli checkpoint verify <file>` prints `ok`, or exits 1 with `<path>: <offset>: <code>: <message>` on stderr.
+
+`describeCheckpoint` reads both headers as stored and checks nothing past the magic, so a damaged file still describes; it refuses only `BAD_MAGIC`, and `TOO_SHORT` for fewer than 64 bytes. `order_book_cli checkpoint describe <file>` prints one `key: value` line per field: `file-bytes`, then the file header's fields (`format-version`, `minimum-reader-version`, `header-bytes`, `engine-version` as `major.minor.patch`, `reserved-at-26`, `shard-count`, `shard-index`, `reserved-at-36`, `position`, `symbol`, `image-bytes`; a symbol that is not one prints as `not a symbol:` and its 8 bytes in hex), then the image header's, read at the stated header bytes with the library's `readImageHeader` (`image-version`, `image-minimum-reader-version`, `image-header-bytes`, `level-record-bytes`, `order-record-bytes`, `stop-record-bytes`, `next-sequence-number`, `next-trade-id`, `last-trade-price`, `bid-levels`, `ask-levels`, `orders`, `stops`, `order-index-size`, `stop-index-size`, `image-reserved`), or `image-header: past the end of the file` if the file holds no 64 bytes there, and last `checksum: not checked`. Neither command takes a lock, since a published checkpoint never changes.
 
 ## Book image
 
@@ -123,3 +190,5 @@ A record's fields are checked in this order: a level's order count, then its pri
 ### Golden samples
 
 `tests/checkpoint/images/` holds images written by `tests/checkpoint/make_golden.py` from hand-listed records, with no line of the library's code, and committed byte-exact (`-text`). `checkpoint_tests` builds each sample's book through the public API and requires `writeImage` to give those bytes, so CI on Linux and Windows proves the format is the same on both.
+
+`tests/checkpoint/files/` holds checkpoint files the same script writes around those images, with the command log generator's hand-written XXH64: `resting`, `empty`, and `maximal`, which `encodeCheckpoint` must reproduce; `extended`, a format 2 file with a 72-byte header and two unknown sections, which this reader must still decode; and `bad_checksum`, `bad_image`, and `short` for the CLI's refusals.
