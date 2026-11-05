@@ -1,0 +1,123 @@
+name: Linux sanity
+
+# Large effects only, on GitHub's shared runners, by hand. No Linux numbers are recorded for
+# v2.1.0 (spec #58): this asks only whether `machine` durability is a sane default on Linux,
+# and, from V1, whether `poll` loses to epoll by more than twice. Read Linux against the
+# Windows runner beside it, ratio against ratio, since a runner's disk is not the reference
+# machine's. Every row is unquotable: unpinned, on a shared machine, with no hand-written
+# machine record. docs/LATENCY.md's claims rule refuses quoting any of it.
+on:
+  workflow_dispatch:
+    inputs:
+      commands:
+        description: Commands per closed-loop run
+        default: "20000"
+      ladder_commands:
+        description: Commands per run on the durable-wait timetable
+        default: "5000"
+
+permissions:
+  contents: read
+
+jobs:
+  sanity:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "Linux GCC Release",    os: ubuntu-24.04 }
+          - { name: "Windows MSVC Release", os: windows-2022 }
+
+    env:
+      COMMANDS: ${{ inputs.commands || '20000' }}
+      LADDER_COMMANDS: ${{ inputs.ladder_commands || '5000' }}
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Ninja
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: |
+          args=(-DORDER_BOOK_WARNINGS_AS_ERRORS=ON -DORDER_BOOK_BUILD_BENCHMARKS=ON)
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            args+=(-G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++)
+          fi
+          cmake -S . -B build "${args[@]}"
+
+      - name: Build
+        run: cmake --build build --config Release --target order_book_latency_benchmarks order_book_engine --parallel
+
+      # What the runner is, so a reader can tell its disk from the engine.
+      - name: Describe the runner
+        run: |
+          {
+            echo "runner: ${{ matrix.os }}, shared GitHub-hosted, not the reference machine"
+            echo "logs under: $RUNNER_TEMP/logs"
+            if [ "${{ runner.os }}" = "Linux" ]; then
+              uname -sr
+              lscpu | grep -E 'Model name|^CPU\(s\)'
+              df -hT "$RUNNER_TEMP"
+            else
+              powershell -NoProfile -Command "(Get-CimInstance Win32_OperatingSystem).Caption; (Get-CimInstance Win32_Processor).Name; [Environment]::ProcessorCount; Get-Volume -DriveLetter (Get-Item '$RUNNER_TEMP').PSDrive.Name | Format-List DriveLetter,FileSystemType,Size,SizeRemaining"
+            fi
+          } | tee machine.txt
+          mkdir -p "$RUNNER_TEMP/logs"
+
+      # The same rows on both runners: durable wait closed-loop at each level, its timetable at
+      # `machine`, and the round trip through the shipped engine at each level.
+      - name: Run
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            program=./build/Release/order_book_latency_benchmarks.exe
+          else
+            program=./build/order_book_latency_benchmarks
+          fi
+          row() {
+            name=$1
+            shift
+            echo "::group::$name"
+            "$program" --workload small-book --runs 9 --warmup 1 --log-dir "$RUNNER_TEMP/logs" \
+              --machine-record machine.txt --out-dir "results/$name" "$@"
+            echo "::endgroup::"
+          }
+          row durable-wait-machine --interval durable-wait --durability machine --commands "$COMMANDS"
+          row durable-wait-process --interval durable-wait --durability process --commands "$COMMANDS"
+          row durable-wait-machine-response --interval durable-wait --durability machine --time response \
+            --commands "$LADDER_COMMANDS"
+          # The warm-up run is discarded already, and a fast closed-loop run could end inside the
+          # default 2 s discard.
+          row round-trip-machine --interval round-trip --durability machine --commands "$COMMANDS" --discard-seconds 0
+          row round-trip-process --interval round-trip --durability process --commands "$COMMANDS" --discard-seconds 0
+
+      - name: Summarize
+        if: always()
+        run: |
+          for report in results/*/report.txt; do
+            [ -f "$report" ] || continue
+            {
+              echo "### ${{ matrix.name }}: $(basename "$(dirname "$report")")"
+              echo '```'
+              cat "$report"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-sanity-${{ matrix.name }}
+          path: |
+            results/
+            machine.txt
+          if-no-files-found: ignore

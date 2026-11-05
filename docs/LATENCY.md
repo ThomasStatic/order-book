@@ -17,7 +17,7 @@ Every statement drawn from these results follows this rule, and so does anything
 - subtracting one interval from another;
 - attributing a marked noise-floor percentile to the engine, or treating max as a guarantee;
 - any `not sustained` rate quoted as a capability;
-- any Linux or other-machine claim drawn from these runs;
+- any Linux or other-machine claim drawn from these runs, and any number from the Linux sanity workflow, which runs on shared GitHub runners (no Linux numbers are recorded for v2.1.0);
 - quoting a `steady_clock` result or the throughput harness's ns/command as latency.
 
 ## Intervals

@@ -30,7 +30,7 @@ ctest --test-dir build -C Debug -R price_level_tests --output-on-failure
 
 Warnings are high (`/W4`, or `-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), so watch for sign/narrowing conversions.
 
-CI (`.github/workflows/ci.yml`) runs on every push and pull request with `ORDER_BOOK_WARNINGS_AS_ERRORS=ON`: on Linux, GCC and Clang Debug/Release, GCC and Clang ASan+UBSan Debug, and Clang ASan+UBSan RelWithDebInfo; on Windows, MSVC Debug/Release and ASan Debug/Release. ThreadSanitizer (Clang RelWithDebInfo, GCC Debug) and Linux Arm Clang Release run the tests labelled `threaded`. A new push to a pull request cancels that pull request's run still in progress; push runs are never cancelled. Code that builds cleanly with MSVC can still fail there on a GCC/Clang warning.
+CI (`.github/workflows/ci.yml`) runs on every push and pull request with `ORDER_BOOK_WARNINGS_AS_ERRORS=ON`: on Linux, GCC and Clang Debug/Release, GCC and Clang ASan+UBSan Debug, and Clang ASan+UBSan RelWithDebInfo; on Windows, MSVC Debug/Release and ASan Debug/Release. ThreadSanitizer (Clang RelWithDebInfo, GCC Debug) and Linux Arm Clang Release run the tests labelled `threaded`. A new push to a pull request cancels that pull request's run still in progress; push runs are never cancelled. Code that builds cleanly with MSVC can still fail there on a GCC/Clang warning. No Linux numbers are recorded: the manual `linux-sanity.yml` workflow checks Linux performance for large effects only, on shared runners, and its numbers are never quoted (see `docs/internals/benchmarks.md`).
 
 ## Writing tests
 
