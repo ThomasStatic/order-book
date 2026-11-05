@@ -195,6 +195,7 @@ add_library(order_book_runtime STATIC
     src/runtime/log_writer.cpp
     src/runtime/matching_loop.cpp
     src/runtime/recovery.cpp
+    src/runtime/roll_forward.cpp
     src/runtime/shard.cpp
     src/runtime/thread_placement.cpp
 )
@@ -656,6 +657,32 @@ if(BUILD_TESTING)
     order_book_enable_warnings(recovery_tests)
     order_book_enable_sanitizers(recovery_tests)
     add_test(NAME recovery_tests COMMAND recovery_tests)
+
+    add_executable(roll_forward_tests
+        tests/roll_forward_test.cpp
+    )
+
+    target_compile_features(roll_forward_tests PRIVATE cxx_std_20)
+    target_link_libraries(roll_forward_tests PRIVATE order_book_runtime)
+    order_book_enable_warnings(roll_forward_tests)
+    order_book_enable_sanitizers(roll_forward_tests)
+    add_test(NAME roll_forward_tests COMMAND roll_forward_tests)
+    # A bad_alloc at each allocation of a roll in turn: skipped under MSVC's debug iterators.
+    add_executable(roll_forward_allocation_tests
+        tests/roll_forward_allocation_test.cpp
+    )
+
+    target_compile_features(roll_forward_allocation_tests PRIVATE cxx_std_20)
+    target_link_libraries(roll_forward_allocation_tests PRIVATE order_book_runtime)
+    order_book_enable_warnings(roll_forward_allocation_tests)
+    order_book_enable_sanitizers(roll_forward_allocation_tests)
+    add_test(NAME roll_forward_allocation_tests COMMAND roll_forward_allocation_tests)
+    set_tests_properties(roll_forward_allocation_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+    # A rolled image that fails its proof must abort, naming the book.
+    add_test(NAME roll_forward_abort_proof
+        COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:roll_forward_tests> -DARGS=abort-proof
+                "-DOUTPUT_REGEX=order book runtime: roll forward: shard 0 AAPL at 25: the image proof failed: restore refused it: NONZERO_RESERVED"
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
 
     add_executable(shard_invariant_tests
         tests/shard_invariant_test.cpp

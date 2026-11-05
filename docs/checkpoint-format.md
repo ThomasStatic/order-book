@@ -4,7 +4,7 @@ A checkpoint is one book's image at that book's own log position ([ADR 0009](adr
 
 ## Checkpoint file
 
-One file holds one instrument's book. Everything is little-endian.
+One file holds one instrument's book. An engine names it `ckpt-<symbol>-<position, 20 digits>.obckpt`, and `<name>.tmp` while publishing it, and keeps the two newest of each book. Everything is little-endian.
 
 ### Header, 64 bytes
 
