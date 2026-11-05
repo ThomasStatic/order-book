@@ -177,6 +177,11 @@ namespace order_book::runtime {
         }
     }
 
+    void publishEmptyCheckpoint(LogStorage& storage, const Symbol& symbol, std::uint32_t shardCount, std::uint32_t shard,
+                                std::uint64_t position) {
+        publishCheckpoint(storage, headerFor(symbol, shardCount, shard, position), imageOf(OrderBook{}));
+    }
+
     ShardRoller::ShardRoller(LogStorage& logStorage, const InstrumentDirectory& instruments, std::uint32_t shardIndex, Report reportTo)
         : storage(logStorage), directory(instruments), shard(shardIndex), report(std::move(reportTo)),
           kept(directory.onShard(shardIndex).size()), firstListing(kept.size()) {
@@ -241,15 +246,21 @@ namespace order_book::runtime {
         return kept.at(slot).newest;
     }
 
-    void ShardRoller::readLogFiles() {
+    void ShardRoller::readLogFiles(std::uint64_t closedEnd) {
+        // This shard's files by first position, from their names alone: a file still being
+        // written, or made ahead, is never opened here, since Windows lets a file have one handle.
+        std::vector<std::pair<std::uint64_t, std::string>> named;
         for (const std::string& name : storage.names()) {
             const std::optional<LogFileNameParts> parts = parseLogFileName(name);
-            if (!parts || parts->temporary || parts->shard != shard) {
-                continue;
+            if (parts && !parts->temporary && parts->shard == shard) {
+                named.emplace_back(parts->firstPosition, name);
             }
-            const bool known = std::any_of(files.begin(), files.end(), [&name](const LogFileInfo& file) { return file.name == name; });
-            if (known) {
-                continue;
+        }
+        std::sort(named.begin(), named.end());
+        for (std::size_t i = 0; i + 1 < named.size() && named[i + 1].first <= closedEnd; ++i) {
+            const auto& [firstPosition, name] = named[i];
+            if (!files.empty() && firstPosition <= files.back().firstPosition) {
+                continue;  // known
             }
             const log_reading::FileHeader header = log_reading::readHeader(storage, name);
             const auto* parsed = std::get_if<replay::LogHeader>(&header.parsed);
@@ -258,28 +269,21 @@ namespace order_book::runtime {
             }
             LogFileInfo file;
             file.name = name;
-            file.firstPosition = parsed->firstPosition;
+            file.firstPosition = firstPosition;
+            file.endPosition = named[i + 1].first;
             file.headerBytes = header.bytes;
             file.shardCount = parsed->shardCount;
             for (const Symbol& symbol : parsed->symbols) {
                 const std::optional<BookLocation> location = directory.find(symbol);
                 if (location && location->shard == shard) {
                     file.slots.push_back(location->slot);
+                    // Where a book with no checkpoint stands: the first file that lists it.
+                    if (!firstListing[location->slot]) {
+                        firstListing[location->slot] = firstPosition;
+                    }
                 }
             }
-            const auto at = std::lower_bound(files.begin(), files.end(), file.firstPosition,
-                                             [](const LogFileInfo& held, std::uint64_t first) { return held.firstPosition < first; });
-            files.insert(at, std::move(file));
-        }
-        // Where a book with no checkpoint stands: the first file that lists it.
-        for (std::size_t slot = 0; slot < firstListing.size(); ++slot) {
-            firstListing[slot].reset();
-            for (const LogFileInfo& file : files) {
-                if (std::find(file.slots.begin(), file.slots.end(), slot) != file.slots.end()) {
-                    firstListing[slot] = file.firstPosition;
-                    break;
-                }
-            }
+            files.push_back(std::move(file));
         }
     }
 
@@ -288,16 +292,15 @@ namespace order_book::runtime {
         return at == file.firstPosition;
     }
 
-    std::size_t ShardRoller::roll(std::uint64_t closedEnd) {
+    std::size_t ShardRoller::roll(std::uint64_t closedEnd, const std::atomic<bool>* stopping) {
         std::size_t made = 0;
         try {
             for (std::uint32_t slot = 0; slot < kept.size(); ++slot) {
                 removeSuperseded(slot);
             }
-            readLogFiles();
+            readLogFiles(closedEnd);
             std::vector<bool> needs(kept.size());
-            for (std::size_t i = 0; i + 1 < files.size() && files[i + 1].firstPosition <= closedEnd; ++i) {
-                const LogFileInfo& file = files[i];
+            for (const LogFileInfo& file : files) {
                 bool any = false;
                 for (const std::uint32_t slot : file.slots) {
                     needs[slot] = standsAt(slot, file);
@@ -306,7 +309,10 @@ namespace order_book::runtime {
                 if (!any) {
                     continue;
                 }
-                pass(file, files[i + 1].firstPosition, needs);
+                if (stopping != nullptr && stopping->load(std::memory_order_relaxed)) {
+                    break;
+                }
+                pass(file, file.endPosition, needs);
                 ++made;
                 std::fill(needs.begin(), needs.end(), false);
             }
@@ -321,10 +327,10 @@ namespace order_book::runtime {
             report("shard " + std::to_string(shard) + ": roll forward stopped: " + abandoned.why);
         }
         behind = 0;
-        for (std::size_t i = 0; i + 1 < files.size() && files[i + 1].firstPosition <= closedEnd; ++i) {
+        for (const LogFileInfo& file : files) {
             // Behind if a book it lists stands before its end.
-            const std::uint64_t end = files[i + 1].firstPosition;
-            const bool needed = std::any_of(files[i].slots.begin(), files[i].slots.end(), [this, end](std::uint32_t slot) {
+            const std::uint64_t end = file.endPosition;
+            const bool needed = std::any_of(file.slots.begin(), file.slots.end(), [this, end](std::uint32_t slot) {
                 const std::optional<std::uint64_t> at = kept[slot].newest ? kept[slot].newest : firstListing[slot];
                 return at && *at < end;
             });
@@ -442,6 +448,32 @@ namespace order_book::runtime {
             held.older = held.newest;
             held.newest = end;
             removeSuperseded(book.slot);
+        }
+    }
+
+    RollWorker::RollWorker(LogStorage& storage, const InstrumentDirectory& directory, const ClosedLog& closedLog,
+                           std::vector<std::uint32_t> shards, ShardRoller::Report report)
+        : closed(closedLog), mine(std::move(shards)) {
+        rollers.reserve(mine.size());
+        for (const std::uint32_t shard : mine) {
+            rollers.push_back(std::make_unique<ShardRoller>(storage, directory, shard, report));
+        }
+    }
+
+    std::size_t RollWorker::pass() {
+        std::size_t made = 0;
+        for (std::size_t index = 0; index < mine.size() && !closed.stopping().load(std::memory_order_relaxed); ++index) {
+            made += rollers[index]->roll(closed.end(mine[index]), &closed.stopping());
+        }
+        return made;
+    }
+
+    void RollWorker::run() {
+        while (!closed.stopping().load(std::memory_order_relaxed)) {
+            // Read before the pass, so a file closed during it wakes the wait at once.
+            const std::uint64_t seen = closed.generation();
+            pass();
+            closed.waitPast(seen);
         }
     }
 

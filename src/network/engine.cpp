@@ -9,6 +9,7 @@
 #include <future>
 #include <iterator>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <optional>
 #include <span>
@@ -22,6 +23,7 @@
 #include "order_book/network/gateway_thread.hpp"
 #include "order_book/network/poll_socket_set.hpp"
 #include "order_book/runtime/abort_report.hpp"
+#include "order_book/runtime/closed_log.hpp"
 #include "order_book/runtime/instruments.hpp"
 #include "order_book/runtime/log_files.hpp"
 #include "order_book/runtime/log_storage.hpp"
@@ -29,6 +31,7 @@
 #include "order_book/runtime/matching_loop.hpp"
 #include "order_book/runtime/recovery.hpp"
 #include "order_book/runtime/ring.hpp"
+#include "order_book/runtime/roll_forward.hpp"
 #include "order_book/runtime/shard.hpp"
 #include "order_book/runtime/thread_placement.hpp"
 
@@ -99,6 +102,11 @@ namespace order_book::network {
             std::future<std::uint64_t> logEnded;    // its future, taken before either thread starts
             bool recoveredTold = false;             // the matching thread's
             runtime::RecoveredShard recovery;       // read once the shard is ready
+
+            // New instruments, named in no log header and with no checkpoint: the log writer
+            // publishes an empty-book checkpoint for each where the log ended, before its file.
+            std::vector<std::uint32_t> newBooks;
+            std::vector<std::string> emptiesPublished;  // the log writer's, removed if the start fails
         };
 
         // One gateway thread, its sockets, and how its start and its end went.
@@ -145,6 +153,10 @@ namespace order_book::network {
             if (!settings.pinLogWriters.empty() && settings.logDir.empty()) {
                 return Refusal{"--pin-log-writers needs --log-dir, since there are no log writers without a log"};
             }
+            if (settings.rollWorkers == 0 || settings.rollWorkers > settings.shards) {
+                return Refusal{"--roll-workers must be from 1 to the " + std::to_string(settings.shards) +
+                               (settings.shards == 1 ? " shard" : " shards") + ", not " + std::to_string(settings.rollWorkers)};
+            }
             if (!settings.pinLogWriters.empty() && settings.pinLogWriters.size() != settings.shards) {
                 return Refusal{"--pin-log-writers needs " + std::to_string(settings.shards) + (settings.shards == 1 ? " core" : " cores") +
                                ", one per shard, not " + std::to_string(settings.pinLogWriters.size())};
@@ -183,6 +195,9 @@ namespace order_book::network {
             // after a forced stop, whose engine is left to the process's exit.
             ~Engine() {
                 stop.onRequest({});
+                if (closedLog) {
+                    closedLog->stop();  // before the release below, so no worker starts a pass
+                }
                 if (housekeeping && !listening) {
                     // Before the release below, so a start that never became ready makes no next
                     // file: nothing ran, so no log writer waits for one.
@@ -209,9 +224,17 @@ namespace order_book::network {
                     }
                 }
                 joinLogWriters();
+                joinRollWorkers();
                 finishHousekeeping();
                 if (!listening && logStorage) {
                     for (const std::unique_ptr<ShardRuntime>& shard : shards) {
+                        for (const std::string& name : shard->emptiesPublished) {
+                            try {
+                                logStorage->remove(name);
+                            } catch (const runtime::LogStorageError&) {
+                                // An empty book where the log ends, true whatever the next start finds.
+                            }
+                        }
                         if (shard->logMade) {
                             try {
                                 logStorage->remove(shard->logName);
@@ -236,6 +259,8 @@ namespace order_book::network {
             void runShard(std::uint32_t number);
             void runLogWriter(std::uint32_t number);
             void joinLogWriters();
+            void startRollWorkers();
+            void joinRollWorkers();
             void finishHousekeeping();
             void startGateways();
             void runGatewayThread(std::size_t thread, const GatewaySettings& gatewaySettings);
@@ -264,6 +289,13 @@ namespace order_book::network {
             std::unique_ptr<runtime::StorageLock> logLock;    // held for the engine's life
             std::unique_ptr<runtime::Housekeeping> housekeeping;  // with --log-dir
             std::thread housekeeper;  // once every shard is ready, unpinned, and running once released
+            // With --log-dir: what each log writer has closed, and the roll-forward workers, made once
+            // every shard is ready and running once released.
+            std::unique_ptr<runtime::ClosedLog> closedLog;
+            std::vector<std::unique_ptr<runtime::RollWorker>> rollWorkers;
+            std::vector<std::thread> rollThreads;
+            std::mutex diagnosticsLock;  // for what the workers print as it happens
+            std::vector<std::vector<std::uint32_t>> newBooks;  // by shard, from recovery's start
             std::vector<std::unique_ptr<ShardRuntime>> shards;
             std::vector<std::unique_ptr<GatewayRuntime>> gateways;  // thread 0's sockets listen
             std::unique_ptr<ConnectionHandOff> handOff;
@@ -355,8 +387,16 @@ namespace order_book::network {
             try {
                 placeThisThread(settings.pinLogWriters, number, settings.threadPriority, "log writer " + std::to_string(number));
                 const std::uint64_t first = own.logEnded.get();
+                // After the tail is cut and before the next file opens, so a crash between the two
+                // leaves the symbol still new.
+                const std::span<const runtime::Instrument> instruments = directory->onShard(number);
+                own.emptiesPublished.reserve(own.newBooks.size());
+                for (const std::uint32_t slot : own.newBooks) {
+                    own.emptiesPublished.push_back(runtime::checkpointFileName(instruments[slot].symbol, first));
+                    runtime::publishEmptyCheckpoint(*logStorage, instruments[slot].symbol, settings.shards, number, first);
+                }
                 own.logName = runtime::logFileName(number, first);
-                writer.emplace(*housekeeping, number, *own.logRing, own.durable, first);
+                writer.emplace(*housekeeping, number, *own.logRing, own.durable, first, closedLog.get());
                 own.logMade = true;
             } catch (const runtime::LogStorageError& error) {
                 own.writerReady.set_exception(std::make_exception_ptr(Refusal{error.what()}));
@@ -385,6 +425,47 @@ namespace order_book::network {
                     shard->writerBell.ring();
                 }
                 shard->writerThread.join();
+            }
+        }
+
+        // Once every shard is ready, so each new instrument's checkpoint stands: a ShardRoller per shard,
+        // reading its books' checkpoints, then each worker's thread, which rolls only once released.
+        // A storage failure or a thread that can't start refuses the start.
+        void Engine::startRollWorkers() {
+            const std::uint32_t workers = settings.rollWorkers;
+            for (std::uint32_t worker = 0; worker < workers; ++worker) {
+                std::vector<std::uint32_t> own;
+                for (std::uint32_t shard = worker; shard < settings.shards; shard += workers) {
+                    own.push_back(shard);
+                }
+                try {
+                    rollWorkers.push_back(std::make_unique<runtime::RollWorker>(*logStorage, *directory, *closedLog, std::move(own),
+                                                                               [this](const std::string& line) {
+                                                                                   const std::lock_guard<std::mutex> held(diagnosticsLock);
+                                                                                   diagnostics << prefix << line << std::endl;
+                                                                               }));
+                } catch (const runtime::LogStorageError& error) {
+                    throw Refusal{error.what()};
+                }
+            }
+            for (std::uint32_t worker = 0; worker < workers; ++worker) {
+                rollThreads.emplace_back([this, worker] {
+                    gatewaysReleased.wait(false, std::memory_order_seq_cst);
+                    rollWorkers[worker]->run();
+                });
+            }
+        }
+
+        // After the log writers, so the last file closed is the last one rolled; a pass under way
+        // finishes first, and none starts once the ClosedLog stops.
+        void Engine::joinRollWorkers() {
+            if (closedLog) {
+                closedLog->stop();
+            }
+            for (std::thread& thread : rollThreads) {
+                if (thread.joinable()) {
+                    thread.join();
+                }
             }
         }
 
@@ -419,6 +500,29 @@ namespace order_book::network {
             }
             housekeeping = std::make_unique<runtime::Housekeeping>(*logStorage, *directory, settings.durability, settings.logFileSize);
             logFiles = std::move(survey.shards);
+            // A listed instrument with no checkpoint, named in no log header, is new. Until
+            // checkpoints are recovered from (D5), one a header names but no checkpoint holds is
+            // rolled from the first file that names it.
+            std::vector<runtime::Symbol> checkpointed;
+            for (const std::string& name : logStorage->names()) {
+                if (const std::optional<runtime::CheckpointFileNameParts> parts = runtime::parseCheckpointFileName(name);
+                    parts && !parts->temporary) {
+                    checkpointed.push_back(parts->symbol);
+                }
+            }
+            std::sort(checkpointed.begin(), checkpointed.end());
+            newBooks.resize(settings.shards);
+            for (std::uint32_t shard = 0; shard < settings.shards; ++shard) {
+                const std::span<const runtime::Instrument> instruments = directory->onShard(shard);
+                for (std::uint32_t slot = 0; slot < instruments.size(); ++slot) {
+                    const runtime::Symbol& symbol = instruments[slot].symbol;
+                    if (!std::binary_search(survey.named.begin(), survey.named.end(), symbol) &&
+                        !std::binary_search(checkpointed.begin(), checkpointed.end(), symbol)) {
+                        newBooks[shard].push_back(slot);
+                    }
+                }
+            }
+            closedLog = std::make_unique<runtime::ClosedLog>(settings.shards);
         }
 
         void Engine::startShards() {
@@ -431,6 +535,7 @@ namespace order_book::network {
                                                                 logged ? settings.logRing : 0));
                 if (logged) {
                     shards.back()->logFiles = std::move(logFiles[number]);
+                    shards.back()->newBooks = std::move(newBooks[number]);
                     shards.back()->logEnded = shards.back()->recovered.get_future();
                 }
                 started.push_back(shards.back()->ready.get_future());
@@ -539,6 +644,9 @@ namespace order_book::network {
                     diagnostics << prefix << "shard " << number << ": recovered books=" << recovered.warmed.size()
                                 << " replayed=" << recovered.replayed << " tail-cut-bytes=" << recovered.tailCutBytes << std::endl;
                 }
+            }
+            if (closedLog) {
+                startRollWorkers();
             }
             if (housekeeping) {
                 // Made before ready, so a thread that can't start refuses it, but making nothing
@@ -658,13 +766,17 @@ namespace order_book::network {
             }
             // Each has written the rest, cut, flushed, and closed its file by now, or is about to.
             joinLogWriters();
+            joinRollWorkers();
             finishHousekeeping();
             writeStopReport();
             return EngineExit::CLEAN_STOP;
         }
 
         EngineExit Engine::forceStop(const std::string& why) {
-            diagnostics << prefix << why << std::endl;
+            {
+                const std::lock_guard<std::mutex> held(diagnosticsLock);  // a roll worker may still print
+                diagnostics << prefix << why << std::endl;
+            }
             // Whatever is still running is left to the process's exit: nothing here waits for it.
             forced = true;
             stop.onRequest({});
@@ -684,6 +796,11 @@ namespace order_book::network {
             if (housekeeper.joinable()) {
                 housekeeper.detach();  // its next files stay, headers with no records, for recovery
             }
+            for (std::thread& thread : rollThreads) {
+                if (thread.joinable()) {
+                    thread.detach();  // a checkpoint cut short is a .tmp, which the next start removes
+                }
+            }
             return EngineExit::FORCED_STOP;
         }
 
@@ -701,14 +818,34 @@ namespace order_book::network {
                      << " stops=" << book.capacity.stops << " levels=" << book.capacity.levels << " growths=" << book.growths << '\n';
                 growths += book.growths;
             }
+            // Each shard's roll-forward counts, from the worker that rolls it, joined by now.
+            std::vector<const runtime::ShardRoller*> rollers(shards.size(), nullptr);
+            for (const std::unique_ptr<runtime::RollWorker>& worker : rollWorkers) {
+                for (std::size_t index = 0; index < worker->shards().size(); ++index) {
+                    rollers[worker->shards()[index]] = &worker->roller(index);
+                }
+            }
+            std::uint64_t writesFailed = 0;
+            std::uint64_t passesLost = 0;
             for (std::uint32_t number = 0; number < shards.size(); ++number) {
                 text << "shard " << number << ":";
                 if (shards[number]->logRing) {
                     text << " log-end=" << shards[number]->logEnd;
                 }
-                text << " result-growths=" << shards[number]->resultGrowths << '\n';
+                text << " result-growths=" << shards[number]->resultGrowths;
+                if (const runtime::ShardRoller* roller = rollers[number]) {
+                    text << " checkpoint-writes-failed=" << roller->counts().writesFailed << " passes-lost=" << roller->counts().passesLost
+                         << " files-behind=" << roller->filesBehind();
+                    writesFailed += roller->counts().writesFailed;
+                    passesLost += roller->counts().passesLost;
+                }
+                text << '\n';
             }
-            text << "total: books=" << books.size() << " capacity-growths=" << growths << '\n';
+            text << "total: books=" << books.size() << " capacity-growths=" << growths;
+            if (!rollWorkers.empty()) {
+                text << " checkpoint-writes-failed=" << writesFailed << " passes-lost=" << passesLost;
+            }
+            text << '\n';
             report << text.str() << std::flush;
         }
     }  // namespace

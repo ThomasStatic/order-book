@@ -50,6 +50,7 @@ namespace order_book::runtime {
         Durability durability = Durability::MACHINE;
         std::size_t logFileSize = defaultLogFileBytes;  // the most bytes per log file
         std::size_t logRing = defaultLogRingRecords;  // records per shard
+        std::uint32_t rollWorkers = 1;  // roll-forward worker threads, each rolling every --roll-workers-th shard
         std::vector<std::uint32_t> pinMatching;    // a core per shard, in shard order; empty is off
         std::vector<std::uint32_t> pinGateway;     // a core per gateway thread; empty is off
         std::vector<std::uint32_t> pinLogWriters;  // a core per shard's log writer; empty is off

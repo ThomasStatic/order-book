@@ -51,6 +51,9 @@ namespace order_book::runtime {
     struct LogSurvey {
         std::vector<std::vector<LogFileEntry>> shards;  // by shard, one per shard of the directory
         std::vector<std::string> temporaries;
+        // Every symbol some log file's header names, sorted: an instrument named nowhere, and with
+        // no checkpoint, is new.
+        std::vector<Symbol> named;
     };
 
     // Recovery's start on the main thread, once the caller holds the storage's lock, before any

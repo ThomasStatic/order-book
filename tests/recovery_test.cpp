@@ -186,6 +186,7 @@ void testNothingToRecover() {
     const LogSurvey survey = surveyLog(storage, directory);
     expect(survey.shards.size() == 2 && survey.shards[0].empty() && survey.shards[1].empty() && survey.temporaries.empty(),
            "an empty directory holds nothing for either shard");
+    expect(survey.named.empty(), "and names no symbol");
     Shard shard(directory, 0);
     const RecoveredShard recovered = recoverShard(storage, directory, survey.shards[0], shard, defaultBookCapacity, running);
     expect(recovered.replayed == 0 && recovered.tailCutBytes == 0 && recovered.filesRemoved == 0, "and a shard recovers nothing");
@@ -205,6 +206,8 @@ void testACleanLogReplays() {
     const LogSurvey survey = surveyLog(storage, directory);
     expect(survey.shards[0].size() == 4 && survey.shards[0][3] == LogFileEntry{logFileName(0, 24), 24} && survey.shards[1].empty(),
            "the survey finds shard 0's files in order, each at its first position");
+    expect(survey.named == std::vector<Symbol>{*Symbol::parse("AAPL"), *Symbol::parse("MSFT")},
+           "and the symbols their headers name, sorted, once each: shard 0's, not IBM");
 
     Shard shard(directory, 0);
     const RecoveredShard recovered = recoverShard(storage, directory, survey.shards[0], shard, defaultBookCapacity, running);

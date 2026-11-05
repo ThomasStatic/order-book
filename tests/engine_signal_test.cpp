@@ -262,7 +262,7 @@ void testEachStopSignalStopsCleanly() {
         const ExitStatus status = child.wait(30s);
         expect(!status.killed && status.code == 0, std::string(nameOf(signal)) + " stops cleanly with exit 0, not " + described(status) +
                                                        ", with stderr:\n" + child.standardError());
-        expect(plain(child.standardOutput()).ends_with("\ntotal: books=2 capacity-growths=0\n"),
+        expect(plain(child.standardOutput()).ends_with("\ntotal: books=2 capacity-growths=0 checkpoint-writes-failed=0 passes-lost=0\n"),
                std::string(nameOf(signal)) + " then prints the stop report:\n" + child.standardOutput());
     }
     std::filesystem::remove(list);
@@ -428,7 +428,7 @@ void testASecondStopForcesIt() {
                                  (ended ? "ended" : "failed") + ", with stdout:\n" + child.standardOutput() + "\nand stderr:\n" +
                                  child.standardError();
 #ifdef _WIN32
-        expect(clean.code == 0 && answered == commands && ended && plain(child.standardOutput()).ends_with("\ntotal: books=2 capacity-growths=0\n"),
+        expect(clean.code == 0 && answered == commands && ended && plain(child.standardOutput()).ends_with("\ntotal: books=2 capacity-growths=0 checkpoint-writes-failed=0 passes-lost=0\n"),
                "a stop not held must be a clean one that answered everything: " + what);
         std::cout << "the system took every answer, so the clean stop wasn't held and a second stop wasn't tried" << std::endl;
         std::filesystem::remove(list);

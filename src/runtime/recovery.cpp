@@ -164,7 +164,10 @@ namespace order_book::runtime {
         }
         for (const Found& file : found) {
             survey.shards[file.name.shard].push_back(LogFileEntry{file.file, file.name.firstPosition});
+            survey.named.insert(survey.named.end(), file.header.symbols.begin(), file.header.symbols.end());
         }
+        std::sort(survey.named.begin(), survey.named.end());
+        survey.named.erase(std::unique(survey.named.begin(), survey.named.end()), survey.named.end());
         return survey;
     }
 

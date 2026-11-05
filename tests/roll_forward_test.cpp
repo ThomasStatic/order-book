@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -12,6 +13,7 @@
 #include <stdlib.h>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -20,6 +22,7 @@
 #include "order_book/command_log.hpp"
 #include "order_book/order_book.hpp"
 #include "order_book/runtime/checkpoint.hpp"
+#include "order_book/runtime/closed_log.hpp"
 #include "order_book/runtime/log_files.hpp"
 #include "order_book/runtime/log_storage.hpp"
 #include "order_book/runtime/log_writer.hpp"
@@ -322,6 +325,42 @@ private:
     LogStorage& held;
 };
 
+// A store that records every name opened.
+class OpenRecordingStorage final : public LogStorage {
+public:
+    explicit OpenRecordingStorage(LogStorage& inner) : held(inner) {}
+
+    std::unique_ptr<StorageLock> lock() override { return held.lock(); }
+    std::vector<std::string> names() const override { return held.names(); }
+    std::unique_ptr<LogFile> open(const std::string& name) override {
+        opened.push_back(name);
+        return held.open(name);
+    }
+    std::unique_ptr<LogFile> create(const std::string& name, Durability durability) override { return held.create(name, durability); }
+    void remove(const std::string& name) override { held.remove(name); }
+    std::string describe(const std::string& name) const override { return held.describe(name); }
+
+    std::vector<std::string> opened;
+
+private:
+    LogStorage& held;
+};
+
+// The log writer's file and the one made ahead are never opened: on Windows a file has one handle.
+void testOnlyClosedFilesAreOpened() {
+    const InstrumentDirectory directory = directoryOf();
+    InMemoryLogStorage storage;
+    writeLog(storage, directory, commandsFor(commandCount));
+    OpenRecordingStorage recording(storage);
+    ShardRoller roller(recording, directory, 0, [](const std::string&) {});
+    roller.roll(99);
+    for (const std::string& name : recording.opened) {
+        expect(name != logFileName(0, 75) && name != logFileName(0, 100), "an open file is never opened: " + name);
+    }
+    expect(std::find(recording.opened.begin(), recording.opened.end(), logFileName(0, 50)) != recording.opened.end(),
+           "a closed one is");
+}
+
 void testAReadBackThatDiffersIsNotPublished() {
     CheckpointHeader header;
     header.shardCount = 1;
@@ -476,6 +515,95 @@ void testACrashAtEveryStepOfPublishing() {
     expect(sawTemporary > 0, "some crash left a .tmp to remove");
 }
 
+// ---- The worker ------------------------------------------------------------------------------
+
+// The log writer says where it started and where each file it fills ends, once flushed and closed.
+void testTheWriterSaysWhatClosed() {
+    const InstrumentDirectory directory = directoryOf();
+    InMemoryLogStorage storage;
+    ClosedLog closed(2);
+    Housekeeping housekeeping(storage, directory, Durability::PROCESS, fileBytesFor(directory));
+    Ring<LogEntry> ring(4096);
+    DurablePosition durable(0);
+    LogWriter writer(housekeeping, 0, ring, durable, 0, &closed);
+    expect(closed.end(0) == 0 && closed.generation() == 1, "the writer says where it starts");
+    const std::vector<Placed> commands = commandsFor(60);
+    for (const Placed& placed : commands) {
+        expect(ring.tryPush(LogEntry{placed.command, placed.slot, ControlKind::COMMAND}), "room in the log ring");
+    }
+    while (writer.pass() != 0 || housekeeping.pass() != 0) {
+    }
+    expect(closed.end(0) == 50 && closed.generation() == 3, "and each full file's end: 25, then 50, with 60 written");
+    const std::optional<InMemoryLogStorage::File> second = storage.file(logFileName(0, 25));
+    expect(second && second->closed && second->sizeOnDrive == second->size, "a file said closed is flushed and closed");
+    expect(closed.end(1) == 0, "another shard's end is its own");
+}
+
+// A worker's pass rolls each of its shards to what the log says is closed.
+void testAWorkerPassRollsWhatClosed() {
+    const InstrumentDirectory directory = directoryOf();
+    InMemoryLogStorage storage;
+    writeLog(storage, directory, commandsFor(commandCount));
+    InMemoryLogStorage reference(storage.contents());
+    rollerOf(reference, directory).roll(commandCount);
+
+    ClosedLog closed(2);
+    RollWorker worker(storage, directory, closed, {0, 1}, [](const std::string&) {});
+    closed.started(0, 60);  // as a writer starting at 60 says: the files before it are closed
+    expect(worker.pass() == 2 && worker.roller(0).position(0) == 50, "the files closed by 60");
+    closed.closed(0, 100);
+    expect(worker.pass() == 2 && worker.roller(0).position(0) == 100 && worker.roller(1).counts().passes == 0, "then the rest");
+    expect(filesOf(storage) == filesOf(reference), "the store a roller makes");
+}
+
+// A worker on its own thread follows a writer as files close, and stops when told.
+void testAWorkerThreadFollowsTheLog() {
+    const InstrumentDirectory directory = directoryOf();
+    const std::vector<Placed> commands = commandsFor(commandCount);
+    InMemoryLogStorage storage;
+    InMemoryLogStorage reference;
+    writeLog(reference, directory, commands);
+    rollerOf(reference, directory).roll(commandCount);
+
+    ClosedLog closed(2);
+    Housekeeping housekeeping(storage, directory, Durability::MACHINE, fileBytesFor(directory));
+    Ring<LogEntry> ring(4096);
+    DurablePosition durable(0);
+    LogWriter writer(housekeeping, 0, ring, durable, 0, &closed);
+    RollWorker worker(storage, directory, closed, {0}, [](const std::string&) {});
+    std::thread thread([&worker] { worker.run(); });
+    for (const Placed& placed : commands) {
+        expect(ring.tryPush(LogEntry{placed.command, placed.slot, ControlKind::COMMAND}), "room in the log ring");
+        while (writer.pass() != 0 || housekeeping.pass() != 0) {
+        }
+    }
+    const std::string last = checkpointFileName(symbolOf("QUIET"), 100);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    for (;;) {
+        const std::vector<std::string> names = storage.names();
+        if (std::find(names.begin(), names.end(), last) != names.end() || std::chrono::steady_clock::now() > deadline) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    closed.stop();
+    thread.join();
+    expect(worker.roller(0).position(2) == 100, "the worker rolled every file as it closed");
+    std::map<std::string, Bytes> checkpoints;
+    for (const auto& [name, bytes] : filesOf(storage)) {
+        if (parseCheckpointFileName(name)) {
+            checkpoints.emplace(name, bytes);
+        }
+    }
+    std::map<std::string, Bytes> expected;
+    for (const auto& [name, bytes] : filesOf(reference)) {
+        if (parseCheckpointFileName(name)) {
+            expected.emplace(name, bytes);
+        }
+    }
+    expect(checkpoints == expected, "the same checkpoints as a roll after the fact");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -495,10 +623,14 @@ int main(int argc, char** argv) {
         testTheProofRefusesABadImage();
         testPublishing();
         testAReadBackThatDiffersIsNotPublished();
+        testOnlyClosedFilesAreOpened();
         testAnExtraCheckpointGoesAtStart();
         testRollingAShard();
         testAFailedWriteWaits();
         testACrashAtEveryStepOfPublishing();
+        testTheWriterSaysWhatClosed();
+        testAWorkerPassRollsWhatClosed();
+        testAWorkerThreadFollowsTheLog();
     } catch (const std::exception& error) {
         std::cerr << "FAILED: unexpected exception: " << error.what() << std::endl;
         return EXIT_FAILURE;

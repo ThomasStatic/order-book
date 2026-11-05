@@ -10,15 +10,19 @@
 namespace order_book::runtime {
 
     LogWriter::LogWriter(Housekeeping& maker, std::uint32_t shardNumber, Ring<LogEntry>& logRing, DurablePosition& durablePosition,
-                         std::uint64_t firstPosition)
+                         std::uint64_t firstPosition, ClosedLog* closedFiles)
         : housekeeping(maker),
           ring(logRing),
           durable(durablePosition),
+          closedLog(closedFiles),
           shard(shardNumber),
           symbols(maker.shape(shardNumber).header.symbols),
           buffer(mostRecordsPerWrite * replay::logRecordBytes),
           next(firstPosition) {
         begin(maker.first(shardNumber, firstPosition));
+        if (closedLog != nullptr) {
+            closedLog->started(shard, firstPosition);  // every file before this one is closed
+        }
     }
 
     void LogWriter::begin(MadeLogFile&& made) {
@@ -86,6 +90,9 @@ namespace order_book::runtime {
                 file->flush();
                 file->close();
                 file.reset();
+                if (closedLog != nullptr) {
+                    closedLog->closed(shard, next);  // for the roll-forward workers
+                }
             }
             if (stopping) {
                 if (file) {

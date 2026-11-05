@@ -1,8 +1,10 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -10,6 +12,7 @@
 #include <vector>
 
 #include "order_book/runtime/checkpoint.hpp"
+#include "order_book/runtime/closed_log.hpp"
 #include "order_book/runtime/instruments.hpp"
 #include "order_book/runtime/log_storage.hpp"
 #include "order_book/symbol.hpp"
@@ -48,6 +51,12 @@ namespace order_book::runtime {
     // leaving every checkpoint already published in place.
     void publishCheckpoint(LogStorage& storage, const CheckpointHeader& header, std::span<const std::byte> image);
 
+    // A new instrument's checkpoint (spec #58): an empty book at the shard's recovered log end,
+    // published after the tail is cut and before the next file opens, so "never checkpointed" is
+    // not a case. Throws as publishCheckpoint does.
+    void publishEmptyCheckpoint(LogStorage& storage, const Symbol& symbol, std::uint32_t shardCount, std::uint32_t shard,
+                                std::uint64_t position);
+
     // What a shard's roll forward has done since it was made.
     struct RollCounts {
         std::uint64_t passes = 0;          // closed files rolled, each publishing its books
@@ -77,8 +86,9 @@ namespace order_book::runtime {
         // where a file is closed once the next one starts at or before closedEnd. A book whose
         // checkpoint failed to publish waits for the next call. A bad_alloc discards that pass's
         // books, is counted, and ends the call; the next call makes the pass again from the last
-        // good checkpoints. Returns the passes made.
-        std::size_t roll(std::uint64_t closedEnd);
+        // good checkpoints. With `stopping`, it stops between passes once that is set. Returns the
+        // passes made.
+        std::size_t roll(std::uint64_t closedEnd, const std::atomic<bool>* stopping = nullptr);
 
         // Closed files, up to the last roll's closedEnd, that some book still needs.
         std::size_t filesBehind() const noexcept { return behind; }
@@ -98,12 +108,13 @@ namespace order_book::runtime {
         struct LogFileInfo {
             std::string name;
             std::uint64_t firstPosition = 0;
+            std::uint64_t endPosition = 0;  // the next file's first
             std::uint64_t headerBytes = 0;
             std::uint32_t shardCount = 0;
             std::vector<std::uint32_t> slots;  // the books its header lists, by slot
         };
 
-        void readLogFiles();
+        void readLogFiles(std::uint64_t closedEnd);
         void pass(const LogFileInfo& file, std::uint64_t end, const std::vector<bool>& needs);
         bool standsAt(std::uint32_t slot, const LogFileInfo& file) const;
         void removeSuperseded(std::uint32_t slot);
@@ -115,9 +126,34 @@ namespace order_book::runtime {
         std::vector<Kept> kept;              // by slot
         // By slot, where a book with no checkpoint stands: the first file whose header lists it.
         std::vector<std::optional<std::uint64_t>> firstListing;
-        std::vector<LogFileInfo> files;      // this shard's, by first position
+        std::vector<LogFileInfo> files;      // this shard's closed ones, by first position
         std::size_t behind = 0;
         RollCounts totals;
+    };
+
+    // A roll-forward worker (--roll-workers): its shards' rollers, made on the thread that starts
+    // the engine, rolled on the worker's own thread whenever a log writer closes a file. Nothing
+    // here touches a live book.
+    class RollWorker {
+    public:
+        // Makes a ShardRoller per shard, so a leftover .tmp goes and each book's checkpoints are
+        // read before the worker runs. A storage failure throws LogStorageError.
+        RollWorker(LogStorage& storage, const InstrumentDirectory& directory, const ClosedLog& closed, std::vector<std::uint32_t> shards,
+                   ShardRoller::Report report);
+
+        // One roll of each of its shards, at the end its log writer last closed. Returns the passes.
+        std::size_t pass();
+
+        // Passes until the ClosedLog stops: once, then each time a file closes.
+        void run();
+
+        const std::vector<std::uint32_t>& shards() const noexcept { return mine; }
+        const ShardRoller& roller(std::size_t index) const { return *rollers.at(index); }
+
+    private:
+        const ClosedLog& closed;
+        std::vector<std::uint32_t> mine;
+        std::vector<std::unique_ptr<ShardRoller>> rollers;  // by index in mine
     };
 
 }  // namespace order_book::runtime

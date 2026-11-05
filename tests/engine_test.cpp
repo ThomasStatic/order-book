@@ -264,6 +264,13 @@ void testRefusals() {
     settings = settingsFor(good, 1);
     settings.gatewayThreads = 0;
     expect(refusedWith(settings, "--gateway-threads must be at least 1") == EngineExit::START_REFUSED, "no gateway thread");
+    settings = settingsFor(good, 1);
+    settings.rollWorkers = 0;
+    expect(refusedWith(settings, "--roll-workers must be from 1 to the 1 shard, not 0") == EngineExit::START_REFUSED, "no roll worker");
+    settings = settingsFor(good, 2);
+    settings.rollWorkers = 3;
+    expect(refusedWith(settings, "--roll-workers must be from 1 to the 2 shards, not 3") == EngineExit::START_REFUSED,
+           "more roll workers than shards, each of which one worker rolls");
 
     const TcpSocket taken = TcpSocket::listenLoopback(0);
     settings = settingsFor(good, 1);
@@ -370,9 +377,24 @@ std::vector<std::string> filesIn(const std::filesystem::path& directory) {
 }
 
 // The log files alone, without the lock file, which a start that took the lock leaves for good.
-std::vector<std::string> logsIn(const std::filesystem::path& directory) {
+// Everything a run left but the lock.
+std::vector<std::string> storeIn(const std::filesystem::path& directory) {
     std::vector<std::string> names = filesIn(directory);
     std::erase(names, "engine.lock");
+    return names;
+}
+
+// The log files alone.
+std::vector<std::string> logsIn(const std::filesystem::path& directory) {
+    std::vector<std::string> names = storeIn(directory);
+    std::erase_if(names, [](const std::string& name) { return !name.ends_with(".oblog"); });
+    return names;
+}
+
+// The checkpoints alone.
+std::vector<std::string> checkpointsIn(const std::filesystem::path& directory) {
+    std::vector<std::string> names = storeIn(directory);
+    std::erase_if(names, [](const std::string& name) { return !name.starts_with("ckpt-"); });
     return names;
 }
 
@@ -422,12 +444,14 @@ void testALoggedRun() {
         run.stop.request();
         expect(run.finish() == EngineExit::CLEAN_STOP, "a logged run stops cleanly");
         const std::string report = run.report.text();
-        expect(report.find("shard 0: log-end=3 result-growths=0\nshard 1: log-end=5 result-growths=0\n") != std::string::npos,
+        expect(report.find("shard 0: log-end=3 result-growths=0 checkpoint-writes-failed=0 passes-lost=0 files-behind=0\nshard 1: log-end=5 result-growths=0 checkpoint-writes-failed=0 passes-lost=0 files-behind=0\n") != std::string::npos,
                "each shard's line gives where its log ends:\n" + report);
     }
     const std::vector<std::string> expected{"log-0000-00000000000000000000.oblog", "log-0001-00000000000000000000.oblog"};
     expect(logsIn(logs) == expected, "one log per shard, named for its first position");
-    expect(filesIn(logs).size() == 3 && std::filesystem::file_size(logs / "engine.lock") == 0, "and the lock file, empty");
+    expect(checkpointsIn(logs) == std::vector<std::string>{"ckpt-AAPL-00000000000000000000.obckpt", "ckpt-MSFT-00000000000000000000.obckpt"},
+           "and each new instrument's empty-book checkpoint, where the log began; no file closed, so no other");
+    expect(filesIn(logs).size() == 5 && std::filesystem::file_size(logs / "engine.lock") == 0, "and the lock file, empty");
     for (const auto& [name, symbol, count] : {std::tuple{expected[0], "AAPL", 3U}, std::tuple{expected[1], "MSFT", 5U}}) {
         const replay::ReplayInput input = replay::readCommandLogFile(logs / name);
         expect(!input.error, name + " reads to its end, with no torn tail");
@@ -466,7 +490,10 @@ void testALoggedRun() {
                                 "order_book_engine: shard 1: recovered books=1 replayed=5 tail-cut-bytes=0\n") != std::string::npos,
                "each shard says what it recovered, in shard order:\n" + diagnostics);
         const std::string report = run.report.text();
-        expect(report.find("shard 0: log-end=5 result-growths=0\nshard 1: log-end=6 result-growths=0\n") != std::string::npos,
+        // The first run's files are closed now, and the worker may not have reached them by the
+        // stop, since until D6 a clean stop does not roll what is left.
+        expect(report.find("shard 0: log-end=5 result-growths=0 checkpoint-writes-failed=0 passes-lost=0 files-behind=") != std::string::npos &&
+                   report.find("\nshard 1: log-end=6 result-growths=0 checkpoint-writes-failed=0 passes-lost=0 files-behind=") != std::string::npos,
                "and each log goes on from where it ended:\n" + report);
         // MSFT declares room for 2 orders and holds 5 on 1 level, so recovery warms it to 8
         // orders, its own 3 stops, and its own 4 levels, more than 1.5 times its 1.
@@ -580,7 +607,10 @@ void testALoggedRunAcrossFiles() {
         run.stop.request();
         expect(run.finish() == EngineExit::CLEAN_STOP, "a run across files stops cleanly");
         const std::string report = run.report.text();
-        expect(report.find("shard 0: log-end=4 result-growths=0\nshard 1: log-end=5 result-growths=0\n") != std::string::npos,
+        // Until a clean stop rolls what is left (D6), a file closed just before the stop may not
+        // be rolled, so how many are behind depends on the worker.
+        expect(report.find("shard 0: log-end=4 result-growths=0 checkpoint-writes-failed=0 passes-lost=0 files-behind=") != std::string::npos &&
+                   report.find("\nshard 1: log-end=5 result-growths=0 checkpoint-writes-failed=0 passes-lost=0 files-behind=") != std::string::npos,
                "each shard's line gives where its log ends:\n" + report);
     }
     const std::vector<std::string> expected{"log-0000-00000000000000000000.oblog", "log-0000-00000000000000000002.oblog",
@@ -657,7 +687,7 @@ void testLogRefusals() {
     WatchedStream report;
     WatchedStream diagnostics;
     expect(runEngine(settings, stop, report, diagnostics) == EngineExit::STOPPED_BEFORE_READY, "a logged stop before ready exits 6");
-    expect(logsIn(logs).empty(), "and leaves no log, since nothing ran");
+    expect(storeIn(logs).empty(), "and leaves no log or checkpoint, since nothing ran");
     std::filesystem::remove_all(logs);
     std::filesystem::remove(list);
 }

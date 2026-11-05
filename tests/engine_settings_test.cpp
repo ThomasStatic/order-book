@@ -78,6 +78,7 @@ void testTheRequiredFlagsAndTheDefaults() {
     expect(settings.durability == Durability::MACHINE && settings.logRing == 65536 && settings.pinLogWriters.empty(),
            "written through to the drive, through a ring of 65,536 records, unpinned");
     expect(settings.logFileSize == 256 * 1024 * 1024, "in files of 256 MiB");
+    expect(settings.rollWorkers == 1, "one roll-forward worker");
 
     for (const std::string_view missing : {"--instruments", "--shards", "--listen", "--log-dir"}) {
         std::vector<std::string_view> args;
@@ -111,6 +112,8 @@ void testEveryFlag() {
     expect(logged.durability == Durability::PROCESS, "process durability");
     expect(logged.logRing == 1024, "the log ring, a size like any ring's");
     expect(logged.logFileSize == 3 * 1024 * 1024, "the log file size, a size");
+    expect(parsed(required({"--roll-workers", "3"})).rollWorkers == 3, "the roll-forward workers, a count");
+    expect(usage(required({"--roll-workers", "some"})) == "--roll-workers needs a number, not 'some'", "and nothing else");
     expect(usage(required({"--log-file-size", "big"})) == "--log-file-size needs a size: digits, then K, M, or G if you like, not 'big'",
            "and nothing else");
     expect(parsed(required({"--durability", "machine"})).durability == Durability::MACHINE, "machine, said outright");
@@ -193,7 +196,7 @@ void testTheRunsRecordGivesTheSameRun() {
     expect(line ==
                "--instruments list.csv --shards 2 --listen 127.0.0.1:0 --command-ring 4096 --response-ring 16384 --spin-window unlimited "
                "--capacity-orders 4096 --capacity-stops 1024 --capacity-levels 256 --max-connections 64 --gateway-threads 1 --high-water-mark 64K "
-               "--hard-limit 16M --stop-grace 1500ms --log-dir logs --durability machine --log-file-size 256M --log-ring 65536 "
+               "--hard-limit 16M --stop-grace 1500ms --log-dir logs --durability machine --log-file-size 256M --log-ring 65536 --roll-workers 1 "
                "--thread-priority normal "
                "--stop-on-stdin-close",
            "the record names every flag:\n" + line);
@@ -204,10 +207,12 @@ void testTheRunsRecordGivesTheSameRun() {
 
     const EngineSettings placed =
         parsed(required({"--pin-matching", "2,0", "--pin-gateway", "1,3", "--thread-priority", "high", "--gateway-threads", "2", "--log-dir",
-                         "logs", "--durability", "process", "--log-ring", "256", "--pin-log-writers", "4,4", "--log-file-size", "1000"}));
+                         "logs", "--durability", "process", "--log-ring", "256", "--pin-log-writers", "4,4", "--log-file-size", "1000",
+                         "--roll-workers", "2"}));
     const std::string placedLine = formatEngineSettings(placed);
     expect(placedLine.find(" --max-connections 64 --gateway-threads 2 ") != std::string::npos, "the gateway threads print:\n" + placedLine);
-    expect(placedLine.ends_with("--stop-grace 5s --log-dir logs --durability process --log-file-size 1000 --log-ring 256 --pin-matching 2,0 "
+    expect(placedLine.ends_with("--stop-grace 5s --log-dir logs --durability process --log-file-size 1000 --log-ring 256 --roll-workers 2 "
+                                "--pin-matching 2,0 "
                                 "--pin-gateway 1,3 --pin-log-writers 4,4 --thread-priority high"),
            "the pins print only when set, and the directory, level, file size, ring, and priority always:\n" + placedLine);
     expect(line.find("--pin-") == std::string::npos && line.find("--thread-priority normal") != std::string::npos,

@@ -144,7 +144,7 @@ void testACleanStopOverStdin() {
     const ExitStatus status = child.wait(30s);
     expect(!status.killed && status.code == 0, "closing stdin stops it cleanly, with exit 0, not " + std::to_string(status.code));
     const std::string report = plain(child.standardOutput());
-    expect(report.find("\nstopped\nbook AAPL shard=") != std::string::npos && report.ends_with("total: books=2 capacity-growths=0\n"),
+    expect(report.find("\nstopped\nbook AAPL shard=") != std::string::npos && report.ends_with("total: books=2 capacity-growths=0 checkpoint-writes-failed=0 passes-lost=0\n"),
            "then prints its stop report:\n" + report);
     expect(child.standardError().starts_with("order_book_engine: --instruments "), "and its record went to stderr first");
     std::filesystem::remove(list);

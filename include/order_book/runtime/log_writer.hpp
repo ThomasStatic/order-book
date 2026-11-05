@@ -11,6 +11,7 @@
 
 #include "order_book/command.hpp"
 #include "order_book/command_log.hpp"
+#include "order_book/runtime/closed_log.hpp"
 #include "order_book/runtime/doorbell.hpp"
 #include "order_book/runtime/durable_position.hpp"
 #include "order_book/runtime/log_files.hpp"
@@ -45,9 +46,11 @@ namespace order_book::runtime {
         static constexpr std::size_t mostRecordsPerWrite = mostBytesPerWrite / replay::logRecordBytes;
 
         // Makes the shard's first file, named for its first position, header and placement
-        // included. A storage failure throws LogStorageError, which refuses a start.
+        // included. A storage failure throws LogStorageError, which refuses a start. With a
+        // ClosedLog, which must outlive it, it says where it starts, and where each file it
+        // fills ends once that file is flushed and closed.
         LogWriter(Housekeeping& housekeeping, std::uint32_t shard, Ring<LogEntry>& ring, DurablePosition& durable,
-                  std::uint64_t firstPosition = 0);
+                  std::uint64_t firstPosition = 0, ClosedLog* closedLog = nullptr);
 
         LogWriter(const LogWriter&) = delete;
         LogWriter& operator=(const LogWriter&) = delete;
@@ -79,6 +82,7 @@ namespace order_book::runtime {
         Housekeeping& housekeeping;
         Ring<LogEntry>& ring;
         DurablePosition& durable;
+        ClosedLog* closedLog;
         std::uint32_t shard;
         std::vector<Symbol> symbols;  // by slot
         std::string name;

@@ -97,7 +97,13 @@ On Windows, closing the console window, logging off, or shutting down starts the
 | 6 | Stopped before ready: `order_book_engine: stopped before ready` | Start again |
 | 8 | Forced stop: `order_book_engine: forced stop` | Start again: recovery does the rest |
 
-Code 7, a clean stop that couldn't publish a book, comes with checkpoints.
+### Checkpoints
+
+A checkpoint is one book's image at a position in its shard's log, `ckpt-<symbol>-<position, 20 digits>.obckpt` in the log directory ([`checkpoint-format.md`](checkpoint-format.md)). Matching never pauses for one: as each log file closes, a roll-forward worker restores the books that have commands in it from their last checkpoints, replays the file on them, proves each result restores to the same bytes, and publishes every book of the file's shard at the file's end, a book with no commands in it getting a new wrapper around the same image. `--roll-workers N`, 1 by default and at most `--shards`, sets how many workers there are, each rolling every N-th shard. Each book keeps its two newest checkpoints. A new instrument, one no checkpoint and no log file names, gets an empty-book checkpoint where its shard's log ends, before the next file opens. `order_book_cli checkpoint verify <file>` checks one, and `checkpoint describe <file>` prints its headers.
+
+A checkpoint that can't be written, the drive full for instance, prints `order_book_engine: shard 0: checkpoint <name> not published: <why>; <symbol> stays at its last checkpoint`, and trading goes on; that book is rolled again when the next file closes. A pass that runs out of memory prints that it was lost and is made again then too. Until recovery starts from checkpoints, in a later build, a start still replays every shard's whole log, and nothing deletes a log file.
+
+Code 7, a clean stop that couldn't publish a book, comes later, with the clean stop's comparison.
 
 ### The stop report
 
@@ -107,12 +113,12 @@ Code 7, a clean stop that couldn't publish a book, comes with checkpoints.
 stopped
 book AAPL shard=0 orders=4096 stops=1024 levels=256 growths=0
 book MSFT shard=1 orders=4096 stops=1024 levels=256 growths=2
-shard 0: log-end=12 result-growths=0
-shard 1: log-end=40 result-growths=0
-total: books=2 capacity-growths=2
+shard 0: log-end=12 result-growths=0 checkpoint-writes-failed=0 passes-lost=0 files-behind=0
+shard 1: log-end=40 result-growths=0 checkpoint-writes-failed=0 passes-lost=0 files-behind=0
+total: books=2 capacity-growths=2 checkpoint-writes-failed=0 passes-lost=0
 ```
 
-One `book` line per book, sorted by symbol, with the capacity it was warmed to and how many times it grew since ready, then a line per shard, with where its log ends, then the total last. A book that grew needs a larger capacity in the list or the defaults.
+One `book` line per book, sorted by symbol, with the capacity it was warmed to and how many times it grew since ready, then a line per shard, with where its log ends, how many of its checkpoints failed to publish, how many passes were lost to memory, and how many closed log files some book still needs rolled, then the total last. A clean stop doesn't yet roll what is left, so a file that closed just before it may show as behind; a count that grows from run to run means the workers can't keep up. A book that grew needs a larger capacity in the list or the defaults.
 
 ### An abort
 

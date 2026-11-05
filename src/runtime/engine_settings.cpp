@@ -14,7 +14,7 @@ namespace order_book::runtime {
             "                         [--capacity-orders N] [--capacity-stops N] [--capacity-levels N]\n"
             "                         [--max-connections N] [--gateway-threads M] [--high-water-mark SIZE] [--hard-limit SIZE]\n"
             "                         [--stop-grace TIME] [--stop-on-stdin-close]\n"
-            "                         [--durability machine|process] [--log-file-size SIZE] [--log-ring RECORDS]\n"
+            "                         [--durability machine|process] [--log-file-size SIZE] [--log-ring RECORDS] [--roll-workers N]\n"
             "                         [--pin-matching CORES] [--pin-gateway CORES] [--pin-log-writers CORES]\n"
             "                         [--thread-priority normal|high]\n"
             "       order_book_engine --help\n";
@@ -153,7 +153,7 @@ namespace order_book::runtime {
                                 : flag == "--log-file-size"   ? sizeFlag(settings.logFileSize)
                                 : flag == "--log-ring"        ? sizeFlag(settings.logRing)
                                                               : nullptr;
-            const bool known = size != nullptr || flag == "--instruments" || flag == "--shards" || flag == "--gateway-threads" || flag == "--listen" ||
+            const bool known = size != nullptr || flag == "--instruments" || flag == "--shards" || flag == "--gateway-threads" || flag == "--roll-workers" || flag == "--listen" ||
                                flag == "--spin-window" || flag == "--stop-grace" || flag == "--pin-matching" || flag == "--pin-gateway" ||
                                flag == "--pin-log-writers" || flag == "--thread-priority" || flag == "--log-dir" || flag == "--durability";
             if (!known) {
@@ -181,12 +181,13 @@ namespace order_book::runtime {
                     return needs(flag, "machine or process", value);
                 }
                 settings.durability = value == "machine" ? Durability::MACHINE : Durability::PROCESS;
-            } else if (flag == "--shards" || flag == "--gateway-threads") {
+            } else if (flag == "--shards" || flag == "--gateway-threads" || flag == "--roll-workers") {
                 const std::optional<std::uint64_t> count = parseDigits(value);
                 if (!count || *count > std::numeric_limits<std::uint32_t>::max()) {
                     return needs(flag, "a number", value);
                 }
-                (flag == "--shards" ? settings.shards : settings.gatewayThreads) = static_cast<std::uint32_t>(*count);
+                (flag == "--shards" ? settings.shards : flag == "--gateway-threads" ? settings.gatewayThreads : settings.rollWorkers) =
+                    static_cast<std::uint32_t>(*count);
             } else if (flag == "--listen") {
                 const std::optional<ListenAddress> address = parseListenAddress(value);
                 if (!address) {
@@ -270,6 +271,7 @@ namespace order_book::runtime {
         line += settings.durability == Durability::MACHINE ? " --durability machine" : " --durability process";
         line += " --log-file-size " + formatSize(settings.logFileSize);
         line += " --log-ring " + std::to_string(settings.logRing);
+        line += " --roll-workers " + std::to_string(settings.rollWorkers);
         if (!settings.pinMatching.empty()) {
             line += " --pin-matching " + formatCores(settings.pinMatching);
         }

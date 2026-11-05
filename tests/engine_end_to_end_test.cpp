@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -17,6 +18,7 @@
 #include "child_process.hpp"
 #include "order_book/command_log.hpp"
 #include "order_book/network/tcp.hpp"
+#include "order_book/runtime/checkpoint.hpp"
 #include "order_book/symbol.hpp"
 
 // order_book_cli send against a real order_book_engine, both child processes, compared byte for
@@ -270,10 +272,24 @@ void testManyInstrumentsAtOneAndThreeShards() {
         running.stop();
         expectLogReplaysTo(running, {"replay", file.string(), "--book"});
         std::size_t files = 0;
+        std::size_t checkpoints = 0;
         for (const fs::directory_entry& entry : fs::directory_iterator(running.logs)) {
             const std::string logName = entry.path().filename().string();
             if (logName == "engine.lock") {
                 continue;  // empty, and never deleted
+            }
+            if (logName.starts_with("ckpt-")) {
+                // What the roll-forward workers published as files closed: each whole and restoring.
+                std::ifstream in(entry.path(), std::ios::binary);
+                const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+                std::vector<std::byte> bytes(text.size());
+                std::transform(text.begin(), text.end(), bytes.begin(), [](char c) { return static_cast<std::byte>(c); });
+                const std::optional<runtime::CheckpointFault> fault = runtime::verifyCheckpoint(bytes);
+                expect(logName.ends_with(".obckpt") && !fault,
+                       running.name + ": " + logName + " is a checkpoint that verifies" +
+                           (fault ? ": " + runtime::formatCheckpointFault(logName, *fault) : std::string()));
+                ++checkpoints;
+                continue;
             }
             expect(logName.ends_with(".oblog"), running.name + ": only log files and the lock are left, not " + logName);
             const std::uintmax_t size = fs::file_size(entry.path());
@@ -281,6 +297,7 @@ void testManyInstrumentsAtOneAndThreeShards() {
             ++files;
         }
         expect(files > 20, running.name + ": the log rolled across many files, " + std::to_string(files));
+        expect(checkpoints >= 7, running.name + ": every book has a checkpoint, " + std::to_string(checkpoints));
     }
     // The one run at machine durability, every write through to the drive.
     Engine running("seven instruments on 3 shards and 2 gateway threads", symbolsIn(file), 3, 2, "machine");
