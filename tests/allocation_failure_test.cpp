@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <iostream>
 #include <list>
@@ -20,6 +21,36 @@ namespace {
 long allocationsBeforeFailure = -1;  // negative = disarmed
 long allocationCount = 0;            // every allocation, failed or not, for tests that count them
 long liveAllocations = 0;            // allocated and not yet freed, for tests that look for leaks
+
+// While tracking, each live allocation's address, size, and number (allocationCount when it
+// was made), so a leak can say which allocation it was. Plain storage: it must not allocate.
+struct TrackedAllocation {
+    void* memory;
+    std::size_t size;
+    long number;
+};
+constexpr std::size_t trackedCapacity = 4096;
+TrackedAllocation tracked[trackedCapacity];
+std::size_t trackedCount = 0;
+bool tracking = false;
+
+void track(void* memory, std::size_t size) noexcept {
+    if (tracking && trackedCount < trackedCapacity) {
+        tracked[trackedCount++] = TrackedAllocation{memory, size, allocationCount};
+    }
+}
+
+void untrack(void* memory) noexcept {
+    if (!tracking || memory == nullptr) {
+        return;
+    }
+    for (std::size_t i = 0; i < trackedCount; ++i) {
+        if (tracked[i].memory == memory) {
+            tracked[i] = tracked[--trackedCount];
+            return;
+        }
+    }
+}
 
 // MSVC's checked iterators allocate bookkeeping proxies inside noexcept container members
 // (e.g. vector's default constructor), so failing one calls std::terminate. The test only
@@ -43,6 +74,7 @@ void* operator new(std::size_t size) {
     }
     if (void* memory = std::malloc(size == 0 ? 1 : size)) {
         ++liveAllocations;
+        track(memory, size);
         return memory;
     }
     throw std::bad_alloc();
@@ -52,6 +84,7 @@ void operator delete(void* memory) noexcept {
     if (memory != nullptr) {
         --liveAllocations;
     }
+    untrack(memory);
     std::free(memory);
 }
 
@@ -59,6 +92,7 @@ void operator delete(void* memory, std::size_t) noexcept {
     if (memory != nullptr) {
         --liveAllocations;
     }
+    untrack(memory);
     std::free(memory);
 }
 
@@ -1034,10 +1068,14 @@ void testFailingRestoreLeaksNothing() {
     int failures = 0;
     for (long failAt = 0;; ++failAt) {
         const long liveBefore = liveAllocations;
+        const long numberBefore = allocationCount;
+        trackedCount = 0;
+        tracking = true;
         allocationsBeforeFailure = failAt;
         bool threw = false;
         try {
             auto restored = OrderBook::restore(image);
+            tracking = false;
             const bool triggered = allocationsBeforeFailure == -1;
             allocationsBeforeFailure = -1;
             expect(!triggered, "a restore that saw its allocation fail should have thrown");
@@ -1046,12 +1084,20 @@ void testFailingRestoreLeaksNothing() {
             std::get<OrderBook>(restored).writeImage(again);
             expect(again == image, "the restored book should write the same image");
         } catch (const std::bad_alloc&) {
+            tracking = false;
             allocationsBeforeFailure = -1;
             threw = true;
             ++failures;
         }
         // Read before the message is built, since building it allocates.
         const bool freedEverything = liveAllocations == liveBefore;
+        if (!freedEverything) {
+            // What is still live, numbered from the first allocation restore made.
+            for (std::size_t i = 0; i < trackedCount; ++i) {
+                std::fprintf(stderr, "still live: allocation %ld of %zu bytes\n", tracked[i].number - numberBefore,
+                             tracked[i].size);
+            }
+        }
         expect(freedEverything,
                "restore failing at allocation " + std::to_string(failAt) + " should free everything it took");
         if (!threw) {
