@@ -147,10 +147,11 @@ public:
     Engine(const Engine&) = delete;
     Engine& operator=(const Engine&) = delete;
 
-    // A clean stop, after every connection has gone.
-    void stop() {
+    // A clean stop, after every connection has gone. One that rolls many small files to its log's
+    // end, flushing each book's checkpoint each time, needs longer on a slow shared runner.
+    void stop(std::chrono::seconds allowed = 30s) {
         child->closeStdin();
-        const ExitStatus status = child->wait(30s);
+        const ExitStatus status = child->wait(allowed);
         expect(!status.killed && status.code == 0, name + ": closing stdin stops the engine with exit 0, not " +
                                                        std::to_string(status.code) + ", with stderr:\n" + child->standardError());
     }
@@ -586,7 +587,7 @@ void testOfflineCommands() {
                    "naming the lock: " + refused.err);
         }
     }
-    store.stop();
+    store.stop(180s);  // seven books' checkpoints on every one of the 4K files
     const std::vector<fs::path> files = logFilesIn(store.logs);
     expect(files.size() > 3, "the log spans several files: " + std::to_string(files.size()));
 
@@ -671,7 +672,7 @@ void testOfflineCommands() {
 
     // The engine starts on what is left, the log ending at 5.
     Engine restarted("offline restarted", symbols, 1, 1, "process", "4K", store.logs);
-    restarted.stop();
+    restarted.stop(180s);
     expect(plain(restarted.standardError()).find("shard 0: recovered books=7 replayed=5 ") != std::string::npos,
            "the start passes the cut, its log ending at 5:\n" + restarted.standardError());
     expectRun({"verify", "--log-dir", logs}, 0, "and verifies");
