@@ -19,7 +19,9 @@ With the Visual Studio generator, build and run the Release configuration: `cmak
 | `--log-dir DIR` | for durable-wait, round-trip, and raw-write, where each run makes a fresh directory for its log, deleted afterwards (default: the system's temporary directory) |
 | `--log-files extended\|zero-filled` | for durable-wait and raw-write, how files are made: extended (default), as the engine makes them, or zero-filled, every byte written as zeros and flushed before any record |
 | `--spin-window TIME\|unlimited` | for hand-off, round-trip, and idle-echo, how long the matching thread, the engine's threads, or the echo thread looks for work before it sleeps, as the engine's `--spin-window` (default `100us`; `0` always sleeps, `unlimited` never does). Hand-off rows record the matching thread's share of a core |
-| `--sockets poll\|completion-port\|epoll`, `--idle-connections N` | for idle-echo, how the echo thread waits (`poll`, the default, is WSAPoll on Windows; `completion-port` is Windows only and `epoll` Linux only), and the connections open beside the active one that never send (default 0) |
+| `--sockets poll\|completion-port\|epoll` | for idle-echo, how the echo thread waits (`poll`, the default, is WSAPoll on Windows; `completion-port` is Windows only and `epoll` Linux only) |
+| `--idle-connections N` | for idle-echo and round-trip, connections open beside the measured one that never send (default 0); a round trip's engine takes 63, filling a gateway thread's 64 |
+| `--roll-worker on\|off`, `--log-file-records N` | for durable-wait, a roll-forward worker rolling each file the log writer closes while the run goes on, from an empty book's checkpoint, and the records a file holds (default: the engine's 256 MiB), so files close during a run |
 | `--server-core N` | for idle-echo, pin the echo thread to this core; needed with `--pin-core` |
 | `--matching-core N` | for hand-off and round-trip, pin the matching thread to this core; needed with `--pin-core` |
 | `--gateway-core N`, `--receiver-core N` | for round-trip, pin the engine's gateway thread and the timetable's receiving thread; both needed with `--pin-core` |

@@ -1413,7 +1413,13 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
                     --workload small-book --commands 300 --runs 2 --warmup 0 --time response --discard-seconds 0
                     --durability process --noise-seconds 0 --allow-unoptimized
                     --out-dir ${CMAKE_CURRENT_BINARY_DIR}/latency-smoke-round-trip-response)
-        set_tests_properties(latency_cli_smoke_round_trip latency_cli_smoke_round_trip_response PROPERTIES
+        # The round trip beside idle connections the engine's gateway thread watches.
+        add_test(NAME latency_cli_smoke_round_trip_idle
+            COMMAND order_book_latency_benchmarks --interval round-trip --engine $<TARGET_FILE:order_book_engine>
+                    --idle-connections 8 --workload small-book --commands 300 --runs 2 --warmup 0 --discard-seconds 0
+                    --durability process --noise-seconds 0 --allow-unoptimized
+                    --out-dir ${CMAKE_CURRENT_BINARY_DIR}/latency-smoke-round-trip-idle)
+        set_tests_properties(latency_cli_smoke_round_trip latency_cli_smoke_round_trip_response latency_cli_smoke_round_trip_idle PROPERTIES
             LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
         # A real log writer on real files, closed-loop at machine, then the ladder at process.
         add_test(NAME latency_cli_smoke_durable_wait

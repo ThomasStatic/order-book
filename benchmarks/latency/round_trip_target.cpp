@@ -12,6 +12,9 @@ RoundTripTarget::RoundTripTarget(const benchmark::Workload& workload, const Roun
     clients.connect(engine_->port());
     clients.preload(benchmark::defaultGatewayWindow);
     link_ = clients.take(0);
+    for (std::size_t i = 0; i < setup.idleConnections; ++i) {
+        idle_.push_back(benchmark::connectLoopback(engine_->port()));
+    }
     records_ = benchmark::workloadRecords(workloads_.front(), benchmark::instrumentSymbol(0));
     frames_ = benchmark::commandFrames(records_, benchmark::instrumentSymbol(0));
     events_.reserve(64);
@@ -54,6 +57,7 @@ void RoundTripTarget::checkOutcome() {
     std::array<std::byte, 1024> into{};
     while (link_.socket.receive(into).status == network::ReadStatus::OPEN) {
     }
+    idle_.clear();  // closed, so the engine's stop waits on none of them
     engine_->stop();
     if (answered_ != records_.size()) {
         throw std::runtime_error("round trip: " + std::to_string(answered_) + " of " + std::to_string(records_.size()) +

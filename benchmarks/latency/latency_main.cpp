@@ -59,6 +59,7 @@ constexpr std::string_view usageText =
     "                                     [--priority normal|high] [--spin-window TIME|unlimited]\n"
     "                                     [--durability process|machine] [--log-dir DIR] [--log-files extended|zero-filled]\n"
     "                                     [--sockets poll|completion-port|epoll] [--idle-connections N]\n"
+    "                                     [--roll-worker on|off] [--log-file-records N]\n"
     "                                     [--engine PATH] [--discard-seconds N] [--machine-record FILE]\n"
     "                                     [--out-dir DIR] [--allow-unoptimized]\n"
     "       order_book_latency_benchmarks --help\n";
@@ -121,8 +122,13 @@ constexpr std::string_view helpText =
     "                       as zeros and flushed first\n"
     "  --sockets SET        for idle-echo, how the echo thread waits: poll (the default; WSAPoll on\n"
     "                       Windows), completion-port on Windows, or epoll on Linux\n"
-    "  --idle-connections N for idle-echo, connections open beside the active one that never send\n"
-    "                       (default 0)\n"
+    "  --idle-connections N for idle-echo and round-trip, connections open beside the active one\n"
+    "                       that never send (default 0; a round trip takes at most 63, filling\n"
+    "                       the engine's gateway thread's 64)\n"
+    "  --roll-worker WHICH  for durable-wait: on, a roll-forward worker rolling each file the log\n"
+    "                       writer closes while the run goes on, or off (the default)\n"
+    "  --log-file-records N for durable-wait: records a log file holds (default: the engine's\n"
+    "                       256 MiB), so files close, and a worker rolls them, during a run\n"
     "  --engine PATH        for round-trip, the order_book_engine to run (default: the one beside\n"
     "                       this program)\n"
     "  --discard-seconds N  for round-trip, commands sent in each run's first N seconds are sent\n"
@@ -158,7 +164,11 @@ struct Settings {
     bool logFilesGiven = false;
     latency::EchoSockets sockets = latency::EchoSockets::POLL;
     std::size_t idleConnections = 0;
-    bool echoGiven = false;  // --sockets or --idle-connections
+    bool echoGiven = false;  // --sockets
+    bool idleGiven = false;  // --idle-connections
+    bool rollWorker = false;
+    bool rollWorkerGiven = false;
+    std::optional<std::uint64_t> logFileRecords;
     // For DURABLE_WAIT and ROUND_TRIP: the engine's default level, and where each run's log goes.
     bench::RunDurability durability = bench::RunDurability::MACHINE;
     bool durabilityGiven = false;
@@ -252,11 +262,12 @@ std::optional<std::string> parseArguments(const std::vector<std::string_view>& a
         const bool textValue = arg == "--interval" || arg == "--time" || arg == "--workload" || arg == "--size" ||
                                arg == "--priority" || arg == "--machine-record" || arg == "--out-dir" || arg == "--engine" ||
                                arg == "--durability" || arg == "--log-dir" || arg == "--spin-window" || arg == "--log-files" ||
-                               arg == "--sockets";
+                               arg == "--sockets" || arg == "--roll-worker";
         const bool numberValue = arg == "--commands" || arg == "--runs" || arg == "--warmup" || arg == "--seed" ||
                                  arg == "--noise-seconds" || arg == "--pin-core" || arg == "--matching-core" ||
                                  arg == "--gateway-core" || arg == "--receiver-core" || arg == "--writer-core" ||
-                                 arg == "--discard-seconds" || arg == "--server-core" || arg == "--idle-connections" || arg == "--rate";
+                                 arg == "--discard-seconds" || arg == "--server-core" || arg == "--idle-connections" || arg == "--rate" ||
+                                 arg == "--log-file-records";
         if (!textValue && !numberValue) {
             return "unknown option '" + std::string(arg) + "'";
         }
@@ -291,13 +302,18 @@ std::optional<std::string> parseArguments(const std::vector<std::string_view>& a
                 settings.serverCore = static_cast<unsigned int>(*number);
             } else if (arg == "--idle-connections") {
                 settings.idleConnections = static_cast<std::size_t>(*number);
-                settings.echoGiven = true;
+                settings.idleGiven = true;
             } else if (*number == 0) {
                 return std::string(arg) + " must be at least 1";
             } else if (arg == "--runs") {
                 settings.runs = static_cast<std::size_t>(*number);
             } else if (arg == "--rate") {
                 settings.rate = static_cast<double>(*number);
+            } else if (arg == "--log-file-records") {
+                if (*number > 100'000'000) {
+                    return "--log-file-records takes at most 100000000, past which a file is past the engine's own";
+                }
+                settings.logFileRecords = *number;
             } else {
                 settings.size = "custom";
                 settings.commands = static_cast<std::size_t>(*number);
@@ -324,6 +340,12 @@ std::optional<std::string> parseArguments(const std::vector<std::string_view>& a
                 }
                 settings.spinWindow = *window;
                 settings.spinWindowGiven = true;
+            } else if (arg == "--roll-worker") {
+                if (value != "on" && value != "off") {
+                    return "unknown --roll-worker '" + std::string(value) + "' (known: on, off)";
+                }
+                settings.rollWorker = value == "on";
+                settings.rollWorkerGiven = true;
             } else if (arg == "--log-files") {
                 settings.logFiles = bench::parseLogFileFill(value);
                 settings.logFilesGiven = true;
@@ -472,13 +494,21 @@ latency::ReportRow startRow(const Session& session, const bench::Workload& workl
         record.set("idle-connections", "none, one producer thread in process");
         record.set("spin-window", formatSpinWindow(order_book::runtime::defaultSpinWindow) + ", the log writer's");
         record.set("durability", bench::durabilityName(settings.durability));
-        record.set("logs-share-drive", "none, no checkpoints: no roll-forward worker runs");
-        record.set("log-files", bench::logFileFillName(settings.logFiles));
+        record.set("logs-share-drive", settings.rollWorker ? "yes, a roll-forward worker's checkpoints, in the log's directory"
+                                                           : "none, no checkpoints: no roll-forward worker runs");
+        std::string files = bench::logFileFillName(settings.logFiles);
+        if (settings.logFileRecords) {
+            files += ", " + std::to_string(*settings.logFileRecords) + " records each";
+        }
+        if (settings.rollWorker) {
+            files += ", a roll-forward worker rolling each as it closes, from an empty book";
+        }
+        record.set("log-files", files);
     } else if (settings.interval == Interval::ROUND_TRIP) {
         record.set("shards", "1");
         record.set("gateway-threads", "1");
         record.set("active-connections", "1");
-        record.set("idle-connections", "0");
+        record.set("idle-connections", std::to_string(settings.idleConnections));
         record.set("spin-window", spinWindow);
         record.set("durability", bench::durabilityName(settings.durability));
         record.set("logs-share-drive", "none, no checkpoints until roll-forward lands");
@@ -586,6 +616,7 @@ Target makeTarget(const Session& session, const bench::Workload& workload) {
         }
         setup.durability = settings.durability;
         setup.logParent = settings.logParent;
+        setup.idleConnections = settings.idleConnections;
         setup.setUpReceiver = [receiverCore = settings.receiverCore, highPriority = settings.highPriority] {
             if (receiverCore) {
                 latency::pinCurrentThread(*receiverCore);
@@ -607,7 +638,7 @@ Target makeTarget(const Session& session, const bench::Workload& workload) {
                     latency::raiseCurrentThreadPriority();
                 }
             },
-            settings.logFiles);
+            settings.logFiles, settings.rollWorker, settings.logFileRecords);
     } else if constexpr (std::is_same_v<Target, latency::RawWriteTarget>) {
         const Settings& settings = session.settings;
         return Target(workload, settings.durability, settings.logParent, settings.logFiles);
@@ -975,7 +1006,16 @@ int runSession(const Settings& settings) {
         return usage("--spin-window is for --interval hand-off, round-trip, and idle-echo");
     }
     if (settings.interval != Interval::IDLE_ECHO && (settings.echoGiven || settings.serverCore)) {
-        return usage("--sockets, --idle-connections, and --server-core are for --interval idle-echo");
+        return usage("--sockets and --server-core are for --interval idle-echo");
+    }
+    if (settings.interval != Interval::IDLE_ECHO && settings.interval != Interval::ROUND_TRIP && settings.idleGiven) {
+        return usage("--idle-connections is for --interval idle-echo and round-trip");
+    }
+    if (settings.interval != Interval::DURABLE_WAIT && (settings.rollWorkerGiven || settings.logFileRecords)) {
+        return usage("--roll-worker and --log-file-records are for --interval durable-wait");
+    }
+    if (settings.interval == Interval::ROUND_TRIP && settings.idleConnections > 63) {
+        return usage("a round trip takes at most 63 idle connections, filling the engine's gateway thread's 64");
     }
     if (settings.interval == Interval::IDLE_ECHO && settings.pinCore.has_value() != settings.serverCore.has_value()) {
         return usage("--interval idle-echo needs both --pin-core and --server-core, or neither");

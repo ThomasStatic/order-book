@@ -537,6 +537,15 @@ void testADurableWaitLogsEveryRecordItTimes() {
         DurableWaitTarget unchecked(workload, bench::RunDurability::PROCESS, parent);
         static_cast<void>(unchecked(0, clock));
     }
+    {
+        // A worker rolling files of about 50 records as they close, whose rolls let retention
+        // delete the oldest: the files left hold the last records sent, and it reports nothing.
+        FakeClock clock;
+        DurableWaitTarget rolled(workload, bench::RunDurability::PROCESS, parent, {}, bench::LogFileFill::EXTENDED, true, 50);
+        const Histogram waits = runClosedLoop(workload.timedCount(), clock, rolled);
+        expect(waits.count() == workload.timedCount(), "one wait per record, with a worker rolling");
+        rolled.checkOutcome();
+    }
     expect(std::filesystem::is_empty(parent), "every run's log directory is deleted");
     bool refused = false;
     try {

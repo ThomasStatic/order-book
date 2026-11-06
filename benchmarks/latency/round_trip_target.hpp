@@ -40,6 +40,9 @@ struct RoundTripSetup {
     // The engine's --durability, and where its log directory is made.
     benchmark::RunDurability durability = benchmark::RunDurability::MACHINE;
     std::filesystem::path logParent = benchmark::defaultLogParent();
+    // Connections opened beside the measured one, each with its Hello and Welcome, that never send:
+    // what the engine's gateway thread watches on every pass. 63 fills a gateway thread's 64.
+    std::size_t idleConnections = 0;
 };
 
 // What one open-loop run measured.
@@ -106,6 +109,7 @@ private:
     std::vector<benchmark::Workload> workloads_;
     std::unique_ptr<benchmark::EngineProcess> engine_;
     benchmark::LoopbackConnection link_;
+    std::vector<benchmark::LoopbackConnection> idle_;
     std::vector<std::byte> frames_;
     std::vector<replay::ReplayRecord> records_;
     std::vector<BookEvent> events_;

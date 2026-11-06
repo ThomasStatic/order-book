@@ -90,7 +90,8 @@ namespace {
         "                       hot-alone, instrument 0 alone on shard 0 and the rest even\n"
         "  --pin-cores LIST     for shard, queue, and gateway: comma-separated logical processors for\n"
         "                       the N matching threads, then the M producers or gateway threads,\n"
-        "                       then gateway's M client threads, then optionally the N log writers\n"
+        "                       then gateway's M client threads, then optionally the N log writers;\n"
+        "                       a later list replaces an earlier one\n"
         "  --priority LEVEL     normal (the default) or high, for every thread a threaded run places\n"
         "  --layout NAME        the name the results give the thread layout (default: pinned with\n"
         "                       --pin-cores, else unpinned)\n"
@@ -258,6 +259,7 @@ namespace {
                     settings.scaling.plan.highPriority = value == "high";
                     settings.scalingGiven = true;
                 } else if (arg == "--pin-cores") {
+                    settings.scaling.plan.cores.clear();  // a later list replaces an earlier one
                     std::string_view rest = value;
                     while (!rest.empty()) {
                         const std::size_t comma = rest.find(',');

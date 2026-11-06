@@ -1,5 +1,7 @@
 #include "durable_wait_target.hpp"
 
+#include "order_book/runtime/log_files.hpp"
+
 #include <algorithm>
 #include <fstream>
 #include <optional>
@@ -48,9 +50,27 @@ std::vector<replay::ReplayRecord> readLog(const std::filesystem::path& directory
 
 DurableWaitTarget::DurableWaitTarget(const benchmark::Workload& workload, benchmark::RunDurability durability,
                                      const std::filesystem::path& logParent, std::function<void()> setUpWriter,
-                                     benchmark::LogFileFill fill)
+                                     benchmark::LogFileFill fill, bool rollWorker, std::optional<std::uint64_t> fileRecords)
     : records_(benchmark::workloadRecords(workload, benchmark::instrumentSymbol(0))), directory_(oneInstrument(), 1) {
-    log_ = std::make_unique<benchmark::RunLog>(logParent, durability, directory_, ring_, 0, std::move(setUpWriter), fill);
+    std::optional<benchmark::RunLogWorker> worker;
+    rollWorker_ = rollWorker;
+    if (rollWorker) {
+        // No preload goes in the log, so the book starts empty: the timed records' cancels of
+        // preloaded orders refuse, and submits rest rather than match, so a pass costs less than
+        // one over the engine's own books would, which the run record says.
+        OrderBook empty;
+        std::vector<std::byte> image(empty.imageSize());
+        image.resize(empty.writeImage(image));
+        worker = benchmark::RunLogWorker{{{benchmark::instrumentSymbol(0), std::move(image)}}};
+    }
+    // Housekeeping and the worker go where the writer does only with a worker, so a row without
+    // one places its threads as it always has.
+    std::function<void()> setUpHelpers = rollWorker ? setUpWriter : std::function<void()>{};
+    const std::uint64_t fileBytes =
+        fileRecords ? runtime::leastLogFileBytes(directory_) - replay::logRecordBytes + *fileRecords * replay::logRecordBytes
+                    : runtime::defaultLogFileBytes;
+    log_ = std::make_unique<benchmark::RunLog>(logParent, durability, directory_, ring_, 0, std::move(setUpWriter), fill, 0, std::move(worker),
+                                               fileBytes, std::move(setUpHelpers));
 }
 
 DurableWaitTarget::~DurableWaitTarget() {
@@ -63,15 +83,20 @@ DurableWaitTarget::~DurableWaitTarget() {
 void DurableWaitTarget::checkOutcome() {
     ring_.sendStop();
     const std::uint64_t end = log_->finish();
+    passes_ = log_->rollPasses();
     const std::vector<replay::ReplayRecord> logged = readLog(log_->directory());
     log_.reset();
-    if (end != sent_ || logged.size() != sent_) {
+    // A worker's rolls let retention delete the files no checkpoint needs, so then the files left
+    // hold the last of the records sent; without one, every record.
+    const bool everyRecord = !rollWorker_;
+    if (end != sent_ || logged.size() > sent_ || (everyRecord && logged.size() != sent_) || logged.empty()) {
         throw std::runtime_error("durable wait: " + std::to_string(sent_) + " records sent, but the log ended at " + std::to_string(end) +
                                  " and its files hold " + std::to_string(logged.size()));
     }
+    const std::size_t first = sent_ - logged.size();
     for (std::size_t i = 0; i < logged.size(); ++i) {
-        if (logged[i].symbol != records_[i].symbol || logged[i].command != records_[i].command) {
-            throw std::runtime_error("durable wait: the log's record " + std::to_string(i) + " isn't the one sent");
+        if (logged[i].symbol != records_[first + i].symbol || logged[i].command != records_[first + i].command) {
+            throw std::runtime_error("durable wait: the log's record " + std::to_string(first + i) + " isn't the one sent");
         }
     }
 }
