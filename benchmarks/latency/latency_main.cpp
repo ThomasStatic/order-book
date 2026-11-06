@@ -511,7 +511,9 @@ latency::ReportRow startRow(const Session& session, const bench::Workload& workl
         record.set("idle-connections", std::to_string(settings.idleConnections));
         record.set("spin-window", spinWindow);
         record.set("durability", bench::durabilityName(settings.durability));
-        record.set("logs-share-drive", "none, no checkpoints until roll-forward lands");
+        // The engine's roll worker publishes a checkpoint only once a log file closes, and a run's
+        // records fill none of its 256 MiB files; its empty books' checkpoints come before the run.
+        record.set("logs-share-drive", "none during a run, which closes no log file, so the engine's roll worker writes no checkpoint");
         record.set("socket-set", "poll, the engine's PollSocketSet");
         record.set("matching-cpu-share", "unmeasured, the engine's thread is in another process");
         record.set("log-files", "extended, as the engine makes them");

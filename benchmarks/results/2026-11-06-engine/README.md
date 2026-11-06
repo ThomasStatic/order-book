@@ -3,6 +3,7 @@
 This was recorded by `benchmarks/record_baseline.py` in one unattended session on the reference machine (`machine.txt` in `../2026-11-05-latency-v1/`):
 - **When.** 2026-11-06, from 01:32 to 13:54. That's 754 steps, and none failed (`session.log`).
 - **The re-checks.** Four comparisons ran again at 24 pairs afterwards, from 14:04 to 14:24.
+- **One ladder rerun.** `latency/round-trip-process-ladder` ran again at 14:53 at 300k commands a run (V3, #98). At 100k, the 75% and 90% rungs fell wholly within the 2 s each run doesn't record, so they recorded nothing. Its console output is `logs/latency_round-trip-process-ladder-300k.txt`. Its run record still gives the round trip's old `logs-share-drive` reason; the field's value, no checkpoint during a run, holds.
 - **The build.** The Release build of `2affa3b`, MSVC with the Visual Studio 17 2022 generator. Threaded cells are pinned at high priority.
 - **The tables.** `summary.md` holds every table, as `summarize.py` (a copy of `benchmarks/summarize_baseline.py`) recomputes them from the files:
 

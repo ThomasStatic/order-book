@@ -538,24 +538,24 @@ Rerun at 24 pairs: python benchmarks/record_baseline.py ... --only pairs --reche
 | round-trip-machine-ladder | round-trip to the first frame, response time, matching-heavy-request, poisson at 50% | yes | 107651 | 289871 |
 | round-trip-machine-ladder | driver lateness, matching-heavy-request, poisson at 50% | yes | 11 unresolved | 2707 noise |
 | round-trip-machine | round-trip, service time, matching-heavy-request, closed-loop | yes | 92948 | 160690 |
-| round-trip-process-ladder | round-trip, response time, matching-heavy-request, fixed at 10% | yes | 22055 | 43585 |
-| round-trip-process-ladder | round-trip to the first frame, response time, matching-heavy-request, fixed at 10% | yes | 22055 | 43585 |
+| round-trip-process-ladder | round-trip, response time, matching-heavy-request, fixed at 10% | yes | 22055 | 53826 |
+| round-trip-process-ladder | round-trip to the first frame, response time, matching-heavy-request, fixed at 10% | yes | 22055 | 53826 |
 | round-trip-process-ladder | driver lateness, matching-heavy-request, fixed at 10% | yes | 11 unresolved | 29 unresolved  noise |
-| round-trip-process-ladder | round-trip, response time, matching-heavy-request, fixed at 25% | yes | 12931 | 25862 |
-| round-trip-process-ladder | round-trip to the first frame, response time, matching-heavy-request, fixed at 25% | yes | 12931 | 25862 |
+| round-trip-process-ladder | round-trip, response time, matching-heavy-request, fixed at 25% | yes | 13062 | 36234 |
+| round-trip-process-ladder | round-trip to the first frame, response time, matching-heavy-request, fixed at 25% | yes | 13062 | 36234 |
 | round-trip-process-ladder | driver lateness, matching-heavy-request, fixed at 25% | yes | 11 unresolved | 29 unresolved  noise |
-| round-trip-process-ladder | round-trip, response time, matching-heavy-request, fixed at 50% | yes | 12800 | 23762 |
-| round-trip-process-ladder | round-trip to the first frame, response time, matching-heavy-request, fixed at 50% | yes | 12800 | 23762 |
+| round-trip-process-ladder | round-trip, response time, matching-heavy-request, fixed at 50% | yes | 12997 | 48312 |
+| round-trip-process-ladder | round-trip to the first frame, response time, matching-heavy-request, fixed at 50% | yes | 12997 | 48312 |
 | round-trip-process-ladder | driver lateness, matching-heavy-request, fixed at 50% | yes | 11 unresolved | 29 unresolved  noise |
-| round-trip-process-ladder | round-trip, response time, matching-heavy-request, fixed at 75% | yes | - | - |
-| round-trip-process-ladder | round-trip to the first frame, response time, matching-heavy-request, fixed at 75% | yes | - | - |
-| round-trip-process-ladder | driver lateness, matching-heavy-request, fixed at 75% | yes | - | - |
-| round-trip-process-ladder | round-trip, response time, matching-heavy-request, fixed at 90% | yes | - | - |
-| round-trip-process-ladder | round-trip to the first frame, response time, matching-heavy-request, fixed at 90% | yes | - | - |
-| round-trip-process-ladder | driver lateness, matching-heavy-request, fixed at 90% | yes | - | - |
-| round-trip-process-ladder | round-trip, response time, matching-heavy-request, poisson at 50% | yes | 14113 | 35446 |
-| round-trip-process-ladder | round-trip to the first frame, response time, matching-heavy-request, poisson at 50% | yes | 14113 | 35446 |
-| round-trip-process-ladder | driver lateness, matching-heavy-request, poisson at 50% | yes | 13 unresolved | 5251 noise |
+| round-trip-process-ladder | round-trip, response time, matching-heavy-request, fixed at 75% | yes | 12931 | 33608 |
+| round-trip-process-ladder | round-trip to the first frame, response time, matching-heavy-request, fixed at 75% | yes | 12931 | 33608 |
+| round-trip-process-ladder | driver lateness, matching-heavy-request, fixed at 75% | yes | 11 unresolved | 29 unresolved  noise |
+| round-trip-process-ladder | round-trip, response time, matching-heavy-request, fixed at 90% | yes | 13128 | 52250 |
+| round-trip-process-ladder | round-trip to the first frame, response time, matching-heavy-request, fixed at 90% | yes | 13128 | 52250 |
+| round-trip-process-ladder | driver lateness, matching-heavy-request, fixed at 90% | yes | 11 unresolved | 29 unresolved  noise |
+| round-trip-process-ladder | round-trip, response time, matching-heavy-request, poisson at 50% | yes | 14113 | 37546 |
+| round-trip-process-ladder | round-trip to the first frame, response time, matching-heavy-request, poisson at 50% | yes | 14113 | 37546 |
+| round-trip-process-ladder | driver lateness, matching-heavy-request, poisson at 50% | yes | 13 unresolved | 5317 noise |
 | round-trip-process | round-trip, service time, matching-heavy-request, closed-loop | yes | 12340 | 19298 |
 
 ## Noise floors around the threaded sessions

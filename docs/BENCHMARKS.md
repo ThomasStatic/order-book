@@ -2,7 +2,243 @@
 
 Recorded throughput of the order book, taken with `order_book_benchmarks` on one desktop machine. Each baseline is a reference point for later changes to this code on this machine. It is not a measure of how the engine compares with any other system. How the harness works is in [`benchmarks/README.md`](../benchmarks/README.md). This page records what was run, what came out, and how far the numbers can be trusted.
 
-There are two. The current one, for v2.0.0, covers all eleven workloads: the five v1 workloads and the six behavior workloads. The first, from 2026-10-25, predates both the optimizations in [`OPTIMIZATION.md`](OPTIMIZATION.md) and the order behaviors, and is kept below as history. The two are not comparable as a before and after: the code, the generator version, and the index's sizing hint all changed between them. The before-and-after comparisons are paired, interleaved runs of two binaries, in [`OPTIMIZATION.md`](OPTIMIZATION.md).
+There are three. The current one, for v2.1.0, is the engine set: the book against v2.0.0 on all eleven workloads, and the threaded kinds, from one shard to six, with and without a log. The v2.0.0 baseline covers all eleven workloads on the book alone: the five v1 workloads and the six behavior workloads. The first, from 2026-10-25, predates both the optimizations in [`OPTIMIZATION.md`](OPTIMIZATION.md) and the order behaviors, and is kept below as history. The two are not comparable as a before and after: the code, the generator version, and the index's sizing hint all changed between them. The before-and-after comparisons are paired, interleaved runs of two binaries, in [`OPTIMIZATION.md`](OPTIMIZATION.md).
+
+## The v2.1.0 engine set (2026-11-06)
+
+| | |
+|---|---|
+| Date | 2026-11-06, one unattended session from 01:32 to 13:54, 754 steps, none failed |
+| Code | commit `2affa3b` on `main` |
+| Workload generator | version 3, seed 42 |
+| Build | MSVC 19.44.35228, Release, with the Visual Studio 17 2022 generator |
+| OS | Windows 11 Pro 10.0.26200, High performance power plan |
+| Machine | the reference machine of [`benchmarks/README.md`](../benchmarks/README.md#environment): AMD Ryzen 5 5600G, 6 physical cores with SMT, one NVMe drive |
+| Raw results | [`benchmarks/results/2026-11-06-engine/`](../benchmarks/results/2026-11-06-engine/); its `summarize.py` recomputes every table here, and its README lists what each directory holds |
+
+Every threaded cell below shares these settings unless its row says otherwise:
+- **Instruments.** 8 a shard.
+- **Spread and placement.** A uniform spread, with even placement (instrument i on shard i mod N).
+- **Spin window.** `100us`.
+- **Threads.** Each thread is pinned at high priority, on a physical core of its own (layout `one-core-each`).
+- **Size.** The extended size: 1M timed commands a shard.
+
+Rows whose layout is `siblings` or `producer-on-sibling` put threads on a core's second logical processor, and they say so. **No scaling claim here goes past the machine's 6 physical cores.**
+
+Each cell's figure is the median over three sessions of 5 measured runs each. The paired figures are ABBA ratios, 16 pairs, with a 95% bootstrap interval. The A/A floors, the same binary on both sides first, are:
+
+| Kind | Floor |
+|---|---:|
+| `shard` | ±1.9% |
+| `queue` | ±1.4% |
+| `gateway` | ±0.4% |
+| `engine` | ±1.4% |
+
+The kinds, from the book outward (`benchmarks/README.md` has each):
+
+| Kind | What runs |
+|---|---|
+| `core` | `OrderBook` called directly |
+| `shard` | Each shard's books on a matching thread of their own, with commands already in its loop |
+| `queue` | Producer threads that feed each shard through its rings |
+| `gateway` | Loopback clients that send frames to gateway threads |
+| `engine` | The shipped `order_book_engine` process |
+
+### The gate: `core` against v2.0.0
+
+v2.1.0 may be no more than 3% slower than tag v2.0.0 on any of the eleven workloads, at both sizes, or the exception is explained and accepted.
+
+| Workload | Standard, now / v2.0.0 | 95% CI | Extended, now / v2.0.0 | 95% CI |
+|---|---:|---|---:|---|
+| `small-book` | 0.982 | 0.966 - 0.990 | 0.981 | 0.975 - 0.994 |
+| `deep-book` | 1.088 | 1.050 - 1.134 | 1.045 | 1.033 - 1.121 |
+| `matching-heavy` | 1.052 | 1.043 - 1.064 | 1.047 | 1.041 - 1.050 |
+| `cancellation-heavy` | 1.069 | 0.933 - 1.195 | 1.032 | 0.987 - 1.043 |
+| `mostly-resting` | 1.277 | 1.216 - 1.330 | 1.093 | 1.089 - 1.100 |
+| `quote-refresh` | **0.963** | 0.952 - 0.967 | **0.964** | 0.961 - 0.973 |
+| `pending-stops` | 1.132 | 1.122 - 1.140 | 1.144 | 1.134 - 1.160 |
+| `self-trade` | 1.087 | 1.055 - 1.097 | 1.090 | 1.085 - 1.098 |
+| `immediate` | 1.082 | 1.074 - 1.087 | 1.096 | 1.090 - 1.101 |
+| `matching-heavy-request` | 1.076 | 1.065 - 1.081 | 1.068 | 1.062 - 1.072 |
+| `matching-heavy-owned` | 1.067 | 1.061 - 1.070 | 1.066 | 1.054 - 1.070 |
+
+**`quote-refresh` is the one exception, explained and accepted.** The results' `gate-bisect/` reads it at 13 commits.
+- **From `92a1d24` to `522461c`:** 0.979 to 0.987, the cost of result reuse (L4) that L5 had already flagged at 0.974.
+- **From V2a's commit `68601c6` on:** 0.959 to 0.961.
+
+The step isn't the engine:
+- **The library.** Every object file of `order_book` disassembles to the same instructions on both sides of it.
+- **The timed code.** The benchmark's timed loop does too.
+
+The same code links at different addresses, and `quote-refresh`, the cheapest command per operation, shows that most. The real 1.3 to 2.1% is [#107](https://github.com/ThomasStatic/order-book/issues/107).
+
+`replay`, which parses CSV in the timed region, is reported and not gated: 0.933 to 1.031 of v2.0.0, lowest on `quote-refresh` and `small-book`.
+
+### Scaling across shards
+
+![Paired throughput ratio of N matching threads to one, shard kind, five workloads, against the N× diagonal: 3.46 to 5.26 times at N = 6.](images/engine-scaling.svg)
+
+These cells are `shard` at N matching threads. The layout is `one-core-each`, with matching threads on logical processors 2, 4, 6, 8, 10, and 0, one per physical core. There's no log. Each figure is the paired ratio to N = 1, then the session median at N.
+
+| Workload | N = 2 | N = 3 | N = 4 | N = 6 | Ops/s at N = 1 | Ops/s at N = 6 |
+|---|---:|---:|---:|---:|---:|---:|
+| `quote-refresh` | 1.950 | 2.871 | 3.766 | 5.257 | 6.23M | 33.17M |
+| `deep-book` | 1.865 | 2.741 | 3.524 | 4.939 | 2.80M | 13.47M |
+| `immediate` | 1.905 | 2.625 | 3.171 | 4.081 | 4.31M | 17.11M |
+| `matching-heavy-request` | 1.878 | 2.542 | 3.092 | 4.101 | 4.49M | 18.18M |
+| `pending-stops` | 1.729 | 2.211 | 2.679 | 3.460 | 3.08M | 10.54M |
+
+Every interval is within ±0.06 of its median, and every pair was faster at N than at 1. The shards share nothing but the machine: memory bandwidth, the shared L3, and the other cores' heat. Each workload's ratio falls away from N in its own way. `pending-stops` scales least. Unpinned at N = 2, `shard` reads within 2.5% of pinned on every workload.
+
+### The kinds side by side, N = 1
+
+Paired, the outer kind over the inner one, on the same books:
+
+| Workload | `shard` / `core` | `queue` / `shard` | `gateway` / `queue` | `engine` / `gateway`, unpinned, `process` |
+|---|---:|---:|---:|---:|
+| `quote-refresh` | 0.831 | 0.926 | 0.732 | 1.013 (24 pairs) |
+| `deep-book` | 0.785 | 0.962 | 1.075 | 0.993 (24 pairs) |
+| `immediate` | 0.919 | 0.838 | 1.126 | 1.005 (24 pairs) |
+| `matching-heavy-request` | 0.914 | 0.850 | 1.096 | 1.006 |
+| `pending-stops` | 0.961 | 0.907 | 1.205 | 1.019 |
+
+- **`shard` / `core`.** `core` can't pin itself, so only the `shard` side is placed. `shard` is 17 to 22% below the book called directly on `deep-book` and `quote-refresh`, the cheapest commands per operation. That's [#101](https://github.com/ThomasStatic/order-book/issues/101).
+- **`gateway` / `queue`.** `gateway` reads above `queue` on four workloads, likely because `queue`'s producer counts events in the timed region, as [#102](https://github.com/ThomasStatic/order-book/issues/102) noted. `quote-refresh` is the exception, where the wire costs more than matching. At window 1, one command in flight on one instrument, `gateway` runs 101.8k commands/s on `quote-refresh`.
+- **`engine` / `gateway`.** The shipped engine reads within 2% of the in-process `gateway` kind. The kinds were run unpinned on both sides, since this program can't place the shipped engine's threads.
+
+### Producers, gateway threads, and siblings
+
+Session medians in commands/s, with no log:
+
+| Kind | N | M | Instruments | Layout | `quote-refresh` | `matching-heavy-request` | `pending-stops` |
+|---|---:|---:|---:|---|---:|---:|---:|
+| `queue` | 1 | 1 | 8 | one-core-each | 5.53M | 3.79M | 2.79M |
+| `queue` | 2 | 1 | 16 | one-core-each | 11.20M | 7.18M | 4.70M |
+| `queue` | 2 | 2 | 16 | one-core-each | 10.76M | 7.03M | 4.59M |
+| `queue` | 2 | 2 | 16 | **producer-on-sibling** | 9.98M | 6.14M | 4.07M |
+| `queue` | 3 | 1 | 24 | one-core-each | 17.11M | 9.85M | 6.11M |
+| `queue` | 3 | 3 | 24 | one-core-each | 15.80M | 9.27M | 5.89M |
+| `queue` | 3 | 3 | 24 | **producer-on-sibling** | 14.48M | 8.23M | 5.37M |
+| `queue` | 4 | 4 | 32 | **producer-on-sibling** | 18.64M | 10.49M | 6.72M |
+| `queue` | 6 | 6 | 48 | **producer-on-sibling** | 25.05M | 14.34M | 8.82M |
+| `gateway` | 1 | 1 | 8 | one-core-each | 4.17M | 4.08M | 3.36M |
+| `gateway` | 2 | 1 | 16 | one-core-each | 4.35M | 4.23M | 3.97M |
+| `gateway` | 2 | 2 | 16 | one-core-each | 8.33M | 7.81M | 5.09M |
+| `gateway` | 4 | 1 | 32 | one-core-each | 4.62M | 4.32M | 4.01M |
+| `gateway` | 4 | 2 | 32 | **siblings** | 8.42M | 7.82M | 6.26M |
+| `engine` | 1 | 1 | 8 | unpinned, `process` | 4.13M | 3.85M | 3.00M |
+| `engine` | 2 | 1 | 16 | unpinned, `process` | 4.31M | 4.13M | 3.71M |
+
+- **One gateway thread** carries 2.9 to 4.6M commands/s across the five workloads, whatever N is behind it. At N = 2, a second raises that 1.92 times on `quote-refresh`, 1.85 times on `matching-heavy-request`, and 1.28 times on `pending-stops`.
+- **The lowest thread CPU share in `gateway` rows** falls to 0.51 to 0.62 at N = 4 and M = 1. That's consistent with matching threads sleeping between commands one gateway thread can't send fast enough. The record names the lowest share, not which thread had it.
+- **A producer on its matching thread's sibling** costs 7 to 13% against one on a core of its own, at N = 2 and 3.
+- **At N = 6 with producers on siblings,** the lowest thread CPU share falls to 0.50 to 0.57 on three of the five workloads, against 0.86 to 1.00 in every other `queue` row. Every logical processor runs a thread there. Read that row as a machine at its limit, not as six shards' worth.
+
+### Durability
+
+`queue` at N = 1 and M = 1, paired against itself:
+- **Writing a log, at `process` durability:** 0.744 to 0.766 of no log on all five workloads.
+- **`machine` against `process`:**
+
+  | Workload | `machine` / `process` | 95% CI |
+  |---|---:|---|
+  | `deep-book` | 0.970 | 0.965 - 0.984 |
+  | `pending-stops` | 1.014 | 1.001 - 1.034, 24 pairs |
+  | `quote-refresh` | 1.060 | 0.953 - 1.086 |
+  | `matching-heavy-request` | 1.060 | 1.053 - 1.073 |
+  | `immediate` | 1.081 | 1.065 - 1.087 |
+
+  In `queue` the matching thread never waits for durability ([ADR 0013](adr/0013-a-response-waits-for-the-log-but-matching-does-not.md)). So the drive's flushes slow the log writer, not the matching thread, and `machine` costing nothing or less is consistent with that. No ticket gave a reason it contradicts.
+
+Session medians in commands/s, extended files as the engine makes them against zero-filled:
+
+| Kind | N | M | Durability | Files | `quote-refresh` | `deep-book` |
+|---|---:|---:|---|---|---:|---:|
+| `queue` | 1 | 1 | `process` | extended | 4.27M | 2.06M |
+| `queue` | 1 | 1 | `process` | zero-filled | 4.27M | 2.11M |
+| `queue` | 1 | 1 | `machine` | extended | 1.25M | 2.04M |
+| `queue` | 1 | 1 | `machine` | zero-filled | 4.71M | 2.09M |
+| `queue` | 2 | 2 | `machine` | extended | 8.48M | 3.72M |
+| `gateway` | 1 | 1 | `machine` | extended | 4.16M | 2.06M |
+| `gateway` | 2 | 1 | `machine` | extended | 4.47M | 3.87M |
+
+`queue` on `quote-refresh` at `machine` on extended files, 1.25M/s, is the one cell where the drive sets the rate, and unevenly: its three sessions read 1.25M, 0.63M, and 4.58M. Each record of that workload is cheap enough to matter, and an extended file's write-through stalls on this drive ([`LATENCY.md`](LATENCY.md#10ks-durable-wait)). On zero-filled files the same cell reads 4.71M/s.
+
+**A roll-forward worker** (`--roll-worker on`, the `long` size, 20M commands a shard) nearly halves `queue`: 0.531 to 0.568 at N = 1, paired. That reverses D4's reason, and it's [#108](https://github.com/ThomasStatic/order-book/issues/108). In this layout the worker shares the log writer's logical processor, which is the matching thread's sibling, and the lowest thread CPU share falls from about 0.95 to about 0.45. The shipped engine doesn't pin its roll threads.
+
+### Books, spread, and the mix
+
+Session medians in commands/s. `shard` and `queue` run at N = 1 and M = 1 (`queue` only) as the number of books on the shard grows:
+
+| Books | `shard`, `quote-refresh` | `shard`, `matching-heavy-request` | `queue`, `quote-refresh` | `queue`, `matching-heavy-request` |
+|---:|---:|---:|---:|---:|
+| 1 | 8.93M | 5.72M | 6.26M | 4.05M |
+| 8 | 6.20M | 4.47M | 5.58M | 3.83M |
+| 64 | 3.60M | 2.64M | 3.54M | 2.49M |
+| 512 | 2.02M | 1.94M | 2.13M | 1.94M |
+
+More books on one matching thread means less of each in cache. At 512 the two kinds read within 6% of each other, unpaired.
+
+**Skewed spreads.** Zipf with exponent 1 over 32 instruments, on `quote-refresh`:
+
+| Kind | N | M | Layout | Placement `hash` | Placement `hot-alone` |
+|---|---:|---:|---|---:|---:|
+| `shard` | 4 | 1 | one-core-each | 18.53M | 19.69M |
+| `queue` | 3 | 3 | one-core-each | 10.40M | 12.30M |
+| `gateway` | 4 | 2 | **siblings** | 5.80M | 5.85M |
+
+**The mix.** `mixed` puts two instruments of each shape on every shard. At N = 2 it reads:
+
+| Kind | Layout | Commands/s |
+|---|---|---:|
+| `shard` | one-core-each | 6.81M |
+| `queue` | one-core-each, M = 2 | 6.17M |
+| `gateway` | one-core-each, M = 1 | 4.32M |
+
+### The gateway's window, connections, and frame budget
+
+`gateway` at N = 1 and M = 1 on `quote-refresh`, session medians:
+
+| Window | 1 | 16 | 256 | 4,096 |
+|---|---:|---:|---:|---:|
+| Commands/s, 1 instrument | 101.8k | 1.16M | 3.59M | 3.91M |
+
+| Connections, one instrument each | 1 | 4 | 16 | 64 |
+|---|---:|---:|---:|---:|
+| Commands/s | 3.58M | 3.99M | 4.38M | 3.77M |
+
+| Frame budget, 16 instruments | 64 | unlimited |
+|---|---:|---:|
+| Commands/s | 4.42M | 5.08M |
+
+The shipped budget, 64 frames a connection a pass, keeps one busy connection from holding a gateway thread at 0.87 of the unlimited rate here. That fairness is the reason it exists, not throughput.
+
+### Limitations of the engine set
+
+- **One machine, one drive.** The engine set comes from one Windows desktop, with MSVC and CMake's default Release flags. Its one NVMe drive holds the logs, the checkpoints, and the system. No second drive was measured.
+- **Loopback, not a network.** `gateway` and `engine` clients run on the same machine, over loopback, and take cores the engine could otherwise use.
+- **Synthetic, uniform load.** The workloads are the generated mixes of `benchmarks/README.md`, one stream a book. Only the skewed rows spread commands unevenly.
+- **Six physical cores.** Nothing here says what a seventh would do. Rows with threads on siblings are labelled and are not scaling points.
+- **The rest of the limitations below** apply too, except noise: every threaded cell here is pinned at high priority, with the A/A floors above.
+
+### Linux
+
+No Linux numbers are recorded for v2.1.0. Linux is built and tested in CI. The manual Linux sanity workflow (`.github/workflows/linux-sanity.yml`) checks for large effects only, on shared GitHub runners, and its runs are never quoted.
+
+### How it was run
+
+From the repository root, against the Release builds of `2affa3b`, of tag v2.0.0 (for the gate), and of `17a8013` (v2.0.0's library in the latency and component programs):
+
+```bash
+python benchmarks/record_baseline.py --out benchmarks/results/2026-11-06-engine \
+  --machine-record benchmarks/results/2026-11-05-latency-v1/machine.txt \
+  --base <v2.0.0>/order_book_benchmarks --before-latency <17a8013>/order_book_latency_benchmarks \
+  --before-component <17a8013>/order_book_component_benchmarks
+python benchmarks/record_baseline.py ... --only pairs --recheck <pair> ...   # each pair near its floor, at 24 pairs
+python benchmarks/results/2026-11-06-engine/summarize.py --out benchmarks/results/2026-11-06-engine
+```
+
+`record_baseline.py --list` prints every step. The latency rows from the same session are in [`LATENCY.md`](LATENCY.md).
 
 ## The v2.0.0 baseline (2026-10-29)
 
@@ -248,4 +484,4 @@ Each `.csv` holds every run, warm-ups included. Each `.json` holds the whole ses
 
 ## What these numbers do not show
 
-They are not a comparison with any production exchange, trading venue, or commercial matching engine, and should not be presented as one. Such systems do different work (many symbols, order types, risk checks, networking, persistence, replication, regulatory recording) on different hardware under different load, and their published figures are measured in other ways. Nothing on this page supports a claim of being "low latency", "microsecond", or "exchange grade", or any claim about tail latency. What the numbers do support is narrower: on this machine and build, with these synthetic workloads, the engine processes a few million commands per second in one thread. They also give a reference for measuring later changes to this code in the same environment.
+They are not a comparison with any production exchange, trading venue, or commercial matching engine, and should not be presented as one. Such systems do different work (many symbols, order types, risk checks, networking, persistence, replication, regulatory recording) on different hardware under different load, and their published figures are measured in other ways. Nothing on this page supports a claim of being "low latency", "microsecond", or "exchange grade", or any claim about tail latency. What the numbers do support is narrower: on this machine and build, with these synthetic workloads, one book processes a few million commands per second on one thread, and the engine's shards add to that on each physical core given to them, up to the six measured. They also give a reference for measuring later changes to this code in the same environment.

@@ -494,6 +494,17 @@ void testNotSustainedReplacesThePercentiles(const std::string& directory) {
     expect(reasons[1] == "not sustained", "a rate whose backlog grew is no capability");
 }
 
+// A run whose commands all fell before its discard ends has nothing to quote, whatever else it
+// carries.
+void testAnEmptyRunMakesARowUnquotable() {
+    ReportRow row = nineRunRow();
+    row.runs[2] = Histogram();
+    row.runs[5] = Histogram();
+    const std::vector<std::string> reasons = unquotableReasons(row);
+    expect(reasons.size() == 1, "an empty run is the only reason");
+    expect(reasons[0] == "2 of 9 runs recorded nothing", "an empty run counts against the row");
+}
+
 void testClosedLoopMayBeUnpinned() {
     ReportRow row = nineRunRow();
     row.pinnedAtHighPriority = false;
@@ -711,6 +722,7 @@ int main(int argc, char** argv) {
     testMissingFieldMakesARunUnquotable(directory);
     testPercentilesAreMarked(directory);
     testNotSustainedReplacesThePercentiles(directory);
+    testAnEmptyRunMakesARowUnquotable();
     testClosedLoopMayBeUnpinned();
     testUnknownRecordFieldIsRefused();
     testADurableWaitLogsEveryRecordItTimes();

@@ -370,11 +370,14 @@ def main():
                 "--gateway-core", "8", "--receiver-core", "4"] + sender
         if s.smoke:
             trip += ["--discard-seconds", "0"]  # 500 commands would fall inside the default 2 s
-        for name, extra in (("process", ["--durability", "process"]), ("machine", ["--durability", "machine"]),
-                            ("machine-63-idle", ["--durability", "machine", "--idle-connections", "63"])):
+        # At process, 75% and 90% of capacity send 100k commands within the 2 s not recorded, so
+        # that ladder takes 300k a run.
+        for name, extra, ladderSize in (("process", ["--durability", "process"], "300000"),
+                                        ("machine", ["--durability", "machine"], "standard"),
+                                        ("machine-63-idle", ["--durability", "machine", "--idle-connections", "63"], "standard")):
             s.latencyRow(f"round-trip-{name}", trip + extra)
-            # Standard size too: #32 put a round trip's ladder at 21 minutes a row at extended.
-            s.latencyRow(f"round-trip-{name}-ladder", trip + extra + ["--time", "response"], size="standard")
+            # At or near standard size: #32 put a round trip's ladder at 21 minutes a row at extended.
+            s.latencyRow(f"round-trip-{name}-ladder", trip + extra + ["--time", "response"], size=ladderSize)
         s.latencyRow("round-trip-idle-wake", trip + ["--durability", "machine", "--time", "response", "--rate", "50"], size="2000")
 
     if s.wanted("allocation"):

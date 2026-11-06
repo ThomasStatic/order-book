@@ -9,6 +9,10 @@ Usage: python docs/images/make_figures.py   (Python 3.8+, standard library only)
 - optimization.svg: the before-and-after tables of docs/OPTIMIZATION.md (ns per command and
   the heap's share of core time), and allocations per timed command from the two
   allocations.txt profiles in benchmarks/results/.
+- engine-scaling.svg: the shard kind's paired ratios of N matching threads to one, from
+  benchmarks/results/2026-11-06-engine/pairs/shard-*-against-1-*/summary.md.
+- engine-latency.svg: p50 and p99 response time against offered rate, one panel per interval,
+  from benchmarks/results/2026-11-06-engine/latency/*-ladder/report.txt.
 - replay-terminal.svg: two CLI runs, drawn from tests/replay/expected/, which CTest compares
   byte for byte with the CLI's real output, so the picture cannot drift from the program.
 
@@ -17,6 +21,7 @@ script after changing any file it reads.
 """
 
 import csv
+import math
 import re
 import statistics
 from html import escape
@@ -317,8 +322,194 @@ def replay_terminal():
                                      TERMINAL_STYLE))
 
 
+# ---- engine-scaling.svg and engine-latency.svg ------------------------------------------------
+
+ENGINE = "benchmarks/results/2026-11-06-engine"
+THREADED = ["quote-refresh", "deep-book", "immediate", "matching-heavy-request", "pending-stops"]
+# The palette's first five categorical slots, validated for both surfaces; series carry direct
+# labels and marker shapes too, since three of the light steps sit under 3:1 against the surface.
+SERIES_STYLE = """
+  .s1{stroke:#2a78d6;fill:#2a78d6} .s2{stroke:#eb6834;fill:#eb6834} .s3{stroke:#1baf7a;fill:#1baf7a}
+  .s4{stroke:#eda100;fill:#eda100} .s5{stroke:#e87ba4;fill:#e87ba4}
+  .line{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+  .ideal{fill:none;stroke:#c3c2b7;stroke-width:1.5;stroke-dasharray:5 4}
+  .ci{stroke-width:1.5;stroke-linecap:round} .ring{stroke:#fcfcfb;stroke-width:2}
+  .hollow{fill:#fcfcfb;stroke-width:2}
+  @media (prefers-color-scheme: dark){
+    .s1{stroke:#3987e5;fill:#3987e5} .s2{stroke:#d95926;fill:#d95926} .s3{stroke:#199e70;fill:#199e70}
+    .s4{stroke:#c98500;fill:#c98500} .s5{stroke:#d55181;fill:#d55181}
+    .ideal{stroke:#4a4a44} .ring{stroke:#1a1a19} .hollow{fill:#1a1a19}
+  }
+"""
+
+
+def pair_row(name):
+    """compare_ab.py's summary.md row for one workload: (median, low, high)."""
+    for line in (ROOT / ENGINE / "pairs" / name / "summary.md").read_text(encoding="utf-8").splitlines():
+        m = re.match(r"^\| (\S+) \| \S+ \| ([0-9.]+) \| ([0-9.]+) - ([0-9.]+) \|", line.strip())
+        if m:
+            return float(m.group(2)), float(m.group(3)), float(m.group(4))
+    raise ValueError(f"no row in pairs/{name}")
+
+
+def marker(shape, cx, cy, cls, r=4.5):
+    if shape == 0:
+        return f'<circle class="{cls} ring" cx="{cx:.1f}" cy="{cy:.1f}" r="{r}"/>'
+    if shape == 1:
+        return f'<rect class="{cls} ring" x="{cx - r:.1f}" y="{cy - r:.1f}" width="{2 * r}" height="{2 * r}" rx="1.5"/>'
+    if shape == 2:
+        return (f'<path class="{cls} ring" d="M{cx:.1f} {cy - r - 1:.1f}L{cx + r + 1:.1f} {cy + r:.1f}'
+                f'L{cx - r - 1:.1f} {cy + r:.1f}z"/>')
+    if shape == 3:
+        return (f'<path class="{cls} ring" d="M{cx:.1f} {cy - r - 1:.1f}L{cx + r + 1:.1f} {cy:.1f}'
+                f'L{cx:.1f} {cy + r + 1:.1f}L{cx - r - 1:.1f} {cy:.1f}z"/>')
+    # A cross is all stroke, so it takes the series color with no surface ring.
+    return (f'<path class="{cls}" d="M{cx - r:.1f} {cy - r:.1f}L{cx + r:.1f} {cy + r:.1f}'
+            f'M{cx + r:.1f} {cy - r:.1f}L{cx - r:.1f} {cy + r:.1f}" stroke-width="2.5" stroke-linecap="round"/>')
+
+
+def engine_scaling():
+    """shard at N matching threads against N = 1, each its own physical core: the paired ratios."""
+    counts = [1, 2, 3, 4, 6]
+    width, x0, x1, top, y1 = 960, 90, 700, 120, 520
+    xs = lambda n: x0 + (n - 1) / 5 * (x1 - x0)
+    ys = lambda v: y1 - (v - 0) / 6 * (y1 - top)
+    body = [
+        text(24, 38, "Throughput against matching threads, shard kind", size=18, weight=600),
+        text(24, 61, "Paired ratio of N matching threads to one, 16 ABBA pairs each, extended size: 1M commands per shard, "
+                     "8 instruments per shard,", cls="t2"),
+        text(24, 80, "uniform spread, even placement, no log, spin window 100us, each thread on its own physical core at high "
+                     "priority. Windows 11, MSVC Release.", cls="t2"),
+    ]
+    for v in range(0, 7):
+        y = ys(v)
+        body.append(f'<line class="grid" x1="{x0}" y1="{y:.1f}" x2="{x1}" y2="{y:.1f}"/>')
+        body.append(text(x0 - 10, y + 4, f"{v}×", cls="t3", size=12, anchor="end"))
+    for n in counts:
+        body.append(text(xs(n), y1 + 20, str(n), cls="t3", size=12, anchor="middle"))
+    body.append(text((x0 + x1) / 2, y1 + 42, "matching threads N, one physical core each (the machine has 6)",
+                     cls="t3", size=12, anchor="middle"))
+    body.append(f'<line class="axis" x1="{x0}" y1="{y1}" x2="{x1}" y2="{y1}"/>')
+    body.append(f'<path class="ideal" d="M{xs(1):.1f} {ys(1):.1f}L{xs(6):.1f} {ys(6):.1f}"/>')
+    body.append(text(xs(6) - 6, ys(6) - 8, "N× (perfect scaling)", cls="t3", size=12, anchor="end"))
+    ends = []
+    for i, w in enumerate(THREADED):
+        cls = f"s{i + 1}"
+        points = [(1, 1.0, 1.0, 1.0)] + [(n, *pair_row(f"shard-{n}-against-1-{w}")) for n in counts[1:]]
+        d = "M" + "L".join(f"{xs(n):.1f} {ys(v):.1f}" for n, v, _, _ in points)
+        body.append(f'<path class="{cls} line" d="{d}"/>')
+        for n, v, lo, hi in points[1:]:
+            body.append(f'<line class="{cls} ci" x1="{xs(n):.1f}" y1="{ys(lo):.1f}" x2="{xs(n):.1f}" y2="{ys(hi):.1f}"/>')
+        for n, v, lo, hi in points:
+            body.append(marker(i, xs(n), ys(v), cls))
+        ends.append((ys(points[-1][1]), w, points[-1][1], cls, i))
+    # Direct labels at the right, nudged apart so none overlap.
+    ends.sort()
+    placed = []
+    for y, w, v, cls, i in ends:
+        y = max(y, placed[-1] + 17) if placed else y
+        placed.append(y)
+        body.append(marker(i, x1 + 22, y - 4, cls, r=4))
+        body.append(text(x1 + 34, y, f"{w}  {v:.2f}×", size=12.5))
+    body.append(text(24, y1 + 74, "Each ratio's 95% bootstrap interval is within ±0.06 of it, drawn as a bar mostly hidden by its marker. "
+                                  "No point goes past 6 physical cores.", cls="t2"))
+    body.append(text(24, y1 + 94, "Tables, the other kinds, and every cell's run record: docs/BENCHMARKS.md · "
+                                  f"Source: {ENGINE}/pairs/shard-*-against-1-*", cls="t3", size=12))
+    write("engine-scaling.svg", svg(width, y1 + 116, "Engine scaling",
+                                    "Line chart of the shard kind's throughput at 2, 3, 4, and 6 matching threads, "
+                                    "each on its own physical core, as a paired ratio to one thread, for five "
+                                    "workloads, beside the perfect-scaling diagonal.", body, SERIES_STYLE))
+
+
+def latency_ladder(row):
+    """Each open-loop rung of latency/<row>/report.txt: (percent of capacity, achieved rate, p50, p99),
+    each percentile (ns, marked) or None, a rung that can't be quoted left out."""
+    rungs = []
+    for block in (ROOT / ENGINE / "latency" / row / "report.txt").read_text(encoding="utf-8").split("\n\n"):
+        lines = block.strip().splitlines()
+        if not lines or not lines[0].startswith("==") or "to the first frame" in lines[0] or "lateness" in lines[0]:
+            continue
+        m = re.search(r"fixed at (\d+)%", lines[0])
+        if not m or not any(l.strip() == "quotable: yes" for l in lines):
+            continue
+        rate = next(int(re.search(r"(\d+)/s", l).group(1)) for l in lines if l.strip().startswith("achieved-rate="))
+        values = {}
+        for l in lines:
+            p = re.match(r"^(p50|p99)\s+(\d+)\s.*?((?:\s+(?:noise|unresolved))*)\s*$", l)
+            if p:
+                values[p.group(1)] = (int(p.group(2)), bool(p.group(3).strip()))
+        rungs.append((int(m.group(1)), rate, values.get("p50"), values.get("p99")))
+    return rungs
+
+
+def engine_latency():
+    """Response time against offered rate, one panel per interval, p50 and p99 on a log scale."""
+    panels = [
+        ("command-ladder-matching-heavy-request", "Command", "one book call"),
+        ("hand-off-ladder", "Hand-off", "into the command ring, back out of the response ring"),
+        ("durable-wait-process-ladder", "Durable wait, process", "log ring to the durable position"),
+        ("durable-wait-machine-ladder", "Durable wait, machine", "log ring to the durable position"),
+        ("round-trip-process-ladder", "Round trip, process", "over loopback through the shipped engine"),
+        ("round-trip-machine-ladder", "Round trip, machine", "over loopback through the shipped engine"),
+    ]
+    width, pw, ph, gx, gy, left, top = 960, 236, 190, 72, 96, 76, 164
+    decades = [100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000, 1_000_000_000]
+    names = ["100 ns", "1 µs", "10 µs", "100 µs", "1 ms", "10 ms", "100 ms", "1 s"]
+    body = [
+        text(24, 38, "Response time against offered rate, matching-heavy-request", size=18, weight=600),
+        text(24, 61, "Each interval at 10, 25, 50, 75, and 90% of the capacity it measured that session, fixed timetable, "
+                     "9 runs merged. Log scale.", cls="t2"),
+        text(24, 80, "Pinned at high priority, one shard, one connection; durability as named; one drive. Windows 11, "
+                     "MSVC Release, rdtscp clock.", cls="t2"),
+        f'<path class="s1 line" d="M30 105L54 105"/>', marker(0, 42, 105, "s1", r=4), text(62, 109, "p50"),
+        f'<path class="s2 line" d="M110 105L134 105"/>', marker(1, 122, 105, "s2", r=4), text(142, 109, "p99"),
+        '<circle class="s1 hollow" cx="196" cy="105" r="4.5"/>',
+        text(208, 109, "hollow: marked noise or unresolved in its report; a missing rung was not sustained or not quotable",
+             cls="t2", size=12.5),
+    ]
+    for k, (row, title, what) in enumerate(panels):
+        px, py = left + (k % 3) * (pw + gx), top + (k // 3) * (ph + gy)
+        rungs = latency_ladder(row)
+        values = [v[0] for r in rungs for v in (r[2], r[3]) if v]
+        lo = max(d for d in decades if d <= min(values))
+        hi = min(d for d in decades if d >= max(values))
+        span = math.log10(hi) - math.log10(lo)
+        ys = lambda v: py + ph - (math.log10(v) - math.log10(lo)) / span * ph
+        xs = lambda pct: px + (pct - 10) / 80 * pw
+        body.append(text(px, py - 26, title, size=13.5, weight=600))
+        body.append(text(px, py - 10, what, cls="t3", size=11.5))
+        for d, label in zip(decades, names):
+            if lo <= d <= hi:
+                body.append(f'<line class="grid" x1="{px}" y1="{ys(d):.1f}" x2="{px + pw}" y2="{ys(d):.1f}"/>')
+                body.append(text(px - 8, ys(d) + 4, label, cls="t3", size=11, anchor="end"))
+        for pct in (10, 25, 50, 75, 90):
+            body.append(text(xs(pct), py + ph + 16, f"{pct}%", cls="t3", size=11, anchor="middle"))
+        rates = ", ".join(f"{r[1]:,}" for r in rungs)
+        body.append(text(px, py + ph + 32, f"per second: {rates}", cls="t3", size=10))
+        for index, (cls, shape) in ((2, ("s1", 0)), (3, ("s2", 1))):
+            pts = [(r[0], r[index]) for r in rungs if r[index]]
+            if len(pts) > 1:
+                d = "M" + "L".join(f"{xs(p):.1f} {ys(v[0]):.1f}" for p, v in pts)
+                body.append(f'<path class="{cls} line" d="{d}"/>')
+            for p, (v, marked) in pts:
+                if marked:
+                    body.append(f'<circle class="{cls} hollow" cx="{xs(p):.1f}" cy="{ys(v):.1f}" r="4.5"/>')
+                else:
+                    body.append(marker(shape, xs(p), ys(v), cls, r=4))
+    bottom = top + 2 * ph + gy + 40
+    body.append(text(24, bottom + 10, "Each panel has its own scale; no interval is subtracted from another, and no max is "
+                                      "shown. Tables with each row's run record: docs/LATENCY.md.", cls="t2"))
+    body.append(text(24, bottom + 30, f"Source: {ENGINE}/latency/*-ladder/report.txt", cls="t3", size=12))
+    write("engine-latency.svg", svg(width, bottom + 52, "Engine latency against rate",
+                                    "Six small line charts, one per interval, of p50 and p99 response time on a log "
+                                    "scale against the offered rate as a share of the capacity each measured.",
+                                    body, SERIES_STYLE))
+
+
 if __name__ == "__main__":
     benchmark_baseline()
     behaviors_baseline()
     optimization()
     replay_terminal()
+    engine_scaling()
+    engine_latency()

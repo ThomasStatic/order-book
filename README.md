@@ -2,7 +2,7 @@
 
 A correctness-first limit order book and matching engine in C++20. It matches orders by price-time priority and cancels orders in O(1). Beyond limit orders it takes market orders, IOC and FOK, post-only limits, self-trade prevention, stop and stop-limit orders with cascades, and cancel-replace. Every command returns the lifecycle events it produced. A whole-book invariant checker can run after every command. Around the engine are a CSV replay format and CLI, seeded randomized testing against an independent model, and a benchmark and profiling harness.
 
-Version 2.0.0, which added the order behaviors to v1.0.0's limit orders. One instrument, single-threaded (see [Limitations](#limitations)).
+Version 2.0.0, which added the order behaviors to v1.0.0's limit orders. Each book is one instrument and single-threaded; `order_book_engine` runs many, each shard's books on a matching thread of its own, behind TCP gateway threads and a command log (see [Limitations](#limitations)).
 
 ## Contents
 
@@ -99,7 +99,7 @@ resting orders: 0
 
 The code is split into libraries that depend in one direction only. The book knows nothing about CSV, printing, or benchmarks.
 
-![The library targets and their dependencies; inside OrderBook, the commands within their invariant boundary, the order index whose slots point straight at an order's list node and level, the two price-level maps, and the node pool.](docs/images/architecture.svg)
+![The library targets and their dependencies; inside OrderBook, the commands within their invariant boundary, the order index whose slots point straight at an order's list node and level, the two sorted level arrays, and the node pool.](docs/images/architecture.svg)
 
 | Target | Kind | Role |
 |---|---|---|
@@ -170,7 +170,7 @@ The same structures seen as a trader would, as a price ladder:
 
 ![A price ladder of twelve resting orders: three ask levels and three bid levels, each bar a level's aggregate quantity split into its orders in queue order, with the best bid, best ask, and two-tick spread marked.](docs/images/book-ladder.svg)
 
-`price_level.hpp`, `level_array.hpp`, `order_location.hpp`, `order_index.hpp`, `node_pool.hpp`, `small_vector.hpp`, `result_recorder.hpp`, and `image_header.hpp` (an image's header as stored, for `checkpoint describe`) are implementation detail. The book never hands one of them out (a result's trades and events come back as `SmallVector`s, which the API names only through `SubmissionTrades`, `SubmissionEvents`, and `CancellationEvents`), and they may change in any release.
+`price_level.hpp`, `level_array.hpp`, `order_location.hpp`, `order_index.hpp`, `node_pool.hpp`, `small_vector.hpp`, `result_recorder.hpp`, `xxh64.hpp` and `little_endian.hpp` (the formats' checksum and byte order), `replay_inputs.hpp` and `replay_instruments.hpp` (how the CLI and engine read their input files), and `image_header.hpp` (an image's header as stored, for `checkpoint describe`) are implementation detail. The book never hands one of them out (a result's trades and events come back as `SmallVector`s, which the API names only through `SubmissionTrades`, `SubmissionEvents`, and `CancellationEvents`), and they may change in any release.
 
 ## Price-time priority
 
@@ -257,7 +257,9 @@ With automatic invariant checks on, which is the default in Debug, every mutatin
 
 ## Public API
 
-Everything is in namespace `order_book`, with headers in `include/order_book/`. Changes to these headers are breaking changes.
+Everything is in namespace `order_book`, with headers in `include/order_book/`. Changes to the headers listed below are breaking changes; `include/order_book/runtime/` and `network/` hold the headers of libraries that are not public API.
+
+In v2.1.0 the public API is the `order_book` library and the replay headers below, in `order_book_replay`. `order_book_runtime`, `order_book_network`, and `order_book_latency` are not public API: their contracts with the outside are the formats ([command log](docs/command-log-format.md), [checkpoint](docs/checkpoint-format.md), [wire protocol](docs/wire-protocol.md)) and the programs' flags and output. Promoting one of them later is an addition, and taking one back would be a break.
 
 - **`order_book.hpp`**: `OrderBook`.
   - Commands: `submitOrder` (match, then rest any remainder), `addOrder` (rest without matching), `cancelOrder`, `replaceOrder` (a resting order's price, total, and instructions, under the same ID). `submitOrder` takes either an `Order` or an `OrderRequest`; the two give identical results for the same ID, side, price, and quantity. `submitOrder(OrderRequest, SubmissionResult& out)` and `replaceOrder(const ReplaceRequest&, ReplaceResult& out)` overwrite one reused result and keep its heap blocks, and give results equal to the other overloads. If one throws, `out` stays valid with unspecified contents.
@@ -276,9 +278,11 @@ Everything is in namespace `order_book`, with headers in `include/order_book/`. 
 - **`event_format.hpp`**: one line of text per event, for callers that print them. The engine itself never prints.
 - **`invariants.hpp`**: `InvariantResult`, `formatInvariantResult`, and the `ORDER_BOOK_INVARIANT_CHECKS` switch.
 - **`replay_parser.hpp`, `replay_engine.hpp`, `replay_summary.hpp`**: the replay format, in namespace `order_book::replay` and library `order_book_replay`.
-- **`symbol.hpp`, `command.hpp`, `command_log.hpp`**, in the same namespace and library. `Symbol` is an instrument's only identity, exactly 8 bytes. `command.hpp` holds `AddCommand`, `CancelCommand`, `ReplaceCommand`, and `Command`, and `executeCommand`, the one place that maps a command to a book call, with an overload that overwrites a reused `CommandResult`. `command_log.hpp` is the binary log's codec and its reader, specified in [`docs/command-log-format.md`](docs/command-log-format.md), and its command body, which the wire protocol shares.
+- **`symbol.hpp`, `command.hpp`, `command_log.hpp`**, in the same namespace and library, since v2.1.0. `Symbol` is an instrument's only identity, exactly 8 bytes, and a `ReplayRecord` carries one. `command.hpp` holds `AddCommand`, `CancelCommand`, `ReplaceCommand`, and `Command`, and `executeCommand`, the one place that maps a command to a book call, with an overload that overwrites a reused `CommandResult`. `command_log.hpp` is the binary log's codec and its reader, specified in [`docs/command-log-format.md`](docs/command-log-format.md), and its command body, which the wire protocol shares.
 
 **Open sets.** `BookEvent`, `RejectionReason`, replay's `Command`, `ReplayFormat`, `ParseErrorCode`, and `RestoreErrorCode` are open: a later release may append alternatives or enumerators, but never reorders, renumbers, or removes one. Code that visits or switches over them should keep a fallback for one it does not know. From v2.0.0 on, such an addition is a minor release. (Adding to them was not promised by v1.0.0, which is why the order behaviors shipped as v2.0.0.)
+
+**Formats.** The command log, the checkpoint file, and the book image inside it each state a minimum reader version. **A format break is a major release:** raising any format's minimum reader version is the break, because a reader from the previous release then refuses the file. Every other extension of a format is a minor release.
 
 Error policy:
 
@@ -545,12 +549,16 @@ cmake --build build/release --target order_book_benchmarks
 
 The program refuses to run (exit 3) in an unoptimized build, meaning Debug, automatic invariant checks, or sanitizers, unless given `--allow-unoptimized`.
 
+Beyond the book alone, `--kind shard`, `queue`, `gateway`, and `engine` time each layer of the engine outward, from one shard's matching loop to the shipped process over loopback. `--shards`, `--producers`, and `--gateway-threads` set the threads, `--pin-cores` and `--priority` place them, and `--durability` adds the command log. `order_book_latency_benchmarks` times single commands, hand-offs, durable waits, and round trips with a cycle-counter clock, under [`docs/LATENCY.md`](docs/LATENCY.md)'s claims rule.
+
+![Paired throughput ratio of N matching threads to one, shard kind, five workloads: 3.46 to 5.26 times at six threads on six physical cores.](docs/images/engine-scaling.svg)
+
 ![Strip plot of the v2.0.0 baseline: 90 runs per workload for the core and replay paths, all eleven workloads. The v1 workloads run 1.5 to 1.8 times their first baseline on core and 2.0 to 2.4 times on replay.](docs/images/benchmark-v2-baseline.svg)
 
 ![Before and after optimization: nanoseconds per command fell on every workload, 1.44 to 2.23 times faster on the core path and 2.34 to 2.74 times on the replay path; the heap's share of core time fell from 34-47% to 0-5%, and allocations per command from 2.0-2.9 to under 0.17.](docs/images/optimization.svg)
 
 - **Methodology**: [`benchmarks/README.md`](benchmarks/README.md) covers the five v1 workloads and the six behavior workloads, what is and isn't timed, determinism, output formats, and the reference environment.
-- **Baselines**: [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) records the v2.0.0 baseline of all eleven workloads, and the first results (before optimization, [figure](docs/images/benchmark-baseline.svg)) as history. Each run measures one throughput, so the page reports throughput percentiles over runs, never latency percentiles for single commands, and explains why. It also lists the baseline's limitations.
+- **Baselines**: [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) records v2.1.0's engine set: the gate against v2.0.0, which ten of eleven workloads pass and `quote-refresh` misses at 0.963, an accepted and explained exception; scaling to six shards; the kinds side by side; and durability. It also keeps the v2.0.0 baseline of all eleven workloads, and the first results (before optimization, [figure](docs/images/benchmark-baseline.svg)) as history. Each run measures one throughput, so the page reports throughput percentiles over runs, never latency percentiles for single commands, and explains why. It also lists the baseline's limitations.
 - **Profile**: [`docs/PROFILING.md`](docs/PROFILING.md) shows where the baseline spent its time and gives the three strongest bottleneck hypotheses.
 - **Experiments**: [`docs/OPTIMIZATION-EXPERIMENTS.md`](docs/OPTIMIZATION-EXPERIMENTS.md) gives each candidate change a hypothesis, a prediction, a paired ABBA measurement protocol, and an outcome, including the reverted and null experiments.
 - **Findings**: [`docs/OPTIMIZATION.md`](docs/OPTIMIZATION.md) is the report.
@@ -559,16 +567,19 @@ The program refuses to run (exit 3) in an unoptimized build, meaning Debug, auto
   - Engine throughput rose 1.44-2.23× and replay throughput 2.34-2.87× at the standard size, with every paired run faster.
   - The report also covers each change's readability cost and what remains unoptimized. Order-index cache misses on large books are now the largest single cost.
 
-All figures come from one machine (Ryzen 5 5600G, Windows 11, MSVC Release) and synthetic single-instrument workloads. They are a reference for measuring later changes to this code, not a comparison with any production system, and they make no claim about latency.
+- **Latency**: [`docs/LATENCY.md`](docs/LATENCY.md) records each interval's percentiles at each rate, every row with its run record, under a claims rule that refuses headline numbers and comparisons.
+
+All figures come from one machine (Ryzen 5 5600G, Windows 11, MSVC Release) and synthetic workloads, with no scaling claim past its 6 physical cores and no Linux numbers recorded. They are a reference for measuring later changes to this code, not a comparison with any production system.
 
 ## Limitations
 
 **Scope**
 
-- **One instrument per book.** There are no symbols, sessions, auctions, or trading halts.
+- **A fixed set of instruments.** Each `OrderBook` is one instrument. The engine runs the instruments its `--instruments` file lists, spread over shards. Adding, moving, or removing one needs a restart, and a move takes a clean stop first ([OPERATIONS](docs/OPERATIONS.md#changing-placement)). There are no sessions, auctions, trading halts, or cross-instrument products.
 - **Order types.** Limit and market orders, with GTC, IOC, and FOK, post-only limits (never repriced), and stop and stop-limit orders (triggering on this book's own trades only, never on quotes or a reference price; a cascade is unbounded). No iceberg or hidden orders, no DAY or GTD (they need a clock), and no price protection for market orders. `addOrder` refuses an order that would cross, which resembles post-only, but it is not an order type.
 - **Replace is cancel-replace only.** There is no amend that keeps priority on a price change, no decrement-only change outside a replace, and pending stops cannot be replaced (cancel and submit again).
 - **Participants.** An order may carry an opaque owner, used only for self-trade prevention. There is no account, no risk or credit check, no per-participant limit, and no decrement mode for self-trade prevention.
+- **Connections.** A connection is the engine's only notion of a client ([ADR 0012](docs/adr/0012-a-connection-is-the-gateways-only-identity.md)). Only the order's sender hears about its fills, never the resting side. There is no cancel on disconnect, no idempotent resend, no authentication or encryption, and no admin command.
 
 **Data model**
 
@@ -578,8 +589,10 @@ All figures come from one machine (Ryzen 5 5600G, Windows 11, MSVC Release) and 
 
 **Runtime**
 
-- **Single-threaded and not thread-safe.** A caller must serialize all access to a book.
-- **In memory only.** There is no persistence, recovery, networking, or market-data publication. Events are returned to the caller, not published, and the replay format is the only way to reconstruct a session.
+- **A book is not thread-safe.** A caller must serialize all access to a book. The engine does: each shard's books belong to one matching thread.
+- **One machine, one process.** The command log, checkpoints, and recovery make a stop or crash lose nothing answered, but there is no replication, high availability, or multi-process deployment. Events go back to the sender only: there is no market-data publication.
+- **Durability rests on the drive.** At `--durability machine`, what survives a power cut is what the drive and file system kept of what they said they had flushed. That was tested only against a model of a drive, never by cutting power ([OPERATIONS](docs/OPERATIONS.md#a-real-power-cut-cannot-be-tested-here)).
+- **`poll` only.** Each gateway thread watches its connections with `poll` (`WSAPoll` on Windows), at most 64 of them. On Windows, its cost grows with every idle connection; a completion-port socket set is [#105](https://github.com/ThomasStatic/order-book/issues/105).
 - **`submitOrder` is not atomic under allocation failure** for a GTC or IOC order (a FOK is). Executions made before the failure stand, and the book stays consistent, but the trades and events are lost with the exception.
 - **Memory is not returned early.** The node pool and the index keep their peak size until the book is destroyed.
 - **The index hash is not hardened** against adversarially chosen IDs (see [Complexity](#complexity)).
@@ -587,7 +600,7 @@ All figures come from one machine (Ryzen 5 5600G, Windows 11, MSVC Release) and 
 **Tooling**
 
 - **Replay format.** `ADD`, `CANCEL`, and (in v2) `REPLACE` commands; no quoting or comments; pending stops are not listed in the output; and a parse error stops the replay, with no skip-and-continue mode.
-- **Performance evidence.** Throughput only, from one machine and compiler, on synthetic workloads. Single-command latency has never been measured.
+- **Performance evidence.** Throughput and latency from one Windows machine and one compiler, on synthetic workloads, with no scaling claim past its 6 physical cores. No Linux numbers are recorded: Linux is built and tested in CI only.
 - **Packaging.** There are no CMake install or package-config rules. Consume the library with `add_subdirectory`.
 
 ## Potential extensions
@@ -595,15 +608,15 @@ All figures come from one machine (Ryzen 5 5600G, Windows 11, MSVC Release) and 
 Roughly in order of how much of the existing design they reuse:
 
 - **Order types.** Iceberg and pegged orders, and DAY or GTD time in force once a clock exists.
-- **Multiple instruments.** Keep one `OrderBook` per symbol behind a router that owns symbol lookup and per-instrument tick and lot sizes.
-- **Participants.** The self-trade-prevention owner could also drive per-participant limits and cancel-all-for-participant.
-- **Market data.** Derive incremental level updates (L2) and top-of-book changes from the events each command already returns.
-- **Persistence and recovery.** Make an append-only command log, in the replay format or a binary form, the source of truth. The book's determinism makes a replay reconstruct its exact state, and the invariant checker can validate the result.
-- **The remaining performance opportunities** in [`docs/OPTIMIZATION.md`](docs/OPTIMIZATION.md#what-remains-unoptimized): index slots holding only keys, for better cache density; a contiguous sorted array of levels instead of `std::map`; and cheaper result construction on the matching path.
-- **A latency harness** that times single commands with a low-overhead clock, so that latency percentiles could be measured rather than inferred.
+- **Instruments while running.** Adding, moving, or removing an instrument without a restart, which needs no format break. Per-instrument tick and lot sizes.
+- **Participants.** The self-trade-prevention owner could also drive per-participant limits and cancel-all-for-participant, and reports to the resting side, cancel on disconnect, and idempotent resends would follow from an identity beyond the connection.
+- **Market data.** Derive incremental level updates (L2) and top-of-book changes from the events each command already returns, and publish them.
+- **Socket sets.** Completion ports on Windows ([#105](https://github.com/ThomasStatic/order-book/issues/105)), whose idle connections cost nothing in the recorded latency rows, and epoll on Linux.
+- **The open performance findings.** `Shard::process` reads 17 to 22% below the book called directly on the two cheapest workloads ([#101](https://github.com/ThomasStatic/order-book/issues/101)); a roll-forward worker placed on the matching thread's sibling nearly halves that shard's throughput in the benchmark ([#108](https://github.com/ThomasStatic/order-book/issues/108)); `quote-refresh` is 1.3 to 2.1% below v2.0.0 ([#107](https://github.com/ThomasStatic/order-book/issues/107)). Beyond those, [`docs/OPTIMIZATION.md`](docs/OPTIMIZATION.md#what-remains-unoptimized) lists index slots holding only keys, for better cache density.
 - **Build options**: LTO, PGO, and target-specific code generation, measured with the existing paired protocol.
 - **Packaging**: CMake install rules and a package config, so the library can be consumed with `find_package`.
 - **Replay**: a skip-and-continue policy for invalid fields, which the format already classifies as recoverable in principle.
+- **Replication and high availability**, from the command log, which already makes a replay reconstruct each book's exact state.
 
 ## Further documentation
 
@@ -613,10 +626,12 @@ Roughly in order of how much of the existing design they reuse:
 | [`tests/replay/README.md`](tests/replay/README.md) | Every replay sample and its expected outcome. |
 | [`tests/randomized/regressions/README.md`](tests/randomized/regressions/README.md) | The saved randomized-test stream format. |
 | [`benchmarks/README.md`](benchmarks/README.md) | Benchmark harness, workloads, and methodology. |
-| [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | The recorded benchmark baseline and its limitations. |
+| [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | The recorded benchmark baselines, v2.1.0's engine set first, and their limitations. |
+| [`docs/LATENCY.md`](docs/LATENCY.md) | The recorded latency set and the claims rule every latency statement follows. |
+| [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Running `order_book_engine`: starting, durability, recovery, stopping, and the worst cases. |
 | [`benchmarks/profiling/README.md`](benchmarks/profiling/README.md) | The profiling tools and how to build them. |
 | [`docs/PROFILING.md`](docs/PROFILING.md) | The baseline's profile and bottleneck hypotheses. |
 | [`docs/OPTIMIZATION-EXPERIMENTS.md`](docs/OPTIMIZATION-EXPERIMENTS.md) | Each optimization experiment's design and outcome. |
 | [`docs/OPTIMIZATION.md`](docs/OPTIMIZATION.md) | The optimization report. |
-| [`docs/images/`](docs/images/) | The figures in this README. `make_figures.py` redraws the benchmark, optimization, and terminal figures from the files they show. |
+| [`docs/images/`](docs/images/) | The figures in this README. `make_figures.py` redraws the benchmark, engine scaling, engine latency, optimization, and terminal figures from the files they show. |
 | [`docs/internals/`](docs/internals/) | Detailed contributor notes: every invariant, test convention, and contract, by topic. [`CLAUDE.md`](CLAUDE.md) indexes them. |

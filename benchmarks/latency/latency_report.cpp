@@ -210,6 +210,11 @@ std::vector<std::string> unquotableReasons(const ReportRow& row) {
     if (!row.sustained) {
         reasons.emplace_back("not sustained");
     }
+    // A run whose commands all fell before its discard ended, say, has nothing to quote.
+    const auto emptyRuns = std::count_if(row.runs.begin(), row.runs.end(), [](const Histogram& run) { return run.count() == 0; });
+    if (emptyRuns > 0) {
+        reasons.push_back(std::to_string(emptyRuns) + " of " + std::to_string(row.runs.size()) + " runs recorded nothing");
+    }
     return reasons;
 }
 

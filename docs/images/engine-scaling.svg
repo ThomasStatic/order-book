@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="636" viewBox="0 0 960 636" role="img" aria-labelledby="title desc">
+<title id="title">Engine scaling</title>
+<desc id="desc">Line chart of the shard kind&#x27;s throughput at 2, 3, 4, and 6 matching threads, each on its own physical core, as a paired ratio to one thread, for five workloads, beside the perfect-scaling diagonal.</desc>
+<style>
+  .bg{fill:#fcfcfb} .frame{fill:none;stroke:rgba(11,11,11,.10)}
+  text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;fill:#0b0b0b}
+  .mono{font-family:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace}
+  .t2{fill:#52514e} .t3{fill:#898781}
+  .grid{stroke:#e1e0d9;stroke-width:1} .axis{stroke:#c3c2b7;stroke-width:1}
+  .core{fill:#2a78d6} .replay{fill:#eb6834}
+  .before{fill:#fcfcfb;stroke:#898781;stroke-width:2} .after{fill:#2a78d6;stroke:#fcfcfb;stroke-width:2}
+  .link{stroke:#c3c2b7;stroke-width:2;stroke-linecap:round}
+  .median{stroke:#0b0b0b;stroke-width:2;stroke-linecap:round}
+  @media (prefers-color-scheme: dark){
+    .bg{fill:#1a1a19} .frame{stroke:rgba(255,255,255,.10)}
+    text{fill:#f0efec} .t2{fill:#c3c2b7} .t3{fill:#898781}
+    .grid{stroke:#2c2c2a} .axis{stroke:#383835}
+    .core{fill:#3987e5} .replay{fill:#d95926}
+    .before{fill:#1a1a19;stroke:#898781} .after{fill:#3987e5;stroke:#1a1a19}
+    .link{stroke:#383835} .median{stroke:#f0efec}
+  }
+
+  .s1{stroke:#2a78d6;fill:#2a78d6} .s2{stroke:#eb6834;fill:#eb6834} .s3{stroke:#1baf7a;fill:#1baf7a}
+  .s4{stroke:#eda100;fill:#eda100} .s5{stroke:#e87ba4;fill:#e87ba4}
+  .line{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+  .ideal{fill:none;stroke:#c3c2b7;stroke-width:1.5;stroke-dasharray:5 4}
+  .ci{stroke-width:1.5;stroke-linecap:round} .ring{stroke:#fcfcfb;stroke-width:2}
+  .hollow{fill:#fcfcfb;stroke-width:2}
+  @media (prefers-color-scheme: dark){
+    .s1{stroke:#3987e5;fill:#3987e5} .s2{stroke:#d95926;fill:#d95926} .s3{stroke:#199e70;fill:#199e70}
+    .s4{stroke:#c98500;fill:#c98500} .s5{stroke:#d55181;fill:#d55181}
+    .ideal{stroke:#4a4a44} .ring{stroke:#1a1a19} .hollow{fill:#1a1a19}
+  }
+</style>
+<rect class="bg" width="960" height="636" rx="12"/>
+<rect class="frame" x="0.5" y="0.5" width="959" height="635" rx="12"/>
+<text x="24.0" y="38.0" font-size="18" text-anchor="start" font-weight="600">Throughput against matching threads, shard kind</text>
+<text x="24.0" y="61.0" class="t2" font-size="13" text-anchor="start">Paired ratio of N matching threads to one, 16 ABBA pairs each, extended size: 1M commands per shard, 8 instruments per shard,</text>
+<text x="24.0" y="80.0" class="t2" font-size="13" text-anchor="start">uniform spread, even placement, no log, spin window 100us, each thread on its own physical core at high priority. Windows 11, MSVC Release.</text>
+<line class="grid" x1="90" y1="520.0" x2="700" y2="520.0"/>
+<text x="80.0" y="524.0" class="t3" font-size="12" text-anchor="end">0×</text>
+<line class="grid" x1="90" y1="453.3" x2="700" y2="453.3"/>
+<text x="80.0" y="457.3" class="t3" font-size="12" text-anchor="end">1×</text>
+<line class="grid" x1="90" y1="386.7" x2="700" y2="386.7"/>
+<text x="80.0" y="390.7" class="t3" font-size="12" text-anchor="end">2×</text>
+<line class="grid" x1="90" y1="320.0" x2="700" y2="320.0"/>
+<text x="80.0" y="324.0" class="t3" font-size="12" text-anchor="end">3×</text>
+<line class="grid" x1="90" y1="253.3" x2="700" y2="253.3"/>
+<text x="80.0" y="257.3" class="t3" font-size="12" text-anchor="end">4×</text>
+<line class="grid" x1="90" y1="186.7" x2="700" y2="186.7"/>
+<text x="80.0" y="190.7" class="t3" font-size="12" text-anchor="end">5×</text>
+<line class="grid" x1="90" y1="120.0" x2="700" y2="120.0"/>
+<text x="80.0" y="124.0" class="t3" font-size="12" text-anchor="end">6×</text>
+<text x="90.0" y="540.0" class="t3" font-size="12" text-anchor="middle">1</text>
+<text x="212.0" y="540.0" class="t3" font-size="12" text-anchor="middle">2</text>
+<text x="334.0" y="540.0" class="t3" font-size="12" text-anchor="middle">3</text>
+<text x="456.0" y="540.0" class="t3" font-size="12" text-anchor="middle">4</text>
+<text x="700.0" y="540.0" class="t3" font-size="12" text-anchor="middle">6</text>
+<text x="395.0" y="562.0" class="t3" font-size="12" text-anchor="middle">matching threads N, one physical core each (the machine has 6)</text>
+<line class="axis" x1="90" y1="520" x2="700" y2="520"/>
+<path class="ideal" d="M90.0 453.3L700.0 120.0"/>
+<text x="694.0" y="112.0" class="t3" font-size="12" text-anchor="end">N× (perfect scaling)</text>
+<path class="s1 line" d="M90.0 453.3L212.0 390.0L334.0 328.6L456.0 268.9L700.0 169.5"/>
+<line class="s1 ci" x1="212.0" y1="390.7" x2="212.0" y2="389.3"/>
+<line class="s1 ci" x1="334.0" y1="329.8" x2="334.0" y2="327.3"/>
+<line class="s1 ci" x1="456.0" y1="269.9" x2="456.0" y2="267.3"/>
+<line class="s1 ci" x1="700.0" y1="172.3" x2="700.0" y2="168.2"/>
+<circle class="s1 ring" cx="90.0" cy="453.3" r="4.5"/>
+<circle class="s1 ring" cx="212.0" cy="390.0" r="4.5"/>
+<circle class="s1 ring" cx="334.0" cy="328.6" r="4.5"/>
+<circle class="s1 ring" cx="456.0" cy="268.9" r="4.5"/>
+<circle class="s1 ring" cx="700.0" cy="169.5" r="4.5"/>
+<path class="s2 line" d="M90.0 453.3L212.0 395.7L334.0 337.3L456.0 285.1L700.0 190.7"/>
+<line class="s2 ci" x1="212.0" y1="396.6" x2="212.0" y2="394.3"/>
+<line class="s2 ci" x1="334.0" y1="338.8" x2="334.0" y2="335.7"/>
+<line class="s2 ci" x1="456.0" y1="287.9" x2="456.0" y2="282.5"/>
+<line class="s2 ci" x1="700.0" y1="194.3" x2="700.0" y2="188.7"/>
+<rect class="s2 ring" x="85.5" y="448.8" width="9.0" height="9.0" rx="1.5"/>
+<rect class="s2 ring" x="207.5" y="391.2" width="9.0" height="9.0" rx="1.5"/>
+<rect class="s2 ring" x="329.5" y="332.8" width="9.0" height="9.0" rx="1.5"/>
+<rect class="s2 ring" x="451.5" y="280.6" width="9.0" height="9.0" rx="1.5"/>
+<rect class="s2 ring" x="695.5" y="186.2" width="9.0" height="9.0" rx="1.5"/>
+<path class="s3 line" d="M90.0 453.3L212.0 393.0L334.0 345.0L456.0 308.6L700.0 247.9"/>
+<line class="s3 ci" x1="212.0" y1="393.7" x2="212.0" y2="392.1"/>
+<line class="s3 ci" x1="334.0" y1="346.0" x2="334.0" y2="343.1"/>
+<line class="s3 ci" x1="456.0" y1="310.3" x2="456.0" y2="307.5"/>
+<line class="s3 ci" x1="700.0" y1="251.6" x2="700.0" y2="246.3"/>
+<path class="s3 ring" d="M90.0 447.8L95.5 457.8L84.5 457.8z"/>
+<path class="s3 ring" d="M212.0 387.5L217.5 397.5L206.5 397.5z"/>
+<path class="s3 ring" d="M334.0 339.5L339.5 349.5L328.5 349.5z"/>
+<path class="s3 ring" d="M456.0 303.1L461.5 313.1L450.5 313.1z"/>
+<path class="s3 ring" d="M700.0 242.4L705.5 252.4L694.5 252.4z"/>
+<path class="s4 line" d="M90.0 453.3L212.0 394.8L334.0 350.5L456.0 313.9L700.0 246.6"/>
+<line class="s4 ci" x1="212.0" y1="395.8" x2="212.0" y2="394.0"/>
+<line class="s4 ci" x1="334.0" y1="351.8" x2="334.0" y2="349.7"/>
+<line class="s4 ci" x1="456.0" y1="314.7" x2="456.0" y2="311.3"/>
+<line class="s4 ci" x1="700.0" y1="250.1" x2="700.0" y2="243.7"/>
+<path class="s4 ring" d="M90.0 447.8L95.5 453.3L90.0 458.8L84.5 453.3z"/>
+<path class="s4 ring" d="M212.0 389.3L217.5 394.8L212.0 400.3L206.5 394.8z"/>
+<path class="s4 ring" d="M334.0 345.0L339.5 350.5L334.0 356.0L328.5 350.5z"/>
+<path class="s4 ring" d="M456.0 308.4L461.5 313.9L456.0 319.4L450.5 313.9z"/>
+<path class="s4 ring" d="M700.0 241.1L705.5 246.6L700.0 252.1L694.5 246.6z"/>
+<path class="s5 line" d="M90.0 453.3L212.0 404.7L334.0 372.6L456.0 341.4L700.0 289.3"/>
+<line class="s5 ci" x1="212.0" y1="405.9" x2="212.0" y2="403.7"/>
+<line class="s5 ci" x1="334.0" y1="373.9" x2="334.0" y2="371.8"/>
+<line class="s5 ci" x1="456.0" y1="343.3" x2="456.0" y2="340.3"/>
+<line class="s5 ci" x1="700.0" y1="290.1" x2="700.0" y2="287.6"/>
+<path class="s5" d="M85.5 448.8L94.5 457.8M94.5 448.8L85.5 457.8" stroke-width="2.5" stroke-linecap="round"/>
+<path class="s5" d="M207.5 400.2L216.5 409.2M216.5 400.2L207.5 409.2" stroke-width="2.5" stroke-linecap="round"/>
+<path class="s5" d="M329.5 368.1L338.5 377.1M338.5 368.1L329.5 377.1" stroke-width="2.5" stroke-linecap="round"/>
+<path class="s5" d="M451.5 336.9L460.5 345.9M460.5 336.9L451.5 345.9" stroke-width="2.5" stroke-linecap="round"/>
+<path class="s5" d="M695.5 284.8L704.5 293.8M704.5 284.8L695.5 293.8" stroke-width="2.5" stroke-linecap="round"/>
+<circle class="s1 ring" cx="722.0" cy="165.5" r="4"/>
+<text x="734.0" y="169.5" font-size="12.5" text-anchor="start">quote-refresh  5.26×</text>
+<rect class="s2 ring" x="718.0" y="182.7" width="8" height="8" rx="1.5"/>
+<text x="734.0" y="190.7" font-size="12.5" text-anchor="start">deep-book  4.94×</text>
+<path class="s4 ring" d="M722.0 237.6L727.0 242.6L722.0 247.6L717.0 242.6z"/>
+<text x="734.0" y="246.6" font-size="12.5" text-anchor="start">matching-heavy-request  4.10×</text>
+<path class="s3 ring" d="M722.0 254.6L727.0 263.6L717.0 263.6z"/>
+<text x="734.0" y="263.6" font-size="12.5" text-anchor="start">immediate  4.08×</text>
+<path class="s5" d="M718.0 281.3L726.0 289.3M726.0 281.3L718.0 289.3" stroke-width="2.5" stroke-linecap="round"/>
+<text x="734.0" y="289.3" font-size="12.5" text-anchor="start">pending-stops  3.46×</text>
+<text x="24.0" y="594.0" class="t2" font-size="13" text-anchor="start">Each ratio&#x27;s 95% bootstrap interval is within ±0.06 of it, drawn as a bar mostly hidden by its marker. No point goes past 6 physical cores.</text>
+<text x="24.0" y="614.0" class="t3" font-size="12" text-anchor="start">Tables, the other kinds, and every cell&#x27;s run record: docs/BENCHMARKS.md · Source: benchmarks/results/2026-11-06-engine/pairs/shard-*-against-1-*</text>
+</svg>
