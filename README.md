@@ -2,7 +2,7 @@
 
 A correctness-first limit order book and matching engine in C++20. It matches orders by price-time priority and cancels orders in O(1). Beyond limit orders it takes market orders, IOC and FOK, post-only limits, self-trade prevention, stop and stop-limit orders with cascades, and cancel-replace. Every command returns the lifecycle events it produced. A whole-book invariant checker can run after every command. Around the engine are a CSV replay format and CLI, seeded randomized testing against an independent model, and a benchmark and profiling harness.
 
-Version 2.0.0, which added the order behaviors to v1.0.0's limit orders. Each book is one instrument and single-threaded; `order_book_engine` runs many, each shard's books on a matching thread of its own, behind TCP gateway threads and a command log (see [Limitations](#limitations)).
+Version 2.1.0, which adds the engine to v2.0.0's order behaviors: instruments in shards, TCP gateway threads, a command log with recovery, and checkpoints rolled forward from it. Each book is one instrument and single-threaded; `order_book_engine` runs many, each shard's books on a matching thread of its own, behind TCP gateway threads and a command log (see [Limitations](#limitations)).
 
 ## Contents
 
