@@ -206,6 +206,10 @@ def main():
     parser.add_argument("--recheck", action="append", help="rerun this pair at 24 pairs, into pairs/NAME-24; repeatable")
     parser.add_argument("--list", action="store_true", help="print the steps and exit")
     options = parser.parse_args()
+    # Absolute, since Windows does not search the current directory for a relative path with slashes.
+    for name in ("base", "before_latency", "before_component", "machine_record"):
+        if getattr(options, name):
+            setattr(options, name, os.path.abspath(getattr(options, name)))
     s = Session(options)
     cur = s.bench
     base = options.base or (cur if options.smoke else None)
