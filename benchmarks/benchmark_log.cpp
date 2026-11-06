@@ -125,7 +125,8 @@ std::filesystem::path defaultLogParent() {
 }
 
 RunLog::RunLog(const std::filesystem::path& parent, RunDurability durability, const runtime::InstrumentDirectory& directory,
-               LogRing& ring, std::uint64_t firstPosition, std::function<void()> setUpWriter, LogFileFill fill)
+               LogRing& ring, std::uint64_t firstPosition, std::function<void()> setUpWriter, LogFileFill fill, std::uint32_t shard,
+               std::optional<RunLogWorker> worker, std::uint64_t fileBytes, std::function<void()> setUpHelpers)
     : log(ring) {
     if (durability == RunDurability::NONE) {
         throw std::invalid_argument("a run with no log has no log writer");
@@ -135,15 +136,33 @@ RunLog::RunLog(const std::filesystem::path& parent, RunDurability durability, co
         storage = runLogStorage(where, fill);
         housekeeping = std::make_unique<runtime::Housekeeping>(
             *storage, directory, durability == RunDurability::MACHINE ? runtime::Durability::MACHINE : runtime::Durability::PROCESS,
-            runtime::defaultLogFileBytes);
+            fileBytes);
+        if (worker) {
+            for (const auto& [symbol, image] : worker->images) {
+                runtime::CheckpointHeader header;
+                header.shardCount = directory.shardCount();
+                header.shardIndex = shard;
+                header.position = firstPosition;
+                header.symbol = symbol;
+                runtime::publishCheckpoint(*storage, header, image);
+            }
+            closedLog = std::make_unique<runtime::ClosedLog>(directory.shardCount());
+            roller = std::make_unique<runtime::RollWorker>(
+                *storage, *storage, directory, *closedLog, std::vector<std::uint32_t>{shard},
+                [this](const std::string& line) {
+                    const std::lock_guard<std::mutex> held(reportedLock);
+                    reported.push_back(line);
+                },
+                [this](std::uint32_t rolledShard, std::uint64_t floor) { housekeeping->retain(rolledShard, floor); });
+        }
         std::future<void> started = ready.get_future();
-        writer = std::thread([this, firstPosition, setUp = std::move(setUpWriter)] {
+        writer = std::thread([this, firstPosition, shard, setUp = std::move(setUpWriter)] {
             std::optional<runtime::LogWriter> made;
             try {
                 if (setUp) {
                     setUp();
                 }
-                made.emplace(*housekeeping, 0, log.ring, log.durable, firstPosition);
+                made.emplace(*housekeeping, shard, log.ring, log.durable, firstPosition, closedLog.get());
             } catch (...) {
                 ready.set_exception(std::current_exception());
                 return;
@@ -160,7 +179,29 @@ RunLog::RunLog(const std::filesystem::path& parent, RunDurability durability, co
         }
         // The next file too, here rather than on the housekeeping thread while the run is timed.
         housekeeping->pass();
-        housekeeper = std::thread([this] { housekeeping->run(); });
+        // The helpers go where the writer's sibling is, and a refusal fails the run at finish
+        // rather than here, once the thread is running.
+        const auto placed = [this, setUpHelpers](const char* thread) {
+            if (!setUpHelpers) {
+                return;
+            }
+            try {
+                setUpHelpers();
+            } catch (const std::exception& error) {
+                const std::lock_guard<std::mutex> held(reportedLock);
+                reported.push_back(std::string("could not place the ") + thread + " thread: " + error.what());
+            }
+        };
+        housekeeper = std::thread([this, placed] {
+            placed("housekeeping");
+            housekeeping->run();
+        });
+        if (roller) {
+            rolling = std::thread([this, placed] {
+                placed("roll-forward worker's");
+                roller->run();
+            });
+        }
     } catch (...) {
         // Nothing has been sent to the matching thread yet, so it isn't writing the log ring, and
         // this thread may stop the writer itself.
@@ -168,8 +209,17 @@ RunLog::RunLog(const std::filesystem::path& parent, RunDurability durability, co
             log.sendStop();
             writer.join();
         }
+        if (closedLog) {
+            closedLog->stop();
+        }
+        if (rolling.joinable()) {
+            rolling.join();
+        }
         if (housekeeping) {
             housekeeping->stop();
+            if (housekeeper.joinable()) {
+                housekeeper.join();
+            }
             housekeeping->removeUnused();
         }
         housekeeping.reset();
@@ -183,11 +233,23 @@ RunLog::RunLog(const std::filesystem::path& parent, RunDurability durability, co
 std::uint64_t RunLog::finish() {
     if (!finished) {
         writer.join();
+        if (closedLog) {
+            closedLog->stop();  // a pass under way finishes first, and none starts after
+            rolling.join();
+            passesWhileRunning = roller->roller(0).counts().passes;
+            // Every file the writer closed, rolled, so a worker that can't roll fails the run
+            // however quickly it ran.
+            roller->pass();
+        }
         housekeeping->stop();
         housekeeper.join();
         // Only once both threads are joined, so a failure here leaves the destructor to try again.
         finished = true;
         housekeeping->removeUnused();
+        const std::lock_guard<std::mutex> held(reportedLock);
+        if (!reported.empty()) {
+            throw std::runtime_error("the roll-forward worker reported: " + reported.front());
+        }
     }
     return logEnd;
 }

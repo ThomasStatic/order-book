@@ -18,6 +18,8 @@
 #include "benchmark_report.hpp"
 #include "benchmark_runner.hpp"
 #include "component_benchmark.hpp"
+#include "order_book/runtime/instruments.hpp"
+#include "scaling_run.hpp"
 #include "order_book/invariants.hpp"
 #include "order_book/replay_engine.hpp"
 #include "order_book/replay_parser.hpp"
@@ -100,6 +102,8 @@ void testSizes() {
     for (const BenchmarkSize size : {BenchmarkSize::SMOKE, BenchmarkSize::STANDARD, BenchmarkSize::EXTENDED}) {
         expect(parseBenchmarkSize(benchmarkSizeName(size)) == size, "a size's name parses back to it");
     }
+    expect(timedCommandCount(BenchmarkSize::LONG) == 20000000 && parseBenchmarkSize("long") == BenchmarkSize::LONG,
+           "long runs 20M timed commands, the threaded kinds' size for a roll-forward pass");
     expectThrows([] { parseBenchmarkSize("huge"); }, "an unknown size is refused");
     expectThrows([] { parseBenchmarkSize("Smoke"); }, "size names are case-sensitive");
 
@@ -244,6 +248,117 @@ void testARunRecordsItsInstruments() {
     expect(first.outcome == again.outcome, "a seed fixes what a run does");
     expect(first.instruments == 2, "a run records its instruments");
     expect(runOnce(workloads[0], BenchmarkKind::CORE).instruments == 1, "every other run is one instrument");
+}
+
+// Shares of a run's commands: equal, or Zipf with exponent 1, whose top instrument of 32 takes
+// about 25% (#33), and never none.
+void testCommandShares() {
+    const std::vector<std::size_t> even = commandShares(100, 8, order_book::reference::Spread::UNIFORM);
+    expect(even.size() == 8 && even[0] == 16 && even[1] == 12 && even[7] == 12, "uniform shares are equal, the rest on the first");
+    const std::vector<std::size_t> skewed = commandShares(1000000, 32, order_book::reference::Spread::SKEWED);
+    std::size_t total = 0;
+    for (std::size_t k = 0; k < skewed.size(); ++k) {
+        total += skewed[k];
+        expect(k == 0 || skewed[k] <= skewed[k - 1], "a skewed share falls with its rank");
+    }
+    expect(total == 1000000, "the skewed shares are every command");
+    const double top = static_cast<double>(skewed[0]) / 1e6;
+    expect(top > 0.24 && top < 0.26, "the top instrument of 32 takes about 25%: " + std::to_string(top));
+    // The rounding left over, under one a share, lands on the first.
+    expect(skewed[1] * 2 + 64 >= skewed[0] && skewed[1] * 2 <= skewed[0] + 64, "the second takes half the first's");
+    for (const auto& [count, instruments] : std::vector<std::pair<std::size_t, std::size_t>>{{40, 32}, {100, 100}, {101, 100}, {33, 32}}) {
+        const std::vector<std::size_t> few = commandShares(count, instruments, order_book::reference::Spread::SKEWED);
+        std::size_t fewTotal = 0;
+        for (std::size_t k = 0; k < few.size(); ++k) {
+            expect(few[k] >= 1 && (k == 0 || few[k] <= few[k - 1]), "every instrument has a command, the top the most");
+            fewTotal += few[k];
+        }
+        expect(fewTotal == count, "and they still sum to the run's");
+    }
+    expectThrows([] { static_cast<void>(commandShares(3, 4, order_book::reference::Spread::UNIFORM)); }, "too few commands are refused");
+    const std::vector<Workload> workloads = spreadWorkloads(findWorkload("quote-refresh"), 4000, 42, 4, order_book::reference::Spread::UNIFORM);
+    const std::vector<Workload> before = instrumentWorkloads(findWorkload("quote-refresh"), 4000, 42, 4);
+    for (std::size_t i = 0; i < 4; ++i) {
+        expect(workloadFingerprint(workloads[i]) == workloadFingerprint(before[i]), "a uniform spread is instrumentWorkloads exactly");
+    }
+}
+
+// Where each placement puts a run's instruments.
+void testPlacements() {
+    const std::vector<Workload> workloads = spreadWorkloads(findWorkload("quote-refresh"), 1600, 42, 8, order_book::reference::Spread::UNIFORM);
+    const RunPlacement even = placeInstruments(workloads, 2, Placement::EVEN);
+    expect(even.instrumentsOf[0] == std::vector<std::uint32_t>{0, 2, 4, 6} && even.instrumentsOf[1] == std::vector<std::uint32_t>{1, 3, 5, 7},
+           "even: instrument i on shard i modulo N");
+    const RunPlacement alone = placeInstruments(workloads, 3, Placement::HOT_ALONE);
+    expect(alone.instrumentsOf[0] == std::vector<std::uint32_t>{0} && alone.instrumentsOf[1] == std::vector<std::uint32_t>{1, 3, 5, 7} &&
+               alone.instrumentsOf[2] == std::vector<std::uint32_t>{2, 4, 6},
+           "hot-alone: instrument 0 alone, the rest even on the others");
+    const RunPlacement hashed = placeInstruments(spreadWorkloads(findWorkload("quote-refresh"), 6400, 42, 32, order_book::reference::Spread::SKEWED),
+                                                 2, Placement::HASH);
+    for (std::uint32_t shard = 0; shard < 2; ++shard) {
+        for (const std::uint32_t instrument : hashed.instrumentsOf[shard]) {
+            expect(order_book::runtime::hashedShard(instrumentSymbol(instrument), 2) == shard, "hash: where the engine puts it");
+        }
+    }
+    expect(even.directory->find(instrumentSymbol(3))->shard == 1, "the directory places them so too");
+    expectThrows([&] { static_cast<void>(placeInstruments(workloads, 1, Placement::HOT_ALONE)); }, "hot-alone needs a second shard");
+    expectThrows([&] { static_cast<void>(placeInstruments(workloads, 9, Placement::EVEN)); }, "a shard with no book is refused");
+}
+
+// A skewed shard draws each command by what each book has left, so a small book's commands spread
+// over the shard's stream rather than going first, whatever its rank on the shard.
+void testASkewedShardSpreadsEachBook() {
+    const std::vector<Workload> workloads = spreadWorkloads(findWorkload("quote-refresh"), 64000, 42, 32, order_book::reference::Spread::SKEWED);
+    const RunPlacement placed = placeInstruments(workloads, 1, Placement::EVEN);
+    const ShardRun run(BookGroup::of(workloads, {0, 31}), placed.directory, 0, order_book::reference::Spread::SKEWED);
+    const std::vector<std::uint32_t>& order = run.sharing();
+    std::size_t smallInFirstHalf = 0;
+    std::size_t small = 0;
+    for (std::size_t i = 0; i < order.size(); ++i) {
+        if (order[i] == 1) {
+            ++small;
+            smallInFirstHalf += i < order.size() / 2 ? 1 : 0;
+        }
+    }
+    const double early = static_cast<double>(smallInFirstHalf) / static_cast<double>(small);
+    expect(small == workloads[31].timedCount() && early > 0.3 && early < 0.7,
+           "instrument 31's commands spread over the shard's stream: " + std::to_string(early) + " in its first half");
+}
+
+// #33's mixed recipe builds, two of each shape in every eight, the commands shared out.
+void testMixedBuilds() {
+    const std::vector<Workload> workloads = mixedWorkloads(801, 42, 8, 1);
+    const std::vector<std::string> names{"deep-book", "deep-book", "pending-stops", "pending-stops",
+                                         "immediate", "immediate", "quote-refresh", "quote-refresh"};
+    std::size_t total = 0;
+    for (std::size_t i = 0; i < workloads.size(); ++i) {
+        expect(workloads[i].config.name == names[i], "instrument " + std::to_string(i) + " is " + names[i]);
+        total += workloads[i].timedCount();
+    }
+    expect(total == 801 && workloads[0].timedCount() == 101 && workloads[1].timedCount() == 100, "every command, the rest on the first");
+    // At N = 2 under even placement, each shard's eight hold two of each.
+    const std::vector<Workload> twoShards = mixedWorkloads(1600, 42, 16, 2);
+    const RunPlacement placed = placeInstruments(twoShards, 2, Placement::EVEN);
+    for (std::uint32_t shard = 0; shard < 2; ++shard) {
+        std::vector<std::string> held;
+        for (const std::uint32_t instrument : placed.instrumentsOf[shard]) {
+            held.push_back(twoShards[instrument].config.name);
+        }
+        expect(held == names, "shard " + std::to_string(shard) + " holds the recipe");
+    }
+}
+
+// A threaded run's fingerprint, pinned as each workload's are: it moves if any instrument's
+// stream or the spread does.
+void testPinnedRunFingerprint() {
+    const auto spread = order_book::reference::Spread::SKEWED;
+    const std::vector<Workload> workloads = spreadWorkloads(findWorkload("quote-refresh"), 3200, 42, 32, spread);
+    const std::uint64_t actual = runFingerprint(workloads, spread, 4, Placement::HASH);
+    const std::uint64_t pinned = 0x9b7fd752046ba3c5ULL;
+    expect(actual == pinned, "the skewed run's fingerprint is " + hex(actual) + ", pinned " + hex(pinned));
+    expect(runFingerprint(workloads, order_book::reference::Spread::UNIFORM, 4, Placement::HASH) != actual, "the spread is part of it");
+    expect(runFingerprint(workloads, spread, 2, Placement::HASH) != actual, "and the shard count");
+    expect(runFingerprint(workloads, spread, 4, Placement::EVEN) != actual, "and the placement");
 }
 
 // Pins what each workload generates at the smoke size, so the stream is the same on every
@@ -597,11 +712,12 @@ void testCsvExport() {
         "workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,"
         "elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,"
         "volume,final_active_orders,final_price_levels,replaces,expirations,preventions,stops_triggered,"
-        "final_pending_stops,instruments,window,shards,durability\n"
+        "final_pending_stops,instruments,window,shards,durability,gateway_threads,producers,spread,placement,pinned,"
+        "priority,layout,spin_window,connections,capacity_growths,min_thread_cpu_share,reserved_stops,reserved_levels\n"
         "small-book,core,custom,42,3,Release,true,1,true,600,1500000000,400.000,2500000.000,400,200,0.333333,0,50,"
-        "700,90,12,0,0,0,0,0,1,0,1,none\n"
+        "700,90,12,0,0,0,0,0,1,0,1,none,0,0,uniform,even,false,normal,unpinned,none,0,0,,0,0\n"
         "small-book,core,custom,42,3,Release,true,1,false,600,3000000000,200.000,5000000.000,400,200,0.333333,0,50,"
-        "700,90,12,0,0,0,0,0,1,0,1,none\n";
+        "700,90,12,0,0,0,0,0,1,0,1,none,0,0,uniform,even,false,normal,unpinned,none,0,0,,0,0\n";
     expect(csv == expected, "CSV export:\n" + csv);
 }
 
@@ -846,6 +962,11 @@ int main() {
     testATamperedPredictionFails();
     testARunRecordsItsInstruments();
     testPinnedFingerprints();
+    testCommandShares();
+    testPlacements();
+    testASkewedShardSpreadsEachBook();
+    testMixedBuilds();
+    testPinnedRunFingerprint();
     testV1WorkloadsUnchanged();
     testBehaviorWorkloads();
     testBehaviorTargets();

@@ -29,7 +29,8 @@ inline constexpr unsigned int workloadGeneratorVersion = 3;
 
 // How many timed commands a run executes: smoke for a quick check, standard for ordinary
 // measurements, extended for long runs. A workload's preload is the same at every size.
-enum class BenchmarkSize { SMOKE, STANDARD, EXTENDED };
+// LONG, 20M commands, is the threaded kinds' size for log rotation and a roll-forward pass.
+enum class BenchmarkSize { SMOKE, STANDARD, EXTENDED, LONG };
 
 std::size_t timedCommandCount(BenchmarkSize size);
 const char* benchmarkSizeName(BenchmarkSize size);

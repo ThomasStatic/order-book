@@ -52,6 +52,10 @@ namespace order_book::network {
         // How long a thread with nothing in flight or parked looks before it sleeps, the matching
         // thread's setting, so 0 sleeps at once and runtime::unlimitedSpin never does.
         std::chrono::nanoseconds spinWindow = runtime::defaultSpinWindow;
+        // The most frames read from one connection in a pass: framesPerPass in the engine, which
+        // has no setting for it. A benchmark compares it with unlimited, the most a size_t holds.
+        // 0 throws std::invalid_argument.
+        std::size_t framesPerPass = network::framesPerPass;
         // The gateway's only clock, read only while idle or stopping.
         std::function<std::chrono::steady_clock::time_point()> clock = std::chrono::steady_clock::now;
     };

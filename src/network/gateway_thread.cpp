@@ -59,6 +59,9 @@ namespace order_book::network {
           connections(checkedConnections(settings.maxConnections)),
           shardStates(shards.size()),
           readBuffer(readBufferBytes) {
+        if (settings.framesPerPass == 0) {
+            throw std::invalid_argument("a gateway thread reads at least one frame a pass");
+        }
         if (handOff == nullptr ? thread != 0 : thread >= handOff->threads()) {
             throw std::invalid_argument("gateway thread " + std::to_string(thread) + " isn't one of the engine's");
         }
@@ -387,7 +390,7 @@ namespace order_book::network {
         connection.framesWaiting = false;
         bool socketRead = false;
         std::size_t frames = 0;
-        while (frames < framesPerPass) {
+        while (frames < settings.framesPerPass) {
             const FrameResult result = connection.reader.next();
             if (const Frame* frame = std::get_if<Frame>(&result)) {
                 ++frames;

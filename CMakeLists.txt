@@ -1302,6 +1302,8 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         benchmarks/benchmark_report.cpp
         benchmarks/component_benchmark.cpp
         benchmarks/engine_process.cpp
+        benchmarks/scaling_run.cpp
+        benchmarks/thread_cpu.cpp
     )
 
     find_package(Threads REQUIRED)
@@ -1482,6 +1484,17 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         add_test(NAME benchmark_gateway_tests COMMAND benchmark_gateway_tests)
         set_tests_properties(benchmark_gateway_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
 
+        add_executable(benchmark_scaling_tests
+            tests/benchmark_scaling_test.cpp
+        )
+
+        target_compile_features(benchmark_scaling_tests PRIVATE cxx_std_20)
+        target_link_libraries(benchmark_scaling_tests PRIVATE order_book_benchmarking)
+        order_book_enable_warnings(benchmark_scaling_tests)
+        order_book_enable_sanitizers(benchmark_scaling_tests)
+        add_test(NAME benchmark_scaling_tests COMMAND benchmark_scaling_tests)
+        set_tests_properties(benchmark_scaling_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
+
         add_executable(benchmark_engine_tests
             tests/benchmark_engine_test.cpp
         )
@@ -1547,6 +1560,25 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         add_test(NAME benchmark_shard_smoke
             COMMAND order_book_benchmarks --workload small-book --commands 2000 --kind shard --instruments 4
                     --repetitions 1 --warmup 0 --allow-unoptimized)
+        # V2a's ladder: each threaded kind at several shards and threads, from the CLI, writing
+        # both files, and one tampered prediction, which must fail.
+        add_test(NAME benchmark_scaled_shard_smoke
+            COMMAND order_book_benchmarks --workload small-book --commands 2000 --kind shard --shards 3 --instruments 24
+                    --repetitions 1 --warmup 0 --allow-unoptimized --csv ${CMAKE_CURRENT_BINARY_DIR}/benchmark-scaled-shard.csv)
+        add_test(NAME benchmark_scaled_queue_smoke
+            COMMAND order_book_benchmarks --workload small-book --commands 2000 --kind queue --shards 2 --producers 1
+                    --instruments 16 --spread skewed --placement hash --durability process --log-dir ${CMAKE_CURRENT_BINARY_DIR}
+                    --repetitions 1 --warmup 0 --allow-unoptimized --json ${CMAKE_CURRENT_BINARY_DIR}/benchmark-scaled-queue.json)
+        add_test(NAME benchmark_scaled_gateway_smoke
+            COMMAND order_book_benchmarks --workload small-book --commands 2000 --kind gateway --shards 2 --gateway-threads 2
+                    --instruments 16 --placement hot-alone --frame-budget unlimited --spin-window 0
+                    --repetitions 1 --warmup 0 --allow-unoptimized)
+        add_test(NAME benchmark_scaled_tampered
+            COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:order_book_benchmarks> -DEXPECTED_EXIT=1
+                    "-DARGS=--workload|small-book|--commands|2000|--kind|gateway|--shards|2|--gateway-threads|2|--instruments|16|--tamper-prediction|--repetitions|1|--warmup|0|--allow-unoptimized"
+                    "-DOUTPUT_REGEX=but the workload predicted" -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
+        set_tests_properties(benchmark_scaled_shard_smoke benchmark_scaled_queue_smoke benchmark_scaled_gateway_smoke
+            benchmark_scaled_tampered PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
         # The program end to end on a tiny run of one workload, both kinds, writing both
         # files. --allow-unoptimized, since CTest runs in every configuration.
         add_test(NAME benchmark_cli_smoke

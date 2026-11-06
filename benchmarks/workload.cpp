@@ -547,6 +547,7 @@ std::size_t timedCommandCount(BenchmarkSize size) {
         case BenchmarkSize::SMOKE: return 10000;
         case BenchmarkSize::STANDARD: return 100000;
         case BenchmarkSize::EXTENDED: return 1000000;
+        case BenchmarkSize::LONG: return 20000000;
     }
     throw std::invalid_argument("unknown benchmark size");
 }
@@ -556,17 +557,18 @@ const char* benchmarkSizeName(BenchmarkSize size) {
         case BenchmarkSize::SMOKE: return "smoke";
         case BenchmarkSize::STANDARD: return "standard";
         case BenchmarkSize::EXTENDED: return "extended";
+        case BenchmarkSize::LONG: return "long";
     }
     return "unknown";
 }
 
 BenchmarkSize parseBenchmarkSize(std::string_view name) {
-    for (const BenchmarkSize size : {BenchmarkSize::SMOKE, BenchmarkSize::STANDARD, BenchmarkSize::EXTENDED}) {
+    for (const BenchmarkSize size : {BenchmarkSize::SMOKE, BenchmarkSize::STANDARD, BenchmarkSize::EXTENDED, BenchmarkSize::LONG}) {
         if (name == benchmarkSizeName(size)) {
             return size;
         }
     }
-    throw std::invalid_argument("unknown size '" + std::string(name) + "' (known: smoke, standard, extended)");
+    throw std::invalid_argument("unknown size '" + std::string(name) + "' (known: smoke, standard, extended, long)");
 }
 
 QuantityRange quantityRange(QuantityClass quantityClass) {

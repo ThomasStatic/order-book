@@ -26,6 +26,7 @@
 #include "order_book/runtime/matching_loop.hpp"
 #include "order_book/runtime/shard.hpp"
 #include "benchmark_log.hpp"
+#include "interleaver.hpp"
 #include "workload.hpp"
 
 // Runs generated workloads against the book and times them. Only the timed commands are
@@ -73,9 +74,31 @@ struct Measurement {
     std::size_t commands = 0;
     std::size_t instruments = 1;  // 1 but for a run of several
     std::size_t window = 0;       // a GATEWAY or ENGINE run's, and 0 for every other kind
-    std::size_t shards = 1;       // an ENGINE run's, and 1 for every other kind
+    std::size_t shards = 1;       // a threaded run's N, and 1 for CORE and REPLAY
     // A QUEUE or GATEWAY run's log, PROCESS for every ENGINE run, and NONE for every other kind.
     RunDurability durability = RunDurability::NONE;
+    // A threaded run's setup, from runScaledOnce or ENGINE: what the CSV's appended columns record.
+    std::size_t gatewayThreads = 0;  // GATEWAY's and ENGINE's M, and 0 for every other kind
+    std::size_t producers = 0;       // QUEUE's M, and 0 for every other kind
+    std::string spread = "uniform";
+    std::string placement = "even";
+    bool pinned = false;
+    bool highPriority = false;
+    std::string layout = "unpinned";
+    std::optional<std::chrono::nanoseconds> spinWindow;  // a threaded run's; none for CORE and REPLAY
+    std::size_t connections = 0;  // GATEWAY's and ENGINE's: one per instrument
+    std::uint64_t capacityGrowths = 0;  // always 0 in a result: a growth fails the run
+    // The lowest share of a core any of a threaded run's pinned threads used while timed.
+    std::optional<double> minThreadCpuShare;
+    // Roll-forward passes made while the run's shards ran, with a worker: in the JSON only.
+    std::uint64_t rollPasses = 0;
+    // A threaded run's runFingerprint, in the JSON only, and 0 for every other run.
+    std::uint64_t fingerprint = 0;
+    std::uint64_t reservedStops = 0;  // summed over the run's books
+    std::uint64_t reservedLevels = 0;
+    // Each part's commands a second to its own finish: a scaled run's shards, or its client
+    // threads for GATEWAY. In the JSON only.
+    std::vector<double> partRates;
     std::int64_t elapsedNanoseconds = 0;
     // What the book did, counted from its results; it always equals the workload's expected
     // outcome, or the run throws instead of returning a measurement.
@@ -133,6 +156,32 @@ std::vector<Workload> instrumentWorkloads(const WorkloadConfig& config, std::siz
 
 // What these workloads predict between them, counter by counter.
 WorkloadOutcome totalOutcome(const std::vector<Workload>& workloads);
+// Adds each of outcome's counters to total's.
+void addOutcome(WorkloadOutcome& total, const WorkloadOutcome& outcome);
+
+// Some of a run's instruments: each one's workload, and its index in the whole run, which names its
+// symbol, so a shard's books or a client's connections can be any of them. The workloads must
+// outlive it, and it is cheap to copy.
+struct BookGroup {
+    std::vector<const Workload*> workloads;
+    std::vector<std::uint32_t> instruments;  // each one's index in the run, for instrumentSymbol
+
+    // Every one of them, in order.
+    static BookGroup all(const std::vector<Workload>& workloads);
+    // Those whose indexes are listed, in that order.
+    static BookGroup of(const std::vector<Workload>& workloads, const std::vector<std::uint32_t>& indexes);
+
+    std::size_t size() const noexcept { return workloads.size(); }
+    const Workload& operator[](std::size_t book) const { return *workloads[book]; }
+    replay::Symbol symbol(std::size_t book) const { return instrumentSymbol(instruments[book]); }
+};
+
+// Throws std::runtime_error if any book's outcome differs from its workload's prediction.
+void requireOutcomes(const std::vector<WorkloadOutcome>& outcomes, const BookGroup& group, BenchmarkKind kind);
+
+// Each book's image once preloaded, built on a book of this thread's, for a roll-forward worker's
+// first checkpoints: the preload isn't in the log.
+std::vector<std::pair<replay::Symbol, std::vector<std::byte>>> preloadedImages(const BookGroup& group);
 
 // Throws std::runtime_error if any book's outcome differs from its workload's prediction.
 void requireOutcomes(const std::vector<WorkloadOutcome>& outcomes, const std::vector<Workload>& workloads, BenchmarkKind kind);
@@ -144,7 +193,14 @@ void requireOutcomes(const std::vector<WorkloadOutcome>& outcomes, const std::ve
 // this.
 class ShardRun {
 public:
+    // Every workload, on a one-shard directory of its own.
     explicit ShardRun(const std::vector<Workload>& workloads);
+    // The group's books as shard `shard` of directory, which must place each of them there. Under
+    // UNIFORM the interleaver shares the commands out as before; under SKEWED each command is drawn
+    // by what each book has left, so each book's commands spread over the shard's whole stream
+    // as its share of the run says, whatever its rank on this shard.
+    ShardRun(BookGroup group, std::shared_ptr<const runtime::InstrumentDirectory> directory, std::uint32_t shard,
+             reference::Spread spread = reference::Spread::UNIFORM);
     ~ShardRun();
 
     void run();
@@ -152,6 +208,9 @@ public:
     runtime::Shard& onThisThread() noexcept { return *shard; }
     // Built in the constructor and never changed, so any thread may read it once that has run.
     const runtime::InstrumentDirectory& instruments() const noexcept { return *directory; }
+    std::shared_ptr<const runtime::InstrumentDirectory> sharedInstruments() const noexcept { return directory; }
+    std::uint32_t shardIndex() const noexcept { return shardNumber; }
+    const BookGroup& group() const noexcept { return books_; }
     // The book that takes each command, in the order they go, and a book's slot and commands.
     const std::vector<std::uint32_t>& sharing() const noexcept { return order; }
     // The log position of the first timed command: the preload's commands come before it.
@@ -167,8 +226,9 @@ public:
 private:
     struct Book;
 
-    const std::vector<Workload>* workloads;
-    std::unique_ptr<order_book::runtime::InstrumentDirectory> directory;
+    BookGroup books_;
+    std::shared_ptr<const runtime::InstrumentDirectory> directory;
+    std::uint32_t shardNumber = 0;
     std::unique_ptr<order_book::runtime::Shard> shard;
     std::vector<Book> books;
     std::vector<std::uint32_t> order;  // which book takes each command
@@ -190,6 +250,11 @@ public:
     MatchingThread(const std::vector<Workload>& workloads, runtime::Doorbell& doorbell, std::vector<runtime::RingPair> rings,
                    std::function<void()> setUp = {}, std::optional<runtime::LogLink> log = std::nullopt,
                    std::chrono::nanoseconds spinWindow = runtime::defaultSpinWindow);
+    // The group's books as shard `shard` of directory, as ShardRun's second constructor.
+    MatchingThread(BookGroup group, std::shared_ptr<const runtime::InstrumentDirectory> directory, std::uint32_t shard,
+                   reference::Spread spread, runtime::Doorbell& doorbell, std::vector<runtime::RingPair> rings,
+                   std::function<void()> setUp = {}, std::optional<runtime::LogLink> log = std::nullopt,
+                   std::chrono::nanoseconds spinWindow = runtime::defaultSpinWindow);
     ~MatchingThread();
 
     // Built before the constructor returns and left alone until the thread stops.
@@ -201,7 +266,10 @@ public:
     std::vector<WorkloadOutcome> withFinalShapes(std::vector<WorkloadOutcome> counted) const;
 
 private:
-    const std::vector<Workload>* workloads;
+    void start(BookGroup group, std::shared_ptr<const runtime::InstrumentDirectory> directory, std::uint32_t shard,
+               reference::Spread spread, runtime::Doorbell& doorbell, std::vector<runtime::RingPair> rings, std::function<void()> setUp,
+               std::optional<runtime::LogLink> log, std::chrono::nanoseconds spinWindow);
+
     const ShardRun* run = nullptr;
     std::vector<WorkloadOutcome> finalShapes;
     std::exception_ptr failure;
@@ -210,11 +278,29 @@ private:
     std::thread thread;
 };
 
+// How one shard of a threaded run is set up, apart from its books.
+struct LaneOptions {
+    std::function<void()> setUpMatchingThread;  // runs first on the matching thread, for pinning it
+    std::function<void()> setUpWriter;          // the same for the log writer, with a log
+    RunDurability durability = RunDurability::NONE;
+    LogFileFill fill = LogFileFill::EXTENDED;
+    std::filesystem::path logParent = defaultLogParent();
+    std::chrono::nanoseconds spinWindow = runtime::defaultSpinWindow;
+    // With a log, a roll-forward worker on it, as the engine runs one. It and the housekeeping
+    // thread run setUpHelpers first.
+    bool rollWorker = false;
+    std::function<void()> setUpHelpers;
+    std::uint64_t logFileBytes = runtime::defaultLogFileBytes;  // a test's smaller, so files close while it runs
+};
+
 // With a durability other than NONE, the shard logs to real files through RunLog, and this
 // thread, as a gateway thread does, holds each response until the durable position reaches its
 // marker.
 class QueueRun {
 public:
+    // The group's books as shard `shard` of directory, with one producer, the caller.
+    QueueRun(BookGroup group, std::shared_ptr<const runtime::InstrumentDirectory> directory, std::uint32_t shard,
+             reference::Spread spread, LaneOptions options);
     // setUpMatchingThread, if given, runs first on the matching thread, for pinning it. The
     // matching thread waits as the engine's does, spinning for spinWindow before it sleeps.
     explicit QueueRun(const std::vector<Workload>& workloads, std::function<void()> setUpMatchingThread = {},
@@ -225,6 +311,11 @@ public:
 
     // Every command through the rings, sending and draining at once. What a timed region holds.
     void run();
+    // One batch sent and the responses drained, for a producer that drives several shards in
+    // turn. True once every command is answered.
+    bool step();
+    // Kept from the constructor, since the matching thread destroys the books when it stops.
+    std::size_t commandCount() const noexcept { return timedCommands; }
 
     // One command at a time, for a latency target. prepare builds the element and is outside
     // the interval. awaitResponse returns once its last event is back.
@@ -240,13 +331,15 @@ public:
     std::vector<WorkloadOutcome> outcomes() const;
     // How many times a hold marker made the responses wait for the log.
     std::size_t holdsWaited() const noexcept { return holds; }
+    // The roll-forward worker's passes, none without one. After finish.
+    std::uint64_t rollPasses() const { return log ? log->rollPasses() : 0; }
 
 private:
     bool trySend(const runtime::CommandElement& element);
     void drainResponses();
     runtime::CommandElement elementFor(std::uint32_t book);
 
-    const std::vector<Workload>* workloads;
+    BookGroup books;
     runtime::Doorbell doorbell;
     runtime::Ring<runtime::CommandElement> commands;
     runtime::Ring<runtime::ResponseRecord> responses;
@@ -260,6 +353,7 @@ private:
     std::size_t holds = 0;
     std::unique_ptr<LogRing> logRing;  // with a log; built before the matching thread takes it
     MatchingThread matching;
+    std::size_t timedCommands = 0;
     std::unique_ptr<RunLog> log;
     // What the log must hold, read while the books exist: the matching thread destroys them.
     std::uint64_t logFirst = 0;
@@ -301,6 +395,8 @@ public:
     // Builds every timed frame, untimed, and counts each command there, since every frame built is
     // sent or run throws. failed is asked as the clients wait, and true ends a wait with an error.
     LoopbackClients(const std::vector<Workload>& workloads, std::function<bool()> failed);
+    // One connection per book of the group, each naming its book by the group's symbol.
+    LoopbackClients(BookGroup group, std::function<bool()> failed);
     ~LoopbackClients();
     LoopbackClients(LoopbackClients&&) noexcept;
     LoopbackClients& operator=(LoopbackClients&&) noexcept;
@@ -316,6 +412,8 @@ public:
     void finish();
     // What each book did, from its frames.
     const std::vector<WorkloadOutcome>& counted() const noexcept { return tallies; }
+    // When each book's last timed answer came, after run.
+    std::vector<std::chrono::steady_clock::time_point> finishTimes() const;
     // The connection for a book, taken from this, for a client of its own.
     LoopbackConnection take(std::size_t book);
 
@@ -325,7 +423,7 @@ private:
     void pump(std::size_t window);
     void receive(Connection& connection);
 
-    const std::vector<Workload>* workloads;
+    BookGroup books;
     std::function<bool()> failed;
     std::vector<Connection> connections;
     std::vector<WorkloadOutcome> tallies;

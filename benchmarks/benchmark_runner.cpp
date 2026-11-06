@@ -1,6 +1,7 @@
 #include "benchmark_runner.hpp"
 
 #include <algorithm>
+#include <random>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -75,20 +76,6 @@ std::vector<replay::ReplayRecord> recordsOf(const std::vector<BenchmarkCommand>&
     return records;
 }
 
-void addOutcome(WorkloadOutcome& total, const WorkloadOutcome& outcome) {
-    total.submits += outcome.submits;
-    total.cancels += outcome.cancels;
-    total.rejections += outcome.rejections;
-    total.trades += outcome.trades;
-    total.volume += outcome.volume;
-    total.finalActiveOrders += outcome.finalActiveOrders;
-    total.finalPriceLevels += outcome.finalPriceLevels;
-    total.replaces += outcome.replaces;
-    total.expirations += outcome.expirations;
-    total.preventions += outcome.preventions;
-    total.stopsTriggered += outcome.stopsTriggered;
-    total.finalPendingStops += outcome.finalPendingStops;
-}
 
 // settings.warmups runs, then settings.repetitions measured runs, warm-ups first.
 template <typename Run>
@@ -230,6 +217,21 @@ Measurement runReplay(const Workload& workload, bool fromLog) {
 
 }  // namespace
 
+void addOutcome(WorkloadOutcome& total, const WorkloadOutcome& outcome) {
+    total.submits += outcome.submits;
+    total.cancels += outcome.cancels;
+    total.rejections += outcome.rejections;
+    total.trades += outcome.trades;
+    total.volume += outcome.volume;
+    total.finalActiveOrders += outcome.finalActiveOrders;
+    total.finalPriceLevels += outcome.finalPriceLevels;
+    total.replaces += outcome.replaces;
+    total.expirations += outcome.expirations;
+    total.preventions += outcome.preventions;
+    total.stopsTriggered += outcome.stopsTriggered;
+    total.finalPendingStops += outcome.finalPendingStops;
+}
+
 // One event's part of a WorkloadOutcome.
 void countResponse(const BookEvent& event, WorkloadOutcome& outcome) {
     if (std::holds_alternative<OrderRejected>(event) || std::holds_alternative<CancelRejected>(event) ||
@@ -358,6 +360,24 @@ WorkloadOutcome totalOutcome(const std::vector<Workload>& workloads) {
     return total;
 }
 
+BookGroup BookGroup::all(const std::vector<Workload>& workloads) {
+    BookGroup group;
+    for (std::size_t i = 0; i < workloads.size(); ++i) {
+        group.workloads.push_back(&workloads[i]);
+        group.instruments.push_back(static_cast<std::uint32_t>(i));
+    }
+    return group;
+}
+
+BookGroup BookGroup::of(const std::vector<Workload>& workloads, const std::vector<std::uint32_t>& indexes) {
+    BookGroup group;
+    for (const std::uint32_t index : indexes) {
+        group.workloads.push_back(&workloads.at(index));
+        group.instruments.push_back(index);
+    }
+    return group;
+}
+
 struct ShardRun::Book {
     runtime::BookLocation location;
     std::vector<replay::ReplayRecord> commands;
@@ -367,29 +387,49 @@ struct ShardRun::Book {
 
 ShardRun::~ShardRun() = default;
 
-ShardRun::ShardRun(const std::vector<Workload>& runWorkloads) : workloads(&runWorkloads) {
+namespace {
+
+// One shard holding every workload, each reserved to its peak.
+std::shared_ptr<const runtime::InstrumentDirectory> oneShardDirectory(const std::vector<Workload>& workloads) {
     std::vector<runtime::Instrument> instruments;
-    for (std::size_t i = 0; i < runWorkloads.size(); ++i) {
-        const BookCapacity capacity = expectedBookSize(runWorkloads[i]);
+    for (std::size_t i = 0; i < workloads.size(); ++i) {
+        const BookCapacity capacity = expectedBookSize(workloads[i]);
         instruments.push_back(runtime::Instrument{instrumentSymbol(i), 0, capacity.orders, capacity.stops, capacity.levels});
     }
-    directory = std::make_unique<runtime::InstrumentDirectory>(instruments, 1);
-    shard = std::make_unique<runtime::Shard>(*directory, 0);
+    return std::make_shared<const runtime::InstrumentDirectory>(instruments, 1);
+}
 
-    books.reserve(runWorkloads.size());
+}  // namespace
+
+ShardRun::ShardRun(const std::vector<Workload>& runWorkloads)
+    : ShardRun(BookGroup::all(runWorkloads), oneShardDirectory(runWorkloads), 0) {}
+
+ShardRun::ShardRun(BookGroup group, std::shared_ptr<const runtime::InstrumentDirectory> instruments, std::uint32_t shardIndex,
+                   reference::Spread spread)
+    : books_(std::move(group)), directory(std::move(instruments)), shardNumber(shardIndex) {
+    if (books_.size() == 0) {
+        throw std::invalid_argument("a shard run needs a book");
+    }
+    shard = std::make_unique<runtime::Shard>(*directory, shardIndex);
+
+    books.reserve(books_.size());
     std::size_t total = 0;
-    for (std::size_t i = 0; i < runWorkloads.size(); ++i) {
-        const replay::Symbol symbol = instrumentSymbol(i);
-        const runtime::BookLocation location = *directory->find(symbol);
+    for (std::size_t i = 0; i < books_.size(); ++i) {
+        const replay::Symbol symbol = books_.symbol(i);
+        const std::optional<runtime::BookLocation> found = directory->find(symbol);
+        if (!found || found->shard != shardIndex) {
+            throw std::invalid_argument("instrument " + std::string(symbol.text()) + " isn't on shard " + std::to_string(shardIndex));
+        }
+        const runtime::BookLocation location = *found;
         WorkloadOutcome preloaded;
-        for (const replay::ReplayRecord& record : preloadRecords(runWorkloads[i], symbol)) {
+        for (const replay::ReplayRecord& record : preloadRecords(books_[i], symbol)) {
             shard->process(record.command, location.slot);
             countCommand(record.command, shard->result().events(), preloaded);
         }
         if (preloaded.rejections != 0 || preloaded.trades != 0) {
-            throw std::runtime_error("workload " + runWorkloads[i].config.name + ": the book refused or traded its preload");
+            throw std::runtime_error("workload " + books_[i].config.name + ": the book refused or traded its preload");
         }
-        books.push_back(Book{location, workloadRecords(runWorkloads[i], symbol), 0, WorkloadOutcome{}});
+        books.push_back(Book{location, workloadRecords(books_[i], symbol), 0, WorkloadOutcome{}});
         total += books.back().commands.size();
     }
     timedFrom = shard->nextPosition();
@@ -399,14 +439,35 @@ ShardRun::ShardRun(const std::vector<Workload>& runWorkloads) : workloads(&runWo
     for (const Book& book : books) {
         remaining.push_back(book.commands.size());
     }
-    reference::Interleaver interleaver(runWorkloads.front().seed, books.size(), reference::Spread::UNIFORM);
     order.reserve(total);
-    while (order.size() < total) {
-        const std::size_t drawn = interleaver.next();
-        if (remaining[drawn] != 0) {
-            --remaining[drawn];
-            order.push_back(static_cast<std::uint32_t>(drawn));
+    if (spread != reference::Spread::SKEWED) {
+        reference::Interleaver interleaver(books_[0].seed, books.size(), spread);
+        while (order.size() < total) {
+            const std::size_t drawn = interleaver.next();
+            if (remaining[drawn] != 0) {
+                --remaining[drawn];
+                order.push_back(static_cast<std::uint32_t>(drawn));
+            }
         }
+        return;
+    }
+    // Drawn by what each book has left, with its own unbiased draw, as the interleaver does, so
+    // the order is the same on every platform.
+    std::mt19937_64 source(books_[0].seed);
+    for (std::uint64_t left = total; left != 0; --left) {
+        const std::uint64_t limit = std::numeric_limits<std::uint64_t>::max() - std::numeric_limits<std::uint64_t>::max() % left;
+        std::uint64_t draw = source();
+        while (draw >= limit) {
+            draw = source();
+        }
+        draw %= left;
+        std::size_t book = 0;
+        while (draw >= remaining[book]) {
+            draw -= remaining[book];
+            ++book;
+        }
+        --remaining[book];
+        order.push_back(static_cast<std::uint32_t>(book));
     }
 }
 
@@ -438,6 +499,28 @@ std::vector<WorkloadOutcome> ShardRun::outcomes() const {
     return counted;
 }
 
+std::vector<std::pair<replay::Symbol, std::vector<std::byte>>> preloadedImages(const BookGroup& group) {
+    std::vector<std::pair<replay::Symbol, std::vector<std::byte>>> images;
+    for (std::size_t i = 0; i < group.size(); ++i) {
+        OrderBook book;
+        preloadBook(book, group[i]);
+        std::vector<std::byte> image(book.imageSize());
+        image.resize(book.writeImage(image));
+        images.emplace_back(group.symbol(i), std::move(image));
+    }
+    return images;
+}
+
+void requireOutcomes(const std::vector<WorkloadOutcome>& outcomes, const BookGroup& group, BenchmarkKind kind) {
+    for (std::size_t i = 0; i < outcomes.size(); ++i) {
+        if (outcomes[i] != group[i].expected) {
+            throw std::runtime_error("workload " + group[i].config.name + " instrument " + std::to_string(group.instruments[i]) + " (" +
+                                     benchmarkKindName(kind) + "): the book did " + describeOutcome(outcomes[i]) +
+                                     " but the workload predicted " + describeOutcome(group[i].expected));
+        }
+    }
+}
+
 void requireOutcomes(const std::vector<WorkloadOutcome>& outcomes, const std::vector<Workload>& workloads, BenchmarkKind kind) {
     for (std::size_t i = 0; i < outcomes.size(); ++i) {
         if (outcomes[i] != workloads[i].expected) {
@@ -450,17 +533,30 @@ void requireOutcomes(const std::vector<WorkloadOutcome>& outcomes, const std::ve
 
 void ShardRun::check() const {
     for (std::size_t i = 0; i < books.size(); ++i) {
-        requireNoGrowth(shard->books().book(books[i].location.slot), (*workloads)[i]);
+        requireNoGrowth(shard->books().book(books[i].location.slot), books_[i]);
     }
-    requireOutcomes(outcomes(), *workloads, BenchmarkKind::SHARD);
+    requireOutcomes(outcomes(), books_, BenchmarkKind::SHARD);
 }
 
 MatchingThread::MatchingThread(const std::vector<Workload>& runWorkloads, runtime::Doorbell& doorbell,
                                std::vector<runtime::RingPair> rings, std::function<void()> setUp, std::optional<runtime::LogLink> log,
-                               std::chrono::nanoseconds spinWindow)
-    : workloads(&runWorkloads) {
+                               std::chrono::nanoseconds spinWindow) {
+    start(BookGroup::all(runWorkloads), oneShardDirectory(runWorkloads), 0, reference::Spread::UNIFORM, doorbell, std::move(rings),
+          std::move(setUp), log, spinWindow);
+}
+
+MatchingThread::MatchingThread(BookGroup group, std::shared_ptr<const runtime::InstrumentDirectory> directory, std::uint32_t shard,
+                               reference::Spread spread, runtime::Doorbell& doorbell, std::vector<runtime::RingPair> rings,
+                               std::function<void()> setUp, std::optional<runtime::LogLink> log, std::chrono::nanoseconds spinWindow) {
+    start(std::move(group), std::move(directory), shard, spread, doorbell, std::move(rings), std::move(setUp), log, spinWindow);
+}
+
+void MatchingThread::start(BookGroup group, std::shared_ptr<const runtime::InstrumentDirectory> directory, std::uint32_t shard,
+                           reference::Spread spread, runtime::Doorbell& doorbell, std::vector<runtime::RingPair> rings,
+                           std::function<void()> setUp, std::optional<runtime::LogLink> log, std::chrono::nanoseconds spinWindow) {
     std::future<void> started = ready.get_future();
-    thread = std::thread([this, &doorbell, rings = std::move(rings), setUp = std::move(setUp), log, spinWindow] {
+    thread = std::thread([this, &doorbell, group = std::move(group), directory = std::move(directory), shard, spread,
+                          rings = std::move(rings), setUp = std::move(setUp), log, spinWindow] {
         // Everything a book's owner must do happens here, its build and destruction included.
         // Whatever can fail before the loop runs fails here, while the constructor is still
         // waiting to hear: once the loop runs, it always sends SHARD_STOPPED.
@@ -470,7 +566,7 @@ MatchingThread::MatchingThread(const std::vector<Workload>& runWorkloads, runtim
             if (setUp) {
                 setUp();
             }
-            built.emplace(*workloads);
+            built.emplace(group, directory, shard, spread);
             loop.emplace(built->onThisThread(), doorbell, rings, spinWindow, std::function<void()>{}, log);
         } catch (...) {
             ready.set_exception(std::current_exception());
@@ -481,8 +577,8 @@ MatchingThread::MatchingThread(const std::vector<Workload>& runWorkloads, runtim
         try {
             loop->run();
             finalShapes = built->outcomes();
-            for (std::size_t i = 0; i < workloads->size(); ++i) {
-                requireNoGrowth(built->onThisThread().books().book(built->slotOf(static_cast<std::uint32_t>(i))), (*workloads)[i]);
+            for (std::size_t i = 0; i < group.size(); ++i) {
+                requireNoGrowth(built->onThisThread().books().book(built->slotOf(static_cast<std::uint32_t>(i))), group[i]);
             }
         } catch (...) {
             failure = std::current_exception();
@@ -538,21 +634,47 @@ void requireLogged(std::uint64_t logEnd, std::uint64_t first, std::size_t comman
 
 }  // namespace
 
+namespace {
+
+LaneOptions laneOptions(std::function<void()> setUpMatchingThread, RunDurability durability, const std::filesystem::path& logParent,
+                        std::chrono::nanoseconds spinWindow) {
+    LaneOptions options;
+    options.setUpMatchingThread = std::move(setUpMatchingThread);
+    options.durability = durability;
+    options.logParent = logParent;
+    options.spinWindow = spinWindow;
+    return options;
+}
+
+}  // namespace
+
 QueueRun::QueueRun(const std::vector<Workload>& runWorkloads, std::function<void()> setUpMatchingThread, RunDurability durability,
                    const std::filesystem::path& logParent, std::chrono::nanoseconds spinWindow)
-    : workloads(&runWorkloads),
+    : QueueRun(BookGroup::all(runWorkloads), oneShardDirectory(runWorkloads), 0, reference::Spread::UNIFORM,
+               laneOptions(std::move(setUpMatchingThread), durability, logParent, spinWindow)) {}
+
+QueueRun::QueueRun(BookGroup group, std::shared_ptr<const runtime::InstrumentDirectory> directory, std::uint32_t shard,
+                   reference::Spread spread, LaneOptions options)
+    : books(std::move(group)),
       commands(runtime::defaultCommandRingSlots),
       responses(runtime::defaultResponseRingSlots),
-      nextCommand(runWorkloads.size(), 0),
-      counted(runWorkloads.size()),
-      logRing(logRingFor(durability)),
-      matching(runWorkloads, doorbell, {runtime::RingPair{&commands, &responses}}, std::move(setUpMatchingThread), linkOf(logRing),
-               spinWindow) {
+      nextCommand(books.size(), 0),
+      counted(books.size()),
+      logRing(logRingFor(options.durability)),
+      matching(books, std::move(directory), shard, spread, doorbell, {runtime::RingPair{&commands, &responses}},
+               std::move(options.setUpMatchingThread), linkOf(logRing), options.spinWindow) {
+    timedCommands = matching.books().sharing().size();
     if (logRing) {
         try {
             logFirst = matching.books().firstTimedPosition();
             logCommands = matching.books().sharing().size();
-            log = std::make_unique<RunLog>(logParent, durability, matching.books().instruments(), *logRing, logFirst);
+            std::optional<RunLogWorker> worker;
+            if (options.rollWorker) {
+                worker = RunLogWorker{preloadedImages(books)};
+            }
+            log = std::make_unique<RunLog>(options.logParent, options.durability, matching.books().instruments(), *logRing, logFirst,
+                                           std::move(options.setUpWriter), options.fill, shard, std::move(worker), options.logFileBytes,
+                                           std::move(options.setUpHelpers));
         } catch (...) {
             try {
                 finish();
@@ -618,17 +740,21 @@ void QueueRun::drainResponses() {
     });
 }
 
-void QueueRun::run() {
+bool QueueRun::step() {
     const std::vector<std::uint32_t>& sharing = matching.books().sharing();
-    while (answered < sharing.size()) {
-        std::size_t batch = 0;
-        while (batch < runtime::takeBatch && sent < sharing.size() && trySend(elementFor(sharing[sent]))) {
-            ++batch;
-        }
-        if (batch != 0) {
-            doorbell.ring();
-        }
-        drainResponses();
+    std::size_t batch = 0;
+    while (batch < runtime::takeBatch && sent < sharing.size() && trySend(elementFor(sharing[sent]))) {
+        ++batch;
+    }
+    if (batch != 0) {
+        doorbell.ring();
+    }
+    drainResponses();
+    return answered == sharing.size();
+}
+
+void QueueRun::run() {
+    while (!step()) {
     }
 }
 
@@ -676,7 +802,7 @@ std::vector<WorkloadOutcome> QueueRun::outcomes() const {
 }
 
 void QueueRun::check() const {
-    requireOutcomes(outcomes(), *workloads, BenchmarkKind::QUEUE);
+    requireOutcomes(outcomes(), books, BenchmarkKind::QUEUE);
     if (log) {
         requireLogged(logEnd, logFirst, logCommands, BenchmarkKind::QUEUE);
     }
@@ -729,6 +855,7 @@ LoopbackConnection connectLoopback(std::uint16_t port, const std::function<bool(
 
 struct LoopbackClients::Connection {
     LoopbackConnection link;
+    std::chrono::steady_clock::time_point finished{};  // when its last answer came
     std::vector<std::byte> timed;  // every timed command's frame, built before the timed region
     std::vector<std::byte> bytes;  // what pump sends: the preload's frames, then timed's
     std::size_t sentBytes = 0;
@@ -742,10 +869,13 @@ LoopbackClients::LoopbackClients(LoopbackClients&&) noexcept = default;
 LoopbackClients& LoopbackClients::operator=(LoopbackClients&&) noexcept = default;
 
 LoopbackClients::LoopbackClients(const std::vector<Workload>& runWorkloads, std::function<bool()> hasFailed)
-    : workloads(&runWorkloads), failed(std::move(hasFailed)), connections(runWorkloads.size()), tallies(runWorkloads.size()) {
+    : LoopbackClients(BookGroup::all(runWorkloads), std::move(hasFailed)) {}
+
+LoopbackClients::LoopbackClients(BookGroup group, std::function<bool()> hasFailed)
+    : books(std::move(group)), failed(std::move(hasFailed)), connections(books.size()), tallies(books.size()) {
     for (std::size_t book = 0; book < connections.size(); ++book) {
-        const std::vector<replay::ReplayRecord> records = workloadRecords(runWorkloads[book], instrumentSymbol(book));
-        connections[book].timed = commandFrames(records, instrumentSymbol(book));
+        const std::vector<replay::ReplayRecord> records = workloadRecords(books[book], books.symbol(book));
+        connections[book].timed = commandFrames(records, books.symbol(book));
         // Every frame built is sent, or run throws, so it is counted here, untimed.
         for (const replay::ReplayRecord& record : records) {
             countCommand(record.command, {}, tallies[book]);
@@ -765,8 +895,8 @@ void LoopbackClients::preload(std::size_t window) {
     total = 0;
     for (std::size_t book = 0; book < connections.size(); ++book) {
         Connection& connection = connections[book];
-        const std::vector<replay::ReplayRecord> records = preloadRecords((*workloads)[book], instrumentSymbol(book));
-        connection.bytes = commandFrames(records, instrumentSymbol(book));
+        const std::vector<replay::ReplayRecord> records = preloadRecords(books[book], books.symbol(book));
+        connection.bytes = commandFrames(records, books.symbol(book));
         connection.sentBytes = 0;
         connection.commands = records.size();
         connection.answered = 0;
@@ -776,9 +906,17 @@ void LoopbackClients::preload(std::size_t window) {
     pump(window);
     for (std::size_t book = 0; book < connections.size(); ++book) {
         if (preloaded[book].rejections != 0 || preloaded[book].trades != 0) {
-            throw std::runtime_error("workload " + (*workloads)[book].config.name + ": the book refused or traded its preload");
+            throw std::runtime_error("workload " + books[book].config.name + ": the book refused or traded its preload");
         }
     }
+}
+
+std::vector<std::chrono::steady_clock::time_point> LoopbackClients::finishTimes() const {
+    std::vector<std::chrono::steady_clock::time_point> times;
+    for (const Connection& connection : connections) {
+        times.push_back(connection.finished);
+    }
+    return times;
 }
 
 void LoopbackClients::run(std::size_t window) {
@@ -836,6 +974,9 @@ void LoopbackClients::receive(Connection& connection) {
         if (frame.last) {
             ++connection.answered;
             ++answered;
+            if (connection.answered == connection.commands) {
+                connection.finished = std::chrono::steady_clock::now();
+            }
         }
     }
 }
@@ -1036,6 +1177,9 @@ Measurement runInstrumentsOnce(const std::vector<Workload>& workloads, Benchmark
         measurement.window = settings.window;
         measurement.shards = settings.shards;
         measurement.durability = RunDurability::PROCESS;
+        measurement.gatewayThreads = 1;
+        measurement.connections = workloads.size();
+        measurement.spinWindow = runtime::defaultSpinWindow;
     } else if (kind == BenchmarkKind::GATEWAY) {
         GatewayRun run(workloads, settings.window, settings.durability, settings.logParent);
         const Clock::time_point start = Clock::now();
@@ -1068,6 +1212,9 @@ Measurement runInstrumentsOnce(const std::vector<Workload>& workloads, Benchmark
     measurement.instruments = workloads.size();
     for (const Workload& workload : workloads) {
         measurement.commands += workload.timedCount();
+        const BookCapacity capacity = expectedBookSize(workload);
+        measurement.reservedStops += capacity.stops;
+        measurement.reservedLevels += capacity.levels;
     }
     for (const WorkloadOutcome& outcome : outcomes) {
         addOutcome(measurement.outcome, outcome);
@@ -1088,6 +1235,9 @@ Measurement runOnce(const Workload& workload, BenchmarkKind kind) {
     measurement.workload = workload.config.name;
     measurement.kind = kind;
     measurement.commands = workload.timedCount();
+    const BookCapacity capacity = expectedBookSize(workload);
+    measurement.reservedStops = capacity.stops;
+    measurement.reservedLevels = capacity.levels;
     if (measurement.outcome != workload.expected) {
         throw std::runtime_error("workload " + workload.config.name + " (" + benchmarkKindName(kind) +
                                  "): the book did " + describeOutcome(measurement.outcome) +

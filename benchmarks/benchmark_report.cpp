@@ -219,13 +219,45 @@ std::string summaryJson(const MeasurementSummary& summary) {
            ", \"coefficient_of_variation\": " + formatFixed(summary.coefficientOfVariation, 6) + "}";
 }
 
+std::string spinWindowText(const Measurement& measurement) {
+    if (!measurement.spinWindow) {
+        return "none";
+    }
+    if (*measurement.spinWindow == std::chrono::nanoseconds::max()) {
+        return "unlimited";
+    }
+    return std::to_string(measurement.spinWindow->count()) + "ns";
+}
+
+std::string shareText(const Measurement& measurement) {
+    return measurement.minThreadCpuShare ? formatFixed(*measurement.minThreadCpuShare, 4) : std::string();
+}
+
+// A threaded run's setup, after the fields every run has.
+std::string threadedJson(const Measurement& measurement) {
+    std::string rates;
+    for (const double rate : measurement.partRates) {
+        rates += (rates.empty() ? "" : ", ") + formatFixed(rate, 3);
+    }
+    return ", \"gateway_threads\": " + std::to_string(measurement.gatewayThreads) + ", \"producers\": " +
+           std::to_string(measurement.producers) + ", \"spread\": " + jsonString(measurement.spread) +
+           ", \"placement\": " + jsonString(measurement.placement) + ", \"pinned\": " + boolText(measurement.pinned) +
+           ", \"priority\": \"" + (measurement.highPriority ? "high" : "normal") + "\", \"layout\": " + jsonString(measurement.layout) +
+           ", \"spin_window\": \"" + spinWindowText(measurement) + "\", \"connections\": " + std::to_string(measurement.connections) +
+           ", \"fingerprint\": " + std::to_string(measurement.fingerprint) + ", \"roll_passes\": " + std::to_string(measurement.rollPasses) +
+           ", \"capacity_growths\": " + std::to_string(measurement.capacityGrowths) + ", \"min_thread_cpu_share\": " +
+           (measurement.minThreadCpuShare ? formatFixed(*measurement.minThreadCpuShare, 4) : std::string("null")) +
+           ", \"reserved_stops\": " + std::to_string(measurement.reservedStops) + ", \"reserved_levels\": " +
+           std::to_string(measurement.reservedLevels) + ", \"part_ops_per_second\": [" + rates + "]";
+}
+
 std::string measurementJson(const Measurement& measurement) {
     return "{\"workload\": " + jsonString(measurement.workload) + ", \"kind\": \"" +
            benchmarkKindName(measurement.kind) + "\", \"repetition\": " + std::to_string(measurement.repetition) +
            ", \"warmup\": " + boolText(measurement.warmup) + ", \"commands\": " +
            std::to_string(measurement.commands) + ", \"instruments\": " + std::to_string(measurement.instruments) +
            ", \"window\": " + std::to_string(measurement.window) + ", \"shards\": " + std::to_string(measurement.shards) +
-           ", \"durability\": \"" + durabilityName(measurement.durability) + "\"" +
+           ", \"durability\": \"" + durabilityName(measurement.durability) + "\"" + threadedJson(measurement) +
            ", \"elapsed_ns\": " +
            std::to_string(measurement.elapsedNanoseconds) + ", \"ops_per_second\": " +
            formatFixed(measurement.operationsPerSecond(), 3) + ", \"ns_per_command\": " +
@@ -300,7 +332,8 @@ std::string formatMeasurementsCsv(const BenchmarkReport& report) {
         "workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,"
         "elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,"
         "volume,final_active_orders,final_price_levels,replaces,expirations,preventions,stops_triggered,"
-        "final_pending_stops,instruments,window,shards,durability\n";
+        "final_pending_stops,instruments,window,shards,durability,gateway_threads,producers,spread,placement,pinned,"
+        "priority,layout,spin_window,connections,capacity_growths,min_thread_cpu_share,reserved_stops,reserved_levels\n";
     const std::string session = report.size + "," + std::to_string(report.seed) + "," +
                                 std::to_string(workloadGeneratorVersion) + "," + report.build.config + "," +
                                 boolText(report.build.optimized());
@@ -318,7 +351,12 @@ std::string formatMeasurementsCsv(const BenchmarkReport& report) {
                std::to_string(outcome.expirations) + "," + std::to_string(outcome.preventions) + "," +
                std::to_string(outcome.stopsTriggered) + "," + std::to_string(outcome.finalPendingStops) + "," +
                std::to_string(measurement.instruments) + "," + std::to_string(measurement.window) + "," +
-               std::to_string(measurement.shards) + "," + durabilityName(measurement.durability) + "\n";
+               std::to_string(measurement.shards) + "," + durabilityName(measurement.durability) + "," +
+               std::to_string(measurement.gatewayThreads) + "," + std::to_string(measurement.producers) + "," + measurement.spread + "," +
+               measurement.placement + "," + boolText(measurement.pinned) + "," + (measurement.highPriority ? "high" : "normal") + "," +
+               measurement.layout + "," + spinWindowText(measurement) + "," + std::to_string(measurement.connections) + "," +
+               std::to_string(measurement.capacityGrowths) + "," + shareText(measurement) + "," +
+               std::to_string(measurement.reservedStops) + "," + std::to_string(measurement.reservedLevels) + "\n";
     }
     return csv;
 }

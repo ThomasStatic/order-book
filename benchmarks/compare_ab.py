@@ -13,7 +13,7 @@ confidence interval, and the share of pairs in which the experiment was faster.
 
     python benchmarks/compare_ab.py --base BASE.exe --exp EXP.exe --out DIR
         [--pairs 16] [--repetitions 5] [--size standard] [--kind both] [--workload NAME]...
-        [--exp-workload NAME] [--exp-kind KIND] [ANY OTHER OPTION OF THE PROGRAM]...
+        [--exp-workload NAME] [--exp-kind KIND] [--exp-args "OPTIONS"] [ANY OTHER OPTION OF THE PROGRAM]...
 
 Writes every invocation's CSV to DIR, and DIR/summary.md.
 
@@ -22,6 +22,8 @@ With --exp-workload, the experiment's invocations run that workload in place of 
 the same interleaving: matching-heavy-owned against matching-heavy-request, for example.
 --exp-kind does the same for two kinds: shard against core on one binary reads the cost of a
 layer. Run the kind against itself first, so a difference can be read against its A/A floor.
+--exp-args gives the experiment's invocations settings of their own, split on spaces, after the
+shared ones: shard at --shards 4 against the same at 1, for the fall a shard count costs.
 """
 import argparse
 import csv
@@ -71,6 +73,7 @@ def main():
     parser.add_argument("--seed", default="42")
     parser.add_argument("--exp-workload")
     parser.add_argument("--exp-kind")
+    parser.add_argument("--exp-args", default="")
     # Anything else goes to both binaries as it is, such as --instruments 8.
     options, passed_through = parser.parse_known_args()
     # Absolute, since Windows does not search the current directory for a relative path with slashes.
@@ -82,7 +85,8 @@ def main():
     for workload in workloads:
         common = ["--size", options.size, "--repetitions", str(options.repetitions), "--warmup", "1", "--seed", options.seed] + passed_through
         args = {"base": ["--workload", workload, "--kind", options.kind] + common,
-                "exp": ["--workload", options.exp_workload or workload, "--kind", options.exp_kind or options.kind] + common}
+                "exp": ["--workload", options.exp_workload or workload, "--kind", options.exp_kind or options.kind] + common +
+                       options.exp_args.split()}
         ratios = {}
         for pair in range(options.pairs):
             order = ("base", "exp") if pair % 2 == 0 else ("exp", "base")
@@ -106,6 +110,7 @@ def main():
     with open(os.path.join(options.out, "summary.md"), "w", newline="\n") as summary:
         against = f"exp workload: {options.exp_workload}\n" if options.exp_workload else ""
         against += f"exp kind: {options.exp_kind}\n" if options.exp_kind else ""
+        against += f"exp args: {options.exp_args}\n" if options.exp_args else ""
         summary.write(f"base: {binaries['base']}\nexp: {binaries['exp']}\n{against}size {options.size}, {options.pairs} ABBA pairs per "
                       f"workload, {options.repetitions} measured runs per invocation, seed {options.seed}\n\n" + "\n".join(lines) + "\n")
 

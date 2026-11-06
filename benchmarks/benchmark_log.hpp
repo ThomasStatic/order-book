@@ -7,11 +7,15 @@
 #include <functional>
 #include <future>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 #include <thread>
+#include <utility>
 
+#include "order_book/runtime/closed_log.hpp"
 #include "order_book/runtime/doorbell.hpp"
 #include "order_book/runtime/durability.hpp"
 #include "order_book/runtime/durable_position.hpp"
@@ -21,6 +25,8 @@
 #include "order_book/runtime/log_writer.hpp"
 #include "order_book/runtime/matching_loop.hpp"
 #include "order_book/runtime/ring.hpp"
+#include "order_book/runtime/roll_forward.hpp"
+#include "order_book/symbol.hpp"
 
 // A shard's log for the queue and gateway kinds: the engine's own log writer and housekeeping
 // thread on real files, each run in a fresh directory, so a durable run pays what the engine pays.
@@ -83,8 +89,15 @@ struct LogRing {
     runtime::DurablePosition durable;
 };
 
-// Shard 0's log writer on its own thread and the housekeeping thread, over real files at one
-// durability in a fresh directory made inside parent. The first file and the next are both made
+// A roll-forward worker for a run's log, as the engine runs one: each book's image at the log's
+// first position, since the preload that made it isn't in the log, published as its checkpoint
+// before the worker reads them.
+struct RunLogWorker {
+    std::vector<std::pair<replay::Symbol, std::vector<std::byte>>> images;
+};
+
+// One shard's log writer on its own thread and the housekeeping thread, over real files at one
+// durability in a fresh directory made inside parent, so each shard of a run has its own. The first file and the next are both made
 // before the constructor returns, so a run shorter than two files makes none while it is timed.
 // The matching thread must stop, which sends the writer its STOP, before finish or the destructor,
 // and the directory is deleted with everything in it once the files are closed.
@@ -95,21 +108,33 @@ public:
     // for NONE.
     RunLog(const std::filesystem::path& parent, RunDurability durability, const runtime::InstrumentDirectory& directory,
            LogRing& ring, std::uint64_t firstPosition, std::function<void()> setUpWriter = {},
-           LogFileFill fill = LogFileFill::EXTENDED);
+           LogFileFill fill = LogFileFill::EXTENDED, std::uint32_t shard = 0, std::optional<RunLogWorker> worker = std::nullopt,
+           std::uint64_t fileBytes = runtime::defaultLogFileBytes, std::function<void()> setUpHelpers = {});
     ~RunLog();
 
     RunLog(const RunLog&) = delete;
     RunLog& operator=(const RunLog&) = delete;
 
-    // Once the matching thread has stopped: waits for the writer to finish its file, stops
-    // housekeeping, and deletes the unused next file. Returns the position the log ended at.
+    // Once the matching thread has stopped: waits for the writer to finish its file, stops the
+    // worker, which then rolls once more to catch up, untimed, and housekeeping, and deletes the
+    // unused next file. Returns the position the log ended at. Throws std::runtime_error if the
+    // worker reported a problem or a helper thread couldn't be placed.
     std::uint64_t finish();
     const std::filesystem::path& directory() const noexcept { return where; }
+    // The passes the roll-forward worker made while the run went on, before finish's catch-up;
+    // none without one. After finish.
+    std::uint64_t rollPasses() const noexcept { return passesWhileRunning; }
 
 private:
     std::filesystem::path where;
     std::unique_ptr<runtime::LogStorage> storage;
     std::unique_ptr<runtime::Housekeeping> housekeeping;
+    std::unique_ptr<runtime::ClosedLog> closedLog;  // with a worker
+    std::unique_ptr<runtime::RollWorker> roller;
+    std::thread rolling;
+    std::vector<std::string> reported;  // what the worker or a helper thread said, which fails the run
+    std::mutex reportedLock;
+    std::uint64_t passesWhileRunning = 0;
     LogRing& log;
     // A member, since the writer may still be inside set_value when the constructor's get returns.
     std::promise<void> ready;
