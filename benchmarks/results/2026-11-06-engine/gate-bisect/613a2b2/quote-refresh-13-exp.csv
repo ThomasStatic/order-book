@@ -1,0 +1,7 @@
+workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,volume,final_active_orders,final_price_levels,replaces,expirations,preventions,stops_triggered,final_pending_stops,instruments,window,shards,durability
+quote-refresh,core,standard,42,3,Release,true,1,true,100000,9490000,10537407.798,94.900,29135,10810,0.270622,0,15932,172272,1805,101,60055,2189,0,0,0,1,0,1,none
+quote-refresh,core,standard,42,3,Release,true,1,false,100000,10027800,9972277.070,100.278,29135,10810,0.270622,0,15932,172272,1805,101,60055,2189,0,0,0,1,0,1,none
+quote-refresh,core,standard,42,3,Release,true,2,false,100000,10836000,9228497.601,108.360,29135,10810,0.270622,0,15932,172272,1805,101,60055,2189,0,0,0,1,0,1,none
+quote-refresh,core,standard,42,3,Release,true,3,false,100000,9431000,10603329.445,94.310,29135,10810,0.270622,0,15932,172272,1805,101,60055,2189,0,0,0,1,0,1,none
+quote-refresh,core,standard,42,3,Release,true,4,false,100000,9861100,10140856.497,98.611,29135,10810,0.270622,0,15932,172272,1805,101,60055,2189,0,0,0,1,0,1,none
+quote-refresh,core,standard,42,3,Release,true,5,false,100000,9799000,10205122.972,97.990,29135,10810,0.270622,0,15932,172272,1805,101,60055,2189,0,0,0,1,0,1,none

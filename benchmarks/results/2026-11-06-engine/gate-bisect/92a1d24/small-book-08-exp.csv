@@ -1,0 +1,7 @@
+workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,volume,final_active_orders,final_price_levels,replaces,expirations,preventions,stops_triggered,final_pending_stops
+small-book,core,standard,42,3,Release,true,1,true,100000,9046200,11054365.369,90.462,64662,35338,0.353380,0,26552,81140,173,10,0,0,0,0,0
+small-book,core,standard,42,3,Release,true,1,false,100000,8999700,11111481.494,89.997,64662,35338,0.353380,0,26552,81140,173,10,0,0,0,0,0
+small-book,core,standard,42,3,Release,true,2,false,100000,8835600,11317850.514,88.356,64662,35338,0.353380,0,26552,81140,173,10,0,0,0,0,0
+small-book,core,standard,42,3,Release,true,3,false,100000,8964100,11155609.598,89.641,64662,35338,0.353380,0,26552,81140,173,10,0,0,0,0,0
+small-book,core,standard,42,3,Release,true,4,false,100000,8832200,11322207.378,88.322,64662,35338,0.353380,0,26552,81140,173,10,0,0,0,0,0
+small-book,core,standard,42,3,Release,true,5,false,100000,8815500,11343656.060,88.155,64662,35338,0.353380,0,26552,81140,173,10,0,0,0,0,0

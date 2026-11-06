@@ -1,0 +1,44 @@
+== command, service time, matching-heavy, closed-loop ==
+quotable: yes
+runs: 9, merged samples: 9000000
+run record:
+  interval=command
+  time=service
+  load=closed-loop
+  target-rate=none
+  achieved-rate=not reported: a per-command timed run never reports throughput
+  workload=matching-heavy
+  workload-fingerprint=9808119556355606439
+  generator-version=3
+  seed=42
+  shards=none, one book in process
+  gateway-threads=none, one book in process
+  active-connections=none, one book in process
+  idle-connections=none, one book in process
+  socket-set=none, no sockets
+  spin-window=none, one book in process
+  matching-cpu-share=none, no matching thread
+  core-map=6
+  pinned=yes
+  priority=high
+  durability=none, one book in process
+  log-files=none, no log
+  logs-share-drive=none, one book in process
+  book-capacity=orders=11700 stops=0 levels=122
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=20.9
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=1000000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 567.4, over 10 us 19.3, over 100 us 0.5; max 401572 ns; lost 0.16%
+noise floor after: 10.0 s; gaps/s over 1 us 560.9, over 10 us 19.3, over 100 us 0.6; max 320872 ns; lost 0.15%
+stat     merged ns      beyond  run median     run min     run max
+p50            130     4500000         130         130         130
+p90            241      900000         241         241         241
+p99            722       90000         722         714         722
+p99.9         1370        9000        1362        1354        1386
+max         218771           -       35740       15630      218771
+

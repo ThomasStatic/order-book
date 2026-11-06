@@ -1,0 +1,21 @@
+order_book_benchmarks: generator v3, seed 42, size standard (100000 timed commands, per shard for the threaded kinds), 1 warm-up and 5 measured runs each
+build: Release, MSVC 194435228
+
+self-trade: 10000 preloaded orders, 100000 timed commands (cancellation rate 0.079, 65076 trades, ending with 8003 orders on 186 levels); generated in 57.977 ms, untimed
+  core warm-up 1: 100000 commands in 16.286 ms, 6140319 ops/s
+  core run 1: 100000 commands in 16.356 ms, 6113927 ops/s
+  core run 2: 100000 commands in 16.177 ms, 6181463 ops/s
+  core run 3: 100000 commands in 15.894 ms, 6291682 ops/s
+  core run 4: 100000 commands in 15.865 ms, 6303064 ops/s
+  core run 5: 100000 commands in 16.431 ms, 6086057 ops/s
+  replay warm-up 1: 100000 commands in 54.909 ms, 1821195 ops/s
+  replay run 1: 100000 commands in 54.673 ms, 1829070 ops/s
+  replay run 2: 100000 commands in 53.984 ms, 1852401 ops/s
+  replay run 3: 100000 commands in 54.271 ms, 1842615 ops/s
+  replay run 4: 100000 commands in 55.377 ms, 1805820 ops/s
+  replay run 5: 100000 commands in 56.736 ms, 1762565 ops/s
+
+summary of measured runs (warm-ups excluded):
+workload            kind     reps  commands   median ops/s      min ops/s      max ops/s   ns/cmd      cv
+self-trade          core        5    100000        6181463        6086057        6303064    161.8    1.6%
+self-trade          replay      5    100000        1829070        1762565        1852401    546.7    2.0%

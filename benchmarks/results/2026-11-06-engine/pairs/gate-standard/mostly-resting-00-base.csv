@@ -1,0 +1,13 @@
+workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,volume,final_active_orders,final_price_levels,replaces,expirations,preventions,stops_triggered,final_pending_stops
+mostly-resting,core,standard,42,3,Release,true,1,true,100000,12702200,7872651.982,127.022,94984,5016,0.050160,0,4073,155209,86874,100,0,0,0,0,0
+mostly-resting,core,standard,42,3,Release,true,1,false,100000,12445300,8035161.868,124.453,94984,5016,0.050160,0,4073,155209,86874,100,0,0,0,0,0
+mostly-resting,core,standard,42,3,Release,true,2,false,100000,13478800,7419058.076,134.788,94984,5016,0.050160,0,4073,155209,86874,100,0,0,0,0,0
+mostly-resting,core,standard,42,3,Release,true,3,false,100000,12742200,7847938.347,127.422,94984,5016,0.050160,0,4073,155209,86874,100,0,0,0,0,0
+mostly-resting,core,standard,42,3,Release,true,4,false,100000,13453600,7432954.748,134.536,94984,5016,0.050160,0,4073,155209,86874,100,0,0,0,0,0
+mostly-resting,core,standard,42,3,Release,true,5,false,100000,12564500,7958931.911,125.645,94984,5016,0.050160,0,4073,155209,86874,100,0,0,0,0,0
+mostly-resting,replay,standard,42,3,Release,true,1,true,100000,35358300,2828190.269,353.583,94984,5016,0.050160,0,4073,155209,86874,100,0,0,0,0,0
+mostly-resting,replay,standard,42,3,Release,true,1,false,100000,35783700,2794568.477,357.837,94984,5016,0.050160,0,4073,155209,86874,100,0,0,0,0,0
+mostly-resting,replay,standard,42,3,Release,true,2,false,100000,35560400,2812116.849,355.604,94984,5016,0.050160,0,4073,155209,86874,100,0,0,0,0,0
+mostly-resting,replay,standard,42,3,Release,true,3,false,100000,35877700,2787246.674,358.777,94984,5016,0.050160,0,4073,155209,86874,100,0,0,0,0,0
+mostly-resting,replay,standard,42,3,Release,true,4,false,100000,37979300,2633013.247,379.793,94984,5016,0.050160,0,4073,155209,86874,100,0,0,0,0,0
+mostly-resting,replay,standard,42,3,Release,true,5,false,100000,38162800,2620352.804,381.628,94984,5016,0.050160,0,4073,155209,86874,100,0,0,0,0,0

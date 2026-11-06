@@ -1,0 +1,1 @@
+deep-book            shard   median ratio 1.865  95% CI 1.851-1.885  exp faster in 100% of 16 pairs

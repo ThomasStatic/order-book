@@ -1,0 +1,1 @@
+pending-stops        shard   median ratio 2.211  95% CI 2.192-2.223  exp faster in 100% of 16 pairs

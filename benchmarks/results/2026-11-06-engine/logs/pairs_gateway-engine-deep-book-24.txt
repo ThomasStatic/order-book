@@ -1,0 +1,1 @@
+deep-book            gateway median ratio 0.993  95% CI 0.988-0.997  exp faster in 17% of 24 pairs

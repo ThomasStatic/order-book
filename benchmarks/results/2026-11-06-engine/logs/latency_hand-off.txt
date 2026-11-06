@@ -1,0 +1,44 @@
+== hand-off, service time, matching-heavy-request, closed-loop ==
+quotable: yes
+runs: 9, merged samples: 9000000
+run record:
+  interval=hand-off
+  time=service
+  load=closed-loop
+  target-rate=none
+  achieved-rate=not reported: a per-command timed run never reports throughput
+  workload=matching-heavy-request
+  workload-fingerprint=6278130361264019647
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=none, one producer thread in process
+  active-connections=none, one producer thread in process
+  idle-connections=none, one producer thread in process
+  socket-set=none, no sockets
+  spin-window=100us
+  matching-cpu-share=99.9% of a core, the median run; 99.8 to 99.9% over runs
+  core-map=sender 6, matching thread 10
+  pinned=yes
+  priority=high
+  durability=none, no log
+  log-files=none, no log
+  logs-share-drive=none, no log
+  book-capacity=orders=11700 stops=0 levels=122
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=1000000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 558.6, over 10 us 15.0, over 100 us 0.4; max 231070 ns; lost 0.14%
+noise floor after: 10.0 s; gaps/s over 1 us 536.9, over 10 us 13.3, over 100 us 0.2; max 269150 ns; lost 0.13%
+stat     merged ns      beyond  run median     run min     run max
+p50            381     4500000         381         381         381
+p90            541      900000         541         533         554
+p99           1181       90000        1165        1157        1304
+p99.9         2067        9000        2067        2026        2117  noise
+max         160050           -       58270       41090      160050
+

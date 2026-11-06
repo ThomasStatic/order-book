@@ -1,0 +1,44 @@
+== round-trip, service time, matching-heavy-request, closed-loop ==
+quotable: yes
+runs: 9, merged samples: 7570621
+run record:
+  interval=round-trip
+  time=service
+  load=closed-loop, commands in each run's first 2 s not recorded
+  target-rate=none
+  achieved-rate=not reported: a per-command timed run never reports throughput
+  workload=matching-heavy-request
+  workload-fingerprint=6278130361264019647
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=1
+  active-connections=1
+  idle-connections=0
+  socket-set=poll, the engine's PollSocketSet
+  spin-window=100us
+  matching-cpu-share=unmeasured, the engine's thread is in another process
+  core-map=sender 6, receiver 4, engine matching thread 10, engine gateway thread 8
+  pinned=yes
+  priority=high
+  durability=process
+  log-files=extended, as the engine makes them
+  logs-share-drive=none, no checkpoints until roll-forward lands
+  book-capacity=orders=11700 stops=1 levels=122
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=1000000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 526.1, over 10 us 8.8, over 100 us 0.1; max 222681 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 544.7, over 10 us 8.8, over 100 us 0.0; max 45520 ns; lost 0.11%
+stat     merged ns      beyond  run median     run min     run max
+p50          12340     3785310       12340       12275       12406
+p90          12734      757062       12734       12668       12865
+p99          19298       75706       19298       19036       19561
+p99.9        41748        7570           -           -           -
+max        1958185           -      701742      435291     1958185
+

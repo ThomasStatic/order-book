@@ -1,0 +1,1 @@
+immediate            shard   median ratio 4.081  95% CI 4.026-4.105  exp faster in 100% of 16 pairs

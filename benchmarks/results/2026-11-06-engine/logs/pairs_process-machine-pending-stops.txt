@@ -1,0 +1,1 @@
+pending-stops        queue   median ratio 1.009  95% CI 1.003-1.018  exp faster in 88% of 16 pairs

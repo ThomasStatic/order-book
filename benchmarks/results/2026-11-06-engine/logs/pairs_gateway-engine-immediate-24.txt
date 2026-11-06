@@ -1,0 +1,1 @@
+immediate            gateway median ratio 1.005  95% CI 0.993-1.026  exp faster in 54% of 24 pairs

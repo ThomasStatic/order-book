@@ -1,0 +1,1 @@
+immediate            core    median ratio 0.919  95% CI 0.916-0.923  exp faster in 0% of 16 pairs

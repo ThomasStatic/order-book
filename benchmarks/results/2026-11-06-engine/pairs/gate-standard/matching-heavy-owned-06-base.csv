@@ -1,0 +1,13 @@
+workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,volume,final_active_orders,final_price_levels,replaces,expirations,preventions,stops_triggered,final_pending_stops
+matching-heavy-owned,core,standard,42,3,Release,true,1,true,100000,16818400,5945868.810,168.184,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-owned,core,standard,42,3,Release,true,1,false,100000,16719400,5981075.876,167.194,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-owned,core,standard,42,3,Release,true,2,false,100000,16618800,6017281.633,166.188,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-owned,core,standard,42,3,Release,true,3,false,100000,16621900,6016159.404,166.219,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-owned,core,standard,42,3,Release,true,4,false,100000,16538200,6046607.249,165.382,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-owned,core,standard,42,3,Release,true,5,false,100000,16692500,5990714.393,166.925,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-owned,replay,standard,42,3,Release,true,1,true,100000,51426700,1944515.203,514.267,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-owned,replay,standard,42,3,Release,true,1,false,100000,51610300,1937597.728,516.103,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-owned,replay,standard,42,3,Release,true,2,false,100000,52172900,1916703.883,521.729,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-owned,replay,standard,42,3,Release,true,3,false,100000,51541700,1940176.595,515.417,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-owned,replay,standard,42,3,Release,true,4,false,100000,51227900,1952061.279,512.279,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-owned,replay,standard,42,3,Release,true,5,false,100000,51929600,1925684.003,519.296,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0

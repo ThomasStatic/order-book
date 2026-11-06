@@ -1,0 +1,528 @@
+== durable-wait, response time, matching-heavy-request, fixed at 10% ==
+quotable: yes
+runs: 9, merged samples: 900000
+run record:
+  interval=durable-wait
+  time=response
+  load=fixed
+  target-rate=1146/s, 10% of capacity measured this session
+  achieved-rate=1146/s
+  workload=matching-heavy-request
+  workload-fingerprint=5142982389858936970
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=none, one producer thread in process
+  active-connections=none, one producer thread in process
+  idle-connections=none, one producer thread in process
+  socket-set=none, no sockets
+  spin-window=100us, the log writer's
+  matching-cpu-share=none, no matching thread
+  core-map=sender 6, log writer 10
+  pinned=yes
+  priority=high
+  durability=machine
+  log-files=extended, 10000 records each, a roll-forward worker rolling each as it closes, from an empty book
+  logs-share-drive=yes, a roll-forward worker's checkpoints, in the log's directory
+  book-capacity=none, no book runs
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=100000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 532.1, over 10 us 9.0, over 100 us 0.5; max 226861 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 525.5, over 10 us 9.0, over 100 us 0.1; max 123310 ns; lost 0.12%
+stat     merged ns      beyond  run median     run min     run max
+p50          86646      450000       86646       86646       86646
+p90          99774       90000       99774       99249      100300
+p99         145986        9000      145986      145986      150187
+p99.9 not printed: 900 beyond, 1000 needed
+max        6970049           -     4857588     4635867     6970049
+
+== driver lateness, matching-heavy-request, fixed at 10% ==
+quotable: yes
+runs: 9, merged samples: 900000
+run record:
+  interval=durable-wait
+  time=driver lateness
+  load=fixed
+  target-rate=1146/s
+  achieved-rate=1146/s
+  workload=matching-heavy-request
+  workload-fingerprint=5142982389858936970
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=none, one producer thread in process
+  active-connections=none, one producer thread in process
+  idle-connections=none, one producer thread in process
+  socket-set=none, no sockets
+  spin-window=100us, the log writer's
+  matching-cpu-share=none, no matching thread
+  core-map=sender 6, log writer 10
+  pinned=yes
+  priority=high
+  durability=machine
+  log-files=extended, 10000 records each, a roll-forward worker rolling each as it closes, from an empty book
+  logs-share-drive=yes, a roll-forward worker's checkpoints, in the log's directory
+  book-capacity=none, no book runs
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=100000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 532.1, over 10 us 9.0, over 100 us 0.5; max 226861 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 525.5, over 10 us 9.0, over 100 us 0.1; max 123310 ns; lost 0.12%
+stat     merged ns      beyond  run median     run min     run max
+p50             10      450000          10          10          10  unresolved  noise
+p90             18       90000          18          18          18  unresolved  noise
+p99             27        9000          28          27          28  unresolved  noise
+p99.9 not printed: 900 beyond, 1000 needed
+max        6097531           -     3984840     3763169     6097531
+
+== durable-wait, response time, matching-heavy-request, fixed at 25% ==
+quotable: yes
+runs: 9, merged samples: 900000
+run record:
+  interval=durable-wait
+  time=response
+  load=fixed
+  target-rate=2864/s, 25% of capacity measured this session
+  achieved-rate=2864/s
+  workload=matching-heavy-request
+  workload-fingerprint=5142982389858936970
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=none, one producer thread in process
+  active-connections=none, one producer thread in process
+  idle-connections=none, one producer thread in process
+  socket-set=none, no sockets
+  spin-window=100us, the log writer's
+  matching-cpu-share=none, no matching thread
+  core-map=sender 6, log writer 10
+  pinned=yes
+  priority=high
+  durability=machine
+  log-files=extended, 10000 records each, a roll-forward worker rolling each as it closes, from an empty book
+  logs-share-drive=yes, a roll-forward worker's checkpoints, in the log's directory
+  book-capacity=none, no book runs
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=100000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 532.1, over 10 us 9.0, over 100 us 0.5; max 226861 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 525.5, over 10 us 9.0, over 100 us 0.1; max 123310 ns; lost 0.12%
+stat     merged ns      beyond  run median     run min     run max
+p50          86121      450000       86121       85596       86121
+p90          93998       90000       93998       93473       95048
+p99         160689        9000      161740      155438      168041
+p99.9 not printed: 900 beyond, 1000 needed
+max        5624770           -     4885049     4579770     5624770
+
+== driver lateness, matching-heavy-request, fixed at 25% ==
+quotable: yes
+runs: 9, merged samples: 900000
+run record:
+  interval=durable-wait
+  time=driver lateness
+  load=fixed
+  target-rate=2864/s
+  achieved-rate=2864/s
+  workload=matching-heavy-request
+  workload-fingerprint=5142982389858936970
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=none, one producer thread in process
+  active-connections=none, one producer thread in process
+  idle-connections=none, one producer thread in process
+  socket-set=none, no sockets
+  spin-window=100us, the log writer's
+  matching-cpu-share=none, no matching thread
+  core-map=sender 6, log writer 10
+  pinned=yes
+  priority=high
+  durability=machine
+  log-files=extended, 10000 records each, a roll-forward worker rolling each as it closes, from an empty book
+  logs-share-drive=yes, a roll-forward worker's checkpoints, in the log's directory
+  book-capacity=none, no book runs
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=100000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 532.1, over 10 us 9.0, over 100 us 0.5; max 226861 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 525.5, over 10 us 9.0, over 100 us 0.1; max 123310 ns; lost 0.12%
+stat     merged ns      beyond  run median     run min     run max
+p50             10      450000          10          10          10  unresolved  noise
+p90             19       90000          19          19          19  unresolved  noise
+p99             29        9000          29          29          29  unresolved  noise
+p99.9 not printed: 900 beyond, 1000 needed
+max        5275821           -     4536330     4230770     5275821
+
+== durable-wait, response time, matching-heavy-request, fixed at 50% ==
+quotable: yes
+runs: 9, merged samples: 900000
+run record:
+  interval=durable-wait
+  time=response
+  load=fixed
+  target-rate=5728/s, 50% of capacity measured this session
+  achieved-rate=5728/s
+  workload=matching-heavy-request
+  workload-fingerprint=5142982389858936970
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=none, one producer thread in process
+  active-connections=none, one producer thread in process
+  idle-connections=none, one producer thread in process
+  socket-set=none, no sockets
+  spin-window=100us, the log writer's
+  matching-cpu-share=none, no matching thread
+  core-map=sender 6, log writer 10
+  pinned=yes
+  priority=high
+  durability=machine
+  log-files=extended, 10000 records each, a roll-forward worker rolling each as it closes, from an empty book
+  logs-share-drive=yes, a roll-forward worker's checkpoints, in the log's directory
+  book-capacity=none, no book runs
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=100000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 532.1, over 10 us 9.0, over 100 us 0.5; max 226861 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 525.5, over 10 us 9.0, over 100 us 0.1; max 123310 ns; lost 0.12%
+stat     merged ns      beyond  run median     run min     run max
+p50          81920      450000       81920       81395       81920
+p90          90322       90000       89797       89797       95573
+p99         621754        9000      470516      447410    20702720
+p99.9 not printed: 900 beyond, 1000 needed
+max       50336073           -     5470556     5184794    50336073
+
+== driver lateness, matching-heavy-request, fixed at 50% ==
+quotable: yes
+runs: 9, merged samples: 900000
+run record:
+  interval=durable-wait
+  time=driver lateness
+  load=fixed
+  target-rate=5728/s
+  achieved-rate=5728/s
+  workload=matching-heavy-request
+  workload-fingerprint=5142982389858936970
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=none, one producer thread in process
+  active-connections=none, one producer thread in process
+  idle-connections=none, one producer thread in process
+  socket-set=none, no sockets
+  spin-window=100us, the log writer's
+  matching-cpu-share=none, no matching thread
+  core-map=sender 6, log writer 10
+  pinned=yes
+  priority=high
+  durability=machine
+  log-files=extended, 10000 records each, a roll-forward worker rolling each as it closes, from an empty book
+  logs-share-drive=yes, a roll-forward worker's checkpoints, in the log's directory
+  book-capacity=none, no book runs
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=100000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 532.1, over 10 us 9.0, over 100 us 0.5; max 226861 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 525.5, over 10 us 9.0, over 100 us 0.1; max 123310 ns; lost 0.12%
+stat     merged ns      beyond  run median     run min     run max
+p50             11      450000          11          11          11  unresolved
+p90             19       90000          19          19          19  unresolved  noise
+p99         445310        9000      296173      273067    20568287
+p99.9 not printed: 900 beyond, 1000 needed
+max       50161543           -     5296117     5010364    50161543
+
+== durable-wait, response time, matching-heavy-request, fixed at 75% ==
+quotable: yes
+runs: 9, merged samples: 900000
+run record:
+  interval=durable-wait
+  time=response
+  load=fixed
+  target-rate=8592/s, 75% of capacity measured this session
+  achieved-rate=8592/s
+  workload=matching-heavy-request
+  workload-fingerprint=5142982389858936970
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=none, one producer thread in process
+  active-connections=none, one producer thread in process
+  idle-connections=none, one producer thread in process
+  socket-set=none, no sockets
+  spin-window=100us, the log writer's
+  matching-cpu-share=none, no matching thread
+  core-map=sender 6, log writer 10
+  pinned=yes
+  priority=high
+  durability=machine
+  log-files=extended, 10000 records each, a roll-forward worker rolling each as it closes, from an empty book
+  logs-share-drive=yes, a roll-forward worker's checkpoints, in the log's directory
+  book-capacity=none, no book runs
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=100000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 532.1, over 10 us 9.0, over 100 us 0.5; max 226861 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 525.5, over 10 us 9.0, over 100 us 0.1; max 123310 ns; lost 0.12%
+stat     merged ns      beyond  run median     run min     run max
+p50          81920      450000       81920       81920       81920
+p90         110277       90000      140735       99249      285670
+p99      125829522        9000    94641008     1873663   169923629
+p99.9 not printed: 900 beyond, 1000 needed
+max      195712899           -   118376260     5674249   195712899
+
+== driver lateness, matching-heavy-request, fixed at 75% ==
+quotable: yes
+runs: 9, merged samples: 900000
+run record:
+  interval=durable-wait
+  time=driver lateness
+  load=fixed
+  target-rate=8592/s
+  achieved-rate=8592/s
+  workload=matching-heavy-request
+  workload-fingerprint=5142982389858936970
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=none, one producer thread in process
+  active-connections=none, one producer thread in process
+  idle-connections=none, one producer thread in process
+  socket-set=none, no sockets
+  spin-window=100us, the log writer's
+  matching-cpu-share=none, no matching thread
+  core-map=sender 6, log writer 10
+  pinned=yes
+  priority=high
+  durability=machine
+  log-files=extended, 10000 records each, a roll-forward worker rolling each as it closes, from an empty book
+  logs-share-drive=yes, a roll-forward worker's checkpoints, in the log's directory
+  book-capacity=none, no book runs
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=100000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 532.1, over 10 us 9.0, over 100 us 0.5; max 226861 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 525.5, over 10 us 9.0, over 100 us 0.1; max 123310 ns; lost 0.12%
+stat     merged ns      beyond  run median     run min     run max
+p50             11      450000          12          11          12  unresolved
+p90             29       90000       24024          20      169092  unresolved  noise
+p99      125829522        9000    94641008     1756034   168848163
+p99.9 not printed: 900 beyond, 1000 needed
+max      195596652           -   118259934     5558042   195596652
+
+== durable-wait, response time, matching-heavy-request, fixed at 90% ==
+quotable: yes
+runs: 9, merged samples: 900000
+run record:
+  interval=durable-wait
+  time=response
+  load=fixed
+  target-rate=10310/s, 90% of capacity measured this session
+  achieved-rate=10310/s
+  workload=matching-heavy-request
+  workload-fingerprint=5142982389858936970
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=none, one producer thread in process
+  active-connections=none, one producer thread in process
+  idle-connections=none, one producer thread in process
+  socket-set=none, no sockets
+  spin-window=100us, the log writer's
+  matching-cpu-share=none, no matching thread
+  core-map=sender 6, log writer 10
+  pinned=yes
+  priority=high
+  durability=machine
+  log-files=extended, 10000 records each, a roll-forward worker rolling each as it closes, from an empty book
+  logs-share-drive=yes, a roll-forward worker's checkpoints, in the log's directory
+  book-capacity=none, no book runs
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=100000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 532.1, over 10 us 9.0, over 100 us 0.5; max 226861 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 525.5, over 10 us 9.0, over 100 us 0.1; max 123310 ns; lost 0.12%
+stat     merged ns      beyond  run median     run min     run max
+p50          82445      450000       82445       82445       82970
+p90        1411549       90000      283570      204800    88725945
+p99      167772697        9000     4974030     4873205   189282017
+p99.9 not printed: 900 beyond, 1000 needed
+max      198567511           -     7134688     6814423   198567511
+
+== driver lateness, matching-heavy-request, fixed at 90% ==
+quotable: yes
+runs: 9, merged samples: 900000
+run record:
+  interval=durable-wait
+  time=driver lateness
+  load=fixed
+  target-rate=10310/s
+  achieved-rate=10310/s
+  workload=matching-heavy-request
+  workload-fingerprint=5142982389858936970
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=none, one producer thread in process
+  active-connections=none, one producer thread in process
+  idle-connections=none, one producer thread in process
+  socket-set=none, no sockets
+  spin-window=100us, the log writer's
+  matching-cpu-share=none, no matching thread
+  core-map=sender 6, log writer 10
+  pinned=yes
+  priority=high
+  durability=machine
+  log-files=extended, 10000 records each, a roll-forward worker rolling each as it closes, from an empty book
+  logs-share-drive=yes, a roll-forward worker's checkpoints, in the log's directory
+  book-capacity=none, no book runs
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=100000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 532.1, over 10 us 9.0, over 100 us 0.5; max 226861 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 525.5, over 10 us 9.0, over 100 us 0.1; max 123310 ns; lost 0.12%
+stat     merged ns      beyond  run median     run min     run max
+p50             14      450000          13          13          16  unresolved
+p90        1319126       90000      186946      107651    88188212
+p99      167772697        9000     4873205     4772380   189282017
+p99.9 not printed: 900 beyond, 1000 needed
+max      198470582           -     7037860     6717664   198470582
+
+== durable-wait, response time, matching-heavy-request, poisson at 50% ==
+quotable: yes
+runs: 9, merged samples: 900000
+run record:
+  interval=durable-wait
+  time=response
+  load=poisson
+  target-rate=5728/s, 50% of capacity measured this session
+  achieved-rate=5718/s
+  workload=matching-heavy-request
+  workload-fingerprint=5142982389858936970
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=none, one producer thread in process
+  active-connections=none, one producer thread in process
+  idle-connections=none, one producer thread in process
+  socket-set=none, no sockets
+  spin-window=100us, the log writer's
+  matching-cpu-share=none, no matching thread
+  core-map=sender 6, log writer 10
+  pinned=yes
+  priority=high
+  durability=machine
+  log-files=extended, 10000 records each, a roll-forward worker rolling each as it closes, from an empty book
+  logs-share-drive=yes, a roll-forward worker's checkpoints, in the log's directory
+  book-capacity=none, no book runs
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=100000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 532.1, over 10 us 9.0, over 100 us 0.5; max 226861 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 525.5, over 10 us 9.0, over 100 us 0.1; max 123310 ns; lost 0.12%
+stat     merged ns      beyond  run median     run min     run max
+p50          95048      450000       95048       94523       96624
+p90         220554       90000      219504      217404      230007
+p99         756187        9000      617552      567140    20568287
+p99.9 not printed: 900 beyond, 1000 needed
+max       48348584           -     5810999     5421695    48348584
+
+== driver lateness, matching-heavy-request, poisson at 50% ==
+quotable: yes
+runs: 9, merged samples: 900000
+run record:
+  interval=durable-wait
+  time=driver lateness
+  load=poisson
+  target-rate=5728/s
+  achieved-rate=5718/s
+  workload=matching-heavy-request
+  workload-fingerprint=5142982389858936970
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=none, one producer thread in process
+  active-connections=none, one producer thread in process
+  idle-connections=none, one producer thread in process
+  socket-set=none, no sockets
+  spin-window=100us, the log writer's
+  matching-cpu-share=none, no matching thread
+  core-map=sender 6, log writer 10
+  pinned=yes
+  priority=high
+  durability=machine
+  log-files=extended, 10000 records each, a roll-forward worker rolling each as it closes, from an empty book
+  logs-share-drive=yes, a roll-forward worker's checkpoints, in the log's directory
+  book-capacity=none, no book runs
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=100000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 532.1, over 10 us 9.0, over 100 us 0.5; max 226861 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 525.5, over 10 us 9.0, over 100 us 0.1; max 123310 ns; lost 0.12%
+stat     merged ns      beyond  run median     run min     run max
+p50             28      450000          27          27         943  unresolved
+p90         133383       90000      132332      130757      143885
+p99         613351        9000      495722      453712    20433854
+p99.9 not printed: 900 beyond, 1000 needed
+max       48211629           -     5654906     5308094    48211629
+

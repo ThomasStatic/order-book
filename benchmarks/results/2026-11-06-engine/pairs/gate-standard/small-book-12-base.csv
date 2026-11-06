@@ -1,0 +1,13 @@
+workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,volume,final_active_orders,final_price_levels,replaces,expirations,preventions,stops_triggered,final_pending_stops
+small-book,core,standard,42,3,Release,true,1,true,100000,8558200,11684700.054,85.582,64662,35338,0.353380,0,26552,81140,173,10,0,0,0,0,0
+small-book,core,standard,42,3,Release,true,1,false,100000,8407100,11894708.044,84.071,64662,35338,0.353380,0,26552,81140,173,10,0,0,0,0,0
+small-book,core,standard,42,3,Release,true,2,false,100000,8528500,11725391.335,85.285,64662,35338,0.353380,0,26552,81140,173,10,0,0,0,0,0
+small-book,core,standard,42,3,Release,true,3,false,100000,8442500,11844832.692,84.425,64662,35338,0.353380,0,26552,81140,173,10,0,0,0,0,0
+small-book,core,standard,42,3,Release,true,4,false,100000,8468700,11808187.797,84.687,64662,35338,0.353380,0,26552,81140,173,10,0,0,0,0,0
+small-book,core,standard,42,3,Release,true,5,false,100000,8413800,11885236.160,84.138,64662,35338,0.353380,0,26552,81140,173,10,0,0,0,0,0
+small-book,replay,standard,42,3,Release,true,1,true,100000,29078600,3438955.108,290.786,64662,35338,0.353380,0,26552,81140,173,10,0,0,0,0,0
+small-book,replay,standard,42,3,Release,true,1,false,100000,28928500,3456798.659,289.285,64662,35338,0.353380,0,26552,81140,173,10,0,0,0,0,0
+small-book,replay,standard,42,3,Release,true,2,false,100000,28774200,3475335.544,287.742,64662,35338,0.353380,0,26552,81140,173,10,0,0,0,0,0
+small-book,replay,standard,42,3,Release,true,3,false,100000,28518200,3506532.670,285.182,64662,35338,0.353380,0,26552,81140,173,10,0,0,0,0,0
+small-book,replay,standard,42,3,Release,true,4,false,100000,28797800,3472487.482,287.978,64662,35338,0.353380,0,26552,81140,173,10,0,0,0,0,0
+small-book,replay,standard,42,3,Release,true,5,false,100000,28638700,3491778.607,286.387,64662,35338,0.353380,0,26552,81140,173,10,0,0,0,0,0

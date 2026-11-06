@@ -1,0 +1,14 @@
+order_book_benchmarks: generator v3, seed 42, size extended (1000000 timed commands, per shard for the threaded kinds), 1 warm-up and 5 measured runs each
+build: Release, MSVC 194435228
+
+mixed: 16 instruments cycling through deep-book, pending-stops, immediate, and quote-refresh, 2000000 timed commands between them
+  shard warm-up 1: 2000000 commands in 295.010 ms, 6779434 ops/s, 148257 stops triggered
+  shard run 1: 2000000 commands in 288.671 ms, 6928295 ops/s, 148257 stops triggered
+  shard run 2: 2000000 commands in 289.290 ms, 6913473 ops/s, 148257 stops triggered
+  shard run 3: 2000000 commands in 293.644 ms, 6810964 ops/s, 148257 stops triggered
+  shard run 4: 2000000 commands in 293.690 ms, 6809897 ops/s, 148257 stops triggered
+  shard run 5: 2000000 commands in 298.556 ms, 6698917 ops/s, 148257 stops triggered
+
+summary of measured runs (warm-ups excluded):
+workload            kind     reps  commands   median ops/s      min ops/s      max ops/s   ns/cmd      cv
+mixed               shard       5   2000000        6810964        6698917        6928295    146.8    1.4%

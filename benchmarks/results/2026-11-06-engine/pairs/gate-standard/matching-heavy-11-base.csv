@@ -1,0 +1,13 @@
+workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,volume,final_active_orders,final_price_levels,replaces,expirations,preventions,stops_triggered,final_pending_stops
+matching-heavy,core,standard,42,3,Release,true,1,true,100000,27785600,3598986.525,277.856,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy,core,standard,42,3,Release,true,1,false,100000,24677700,4052241.497,246.777,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy,core,standard,42,3,Release,true,2,false,100000,20299400,4926253.978,202.994,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy,core,standard,42,3,Release,true,3,false,100000,18821700,5313016.359,188.217,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy,core,standard,42,3,Release,true,4,false,100000,18504400,5404120.101,185.044,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy,core,standard,42,3,Release,true,5,false,100000,21033800,4754252.679,210.338,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy,replay,standard,42,3,Release,true,1,true,100000,42991800,2326024.963,429.918,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy,replay,standard,42,3,Release,true,1,false,100000,45493200,2198130.710,454.932,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy,replay,standard,42,3,Release,true,2,false,100000,43202900,2314659.433,432.029,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy,replay,standard,42,3,Release,true,3,false,100000,45230700,2210887.738,452.307,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy,replay,standard,42,3,Release,true,4,false,100000,44529600,2245697.244,445.296,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy,replay,standard,42,3,Release,true,5,false,100000,44497200,2247332.416,444.972,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0

@@ -1,0 +1,14 @@
+order_book_benchmarks: generator v3, seed 42, size extended (1000000 timed commands, per shard for the threaded kinds), 1 warm-up and 5 measured runs each
+build: Release, MSVC 194435228
+
+matching-heavy-request: 10000 preloaded orders, 1000000 timed commands (cancellation rate 0.080, 835780 trades, ending with 11201 orders on 198 levels); generated in 883.765 ms, untimed
+  shard warm-up 1: 1000000 commands in 528.871 ms, 1890821 ops/s
+  shard run 1: 1000000 commands in 551.741 ms, 1812446 ops/s
+  shard run 2: 1000000 commands in 527.092 ms, 1897202 ops/s
+  shard run 3: 1000000 commands in 564.489 ms, 1771513 ops/s
+  shard run 4: 1000000 commands in 519.492 ms, 1924959 ops/s
+  shard run 5: 1000000 commands in 533.297 ms, 1875130 ops/s
+
+summary of measured runs (warm-ups excluded):
+workload            kind     reps  commands   median ops/s      min ops/s      max ops/s   ns/cmd      cv
+matching-heavy-requestshard       5   1000000        1875130        1771513        1924959    533.3    3.4%

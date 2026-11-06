@@ -1,0 +1,13 @@
+workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,volume,final_active_orders,final_price_levels,replaces,expirations,preventions,stops_triggered,final_pending_stops
+cancellation-heavy,core,extended,42,3,Release,true,1,true,1000000,91062200,10981504.949,91.062,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,core,extended,42,3,Release,true,1,false,1000000,90173600,11089720.273,90.174,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,core,extended,42,3,Release,true,2,false,1000000,87793800,11390325.968,87.794,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,core,extended,42,3,Release,true,3,false,1000000,86246200,11594713.738,86.246,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,core,extended,42,3,Release,true,4,false,1000000,85404500,11708984.890,85.404,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,core,extended,42,3,Release,true,5,false,1000000,88631700,11282644.923,88.632,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,replay,extended,42,3,Release,true,1,true,1000000,277964000,3597588.177,277.964,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,replay,extended,42,3,Release,true,1,false,1000000,277433000,3604473.873,277.433,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,replay,extended,42,3,Release,true,2,false,1000000,278206400,3594453.614,278.206,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,replay,extended,42,3,Release,true,3,false,1000000,283031200,3533179.381,283.031,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,replay,extended,42,3,Release,true,4,false,1000000,347811300,2875122.229,347.811,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,replay,extended,42,3,Release,true,5,false,1000000,281033900,3558289.587,281.034,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0

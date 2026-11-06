@@ -1,0 +1,10 @@
+row,title,run,count,maximum_ticks,p50_ticks,p90_ticks,p99_ticks,p99.9_ticks,sustained,ticks_per_nanosecond
+0,command, service time, quote-refresh, closed-loop,1,1000000,732342,391,507,1487,3599,yes,3.899994
+0,command, service time, quote-refresh, closed-loop,2,1000000,50115,391,507,1447,3439,yes,3.899994
+0,command, service time, quote-refresh, closed-loop,3,1000000,165126,391,507,1487,3471,yes,3.899994
+0,command, service time, quote-refresh, closed-loop,4,1000000,164502,391,507,1487,3439,yes,3.899994
+0,command, service time, quote-refresh, closed-loop,5,1000000,68601,391,507,1487,3519,yes,3.899994
+0,command, service time, quote-refresh, closed-loop,6,1000000,60060,391,507,1527,3551,yes,3.899994
+0,command, service time, quote-refresh, closed-loop,7,1000000,169377,391,507,1447,3439,yes,3.899994
+0,command, service time, quote-refresh, closed-loop,8,1000000,171951,391,507,1487,3471,yes,3.899994
+0,command, service time, quote-refresh, closed-loop,9,1000000,89388,391,547,1527,3631,yes,3.899994

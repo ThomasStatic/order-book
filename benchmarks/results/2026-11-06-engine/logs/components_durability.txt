@@ -1,0 +1,6 @@
+publish-checkpoint deep-book log-drive, 1000 orders, 250 levels: 1251860.0 ns per operation over 5
+publish-checkpoint deep-book log-drive, 10000 orders, 1000 levels: 1436780.0 ns per operation over 5
+publish-checkpoint deep-book log-drive, 100000 orders, 1000 levels: 4367040.0 ns per operation over 5
+publish-checkpoint deep-book log-drive, 1000000 orders, 1000 levels: 35008240.0 ns per operation over 5
+roll-pass matching-heavy-request closed-file, 45799 orders, 113 levels: 298.8 ns per operation over 20132649
+recover matching-heavy-request checkpoint-and-one-file, 45799 orders, 113 levels: 292.8 ns per operation over 20132649

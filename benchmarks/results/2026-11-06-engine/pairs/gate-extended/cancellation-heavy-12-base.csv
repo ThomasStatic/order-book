@@ -1,0 +1,13 @@
+workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,volume,final_active_orders,final_price_levels,replaces,expirations,preventions,stops_triggered,final_pending_stops
+cancellation-heavy,core,extended,42,3,Release,true,1,true,1000000,84954700,11770979.122,84.955,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,core,extended,42,3,Release,true,1,false,1000000,85245400,11730838.262,85.245,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,core,extended,42,3,Release,true,2,false,1000000,85102300,11750563.733,85.102,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,core,extended,42,3,Release,true,3,false,1000000,84242300,11870521.104,84.242,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,core,extended,42,3,Release,true,4,false,1000000,84515700,11832121.133,84.516,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,core,extended,42,3,Release,true,5,false,1000000,106456300,9393525.794,106.456,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,replay,extended,42,3,Release,true,1,true,1000000,303306300,3296997.128,303.306,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,replay,extended,42,3,Release,true,1,false,1000000,357416100,2797859.414,357.416,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,replay,extended,42,3,Release,true,2,false,1000000,294306500,3397818.261,294.307,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,replay,extended,42,3,Release,true,3,false,1000000,282287800,3542483.947,282.288,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,replay,extended,42,3,Release,true,4,false,1000000,280861800,3560469.954,280.862,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0
+cancellation-heavy,replay,extended,42,3,Release,true,5,false,1000000,295618100,3382742.802,295.618,499904,500096,0.500096,0,0,0,49808,500,0,0,0,0,0

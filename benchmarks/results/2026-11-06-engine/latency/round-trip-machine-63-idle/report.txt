@@ -1,0 +1,44 @@
+== round-trip, service time, matching-heavy-request, closed-loop ==
+quotable: yes
+runs: 9, merged samples: 8852458
+run record:
+  interval=round-trip
+  time=service
+  load=closed-loop, commands in each run's first 2 s not recorded
+  target-rate=none
+  achieved-rate=not reported: a per-command timed run never reports throughput
+  workload=matching-heavy-request
+  workload-fingerprint=6278130361264019647
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=1
+  active-connections=1
+  idle-connections=63
+  socket-set=poll, the engine's PollSocketSet
+  spin-window=100us
+  matching-cpu-share=unmeasured, the engine's thread is in another process
+  core-map=sender 6, receiver 4, engine matching thread 10, engine gateway thread 8
+  pinned=yes
+  priority=high
+  durability=machine
+  log-files=extended, as the engine makes them
+  logs-share-drive=none, no checkpoints until roll-forward lands
+  book-capacity=orders=11700 stops=1 levels=122
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.5
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=1000000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 655.9, over 10 us 12.7, over 100 us 0.4; max 235390 ns; lost 0.13%
+noise floor after: 10.0 s; gaps/s over 1 us 533.4, over 10 us 3.8, over 100 us 0.1; max 140480 ns; lost 0.09%
+stat     merged ns      beyond  run median     run min     run max
+p50         115528     4426229      115528      113953      116053
+p90         135483      885245      141785      131282      143885
+p99         184845       88524      187996      176443      189046
+p99.9       315077        8852           -           -           -
+max      197615855           -   196783644   188181386   197615855
+

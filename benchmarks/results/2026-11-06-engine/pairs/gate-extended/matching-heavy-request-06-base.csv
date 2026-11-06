@@ -1,0 +1,13 @@
+workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,volume,final_active_orders,final_price_levels,replaces,expirations,preventions,stops_triggered,final_pending_stops
+matching-heavy-request,core,extended,42,3,Release,true,1,true,1000000,173133700,5775883.031,173.134,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-request,core,extended,42,3,Release,true,1,false,1000000,174397800,5734017.287,174.398,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-request,core,extended,42,3,Release,true,2,false,1000000,171889800,5817680.863,171.890,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-request,core,extended,42,3,Release,true,3,false,1000000,170981800,5848575.696,170.982,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-request,core,extended,42,3,Release,true,4,false,1000000,170564400,5862888.153,170.564,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-request,core,extended,42,3,Release,true,5,false,1000000,171832300,5819627.625,171.832,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-request,replay,extended,42,3,Release,true,1,true,1000000,492564600,2030190.558,492.565,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-request,replay,extended,42,3,Release,true,1,false,1000000,484015600,2066049.111,484.016,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-request,replay,extended,42,3,Release,true,2,false,1000000,487553900,2051055.278,487.554,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-request,replay,extended,42,3,Release,true,3,false,1000000,488075300,2048864.181,488.075,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-request,replay,extended,42,3,Release,true,4,false,1000000,495005500,2020179.574,495.005,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-request,replay,extended,42,3,Release,true,5,false,1000000,502733000,1989127.429,502.733,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0

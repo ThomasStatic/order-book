@@ -1,0 +1,132 @@
+== round-trip, response time, matching-heavy-request, fixed at 50/s ==
+quotable: yes
+runs: 9, merged samples: 17100
+run record:
+  interval=round-trip
+  time=response
+  load=fixed, commands in each run's first 2 s not recorded
+  target-rate=50/s, as --rate gave
+  achieved-rate=50/s
+  workload=matching-heavy-request
+  workload-fingerprint=4093288638487942580
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=1
+  active-connections=1
+  idle-connections=0
+  socket-set=poll, the engine's PollSocketSet
+  spin-window=100us
+  matching-cpu-share=unmeasured, the engine's thread is in another process
+  core-map=sender 6, receiver 4, engine matching thread 10, engine gateway thread 8
+  pinned=yes
+  priority=high
+  durability=machine
+  log-files=extended, as the engine makes them
+  logs-share-drive=none, no checkpoints until roll-forward lands
+  book-capacity=orders=10018 stops=1 levels=105
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.1
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=2000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 551.3, over 10 us 3.7, over 100 us 0.1; max 111020 ns; lost 0.09%
+noise floor after: 10.0 s; gaps/s over 1 us 579.6, over 10 us 7.4, over 100 us 0.0; max 94800 ns; lost 0.10%
+stat     merged ns      beyond  run median     run min     run max
+p50         194297        8550           -           -           -
+p90         249961        1710           -           -           -
+p99   not printed: 171 beyond, 1000 needed
+p99.9 not printed: 17 beyond, 1000 needed
+max       17208391           -     1892459      583553    17208391
+
+== round-trip to the first frame, response time, matching-heavy-request, fixed at 50/s ==
+quotable: yes
+runs: 9, merged samples: 17100
+run record:
+  interval=round-trip
+  time=response, to the response's first frame
+  load=fixed, commands in each run's first 2 s not recorded
+  target-rate=50/s, as --rate gave
+  achieved-rate=50/s
+  workload=matching-heavy-request
+  workload-fingerprint=4093288638487942580
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=1
+  active-connections=1
+  idle-connections=0
+  socket-set=poll, the engine's PollSocketSet
+  spin-window=100us
+  matching-cpu-share=unmeasured, the engine's thread is in another process
+  core-map=sender 6, receiver 4, engine matching thread 10, engine gateway thread 8
+  pinned=yes
+  priority=high
+  durability=machine
+  log-files=extended, as the engine makes them
+  logs-share-drive=none, no checkpoints until roll-forward lands
+  book-capacity=orders=10018 stops=1 levels=105
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.1
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=2000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 551.3, over 10 us 3.7, over 100 us 0.1; max 111020 ns; lost 0.09%
+noise floor after: 10.0 s; gaps/s over 1 us 579.6, over 10 us 7.4, over 100 us 0.0; max 94800 ns; lost 0.10%
+stat     merged ns      beyond  run median     run min     run max
+p50         194297        8550           -           -           -
+p90         249961        1710           -           -           -
+p99   not printed: 171 beyond, 1000 needed
+p99.9 not printed: 17 beyond, 1000 needed
+max       17208391           -     1892459      583553    17208391
+
+== driver lateness, matching-heavy-request, fixed at 50/s ==
+quotable: yes
+runs: 9, merged samples: 17100
+run record:
+  interval=round-trip
+  time=driver lateness
+  load=fixed, commands in each run's first 2 s not recorded
+  target-rate=50/s
+  achieved-rate=50/s
+  workload=matching-heavy-request
+  workload-fingerprint=4093288638487942580
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=1
+  active-connections=1
+  idle-connections=0
+  socket-set=poll, the engine's PollSocketSet
+  spin-window=100us
+  matching-cpu-share=unmeasured, the engine's thread is in another process
+  core-map=sender 6, receiver 4, engine matching thread 10, engine gateway thread 8
+  pinned=yes
+  priority=high
+  durability=machine
+  log-files=extended, as the engine makes them
+  logs-share-drive=none, no checkpoints until roll-forward lands
+  book-capacity=orders=10018 stops=1 levels=105
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.1
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=2000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 551.3, over 10 us 3.7, over 100 us 0.1; max 111020 ns; lost 0.09%
+noise floor after: 10.0 s; gaps/s over 1 us 579.6, over 10 us 7.4, over 100 us 0.0; max 94800 ns; lost 0.10%
+stat     merged ns      beyond  run median     run min     run max
+p50             10        8550           -           -           -  unresolved  noise
+p90             18        1710           -           -           -  unresolved  noise
+p99   not printed: 171 beyond, 1000 needed
+p99.9 not printed: 17 beyond, 1000 needed
+max           3602           -         122          28        3602
+

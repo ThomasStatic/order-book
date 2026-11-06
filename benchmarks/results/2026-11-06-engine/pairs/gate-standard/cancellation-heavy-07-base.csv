@@ -1,0 +1,13 @@
+workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,volume,final_active_orders,final_price_levels,replaces,expirations,preventions,stops_triggered,final_pending_stops
+cancellation-heavy,core,standard,42,3,Release,true,1,true,100000,8564700,11675832.195,85.647,49846,50154,0.501540,0,0,0,49692,500,0,0,0,0,0
+cancellation-heavy,core,standard,42,3,Release,true,1,false,100000,8785800,11382002.777,87.858,49846,50154,0.501540,0,0,0,49692,500,0,0,0,0,0
+cancellation-heavy,core,standard,42,3,Release,true,2,false,100000,8576700,11659496.077,85.767,49846,50154,0.501540,0,0,0,49692,500,0,0,0,0,0
+cancellation-heavy,core,standard,42,3,Release,true,3,false,100000,9394200,10644865.981,93.942,49846,50154,0.501540,0,0,0,49692,500,0,0,0,0,0
+cancellation-heavy,core,standard,42,3,Release,true,4,false,100000,8674100,11528573.570,86.741,49846,50154,0.501540,0,0,0,49692,500,0,0,0,0,0
+cancellation-heavy,core,standard,42,3,Release,true,5,false,100000,9401200,10636939.965,94.012,49846,50154,0.501540,0,0,0,49692,500,0,0,0,0,0
+cancellation-heavy,replay,standard,42,3,Release,true,1,true,100000,32437000,3082899.158,324.370,49846,50154,0.501540,0,0,0,49692,500,0,0,0,0,0
+cancellation-heavy,replay,standard,42,3,Release,true,1,false,100000,32216500,3103999.503,322.165,49846,50154,0.501540,0,0,0,49692,500,0,0,0,0,0
+cancellation-heavy,replay,standard,42,3,Release,true,2,false,100000,32894000,3040068.098,328.940,49846,50154,0.501540,0,0,0,49692,500,0,0,0,0,0
+cancellation-heavy,replay,standard,42,3,Release,true,3,false,100000,31583700,3166190.155,315.837,49846,50154,0.501540,0,0,0,49692,500,0,0,0,0,0
+cancellation-heavy,replay,standard,42,3,Release,true,4,false,100000,32528800,3074198.864,325.288,49846,50154,0.501540,0,0,0,49692,500,0,0,0,0,0
+cancellation-heavy,replay,standard,42,3,Release,true,5,false,100000,32343200,3091840.016,323.432,49846,50154,0.501540,0,0,0,49692,500,0,0,0,0,0

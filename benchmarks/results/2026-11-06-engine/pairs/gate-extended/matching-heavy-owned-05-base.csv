@@ -1,0 +1,13 @@
+workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,volume,final_active_orders,final_price_levels,replaces,expirations,preventions,stops_triggered,final_pending_stops
+matching-heavy-owned,core,extended,42,3,Release,true,1,true,1000000,176224700,5674573.428,176.225,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-owned,core,extended,42,3,Release,true,1,false,1000000,172905500,5783506.019,172.905,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-owned,core,extended,42,3,Release,true,2,false,1000000,172886700,5784134.928,172.887,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-owned,core,extended,42,3,Release,true,3,false,1000000,173995400,5747278.376,173.995,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-owned,core,extended,42,3,Release,true,4,false,1000000,171460400,5832250.479,171.460,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-owned,core,extended,42,3,Release,true,5,false,1000000,175299600,5704519.577,175.300,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-owned,replay,extended,42,3,Release,true,1,true,1000000,504169600,1983459.534,504.170,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-owned,replay,extended,42,3,Release,true,1,false,1000000,523815500,1909069.128,523.816,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-owned,replay,extended,42,3,Release,true,2,false,1000000,517449100,1932557.231,517.449,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-owned,replay,extended,42,3,Release,true,3,false,1000000,513142100,1948777.931,513.142,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-owned,replay,extended,42,3,Release,true,4,false,1000000,518509400,1928605.344,518.509,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0
+matching-heavy-owned,replay,extended,42,3,Release,true,5,false,1000000,504128500,1983621.239,504.128,920046,79954,0.079954,0,835780,60496991,11201,198,0,0,0,0,0

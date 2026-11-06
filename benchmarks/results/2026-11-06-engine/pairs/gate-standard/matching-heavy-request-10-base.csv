@@ -1,0 +1,13 @@
+workload,kind,size,seed,generator_version,build_config,optimized,repetition,warmup,commands,elapsed_ns,ops_per_second,ns_per_command,submits,cancels,cancellation_rate,rejections,trades,volume,final_active_orders,final_price_levels,replaces,expirations,preventions,stops_triggered,final_pending_stops
+matching-heavy-request,core,standard,42,3,Release,true,1,true,100000,16699900,5988059.809,166.999,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-request,core,standard,42,3,Release,true,1,false,100000,16465000,6073489.220,164.650,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-request,core,standard,42,3,Release,true,2,false,100000,16516600,6054514.852,165.166,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-request,core,standard,42,3,Release,true,3,false,100000,16478100,6068660.829,164.781,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-request,core,standard,42,3,Release,true,4,false,100000,16451200,6078583.933,164.512,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-request,core,standard,42,3,Release,true,5,false,100000,16446700,6080247.101,164.467,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-request,replay,standard,42,3,Release,true,1,true,100000,49103800,2036502.267,491.038,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-request,replay,standard,42,3,Release,true,1,false,100000,54834600,1823666.079,548.346,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-request,replay,standard,42,3,Release,true,2,false,100000,49398800,2024340.672,493.988,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-request,replay,standard,42,3,Release,true,3,false,100000,50297700,1988162.481,502.977,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-request,replay,standard,42,3,Release,true,4,false,100000,51272000,1950382.275,512.720,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0
+matching-heavy-request,replay,standard,42,3,Release,true,5,false,100000,54417400,1837647.517,544.174,92035,7965,0.079650,0,83586,6056332,10147,194,0,0,0,0,0

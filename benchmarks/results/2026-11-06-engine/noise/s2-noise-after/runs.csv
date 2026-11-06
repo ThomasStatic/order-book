@@ -1,0 +1,2 @@
+row,title,run,count,maximum_ticks,p50_ticks,p90_ticks,p99_ticks,p99.9_ticks,sustained,ticks_per_nanosecond
+0,command, service time, small-book, closed-loop,1,1000,7839,351,627,1095,1567,yes,3.899996

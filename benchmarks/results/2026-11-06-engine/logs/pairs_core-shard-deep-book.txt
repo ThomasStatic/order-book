@@ -1,0 +1,1 @@
+deep-book            core    median ratio 0.785  95% CI 0.769-0.808  exp faster in 0% of 16 pairs

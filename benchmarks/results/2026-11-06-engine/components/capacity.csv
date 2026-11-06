@@ -1,0 +1,16 @@
+operation,workload,state,orders,levels,passes,elapsed_ns,ns_per_op
+grow-to,order-index,full,12288,0,5,761800,152360.0
+grow-to,order-index,full,98304,0,5,7607800,1521560.0
+grow-to,order-index,full,786432,0,5,71262200,14252440.0
+reserve-orders,empty-book,fresh,12288,0,5,68700,13740.0
+reserve-orders,empty-book,fresh,98304,0,5,2773800,554760.0
+reserve-orders,empty-book,fresh,786432,0,5,21699400,4339880.0
+reserve-capacity,empty-book,fresh,12288,1228,5,3229700,645940.0
+reserve-capacity,empty-book,fresh,98304,9830,5,28772000,5754400.0
+reserve-capacity,empty-book,fresh,786432,78643,5,244284700,48856940.0
+new-level-near,ladder,two-ticks-apart,4000,2000,100,1187100,118.7
+new-level-near,ladder,two-ticks-apart,40000,20000,100,1104200,110.4
+new-level-near,ladder,two-ticks-apart,400000,200000,100,1115400,111.5
+new-level-far,ladder,two-ticks-apart,4000,2000,100,5701900,570.2
+new-level-far,ladder,two-ticks-apart,40000,20000,100,50074200,5007.4
+new-level-far,ladder,two-ticks-apart,400000,200000,100,499062300,49906.2

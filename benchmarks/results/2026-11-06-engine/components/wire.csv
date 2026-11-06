@@ -1,0 +1,7 @@
+operation,workload,state,orders,levels,passes,elapsed_ns,ns_per_op
+frame-decode,matching-heavy-request,in-memory,0,0,5,141690900,28.3
+event-encode,matching-heavy-request,in-memory,0,0,5,88993500,9.7
+frame-decode,quote-refresh,in-memory,0,0,5,156090000,31.2
+event-encode,quote-refresh,in-memory,0,0,5,64435000,10.9
+frame-decode,pending-stops,in-memory,0,0,5,142960700,28.6
+event-encode,pending-stops,in-memory,0,0,5,100772900,9.8

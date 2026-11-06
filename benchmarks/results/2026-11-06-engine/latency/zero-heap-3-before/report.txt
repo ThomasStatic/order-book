@@ -1,0 +1,440 @@
+== command, service time, small-book, closed-loop ==
+quotable: no (missing capacity-growths)
+runs: 9, merged samples: 9000000
+run record:
+  interval=command
+  time=service
+  load=closed-loop
+  target-rate=none
+  achieved-rate=not reported: a per-command timed run never reports throughput
+  workload=small-book
+  workload-fingerprint=7845049413860011546
+  generator-version=3
+  seed=42
+  shards=none, one book in process
+  gateway-threads=none, one book in process
+  active-connections=none, one book in process
+  idle-connections=none, one book in process
+  spin-window=none, one book in process
+  core-map=6
+  pinned=yes
+  priority=high
+  durability=none, one book in process
+  logs-share-drive=none, one book in process
+  book-capacity=orders=194
+  capacity-growths=MISSING
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=1000000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 534.6, over 10 us 8.7, over 100 us 0.1; max 200370 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 530.3, over 10 us 8.8, over 100 us 0.0; max 44540 ns; lost 0.11%
+stat     merged ns      beyond  run median     run min     run max
+p50             90     4500000          90          90         100
+p90            170      900000         170         170         180
+p99            291       90000         291         281         301
+p99.9          392        9000         392         381         420
+max          42150           -       17760       10430       42150
+
+== command, service time, deep-book, closed-loop ==
+quotable: no (missing capacity-growths)
+runs: 9, merged samples: 9000000
+run record:
+  interval=command
+  time=service
+  load=closed-loop
+  target-rate=none
+  achieved-rate=not reported: a per-command timed run never reports throughput
+  workload=deep-book
+  workload-fingerprint=3037793824878478722
+  generator-version=3
+  seed=42
+  shards=none, one book in process
+  gateway-threads=none, one book in process
+  active-connections=none, one book in process
+  idle-connections=none, one book in process
+  spin-window=none, one book in process
+  core-map=6
+  pinned=yes
+  priority=high
+  durability=none, one book in process
+  logs-share-drive=none, one book in process
+  book-capacity=orders=100000
+  capacity-growths=MISSING
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=1000000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 534.6, over 10 us 8.7, over 100 us 0.1; max 200370 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 530.3, over 10 us 8.8, over 100 us 0.0; max 44540 ns; lost 0.11%
+stat     merged ns      beyond  run median     run min     run max
+p50            170     4500000         170         161         170
+p90            271      900000         260         260         271
+p99            541       90000         533         533         554
+p99.9         1485        9000        1477        1444        1542
+max          54460           -       42910       22860       54460
+
+== command, service time, matching-heavy, closed-loop ==
+quotable: no (missing capacity-growths)
+runs: 9, merged samples: 9000000
+run record:
+  interval=command
+  time=service
+  load=closed-loop
+  target-rate=none
+  achieved-rate=not reported: a per-command timed run never reports throughput
+  workload=matching-heavy
+  workload-fingerprint=9808119556355606439
+  generator-version=3
+  seed=42
+  shards=none, one book in process
+  gateway-threads=none, one book in process
+  active-connections=none, one book in process
+  idle-connections=none, one book in process
+  spin-window=none, one book in process
+  core-map=6
+  pinned=yes
+  priority=high
+  durability=none, one book in process
+  logs-share-drive=none, one book in process
+  book-capacity=orders=11201
+  capacity-growths=MISSING
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=1000000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 534.6, over 10 us 8.7, over 100 us 0.1; max 200370 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 530.3, over 10 us 8.8, over 100 us 0.0; max 44540 ns; lost 0.11%
+stat     merged ns      beyond  run median     run min     run max
+p50            140     4500000         140         140         140
+p90            291      900000         291         291         301
+p99            783       90000         771         771         804
+p99.9         1460        9000        1452        1444        1501
+max          50240           -       41450       11500       50240
+
+== command, service time, cancellation-heavy, closed-loop ==
+quotable: no (missing capacity-growths)
+runs: 9, merged samples: 9000000
+run record:
+  interval=command
+  time=service
+  load=closed-loop
+  target-rate=none
+  achieved-rate=not reported: a per-command timed run never reports throughput
+  workload=cancellation-heavy
+  workload-fingerprint=17294080015055130175
+  generator-version=3
+  seed=42
+  shards=none, one book in process
+  gateway-threads=none, one book in process
+  active-connections=none, one book in process
+  idle-connections=none, one book in process
+  spin-window=none, one book in process
+  core-map=6
+  pinned=yes
+  priority=high
+  durability=none, one book in process
+  logs-share-drive=none, one book in process
+  book-capacity=orders=50000
+  capacity-growths=MISSING
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=1000000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 534.6, over 10 us 8.7, over 100 us 0.1; max 200370 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 530.3, over 10 us 8.8, over 100 us 0.0; max 44540 ns; lost 0.11%
+stat     merged ns      beyond  run median     run min     run max
+p50            100     4500000         100         100         100
+p90            151      900000         151         151         151
+p99            201       90000         210         180         220
+p99.9          451        9000         451         281         521
+max          45730           -       12800       10490       45730
+
+== command, service time, mostly-resting, closed-loop ==
+quotable: no (missing capacity-growths)
+runs: 9, merged samples: 9000000
+run record:
+  interval=command
+  time=service
+  load=closed-loop
+  target-rate=none
+  achieved-rate=not reported: a per-command timed run never reports throughput
+  workload=mostly-resting
+  workload-fingerprint=10841984704253552526
+  generator-version=3
+  seed=42
+  shards=none, one book in process
+  gateway-threads=none, one book in process
+  active-connections=none, one book in process
+  idle-connections=none, one book in process
+  spin-window=none, one book in process
+  core-map=6
+  pinned=yes
+  priority=high
+  durability=none, one book in process
+  logs-share-drive=none, one book in process
+  book-capacity=orders=862963
+  capacity-growths=MISSING
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=1000000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 534.6, over 10 us 8.7, over 100 us 0.1; max 200370 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 530.3, over 10 us 8.8, over 100 us 0.0; max 44540 ns; lost 0.11%
+stat     merged ns      beyond  run median     run min     run max
+p50            191     4500000         191         191         201
+p90            241      900000         241         231         241
+p99           1050       90000        1050        1042        1075
+p99.9         2363        9000        2330        2232        2543
+max          66120           -       51180       46960       66120
+
+== command, service time, quote-refresh, closed-loop ==
+quotable: no (missing capacity-growths)
+runs: 9, merged samples: 9000000
+run record:
+  interval=command
+  time=service
+  load=closed-loop
+  target-rate=none
+  achieved-rate=not reported: a per-command timed run never reports throughput
+  workload=quote-refresh
+  workload-fingerprint=2687835733357781738
+  generator-version=3
+  seed=42
+  shards=none, one book in process
+  gateway-threads=none, one book in process
+  active-connections=none, one book in process
+  idle-connections=none, one book in process
+  spin-window=none, one book in process
+  core-map=6
+  pinned=yes
+  priority=high
+  durability=none, one book in process
+  logs-share-drive=none, one book in process
+  book-capacity=orders=2000
+  capacity-growths=MISSING
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=1000000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 534.6, over 10 us 8.7, over 100 us 0.1; max 200370 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 530.3, over 10 us 8.8, over 100 us 0.0; max 44540 ns; lost 0.11%
+stat     merged ns      beyond  run median     run min     run max
+p50            100     4500000         100         100         100
+p90            140      900000         140         130         140
+p99            392       90000         392         381         392
+p99.9          911        9000         911         902         943
+max          52580           -       34650       12110       52580
+
+== command, service time, pending-stops, closed-loop ==
+quotable: no (missing capacity-growths)
+runs: 9, merged samples: 9000000
+run record:
+  interval=command
+  time=service
+  load=closed-loop
+  target-rate=none
+  achieved-rate=not reported: a per-command timed run never reports throughput
+  workload=pending-stops
+  workload-fingerprint=9145293822797906275
+  generator-version=3
+  seed=42
+  shards=none, one book in process
+  gateway-threads=none, one book in process
+  active-connections=none, one book in process
+  idle-connections=none, one book in process
+  spin-window=none, one book in process
+  core-map=6
+  pinned=yes
+  priority=high
+  durability=none, one book in process
+  logs-share-drive=none, one book in process
+  book-capacity=orders=10000
+  capacity-growths=MISSING
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=1000000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 534.6, over 10 us 8.7, over 100 us 0.1; max 200370 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 530.3, over 10 us 8.8, over 100 us 0.0; max 44540 ns; lost 0.11%
+stat     merged ns      beyond  run median     run min     run max
+p50            180     4500000         180         180         180
+p90            322      900000         322         312         322
+p99           2264       90000        2264        2248        2281
+p99.9        10896        9000       10896       10831       10962
+max         105510           -      100240       94600      105510
+
+== command, service time, self-trade, closed-loop ==
+quotable: no (missing capacity-growths)
+runs: 9, merged samples: 9000000
+run record:
+  interval=command
+  time=service
+  load=closed-loop
+  target-rate=none
+  achieved-rate=not reported: a per-command timed run never reports throughput
+  workload=self-trade
+  workload-fingerprint=11340702719043048692
+  generator-version=3
+  seed=42
+  shards=none, one book in process
+  gateway-threads=none, one book in process
+  active-connections=none, one book in process
+  idle-connections=none, one book in process
+  spin-window=none, one book in process
+  core-map=6
+  pinned=yes
+  priority=high
+  durability=none, one book in process
+  logs-share-drive=none, one book in process
+  book-capacity=orders=10000
+  capacity-growths=MISSING
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=1000000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 534.6, over 10 us 8.7, over 100 us 0.1; max 200370 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 530.3, over 10 us 8.8, over 100 us 0.0; max 44540 ns; lost 0.11%
+stat     merged ns      beyond  run median     run min     run max
+p50            151     4500000         140         140         151
+p90            301      900000         301         301         301
+p99            714       90000         714         701         714
+p99.9         1460        9000        1452        1444        1477
+max          47270           -       39150       11940       47270
+
+== command, service time, immediate, closed-loop ==
+quotable: no (missing capacity-growths)
+runs: 9, merged samples: 9000000
+run record:
+  interval=command
+  time=service
+  load=closed-loop
+  target-rate=none
+  achieved-rate=not reported: a per-command timed run never reports throughput
+  workload=immediate
+  workload-fingerprint=10243786901646227591
+  generator-version=3
+  seed=42
+  shards=none, one book in process
+  gateway-threads=none, one book in process
+  active-connections=none, one book in process
+  idle-connections=none, one book in process
+  spin-window=none, one book in process
+  core-map=6
+  pinned=yes
+  priority=high
+  durability=none, one book in process
+  logs-share-drive=none, one book in process
+  book-capacity=orders=11998
+  capacity-growths=MISSING
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=1000000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 534.6, over 10 us 8.7, over 100 us 0.1; max 200370 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 530.3, over 10 us 8.8, over 100 us 0.0; max 44540 ns; lost 0.11%
+stat     merged ns      beyond  run median     run min     run max
+p50            151     4500000         151         151         161
+p90            281      900000         281         281         291
+p99            660       90000         652         652         660
+p99.9         2396        9000        2379        2330        2461
+max          40160           -       39740       21050       40160
+
+== command, service time, matching-heavy-request, closed-loop ==
+quotable: no (missing capacity-growths)
+runs: 9, merged samples: 9000000
+run record:
+  interval=command
+  time=service
+  load=closed-loop
+  target-rate=none
+  achieved-rate=not reported: a per-command timed run never reports throughput
+  workload=matching-heavy-request
+  workload-fingerprint=6278130361264019647
+  generator-version=3
+  seed=42
+  shards=none, one book in process
+  gateway-threads=none, one book in process
+  active-connections=none, one book in process
+  idle-connections=none, one book in process
+  spin-window=none, one book in process
+  core-map=6
+  pinned=yes
+  priority=high
+  durability=none, one book in process
+  logs-share-drive=none, one book in process
+  book-capacity=orders=11201
+  capacity-growths=MISSING
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=1000000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 534.6, over 10 us 8.7, over 100 us 0.1; max 200370 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 530.3, over 10 us 8.8, over 100 us 0.0; max 44540 ns; lost 0.11%
+stat     merged ns      beyond  run median     run min     run max
+p50            140     4500000         140         140         151
+p90            291      900000         291         291         322
+p99            783       90000         771         771         874
+p99.9         1477        9000        1452        1436        1682
+max          47000           -       40430       10190       47000
+
+== command, service time, matching-heavy-owned, closed-loop ==
+quotable: no (missing capacity-growths)
+runs: 9, merged samples: 9000000
+run record:
+  interval=command
+  time=service
+  load=closed-loop
+  target-rate=none
+  achieved-rate=not reported: a per-command timed run never reports throughput
+  workload=matching-heavy-owned
+  workload-fingerprint=6888937720126819170
+  generator-version=3
+  seed=42
+  shards=none, one book in process
+  gateway-threads=none, one book in process
+  active-connections=none, one book in process
+  idle-connections=none, one book in process
+  spin-window=none, one book in process
+  core-map=6
+  pinned=yes
+  priority=high
+  durability=none, one book in process
+  logs-share-drive=none, one book in process
+  book-capacity=orders=11201
+  capacity-growths=MISSING
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=1000000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 534.6, over 10 us 8.7, over 100 us 0.1; max 200370 ns; lost 0.12%
+noise floor after: 10.0 s; gaps/s over 1 us 530.3, over 10 us 8.8, over 100 us 0.0; max 44540 ns; lost 0.11%
+stat     merged ns      beyond  run median     run min     run max
+p50            140     4500000         140         140         151
+p90            291      900000         291         291         301
+p99            783       90000         783         783         812
+p99.9         1477        9000        1452        1452        1551
+max          46640           -       39500       16180       46640
+

@@ -1,0 +1,10 @@
+operation,workload,state,orders,levels,passes,elapsed_ns,ns_per_op
+log-encode,matching-heavy-request,chained,0,0,5,114949700,23.0
+log-read,matching-heavy-request,in-memory,0,0,5,417035600,83.4
+csv-read,matching-heavy-request,in-memory,0,0,5,1404585000,280.9
+log-encode,quote-refresh,chained,0,0,5,124004400,24.8
+log-read,quote-refresh,in-memory,0,0,5,402679500,80.5
+csv-read,quote-refresh,in-memory,0,0,5,1367607200,273.5
+log-encode,pending-stops,chained,0,0,5,114592500,22.9
+log-read,pending-stops,in-memory,0,0,5,448082000,89.6
+csv-read,pending-stops,in-memory,0,0,5,1550325400,310.1

@@ -1,0 +1,44 @@
+== round-trip, service time, matching-heavy-request, closed-loop ==
+quotable: yes
+runs: 9, merged samples: 8818230
+run record:
+  interval=round-trip
+  time=service
+  load=closed-loop, commands in each run's first 2 s not recorded
+  target-rate=none
+  achieved-rate=not reported: a per-command timed run never reports throughput
+  workload=matching-heavy-request
+  workload-fingerprint=6278130361264019647
+  generator-version=3
+  seed=42
+  shards=1
+  gateway-threads=1
+  active-connections=1
+  idle-connections=0
+  socket-set=poll, the engine's PollSocketSet
+  spin-window=100us
+  matching-cpu-share=unmeasured, the engine's thread is in another process
+  core-map=sender 6, receiver 4, engine matching thread 10, engine gateway thread 8
+  pinned=yes
+  priority=high
+  durability=machine
+  log-files=extended, as the engine makes them
+  logs-share-drive=none, no checkpoints until roll-forward lands
+  book-capacity=orders=11700 stops=1 levels=122
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=21.1
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=1000000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 531.8, over 10 us 8.5, over 100 us 0.0; max 52390 ns; lost 0.11%
+noise floor after: 10.0 s; gaps/s over 1 us 540.2, over 10 us 7.8, over 100 us 0.3; max 227081 ns; lost 0.12%
+stat     merged ns      beyond  run median     run min     run max
+p50          92948     4409115       92948       92948       93473
+p90         106076      881823      105551      105026      108702
+p99         160690       88182      159640      158589      166991
+p99.9       251012        8818           -           -           -
+max      197723327           -   196513290     2003141   197723327
+

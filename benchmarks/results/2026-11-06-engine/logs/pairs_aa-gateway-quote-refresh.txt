@@ -1,0 +1,1 @@
+quote-refresh        gateway median ratio 1.001  95% CI 0.997-1.004  exp faster in 50% of 16 pairs

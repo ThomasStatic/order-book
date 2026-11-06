@@ -1,0 +1,19 @@
+row,title,run,count,maximum_ticks,p50_ticks,p90_ticks,p99_ticks,p99.9_ticks,sustained,ticks_per_nanosecond
+0,hand-off, response time, matching-heavy-request, fixed at 50/s,1,2000,1986980,66047,675839,1417215,1941503,yes,3.899994
+0,hand-off, response time, matching-heavy-request, fixed at 50/s,2,2000,2120352,66047,380927,1605631,1966079,yes,3.899994
+0,hand-off, response time, matching-heavy-request, fixed at 50/s,3,2000,2117872,66047,458751,1646591,2080767,yes,3.899994
+0,hand-off, response time, matching-heavy-request, fixed at 50/s,4,2000,2061587,66559,1171455,1540095,2047999,yes,3.899994
+0,hand-off, response time, matching-heavy-request, fixed at 50/s,5,2000,2141568,66559,1155071,1703935,1867775,yes,3.899994
+0,hand-off, response time, matching-heavy-request, fixed at 50/s,6,2000,2122669,66047,222207,1449983,1851391,yes,3.899994
+0,hand-off, response time, matching-heavy-request, fixed at 50/s,7,2000,2120805,66047,872447,1449983,1859583,yes,3.899994
+0,hand-off, response time, matching-heavy-request, fixed at 50/s,8,2000,2171559,66047,856063,1728511,2072575,yes,3.899994
+0,hand-off, response time, matching-heavy-request, fixed at 50/s,9,2000,2146943,66559,741375,1376255,1851391,yes,3.899994
+1,driver lateness, matching-heavy-request, fixed at 50/s,1,2000,39827,39,71,102,234,yes,3.899994
+1,driver lateness, matching-heavy-request, fixed at 50/s,2,2000,8300,39,71,102,3311,yes,3.899994
+1,driver lateness, matching-heavy-request, fixed at 50/s,3,2000,3869,39,71,102,195,yes,3.899994
+1,driver lateness, matching-heavy-request, fixed at 50/s,4,2000,5663,39,71,102,2367,yes,3.899994
+1,driver lateness, matching-heavy-request, fixed at 50/s,5,2000,789938,39,71,102,58879,yes,3.899994
+1,driver lateness, matching-heavy-request, fixed at 50/s,6,2000,84810,39,71,110,1623,yes,3.899994
+1,driver lateness, matching-heavy-request, fixed at 50/s,7,2000,32152,39,71,110,3743,yes,3.899994
+1,driver lateness, matching-heavy-request, fixed at 50/s,8,2000,29952,39,71,102,234,yes,3.899994
+1,driver lateness, matching-heavy-request, fixed at 50/s,9,2000,13494,39,71,102,851,yes,3.899994

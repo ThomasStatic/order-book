@@ -1,0 +1,109 @@
+row,title,run,count,maximum_ticks,p50_ticks,p90_ticks,p99_ticks,p99.9_ticks,sustained,ticks_per_nanosecond
+0,command, response time, pending-stops, fixed at 10%,1,1000000,400444,779,1455,19711,78335,yes,3.899951
+0,command, response time, pending-stops, fixed at 10%,2,1000000,955406,775,1447,19839,89599,yes,3.899951
+0,command, response time, pending-stops, fixed at 10%,3,1000000,741952,775,1431,19839,84479,yes,3.899951
+0,command, response time, pending-stops, fixed at 10%,4,1000000,765327,779,1471,20351,90111,yes,3.899951
+0,command, response time, pending-stops, fixed at 10%,5,1000000,574930,779,1471,20735,80895,yes,3.899951
+0,command, response time, pending-stops, fixed at 10%,6,1000000,836274,779,1463,19711,80895,yes,3.899951
+0,command, response time, pending-stops, fixed at 10%,7,1000000,932943,779,1455,20223,89599,yes,3.899951
+0,command, response time, pending-stops, fixed at 10%,8,1000000,622738,775,1439,19199,76287,yes,3.899951
+0,command, response time, pending-stops, fixed at 10%,9,1000000,2121529,775,1431,19455,87039,yes,3.899951
+1,driver lateness, pending-stops, fixed at 10%,1,1000000,399001,42,77,11455,71167,yes,3.899951
+1,driver lateness, pending-stops, fixed at 10%,2,1000000,948520,42,77,11519,82943,yes,3.899951
+1,driver lateness, pending-stops, fixed at 10%,3,1000000,734871,42,77,11583,77311,yes,3.899951
+1,driver lateness, pending-stops, fixed at 10%,4,1000000,757426,42,77,11967,82431,yes,3.899951
+1,driver lateness, pending-stops, fixed at 10%,5,1000000,573838,42,77,12351,72703,yes,3.899951
+1,driver lateness, pending-stops, fixed at 10%,6,1000000,828786,42,77,11391,73727,yes,3.899951
+1,driver lateness, pending-stops, fixed at 10%,7,1000000,928815,42,77,11839,82431,yes,3.899951
+1,driver lateness, pending-stops, fixed at 10%,8,1000000,620671,42,77,10943,69119,yes,3.899951
+1,driver lateness, pending-stops, fixed at 10%,9,1000000,2115305,42,77,11135,79871,yes,3.899951
+2,command, response time, pending-stops, fixed at 25%,1,1000000,492372,791,3103,38399,109567,yes,3.899951
+2,command, response time, pending-stops, fixed at 25%,2,1000000,768727,779,2943,36607,106495,yes,3.899951
+2,command, response time, pending-stops, fixed at 25%,3,1000000,420573,791,3071,37631,104959,yes,3.899951
+2,command, response time, pending-stops, fixed at 25%,4,1000000,398382,783,2975,36095,98815,yes,3.899951
+2,command, response time, pending-stops, fixed at 25%,5,1000000,409692,783,3007,36607,97279,yes,3.899951
+2,command, response time, pending-stops, fixed at 25%,6,1000000,422055,791,3151,38655,105983,yes,3.899951
+2,command, response time, pending-stops, fixed at 25%,7,1000000,487848,779,3183,37887,99327,yes,3.899951
+2,command, response time, pending-stops, fixed at 25%,8,1000000,407898,779,3039,37119,99839,yes,3.899951
+2,command, response time, pending-stops, fixed at 25%,9,1000000,489330,791,3087,37887,104447,yes,3.899951
+3,driver lateness, pending-stops, fixed at 25%,1,1000000,490929,46,114,35071,106495,yes,3.899951
+3,driver lateness, pending-stops, fixed at 25%,2,1000000,766011,46,113,33279,103423,yes,3.899951
+3,driver lateness, pending-stops, fixed at 25%,3,1000000,419364,46,114,34303,101887,yes,3.899951
+3,driver lateness, pending-stops, fixed at 25%,4,1000000,397056,46,113,33023,95743,yes,3.899951
+3,driver lateness, pending-stops, fixed at 25%,5,1000000,408483,46,113,33279,94207,yes,3.899951
+3,driver lateness, pending-stops, fixed at 25%,6,1000000,420846,46,115,35327,103423,yes,3.899951
+3,driver lateness, pending-stops, fixed at 25%,7,1000000,486600,46,115,34815,96255,yes,3.899951
+3,driver lateness, pending-stops, fixed at 25%,8,1000000,406611,46,113,34047,96767,yes,3.899951
+3,driver lateness, pending-stops, fixed at 25%,9,1000000,488199,46,114,34815,101375,yes,3.899951
+4,command, response time, pending-stops, fixed at 50%,1,1000000,400061,863,15487,63487,129535,yes,3.899951
+4,command, response time, pending-stops, fixed at 50%,2,1000000,850438,859,15551,69119,440319,yes,3.899951
+4,command, response time, pending-stops, fixed at 50%,3,1000000,475760,903,17663,80383,189439,yes,3.899951
+4,command, response time, pending-stops, fixed at 50%,4,1000000,421979,859,15295,65535,146431,yes,3.899951
+4,command, response time, pending-stops, fixed at 50%,5,1000000,398150,859,15231,63487,141311,yes,3.899951
+4,command, response time, pending-stops, fixed at 50%,6,1000000,415661,859,15423,63487,144383,yes,3.899951
+4,command, response time, pending-stops, fixed at 50%,7,1000000,431144,867,15871,66047,149503,yes,3.899951
+4,command, response time, pending-stops, fixed at 50%,8,1000000,520424,903,18047,113151,450559,yes,3.899951
+4,command, response time, pending-stops, fixed at 50%,9,1000000,466123,863,16191,73727,222207,yes,3.899951
+5,driver lateness, pending-stops, fixed at 50%,1,1000000,398891,63,13887,61951,127999,yes,3.899951
+5,driver lateness, pending-stops, fixed at 50%,2,1000000,849697,63,13951,67583,440319,yes,3.899951
+5,driver lateness, pending-stops, fixed at 50%,3,1000000,474551,66,15999,78847,187391,yes,3.899951
+5,driver lateness, pending-stops, fixed at 50%,4,1000000,420770,63,13695,63999,145407,yes,3.899951
+5,driver lateness, pending-stops, fixed at 50%,5,1000000,396902,63,13631,61951,140287,yes,3.899951
+5,driver lateness, pending-stops, fixed at 50%,6,1000000,414491,63,13823,61951,142335,yes,3.899951
+5,driver lateness, pending-stops, fixed at 50%,7,1000000,429896,64,14271,64255,148479,yes,3.899951
+5,driver lateness, pending-stops, fixed at 50%,8,1000000,519020,66,16511,111615,448511,yes,3.899951
+5,driver lateness, pending-stops, fixed at 50%,9,1000000,464550,63,14591,72191,221183,yes,3.899951
+6,command, response time, pending-stops, fixed at 75%,1,1000000,3774195,65279,1425407,3489791,3735551,no,3.899951
+6,command, response time, pending-stops, fixed at 75%,2,1000000,1198162,43775,270335,1036287,1163263,no,3.899951
+6,command, response time, pending-stops, fixed at 75%,3,1000000,1568144,89599,1011711,1466367,1540095,no,3.899951
+6,command, response time, pending-stops, fixed at 75%,4,1000000,1623540,43263,323583,1417215,1572863,no,3.899951
+6,command, response time, pending-stops, fixed at 75%,5,1000000,25772926,23199743,25427967,25690111,25772926,no,3.899951
+6,command, response time, pending-stops, fixed at 75%,6,1000000,2448061,246783,1122303,2113535,2424831,no,3.899951
+6,command, response time, pending-stops, fixed at 75%,7,1000000,1684057,47103,292863,1392639,1654783,no,3.899951
+6,command, response time, pending-stops, fixed at 75%,8,1000000,1179600,50943,389119,1056767,1138687,no,3.899951
+6,command, response time, pending-stops, fixed at 75%,9,1000000,2036105,122367,1736703,1949695,2007039,no,3.899951
+7,driver lateness, pending-stops, fixed at 75%,1,1000000,3773298,64255,1425407,3489791,3735551,no,3.899951
+7,driver lateness, pending-stops, fixed at 75%,2,1000000,1197343,42751,270335,1036287,1155071,no,3.899951
+7,driver lateness, pending-stops, fixed at 75%,3,1000000,1567325,88575,1007615,1466367,1540095,no,3.899951
+7,driver lateness, pending-stops, fixed at 75%,4,1000000,1622565,42239,323583,1417215,1572863,no,3.899951
+7,driver lateness, pending-stops, fixed at 75%,5,1000000,25772258,23199743,25427967,25690111,25772258,no,3.899951
+7,driver lateness, pending-stops, fixed at 75%,6,1000000,2447125,245759,1122303,2097151,2424831,no,3.899951
+7,driver lateness, pending-stops, fixed at 75%,7,1000000,1683277,46079,290815,1392639,1654783,no,3.899951
+7,driver lateness, pending-stops, fixed at 75%,8,1000000,1178742,49919,389119,1056767,1138687,no,3.899951
+7,driver lateness, pending-stops, fixed at 75%,9,1000000,2035247,121343,1736703,1949695,2007039,no,3.899951
+8,command, response time, pending-stops, fixed at 90%,1,1000000,211777559,109576191,192937983,210763775,211777559,no,3.899951
+8,command, response time, pending-stops, fixed at 90%,2,1000000,245688215,113770495,221249535,244318207,245688215,no,3.899951
+8,command, response time, pending-stops, fixed at 90%,3,1000000,203603276,101711871,183500799,202375167,203423743,no,3.899951
+8,command, response time, pending-stops, fixed at 90%,4,1000000,206106374,103284735,186646527,204472319,206106374,no,3.899951
+8,command, response time, pending-stops, fixed at 90%,5,1000000,202457144,101187583,182452223,201326591,202375167,no,3.899951
+8,command, response time, pending-stops, fixed at 90%,6,1000000,223772087,118489087,203423743,222298111,223772087,no,3.899951
+8,command, response time, pending-stops, fixed at 90%,7,1000000,217919669,112197631,196083711,216006655,217919669,no,3.899951
+8,command, response time, pending-stops, fixed at 90%,8,1000000,204802331,101187583,185597951,203423743,204802331,no,3.899951
+8,command, response time, pending-stops, fixed at 90%,9,1000000,204421730,102760447,184549375,202375167,204421730,no,3.899951
+9,driver lateness, pending-stops, fixed at 90%,1,1000000,211776750,109576191,192937983,210763775,211776750,no,3.899951
+9,driver lateness, pending-stops, fixed at 90%,2,1000000,245687406,113770495,221249535,244318207,245687406,no,3.899951
+9,driver lateness, pending-stops, fixed at 90%,3,1000000,203602467,101711871,183500799,202375167,203423743,no,3.899951
+9,driver lateness, pending-stops, fixed at 90%,4,1000000,206105604,103284735,186646527,204472319,206105604,no,3.899951
+9,driver lateness, pending-stops, fixed at 90%,5,1000000,202456335,101187583,182452223,201326591,202375167,no,3.899951
+9,driver lateness, pending-stops, fixed at 90%,6,1000000,223771317,118489087,203423743,222298111,223771317,no,3.899951
+9,driver lateness, pending-stops, fixed at 90%,7,1000000,217918938,112197631,196083711,216006655,217918938,no,3.899951
+9,driver lateness, pending-stops, fixed at 90%,8,1000000,204801522,101187583,185597951,203423743,204801522,no,3.899951
+9,driver lateness, pending-stops, fixed at 90%,9,1000000,204420882,102760447,184549375,202375167,204420882,no,3.899951
+10,command, response time, pending-stops, poisson at 50%,1,1000000,433559,1791,18943,69119,139263,yes,3.899951
+10,command, response time, pending-stops, poisson at 50%,2,1000000,408092,1783,19199,69631,153599,yes,3.899951
+10,command, response time, pending-stops, poisson at 50%,3,1000000,402944,1799,19711,75263,173055,yes,3.899951
+10,command, response time, pending-stops, poisson at 50%,4,1000000,398615,1759,18687,68607,141311,yes,3.899951
+10,command, response time, pending-stops, poisson at 50%,5,1000000,499625,1935,21631,91647,169983,yes,3.899951
+10,command, response time, pending-stops, poisson at 50%,6,1000000,406415,1775,18943,70655,162815,yes,3.899951
+10,command, response time, pending-stops, poisson at 50%,7,1000000,406844,1767,18687,71167,157695,yes,3.899951
+10,command, response time, pending-stops, poisson at 50%,8,1000000,402203,1815,19839,70143,139263,yes,3.899951
+10,command, response time, pending-stops, poisson at 50%,9,1000000,395027,1791,19839,71679,139263,yes,3.899951
+11,driver lateness, pending-stops, poisson at 50%,1,1000000,432311,839,17407,67583,137215,yes,3.899951
+11,driver lateness, pending-stops, poisson at 50%,2,1000000,407000,835,17663,68095,152575,yes,3.899951
+11,driver lateness, pending-stops, poisson at 50%,3,1000000,401735,847,18303,73727,172031,yes,3.899951
+11,driver lateness, pending-stops, poisson at 50%,4,1000000,397562,823,17151,67071,139263,yes,3.899951
+11,driver lateness, pending-stops, poisson at 50%,5,1000000,497909,939,20095,90111,167935,yes,3.899951
+11,driver lateness, pending-stops, poisson at 50%,6,1000000,405128,831,17407,69119,161791,yes,3.899951
+11,driver lateness, pending-stops, poisson at 50%,7,1000000,405752,823,17279,69631,156671,yes,3.899951
+11,driver lateness, pending-stops, poisson at 50%,8,1000000,401072,859,18303,68607,137215,yes,3.899951
+11,driver lateness, pending-stops, poisson at 50%,9,1000000,393974,843,18303,70143,137215,yes,3.899951

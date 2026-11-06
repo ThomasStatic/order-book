@@ -1,0 +1,1 @@
+quote-refresh        core    median ratio 0.831  95% CI 0.829-0.834  exp faster in 0% of 16 pairs

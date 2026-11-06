@@ -1,0 +1,5 @@
+operation,workload,state,orders,levels,passes,elapsed_ns,ns_per_op
+cpu-loop,none,thread-0-of-1,0,0,1,271206500,1.4
+memory-walk,256KiB,thread-0-of-1,0,0,1,59183600,3.0
+memory-walk,8192KiB,thread-0-of-1,0,0,1,365470400,18.3
+memory-walk,262144KiB,thread-0-of-1,0,0,1,1916385600,95.8

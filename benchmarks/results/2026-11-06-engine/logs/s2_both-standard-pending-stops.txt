@@ -1,0 +1,21 @@
+order_book_benchmarks: generator v3, seed 42, size standard (100000 timed commands, per shard for the threaded kinds), 1 warm-up and 5 measured runs each
+build: Release, MSVC 194435228
+
+pending-stops: 15000 preloaded orders, 100000 timed commands (cancellation rate 0.104, 75650 trades, ending with 9002 orders on 112 levels); generated in 83.018 ms, untimed
+  core warm-up 1: 100000 commands in 23.669 ms, 4224882 ops/s, 29750 stops triggered
+  core run 1: 100000 commands in 23.597 ms, 4237827 ops/s, 29750 stops triggered
+  core run 2: 100000 commands in 22.899 ms, 4366984 ops/s, 29750 stops triggered
+  core run 3: 100000 commands in 22.839 ms, 4378399 ops/s, 29750 stops triggered
+  core run 4: 100000 commands in 23.248 ms, 4301501 ops/s, 29750 stops triggered
+  core run 5: 100000 commands in 22.975 ms, 4352614 ops/s, 29750 stops triggered
+  replay warm-up 1: 100000 commands in 64.138 ms, 1559128 ops/s, 29750 stops triggered
+  replay run 1: 100000 commands in 60.633 ms, 1649261 ops/s, 29750 stops triggered
+  replay run 2: 100000 commands in 61.392 ms, 1628871 ops/s, 29750 stops triggered
+  replay run 3: 100000 commands in 60.335 ms, 1657416 ops/s, 29750 stops triggered
+  replay run 4: 100000 commands in 60.732 ms, 1646578 ops/s, 29750 stops triggered
+  replay run 5: 100000 commands in 59.852 ms, 1670791 ops/s, 29750 stops triggered
+
+summary of measured runs (warm-ups excluded):
+workload            kind     reps  commands   median ops/s      min ops/s      max ops/s   ns/cmd      cv
+pending-stops       core        5    100000        4352614        4237827        4378399    229.7    1.3%
+pending-stops       replay      5    100000        1649261        1628871        1670791    606.3    0.9%

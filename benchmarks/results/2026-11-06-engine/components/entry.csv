@@ -1,0 +1,11 @@
+operation,workload,state,orders,levels,passes,elapsed_ns,ns_per_op
+symbol-compare,four-symbols,word,0,0,5,327844900,0.7
+symbol-lookup,8-instruments,hit,0,0,5,61047500,11.6
+symbol-lookup,64-instruments,hit,0,0,5,119800100,22.9
+symbol-lookup,512-instruments,hit,0,0,5,169764600,32.4
+execute-command,matching-heavy-request,warm,0,0,5,787002500,157.4
+check-entry,matching-heavy-request,in-memory,0,0,5,202683500,40.5
+execute-command,quote-refresh,warm,0,0,5,502667500,100.5
+check-entry,quote-refresh,in-memory,0,0,5,217018900,43.4
+execute-command,pending-stops,warm,0,0,5,1100192600,220.0
+check-entry,pending-stops,in-memory,0,0,5,202085500,40.4

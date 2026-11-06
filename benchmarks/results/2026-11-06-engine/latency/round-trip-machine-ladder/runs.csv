@@ -1,0 +1,163 @@
+row,title,run,count,maximum_ticks,p50_ticks,p90_ticks,p99_ticks,p99.9_ticks,sustained,ticks_per_nanosecond
+0,round-trip, response time, matching-heavy-request, fixed at 10%,1,97937,9271814,413695,528383,749567,2277375,yes,3.899995
+0,round-trip, response time, matching-heavy-request, fixed at 10%,2,97937,6027139,413695,532479,753663,2244607,yes,3.899995
+0,round-trip, response time, matching-heavy-request, fixed at 10%,3,97937,11452923,413695,532479,753663,2244607,yes,3.899995
+0,round-trip, response time, matching-heavy-request, fixed at 10%,4,97937,57490359,415743,532479,753663,3096575,yes,3.899995
+0,round-trip, response time, matching-heavy-request, fixed at 10%,5,97937,9597237,413695,528383,749567,2146303,yes,3.899995
+0,round-trip, response time, matching-heavy-request, fixed at 10%,6,97937,60965500,415743,532479,753663,2670591,yes,3.899995
+0,round-trip, response time, matching-heavy-request, fixed at 10%,7,97937,10985053,413695,528383,749567,2244607,yes,3.899995
+0,round-trip, response time, matching-heavy-request, fixed at 10%,8,97937,6152609,413695,528383,745471,2179071,yes,3.899995
+0,round-trip, response time, matching-heavy-request, fixed at 10%,9,97937,11029774,413695,528383,749567,2359295,yes,3.899995
+1,round-trip to the first frame, response time, matching-heavy-request, fixed at 10%,1,97937,9271814,413695,528383,749567,2277375,yes,3.899995
+1,round-trip to the first frame, response time, matching-heavy-request, fixed at 10%,2,97937,6027139,413695,532479,753663,2244607,yes,3.899995
+1,round-trip to the first frame, response time, matching-heavy-request, fixed at 10%,3,97937,11452923,413695,532479,753663,2244607,yes,3.899995
+1,round-trip to the first frame, response time, matching-heavy-request, fixed at 10%,4,97937,57490359,415743,532479,753663,3096575,yes,3.899995
+1,round-trip to the first frame, response time, matching-heavy-request, fixed at 10%,5,97937,9597237,413695,528383,749567,2146303,yes,3.899995
+1,round-trip to the first frame, response time, matching-heavy-request, fixed at 10%,6,97937,60965500,415743,532479,753663,2670591,yes,3.899995
+1,round-trip to the first frame, response time, matching-heavy-request, fixed at 10%,7,97937,10985053,413695,528383,749567,2244607,yes,3.899995
+1,round-trip to the first frame, response time, matching-heavy-request, fixed at 10%,8,97937,6152609,413695,528383,745471,2179071,yes,3.899995
+1,round-trip to the first frame, response time, matching-heavy-request, fixed at 10%,9,97937,11029774,413695,528383,749567,2359295,yes,3.899995
+2,driver lateness, matching-heavy-request, fixed at 10%,1,97937,97469,41,75,112,2703,yes,3.899995
+2,driver lateness, matching-heavy-request, fixed at 10%,2,97937,322057,41,75,112,2143,yes,3.899995
+2,driver lateness, matching-heavy-request, fixed at 10%,3,97937,362298,41,75,111,1935,yes,3.899995
+2,driver lateness, matching-heavy-request, fixed at 10%,4,97937,144933,41,75,111,2895,yes,3.899995
+2,driver lateness, matching-heavy-request, fixed at 10%,5,97937,1069421,41,75,111,1447,yes,3.899995
+2,driver lateness, matching-heavy-request, fixed at 10%,6,97937,151818,41,75,111,3455,yes,3.899995
+2,driver lateness, matching-heavy-request, fixed at 10%,7,97937,796683,42,75,112,2351,yes,3.899995
+2,driver lateness, matching-heavy-request, fixed at 10%,8,97937,504744,41,75,111,1727,yes,3.899995
+2,driver lateness, matching-heavy-request, fixed at 10%,9,97937,133031,41,75,111,2511,yes,3.899995
+3,round-trip, response time, matching-heavy-request, fixed at 25%,1,94843,7329157,403455,499711,737279,2736127,yes,3.899995
+3,round-trip, response time, matching-heavy-request, fixed at 25%,2,94843,27464212,403455,495615,733183,2703359,yes,3.899995
+3,round-trip, response time, matching-heavy-request, fixed at 25%,3,94843,10946699,405503,497663,729087,2654207,yes,3.899995
+3,round-trip, response time, matching-heavy-request, fixed at 25%,4,94843,10377237,405503,497663,733183,2703359,yes,3.899995
+3,round-trip, response time, matching-heavy-request, fixed at 25%,5,94843,6419309,405503,493567,733183,2113535,yes,3.899995
+3,round-trip, response time, matching-heavy-request, fixed at 25%,6,94843,14896235,405503,503807,741375,4046847,yes,3.899995
+3,round-trip, response time, matching-heavy-request, fixed at 25%,7,94843,10061220,405503,495615,733183,2736127,yes,3.899995
+3,round-trip, response time, matching-heavy-request, fixed at 25%,8,94843,8617946,405503,497663,733183,2736127,yes,3.899995
+3,round-trip, response time, matching-heavy-request, fixed at 25%,9,94843,6898029,405503,501759,729087,2605055,yes,3.899995
+4,round-trip to the first frame, response time, matching-heavy-request, fixed at 25%,1,94843,7329157,403455,499711,737279,2736127,yes,3.899995
+4,round-trip to the first frame, response time, matching-heavy-request, fixed at 25%,2,94843,27464212,403455,495615,733183,2703359,yes,3.899995
+4,round-trip to the first frame, response time, matching-heavy-request, fixed at 25%,3,94843,10946699,405503,497663,729087,2654207,yes,3.899995
+4,round-trip to the first frame, response time, matching-heavy-request, fixed at 25%,4,94843,10377237,405503,497663,733183,2703359,yes,3.899995
+4,round-trip to the first frame, response time, matching-heavy-request, fixed at 25%,5,94843,6419309,405503,493567,733183,2113535,yes,3.899995
+4,round-trip to the first frame, response time, matching-heavy-request, fixed at 25%,6,94843,14896235,405503,503807,741375,4046847,yes,3.899995
+4,round-trip to the first frame, response time, matching-heavy-request, fixed at 25%,7,94843,10061220,405503,495615,733183,2736127,yes,3.899995
+4,round-trip to the first frame, response time, matching-heavy-request, fixed at 25%,8,94843,8617946,405503,497663,733183,2736127,yes,3.899995
+4,round-trip to the first frame, response time, matching-heavy-request, fixed at 25%,9,94843,6898029,405503,501759,729087,2605055,yes,3.899995
+5,driver lateness, matching-heavy-request, fixed at 25%,1,94843,484045,42,75,112,3871,yes,3.899995
+5,driver lateness, matching-heavy-request, fixed at 25%,2,94843,807145,42,75,112,3679,yes,3.899995
+5,driver lateness, matching-heavy-request, fixed at 25%,3,94843,833365,42,75,112,1943,yes,3.899995
+5,driver lateness, matching-heavy-request, fixed at 25%,4,94843,579703,42,75,112,3727,yes,3.899995
+5,driver lateness, matching-heavy-request, fixed at 25%,5,94843,730270,42,75,112,3615,yes,3.899995
+5,driver lateness, matching-heavy-request, fixed at 25%,6,94843,431803,42,75,112,2415,yes,3.899995
+5,driver lateness, matching-heavy-request, fixed at 25%,7,94843,322029,42,75,112,2223,yes,3.899995
+5,driver lateness, matching-heavy-request, fixed at 25%,8,94843,117830,42,75,112,3343,yes,3.899995
+5,driver lateness, matching-heavy-request, fixed at 25%,9,94843,655050,42,75,112,2895,yes,3.899995
+6,round-trip, response time, matching-heavy-request, fixed at 50%,1,89686,9491401,397311,481279,708607,3244031,yes,3.899995
+6,round-trip, response time, matching-heavy-request, fixed at 50%,2,89686,12098488,393215,468991,716799,2637823,yes,3.899995
+6,round-trip, response time, matching-heavy-request, fixed at 50%,3,89686,11155977,395263,475135,716799,3031039,yes,3.899995
+6,round-trip, response time, matching-heavy-request, fixed at 50%,4,89686,6681210,393215,468991,708607,2392063,yes,3.899995
+6,round-trip, response time, matching-heavy-request, fixed at 50%,5,89686,7013718,393215,473087,712703,3194879,yes,3.899995
+6,round-trip, response time, matching-heavy-request, fixed at 50%,6,89686,6822035,393215,468991,712703,2637823,yes,3.899995
+6,round-trip, response time, matching-heavy-request, fixed at 50%,7,89686,6566571,393215,468991,708607,2490367,yes,3.899995
+6,round-trip, response time, matching-heavy-request, fixed at 50%,8,89686,7325633,395263,471039,708607,3031039,yes,3.899995
+6,round-trip, response time, matching-heavy-request, fixed at 50%,9,89686,10262515,395263,479231,823295,4177919,yes,3.899995
+7,round-trip to the first frame, response time, matching-heavy-request, fixed at 50%,1,89686,9491401,397311,481279,708607,3244031,yes,3.899995
+7,round-trip to the first frame, response time, matching-heavy-request, fixed at 50%,2,89686,12098488,393215,468991,716799,2637823,yes,3.899995
+7,round-trip to the first frame, response time, matching-heavy-request, fixed at 50%,3,89686,11155977,395263,475135,716799,3031039,yes,3.899995
+7,round-trip to the first frame, response time, matching-heavy-request, fixed at 50%,4,89686,6681210,393215,468991,708607,2392063,yes,3.899995
+7,round-trip to the first frame, response time, matching-heavy-request, fixed at 50%,5,89686,7013718,393215,473087,712703,3194879,yes,3.899995
+7,round-trip to the first frame, response time, matching-heavy-request, fixed at 50%,6,89686,6822035,393215,468991,712703,2637823,yes,3.899995
+7,round-trip to the first frame, response time, matching-heavy-request, fixed at 50%,7,89686,6566571,393215,468991,708607,2490367,yes,3.899995
+7,round-trip to the first frame, response time, matching-heavy-request, fixed at 50%,8,89686,7325633,395263,471039,708607,3031039,yes,3.899995
+7,round-trip to the first frame, response time, matching-heavy-request, fixed at 50%,9,89686,10262515,395263,479231,823295,4177919,yes,3.899995
+8,driver lateness, matching-heavy-request, fixed at 50%,1,89686,911948,42,77,113,152,yes,3.899995
+8,driver lateness, matching-heavy-request, fixed at 50%,2,89686,522494,42,76,112,116,yes,3.899995
+8,driver lateness, matching-heavy-request, fixed at 50%,3,89686,900789,42,77,112,447,yes,3.899995
+8,driver lateness, matching-heavy-request, fixed at 50%,4,89686,531240,42,77,113,297,yes,3.899995
+8,driver lateness, matching-heavy-request, fixed at 50%,5,89686,336749,42,77,113,214,yes,3.899995
+8,driver lateness, matching-heavy-request, fixed at 50%,6,89686,199183,43,77,113,519,yes,3.899995
+8,driver lateness, matching-heavy-request, fixed at 50%,7,89686,782758,42,77,113,951,yes,3.899995
+8,driver lateness, matching-heavy-request, fixed at 50%,8,89686,116809,42,77,113,279,yes,3.899995
+8,driver lateness, matching-heavy-request, fixed at 50%,9,89686,179637,43,77,113,116,yes,3.899995
+9,round-trip, response time, matching-heavy-request, fixed at 75%,1,84529,9992635,380927,460799,737279,3375103,yes,3.899995
+9,round-trip, response time, matching-heavy-request, fixed at 75%,2,84529,766501894,380927,479231,341835775,725614591,yes,3.899995
+9,round-trip, response time, matching-heavy-request, fixed at 75%,3,84529,769048110,378879,475135,343932927,729808895,yes,3.899995
+9,round-trip, response time, matching-heavy-request, fixed at 75%,4,84529,769978395,378879,473087,346030079,729808895,yes,3.899995
+9,round-trip, response time, matching-heavy-request, fixed at 75%,5,84529,760230006,378879,475135,335544319,721420287,yes,3.899995
+9,round-trip, response time, matching-heavy-request, fixed at 75%,6,84529,745932620,380927,481279,320864255,704643071,yes,3.899995
+9,round-trip, response time, matching-heavy-request, fixed at 75%,7,84529,763082820,380927,497663,545259519,738197503,yes,3.899995
+9,round-trip, response time, matching-heavy-request, fixed at 75%,8,84529,771148974,378879,471039,346030079,729808895,yes,3.899995
+9,round-trip, response time, matching-heavy-request, fixed at 75%,9,84529,20397025,378879,458751,749567,3653631,yes,3.899995
+10,round-trip to the first frame, response time, matching-heavy-request, fixed at 75%,1,84529,9992635,380927,460799,737279,3375103,yes,3.899995
+10,round-trip to the first frame, response time, matching-heavy-request, fixed at 75%,2,84529,766501894,380927,479231,341835775,725614591,yes,3.899995
+10,round-trip to the first frame, response time, matching-heavy-request, fixed at 75%,3,84529,769048110,378879,475135,343932927,729808895,yes,3.899995
+10,round-trip to the first frame, response time, matching-heavy-request, fixed at 75%,4,84529,769978395,378879,473087,346030079,729808895,yes,3.899995
+10,round-trip to the first frame, response time, matching-heavy-request, fixed at 75%,5,84529,760230006,378879,475135,335544319,721420287,yes,3.899995
+10,round-trip to the first frame, response time, matching-heavy-request, fixed at 75%,6,84529,745932620,380927,481279,320864255,704643071,yes,3.899995
+10,round-trip to the first frame, response time, matching-heavy-request, fixed at 75%,7,84529,763082820,380927,497663,545259519,738197503,yes,3.899995
+10,round-trip to the first frame, response time, matching-heavy-request, fixed at 75%,8,84529,771148974,378879,471039,346030079,729808895,yes,3.899995
+10,round-trip to the first frame, response time, matching-heavy-request, fixed at 75%,9,84529,20397025,378879,458751,749567,3653631,yes,3.899995
+11,driver lateness, matching-heavy-request, fixed at 75%,1,84529,745196,43,77,113,971,yes,3.899995
+11,driver lateness, matching-heavy-request, fixed at 75%,2,84529,615075,42,77,112,196,yes,3.899995
+11,driver lateness, matching-heavy-request, fixed at 75%,3,84529,709968,43,77,113,353,yes,3.899995
+11,driver lateness, matching-heavy-request, fixed at 75%,4,84529,545765,43,77,113,1223,yes,3.899995
+11,driver lateness, matching-heavy-request, fixed at 75%,5,84529,335195,42,77,113,543,yes,3.899995
+11,driver lateness, matching-heavy-request, fixed at 75%,6,84529,29819,42,77,113,116,yes,3.899995
+11,driver lateness, matching-heavy-request, fixed at 75%,7,84529,744178,42,77,113,751,yes,3.899995
+11,driver lateness, matching-heavy-request, fixed at 75%,8,84529,486727,42,77,113,116,yes,3.899995
+11,driver lateness, matching-heavy-request, fixed at 75%,9,84529,1206143,42,77,113,116,yes,3.899995
+12,round-trip, response time, matching-heavy-request, fixed at 90%,1,81435,761273839,378879,532479,421527551,729808895,yes,3.899995
+12,round-trip, response time, matching-heavy-request, fixed at 90%,2,81435,765062860,376831,501759,425721855,734003199,yes,3.899995
+12,round-trip, response time, matching-heavy-request, fixed at 90%,3,81435,750995219,376831,528383,411041791,721420287,yes,3.899995
+12,round-trip, response time, matching-heavy-request, fixed at 90%,4,81435,597207770,376831,518143,255852543,566231039,yes,3.899995
+12,round-trip, response time, matching-heavy-request, fixed at 90%,5,81435,777423531,378879,790527,654311423,759169023,yes,3.899995
+12,round-trip, response time, matching-heavy-request, fixed at 90%,6,81435,764786411,378879,548863,423624703,734003199,yes,3.899995
+12,round-trip, response time, matching-heavy-request, fixed at 90%,7,81435,767351027,378879,532479,427819007,734003199,yes,3.899995
+12,round-trip, response time, matching-heavy-request, fixed at 90%,8,81435,765031062,376831,516095,425721855,734003199,yes,3.899995
+12,round-trip, response time, matching-heavy-request, fixed at 90%,9,81435,767866438,378879,532479,427819007,738197503,yes,3.899995
+13,round-trip to the first frame, response time, matching-heavy-request, fixed at 90%,1,81435,761273839,378879,532479,421527551,729808895,yes,3.899995
+13,round-trip to the first frame, response time, matching-heavy-request, fixed at 90%,2,81435,765062860,376831,501759,425721855,734003199,yes,3.899995
+13,round-trip to the first frame, response time, matching-heavy-request, fixed at 90%,3,81435,750995219,376831,528383,411041791,721420287,yes,3.899995
+13,round-trip to the first frame, response time, matching-heavy-request, fixed at 90%,4,81435,597207770,376831,518143,255852543,566231039,yes,3.899995
+13,round-trip to the first frame, response time, matching-heavy-request, fixed at 90%,5,81435,777423531,378879,790527,654311423,759169023,yes,3.899995
+13,round-trip to the first frame, response time, matching-heavy-request, fixed at 90%,6,81435,764786411,378879,548863,423624703,734003199,yes,3.899995
+13,round-trip to the first frame, response time, matching-heavy-request, fixed at 90%,7,81435,767351027,378879,532479,427819007,734003199,yes,3.899995
+13,round-trip to the first frame, response time, matching-heavy-request, fixed at 90%,8,81435,765031062,376831,516095,425721855,734003199,yes,3.899995
+13,round-trip to the first frame, response time, matching-heavy-request, fixed at 90%,9,81435,767866438,378879,532479,427819007,738197503,yes,3.899995
+14,driver lateness, matching-heavy-request, fixed at 90%,1,81435,815846,42,77,113,1063,yes,3.899995
+14,driver lateness, matching-heavy-request, fixed at 90%,2,81435,132743,42,77,112,551,yes,3.899995
+14,driver lateness, matching-heavy-request, fixed at 90%,3,81435,9949155,43,77,113,2607,yes,3.899995
+14,driver lateness, matching-heavy-request, fixed at 90%,4,81435,20798,42,77,113,567,yes,3.899995
+14,driver lateness, matching-heavy-request, fixed at 90%,5,81435,53833,42,77,113,116,yes,3.899995
+14,driver lateness, matching-heavy-request, fixed at 90%,6,81435,160882,42,77,113,587,yes,3.899995
+14,driver lateness, matching-heavy-request, fixed at 90%,7,81435,1072132,42,77,113,1463,yes,3.899995
+14,driver lateness, matching-heavy-request, fixed at 90%,8,81435,578549,42,77,113,987,yes,3.899995
+14,driver lateness, matching-heavy-request, fixed at 90%,9,81435,970019,43,77,113,739,yes,3.899995
+15,round-trip, response time, matching-heavy-request, poisson at 50%,1,89619,6229976,415743,659455,942079,2064383,yes,3.899995
+15,round-trip, response time, matching-heavy-request, poisson at 50%,2,89619,7012688,413695,655359,925695,2916351,yes,3.899995
+15,round-trip, response time, matching-heavy-request, poisson at 50%,3,89619,11595010,415743,659455,933887,3080191,yes,3.899995
+15,round-trip, response time, matching-heavy-request, poisson at 50%,4,89619,10530793,413695,655359,925695,2965503,yes,3.899995
+15,round-trip, response time, matching-heavy-request, poisson at 50%,5,89619,6582394,415743,659455,929791,2736127,yes,3.899995
+15,round-trip, response time, matching-heavy-request, poisson at 50%,6,89619,11622762,413695,659455,933887,3309567,yes,3.899995
+15,round-trip, response time, matching-heavy-request, poisson at 50%,7,89619,6846375,415743,659455,913407,2506751,yes,3.899995
+15,round-trip, response time, matching-heavy-request, poisson at 50%,8,89619,88830355,452607,798719,8454143,46661631,yes,3.899995
+15,round-trip, response time, matching-heavy-request, poisson at 50%,9,89619,9073270,448511,700415,2146303,6553599,yes,3.899995
+16,round-trip to the first frame, response time, matching-heavy-request, poisson at 50%,1,89619,6229976,415743,659455,942079,2064383,yes,3.899995
+16,round-trip to the first frame, response time, matching-heavy-request, poisson at 50%,2,89619,7012688,413695,655359,925695,2916351,yes,3.899995
+16,round-trip to the first frame, response time, matching-heavy-request, poisson at 50%,3,89619,11595010,415743,659455,933887,3080191,yes,3.899995
+16,round-trip to the first frame, response time, matching-heavy-request, poisson at 50%,4,89619,10530793,413695,655359,925695,2965503,yes,3.899995
+16,round-trip to the first frame, response time, matching-heavy-request, poisson at 50%,5,89619,6582394,415743,659455,929791,2736127,yes,3.899995
+16,round-trip to the first frame, response time, matching-heavy-request, poisson at 50%,6,89619,11622762,413695,659455,933887,3309567,yes,3.899995
+16,round-trip to the first frame, response time, matching-heavy-request, poisson at 50%,7,89619,6846375,415743,659455,913407,2506751,yes,3.899995
+16,round-trip to the first frame, response time, matching-heavy-request, poisson at 50%,8,89619,88830355,452607,798719,8454143,46661631,yes,3.899995
+16,round-trip to the first frame, response time, matching-heavy-request, poisson at 50%,9,89619,9073270,448511,700415,2146303,6553599,yes,3.899995
+17,driver lateness, matching-heavy-request, poisson at 50%,1,89619,96185,43,79,10175,19967,yes,3.899995
+17,driver lateness, matching-heavy-request, poisson at 50%,2,89619,254662,43,79,10111,19711,yes,3.899995
+17,driver lateness, matching-heavy-request, poisson at 50%,3,89619,533974,43,80,10047,18687,yes,3.899995
+17,driver lateness, matching-heavy-request, poisson at 50%,4,89619,331531,43,79,9919,18815,yes,3.899995
+17,driver lateness, matching-heavy-request, poisson at 50%,5,89619,212367,43,80,9855,18687,yes,3.899995
+17,driver lateness, matching-heavy-request, poisson at 50%,6,89619,9901925,43,79,9855,20223,yes,3.899995
+17,driver lateness, matching-heavy-request, poisson at 50%,7,89619,786737,43,79,9791,18815,yes,3.899995
+17,driver lateness, matching-heavy-request, poisson at 50%,8,89619,58465461,43,83,14335,10551295,yes,3.899995
+17,driver lateness, matching-heavy-request, poisson at 50%,9,89619,690060,43,81,10751,23679,yes,3.899995

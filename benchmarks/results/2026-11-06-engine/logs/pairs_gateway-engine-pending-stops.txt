@@ -1,0 +1,1 @@
+pending-stops        gateway median ratio 1.019  95% CI 1.005-1.028  exp faster in 81% of 16 pairs

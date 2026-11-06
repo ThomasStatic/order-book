@@ -1,0 +1,44 @@
+== command, service time, matching-heavy-owned, closed-loop ==
+quotable: yes
+runs: 9, merged samples: 9000000
+run record:
+  interval=command
+  time=service
+  load=closed-loop
+  target-rate=none
+  achieved-rate=not reported: a per-command timed run never reports throughput
+  workload=matching-heavy-owned
+  workload-fingerprint=6888937720126819170
+  generator-version=3
+  seed=42
+  shards=none, one book in process
+  gateway-threads=none, one book in process
+  active-connections=none, one book in process
+  idle-connections=none, one book in process
+  socket-set=none, no sockets
+  spin-window=none, one book in process
+  matching-cpu-share=none, no matching thread
+  core-map=6
+  pinned=yes
+  priority=high
+  durability=none, one book in process
+  log-files=none, no log
+  logs-share-drive=none, one book in process
+  book-capacity=orders=11700 stops=0 levels=122
+  capacity-growths=0
+  clock=rdtscp;lfence
+  clock-step-ns=10.0
+  clock-read-ns=20.6
+  empty-pair-ns=p50 20.0, p99 30.0
+  commands-per-run=1000000
+  build=Release, MSVC 194435228
+  machine=AMD Ryzen 5 5600G, 6 cores, 12 logical processors; SMT on; 31.8 GiB RAM; WD Blue SN570 500GB NVMe SSD, the one drive: logs, temp, and system; Windows 11 Pro 10.0.26200, power plan High performance; Pinned to logical processors 6 and 10, on different physical cores; other work on the machine: an idle desktop and this terminal
+noise floor before: 10.0 s; gaps/s over 1 us 549.7, over 10 us 15.7, over 100 us 0.1; max 162901 ns; lost 0.13%
+noise floor after: 10.0 s; gaps/s over 1 us 550.8, over 10 us 12.6, over 100 us 0.6; max 241451 ns; lost 0.14%
+stat     merged ns      beyond  run median     run min     run max
+p50            140     4500000         140         140         140
+p90            260      900000         250         250         260
+p99            751       90000         751         751         771
+p99.9         1436        9000        1427        1427        1485
+max         148281           -       43270       17820      148281
+

@@ -1,0 +1,14 @@
+order_book_benchmarks: generator v3, seed 42, size extended (1000000 timed commands, per shard for the threaded kinds), 1 warm-up and 5 measured runs each
+build: Release, MSVC 194435228
+
+pending-stops: 15000 preloaded orders, 1000000 timed commands (cancellation rate 0.113, 714509 trades, ending with 9007 orders on 134 levels); generated in 944.855 ms, untimed
+  queue warm-up 1: 1000000 commands in 362.144 ms, 2761332 ops/s, 295519 stops triggered
+  queue run 1: 1000000 commands in 377.867 ms, 2646436 ops/s, 295519 stops triggered
+  queue run 2: 1000000 commands in 354.722 ms, 2819107 ops/s, 295519 stops triggered
+  queue run 3: 1000000 commands in 349.358 ms, 2862392 ops/s, 295519 stops triggered
+  queue run 4: 1000000 commands in 358.296 ms, 2790985 ops/s, 295519 stops triggered
+  queue run 5: 1000000 commands in 349.109 ms, 2864437 ops/s, 295519 stops triggered
+
+summary of measured runs (warm-ups excluded):
+workload            kind     reps  commands   median ops/s      min ops/s      max ops/s   ns/cmd      cv
+pending-stops       queue       5   1000000        2819107        2646436        2864437    354.7    3.2%

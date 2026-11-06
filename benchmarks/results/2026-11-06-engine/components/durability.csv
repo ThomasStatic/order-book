@@ -1,0 +1,7 @@
+operation,workload,state,orders,levels,passes,elapsed_ns,ns_per_op
+publish-checkpoint,deep-book,log-drive,1000,250,5,6259300,1251860.0
+publish-checkpoint,deep-book,log-drive,10000,1000,5,7183900,1436780.0
+publish-checkpoint,deep-book,log-drive,100000,1000,5,21835200,4367040.0
+publish-checkpoint,deep-book,log-drive,1000000,1000,5,175041200,35008240.0
+roll-pass,matching-heavy-request,closed-file,45799,113,3,6016016300,298.8
+recover,matching-heavy-request,checkpoint-and-one-file,45799,113,3,5894214200,292.8

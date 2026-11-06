@@ -1,0 +1,9 @@
+log-encode matching-heavy-request chained: 23.0 ns per operation over 5000000
+log-read matching-heavy-request in-memory: 83.4 ns per operation over 5000000
+csv-read matching-heavy-request in-memory: 280.9 ns per operation over 5000000
+log-encode quote-refresh chained: 24.8 ns per operation over 5000000
+log-read quote-refresh in-memory: 80.5 ns per operation over 5000000
+csv-read quote-refresh in-memory: 273.5 ns per operation over 5000000
+log-encode pending-stops chained: 22.9 ns per operation over 5000000
+log-read pending-stops in-memory: 89.6 ns per operation over 5000000
+csv-read pending-stops in-memory: 310.1 ns per operation over 5000000

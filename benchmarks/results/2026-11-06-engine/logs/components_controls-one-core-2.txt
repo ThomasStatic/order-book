@@ -1,0 +1,8 @@
+cpu-loop none thread-0-of-2: 1.4 ns per operation over 200000000
+cpu-loop none thread-1-of-2: 1.4 ns per operation over 200000000
+memory-walk 256KiB thread-0-of-2: 3.0 ns per operation over 20000000
+memory-walk 256KiB thread-1-of-2: 3.0 ns per operation over 20000000
+memory-walk 8192KiB thread-0-of-2: 27.5 ns per operation over 20000000
+memory-walk 8192KiB thread-1-of-2: 19.8 ns per operation over 20000000
+memory-walk 262144KiB thread-0-of-2: 98.8 ns per operation over 20000000
+memory-walk 262144KiB thread-1-of-2: 99.8 ns per operation over 20000000

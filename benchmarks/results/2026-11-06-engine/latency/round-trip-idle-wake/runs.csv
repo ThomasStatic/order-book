@@ -1,0 +1,28 @@
+row,title,run,count,maximum_ticks,p50_ticks,p90_ticks,p99_ticks,p99.9_ticks,sustained,ticks_per_nanosecond
+0,round-trip, response time, matching-heavy-request, fixed at 50/s,1,1900,12769951,749567,901119,1196031,6258687,yes,3.899995
+0,round-trip, response time, matching-heavy-request, fixed at 50/s,2,1900,5598225,749567,888831,1163263,3899391,yes,3.899995
+0,round-trip, response time, matching-heavy-request, fixed at 50/s,3,1900,14348679,749567,897023,1138687,3768319,yes,3.899995
+0,round-trip, response time, matching-heavy-request, fixed at 50/s,4,1900,2751178,749567,925695,1204223,2736127,yes,3.899995
+0,round-trip, response time, matching-heavy-request, fixed at 50/s,5,1900,2275854,749567,901119,1138687,2260991,yes,3.899995
+0,round-trip, response time, matching-heavy-request, fixed at 50/s,6,1900,2917825,749567,897023,1146879,1728511,yes,3.899995
+0,round-trip, response time, matching-heavy-request, fixed at 50/s,7,1900,67112644,757759,1122303,7208959,48758783,yes,3.899995
+0,round-trip, response time, matching-heavy-request, fixed at 50/s,8,1900,9001888,868351,1089535,4259839,8650751,yes,3.899995
+0,round-trip, response time, matching-heavy-request, fixed at 50/s,9,1900,7380580,802815,1011711,1531903,7274495,yes,3.899995
+1,round-trip to the first frame, response time, matching-heavy-request, fixed at 50/s,1,1900,12769951,749567,901119,1196031,6258687,yes,3.899995
+1,round-trip to the first frame, response time, matching-heavy-request, fixed at 50/s,2,1900,5598225,749567,888831,1163263,3899391,yes,3.899995
+1,round-trip to the first frame, response time, matching-heavy-request, fixed at 50/s,3,1900,14348679,749567,897023,1138687,3768319,yes,3.899995
+1,round-trip to the first frame, response time, matching-heavy-request, fixed at 50/s,4,1900,2751178,749567,925695,1204223,2736127,yes,3.899995
+1,round-trip to the first frame, response time, matching-heavy-request, fixed at 50/s,5,1900,2275854,749567,901119,1138687,2260991,yes,3.899995
+1,round-trip to the first frame, response time, matching-heavy-request, fixed at 50/s,6,1900,2917825,749567,897023,1146879,1728511,yes,3.899995
+1,round-trip to the first frame, response time, matching-heavy-request, fixed at 50/s,7,1900,67112644,757759,1122303,7208959,48758783,yes,3.899995
+1,round-trip to the first frame, response time, matching-heavy-request, fixed at 50/s,8,1900,9001888,868351,1089535,4259839,8650751,yes,3.899995
+1,round-trip to the first frame, response time, matching-heavy-request, fixed at 50/s,9,1900,7380580,802815,1011711,1531903,7274495,yes,3.899995
+2,driver lateness, matching-heavy-request, fixed at 50/s,1,1900,14048,39,71,110,7615,yes,3.899995
+2,driver lateness, matching-heavy-request, fixed at 50/s,2,1900,110,39,71,102,110,yes,3.899995
+2,driver lateness, matching-heavy-request, fixed at 50/s,3,1900,4173,39,71,110,110,yes,3.899995
+2,driver lateness, matching-heavy-request, fixed at 50/s,4,1900,5593,39,71,110,4959,yes,3.899995
+2,driver lateness, matching-heavy-request, fixed at 50/s,5,1900,2598,39,71,110,2543,yes,3.899995
+2,driver lateness, matching-heavy-request, fixed at 50/s,6,1900,110,39,71,102,110,yes,3.899995
+2,driver lateness, matching-heavy-request, fixed at 50/s,7,1900,258,39,71,110,110,yes,3.899995
+2,driver lateness, matching-heavy-request, fixed at 50/s,8,1900,110,39,71,102,110,yes,3.899995
+2,driver lateness, matching-heavy-request, fixed at 50/s,9,1900,476,39,71,102,110,yes,3.899995

@@ -1,0 +1,12 @@
+grow-to order-index full, 12288 orders: 222640.0 ns per operation over 5
+grow-to order-index full, 98304 orders: 32687100.0 ns per operation over 5
+grow-to order-index full, 786432 orders: 280176080.0 ns per operation over 5
+reserve-orders empty-book fresh, 12288 orders: 38680.0 ns per operation over 5
+reserve-orders empty-book fresh, 98304 orders: 13128860.0 ns per operation over 5
+reserve-orders empty-book fresh, 786432 orders: 136885160.0 ns per operation over 5
+new-level-near ladder two-ticks-apart, 4000 orders, 2000 levels: 104.0 ns per operation over 10000
+new-level-near ladder two-ticks-apart, 40000 orders, 20000 levels: 108.8 ns per operation over 10000
+new-level-near ladder two-ticks-apart, 400000 orders, 200000 levels: 112.4 ns per operation over 10000
+new-level-far ladder two-ticks-apart, 4000 orders, 2000 levels: 131.2 ns per operation over 10000
+new-level-far ladder two-ticks-apart, 40000 orders, 20000 levels: 131.8 ns per operation over 10000
+new-level-far ladder two-ticks-apart, 400000 orders, 200000 levels: 137.6 ns per operation over 10000

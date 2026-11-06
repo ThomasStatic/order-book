@@ -1,0 +1,1 @@
+quote-refresh        queue   median ratio 1.060  95% CI 0.953-1.086  exp faster in 62% of 16 pairs

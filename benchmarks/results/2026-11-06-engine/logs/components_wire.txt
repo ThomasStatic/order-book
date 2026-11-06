@@ -1,0 +1,6 @@
+frame-decode matching-heavy-request in-memory: 28.3 ns per operation over 5000000
+event-encode matching-heavy-request in-memory: 9.7 ns per operation over 9172180
+frame-decode quote-refresh in-memory: 31.2 ns per operation over 5000000
+event-encode quote-refresh in-memory: 10.9 ns per operation over 5899255
+frame-decode pending-stops in-memory: 28.6 ns per operation over 5000000
+event-encode pending-stops in-memory: 9.8 ns per operation over 10239580

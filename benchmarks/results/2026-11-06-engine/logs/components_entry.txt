@@ -1,0 +1,10 @@
+symbol-compare four-symbols word: 0.7 ns per operation over 500000000
+symbol-lookup 8-instruments hit: 11.6 ns per operation over 5242880
+symbol-lookup 64-instruments hit: 22.9 ns per operation over 5242880
+symbol-lookup 512-instruments hit: 32.4 ns per operation over 5242880
+execute-command matching-heavy-request warm: 157.4 ns per operation over 5000000
+check-entry matching-heavy-request in-memory: 40.5 ns per operation over 5000000
+execute-command quote-refresh warm: 100.5 ns per operation over 5000000
+check-entry quote-refresh in-memory: 43.4 ns per operation over 5000000
+execute-command pending-stops warm: 220.0 ns per operation over 5000000
+check-entry pending-stops in-memory: 40.4 ns per operation over 5000000

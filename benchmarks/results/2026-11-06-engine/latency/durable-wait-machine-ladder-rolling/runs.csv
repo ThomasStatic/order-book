@@ -1,0 +1,109 @@
+row,title,run,count,maximum_ticks,p50_ticks,p90_ticks,p99_ticks,p99.9_ticks,sustained,ticks_per_nanosecond
+0,durable-wait, response time, matching-heavy-request, fixed at 10%,1,100000,18079824,337919,389119,585727,3702783,yes,3.899988
+0,durable-wait, response time, matching-heavy-request, fixed at 10%,2,100000,18311835,337919,389119,569343,3047423,yes,3.899988
+0,durable-wait, response time, matching-heavy-request, fixed at 10%,3,100000,18259107,337919,391167,569343,3129343,yes,3.899988
+0,durable-wait, response time, matching-heavy-request, fixed at 10%,4,100000,19845702,337919,389119,573439,3129343,yes,3.899988
+0,durable-wait, response time, matching-heavy-request, fixed at 10%,5,100000,27183106,337919,387071,569343,3637247,yes,3.899988
+0,durable-wait, response time, matching-heavy-request, fixed at 10%,6,100000,18387237,337919,391167,569343,3260415,yes,3.899988
+0,durable-wait, response time, matching-heavy-request, fixed at 10%,7,100000,19218897,337919,389119,569343,3342335,yes,3.899988
+0,durable-wait, response time, matching-heavy-request, fixed at 10%,8,100000,25262359,337919,389119,569343,3473407,yes,3.899988
+0,durable-wait, response time, matching-heavy-request, fixed at 10%,9,100000,18944532,337919,389119,569343,3178495,yes,3.899988
+1,driver lateness, matching-heavy-request, fixed at 10%,1,100000,14676312,40,72,108,354303,yes,3.899988
+1,driver lateness, matching-heavy-request, fixed at 10%,2,100000,14908167,40,72,108,70143,yes,3.899988
+1,driver lateness, matching-heavy-request, fixed at 10%,3,100000,14855439,40,72,107,44799,yes,3.899988
+1,driver lateness, matching-heavy-request, fixed at 10%,4,100000,16442268,40,72,108,49663,yes,3.899988
+1,driver lateness, matching-heavy-request, fixed at 10%,5,100000,23780296,40,72,107,241663,yes,3.899988
+1,driver lateness, matching-heavy-request, fixed at 10%,6,100000,14983569,40,72,107,39679,yes,3.899988
+1,driver lateness, matching-heavy-request, fixed at 10%,7,100000,15815463,40,72,108,78335,yes,3.899988
+1,driver lateness, matching-heavy-request, fixed at 10%,8,100000,21859120,40,72,108,107007,yes,3.899988
+1,driver lateness, matching-heavy-request, fixed at 10%,9,100000,15540825,40,72,107,92159,yes,3.899988
+2,durable-wait, response time, matching-heavy-request, fixed at 25%,1,100000,19295472,333823,364543,630783,9633791,yes,3.899988
+2,durable-wait, response time, matching-heavy-request, fixed at 25%,2,100000,19294093,335871,366591,622591,9175039,yes,3.899988
+2,durable-wait, response time, matching-heavy-request, fixed at 25%,3,100000,19051630,335871,366591,655359,9175039,yes,3.899988
+2,durable-wait, response time, matching-heavy-request, fixed at 25%,4,100000,19831331,335871,366591,606207,9502719,yes,3.899988
+2,durable-wait, response time, matching-heavy-request, fixed at 25%,5,100000,21936534,335871,366591,647167,10616831,yes,3.899988
+2,durable-wait, response time, matching-heavy-request, fixed at 25%,6,100000,17982952,335871,370687,630783,8912895,yes,3.899988
+2,durable-wait, response time, matching-heavy-request, fixed at 25%,7,100000,18387879,335871,366591,630783,9175039,yes,3.899988
+2,durable-wait, response time, matching-heavy-request, fixed at 25%,8,100000,18460273,335871,366591,622591,9240575,yes,3.899988
+2,durable-wait, response time, matching-heavy-request, fixed at 25%,9,100000,17861045,335871,368639,614399,9175039,yes,3.899988
+3,driver lateness, matching-heavy-request, fixed at 25%,1,100000,17934769,40,73,112,8290303,yes,3.899988
+3,driver lateness, matching-heavy-request, fixed at 25%,2,100000,17932961,40,73,112,7798783,yes,3.899988
+3,driver lateness, matching-heavy-request, fixed at 25%,3,100000,17691629,40,73,113,7831551,yes,3.899988
+3,driver lateness, matching-heavy-request, fixed at 25%,4,100000,18470940,40,73,112,8126463,yes,3.899988
+3,driver lateness, matching-heavy-request, fixed at 25%,5,100000,20575636,40,73,113,9240575,yes,3.899988
+3,driver lateness, matching-heavy-request, fixed at 25%,6,100000,16622990,40,73,113,7536639,yes,3.899988
+3,driver lateness, matching-heavy-request, fixed at 25%,7,100000,17026825,40,73,113,7798783,yes,3.899988
+3,driver lateness, matching-heavy-request, fixed at 25%,8,100000,17100194,40,73,113,7864319,yes,3.899988
+3,driver lateness, matching-heavy-request, fixed at 25%,9,100000,16499952,40,73,113,7798783,yes,3.899988
+4,durable-wait, response time, matching-heavy-request, fixed at 50%,1,100000,21668973,317439,350207,1794047,16318463,yes,3.899988
+4,durable-wait, response time, matching-heavy-request, fixed at 50%,2,100000,21389393,319487,350207,1908735,16252927,yes,3.899988
+4,durable-wait, response time, matching-heavy-request, fixed at 50%,3,100000,20789832,319487,352255,1843199,16318463,yes,3.899988
+4,durable-wait, response time, matching-heavy-request, fixed at 50%,4,100000,196310056,319487,372735,80740351,184549375,yes,3.899988
+4,durable-wait, response time, matching-heavy-request, fixed at 50%,5,100000,21335101,319487,350207,1744895,16383999,yes,3.899988
+4,durable-wait, response time, matching-heavy-request, fixed at 50%,6,100000,20406756,317439,352255,1835007,15794175,yes,3.899988
+4,durable-wait, response time, matching-heavy-request, fixed at 50%,7,100000,21000084,319487,350207,1794047,16056319,yes,3.899988
+4,durable-wait, response time, matching-heavy-request, fixed at 50%,8,100000,20220630,319487,350207,1777663,15925247,yes,3.899988
+4,durable-wait, response time, matching-heavy-request, fixed at 50%,9,100000,21605659,317439,352255,2359295,16318463,yes,3.899988
+5,driver lateness, matching-heavy-request, fixed at 50%,1,100000,20988700,41,74,1114111,15663103,yes,3.899988
+5,driver lateness, matching-heavy-request, fixed at 50%,2,100000,20709081,41,74,1228799,15597567,yes,3.899988
+5,driver lateness, matching-heavy-request, fixed at 50%,3,100000,20109480,41,74,1163263,15663103,yes,3.899988
+5,driver lateness, matching-heavy-request, fixed at 50%,4,100000,195629393,42,75,80216063,183500799,yes,3.899988
+5,driver lateness, matching-heavy-request, fixed at 50%,5,100000,20654789,41,74,1064959,15728639,yes,3.899988
+5,driver lateness, matching-heavy-request, fixed at 50%,6,100000,19726444,41,74,1155071,15138815,yes,3.899988
+5,driver lateness, matching-heavy-request, fixed at 50%,7,100000,20319655,41,74,1114111,15400959,yes,3.899988
+5,driver lateness, matching-heavy-request, fixed at 50%,8,100000,19540357,41,74,1097727,15269887,yes,3.899988
+5,driver lateness, matching-heavy-request, fixed at 50%,9,100000,20925346,41,74,1679359,15597567,yes,3.899988
+6,durable-wait, response time, matching-heavy-request, fixed at 75%,1,100000,22810853,319487,387071,7307263,19791871,yes,3.899988
+6,durable-wait, response time, matching-heavy-request, fixed at 75%,2,100000,25990361,319487,389119,9502719,20447231,yes,3.899988
+6,durable-wait, response time, matching-heavy-request, fixed at 75%,3,100000,24194471,319487,389119,9175039,20316159,yes,3.899988
+6,durable-wait, response time, matching-heavy-request, fixed at 75%,4,100000,755396829,319487,839679,662700031,746586111,yes,3.899988
+6,durable-wait, response time, matching-heavy-request, fixed at 75%,5,100000,757432434,319487,1019903,637534207,746586111,yes,3.899988
+6,durable-wait, response time, matching-heavy-request, fixed at 75%,6,100000,759948930,319487,942079,637534207,750780415,yes,3.899988
+6,durable-wait, response time, matching-heavy-request, fixed at 75%,7,100000,763277863,319487,1114111,641728511,754974719,yes,3.899988
+6,durable-wait, response time, matching-heavy-request, fixed at 75%,8,100000,461665937,319487,548863,369098751,452984831,yes,3.899988
+6,durable-wait, response time, matching-heavy-request, fixed at 75%,9,100000,22129500,319487,387071,7438335,19136511,yes,3.899988
+7,driver lateness, matching-heavy-request, fixed at 75%,1,100000,22357376,43,77,6848511,19267583,yes,3.899988
+7,driver lateness, matching-heavy-request, fixed at 75%,2,100000,25537391,43,80,9043967,20054015,yes,3.899988
+7,driver lateness, matching-heavy-request, fixed at 75%,3,100000,23741111,43,84,8716287,19791871,yes,3.899988
+7,driver lateness, matching-heavy-request, fixed at 75%,4,100000,754943430,46,385023,658505727,746586111,yes,3.899988
+7,driver lateness, matching-heavy-request, fixed at 75%,5,100000,756980440,46,565247,637534207,746586111,yes,3.899988
+7,driver lateness, matching-heavy-request, fixed at 75%,6,100000,759495492,46,485375,637534207,746586111,yes,3.899988
+7,driver lateness, matching-heavy-request, fixed at 75%,7,100000,762824503,46,659455,641728511,754974719,yes,3.899988
+7,driver lateness, matching-heavy-request, fixed at 75%,8,100000,461212266,45,93695,369098751,452984831,yes,3.899988
+7,driver lateness, matching-heavy-request, fixed at 75%,9,100000,21676296,43,79,6979583,18743295,yes,3.899988
+8,durable-wait, response time, matching-heavy-request, fixed at 90%,1,100000,774410813,323583,339738623,738197503,771751935,yes,3.899988
+8,durable-wait, response time, matching-heavy-request, fixed at 90%,2,100000,761239477,323583,325058559,721420287,759169023,yes,3.899988
+8,durable-wait, response time, matching-heavy-request, fixed at 90%,3,100000,27303440,321535,1015807,19136511,25427967,yes,3.899988
+8,durable-wait, response time, matching-heavy-request, fixed at 90%,4,100000,29983405,321535,798719,19529727,26607615,yes,3.899988
+8,durable-wait, response time, matching-heavy-request, fixed at 90%,5,100000,26576165,321535,1130495,19398655,25165823,yes,3.899988
+8,durable-wait, response time, matching-heavy-request, fixed at 90%,6,100000,769573496,323583,346030079,734003199,767557631,yes,3.899988
+8,durable-wait, response time, matching-heavy-request, fixed at 90%,7,100000,27469276,321535,942079,19136511,25427967,yes,3.899988
+8,durable-wait, response time, matching-heavy-request, fixed at 90%,8,100000,27825195,321535,999423,19005439,25821183,yes,3.899988
+8,durable-wait, response time, matching-heavy-request, fixed at 90%,9,100000,26852619,321535,1105919,19005439,25034751,yes,3.899988
+9,driver lateness, matching-heavy-request, fixed at 90%,1,100000,774032793,61,339738623,738197503,771751935,yes,3.899988
+9,driver lateness, matching-heavy-request, fixed at 90%,2,100000,760861417,62,322961407,721420287,759169023,yes,3.899988
+9,driver lateness, matching-heavy-request, fixed at 90%,3,100000,26925731,51,638975,18743295,25165823,yes,3.899988
+9,driver lateness, matching-heavy-request, fixed at 90%,4,100000,29605579,50,419839,19136511,26214399,yes,3.899988
+9,driver lateness, matching-heavy-request, fixed at 90%,5,100000,26198807,51,749567,19005439,24772607,yes,3.899988
+9,driver lateness, matching-heavy-request, fixed at 90%,6,100000,769195788,62,343932927,734003199,767557631,yes,3.899988
+9,driver lateness, matching-heavy-request, fixed at 90%,7,100000,27091996,51,565247,18743295,25034751,yes,3.899988
+9,driver lateness, matching-heavy-request, fixed at 90%,8,100000,27447565,51,618495,18612223,25427967,yes,3.899988
+9,driver lateness, matching-heavy-request, fixed at 90%,9,100000,26474989,51,729087,18612223,24641535,yes,3.899988
+10,durable-wait, response time, matching-heavy-request, poisson at 50%,1,100000,22662824,368639,847871,2310143,15400959,yes,3.899988
+10,durable-wait, response time, matching-heavy-request, poisson at 50%,2,100000,23432971,370687,860159,2834431,16318463,yes,3.899988
+10,durable-wait, response time, matching-heavy-request, poisson at 50%,3,100000,188558873,376831,897023,80216063,176160767,yes,3.899988
+10,durable-wait, response time, matching-heavy-request, poisson at 50%,4,100000,21144541,368639,856063,2719743,15400959,yes,3.899988
+10,durable-wait, response time, matching-heavy-request, poisson at 50%,5,100000,22399016,372735,860159,2392063,15728639,yes,3.899988
+10,durable-wait, response time, matching-heavy-request, poisson at 50%,6,100000,23406913,370687,851967,2408447,16121855,yes,3.899988
+10,durable-wait, response time, matching-heavy-request, poisson at 50%,7,100000,22078604,368639,847871,2326527,16383999,yes,3.899988
+10,durable-wait, response time, matching-heavy-request, poisson at 50%,8,100000,21671405,370687,856063,2211839,15728639,yes,3.899988
+10,durable-wait, response time, matching-heavy-request, poisson at 50%,9,100000,23321267,368639,851967,2424831,15859711,yes,3.899988
+11,driver lateness, matching-heavy-request, poisson at 50%,1,100000,21941273,106,509951,1851391,14680063,yes,3.899988
+11,driver lateness, matching-heavy-request, poisson at 50%,2,100000,22943522,108,522239,2277375,15597567,yes,3.899988
+11,driver lateness, matching-heavy-request, poisson at 50%,3,100000,188024752,3679,561151,79691775,176160767,yes,3.899988
+11,driver lateness, matching-heavy-request, poisson at 50%,4,100000,20790110,107,520191,2228223,14745599,yes,3.899988
+11,driver lateness, matching-heavy-request, poisson at 50%,5,100000,22054061,109,520191,1933311,15204351,yes,3.899988
+11,driver lateness, matching-heavy-request, poisson at 50%,6,100000,22856573,107,516095,1908735,15335423,yes,3.899988
+11,driver lateness, matching-heavy-request, poisson at 50%,7,100000,21737393,104,511999,1810431,15663103,yes,3.899988
+11,driver lateness, matching-heavy-request, poisson at 50%,8,100000,20701502,106,516095,1769471,14876671,yes,3.899988
+11,driver lateness, matching-heavy-request, poisson at 50%,9,100000,22307521,104,516095,1949695,15007743,yes,3.899988
