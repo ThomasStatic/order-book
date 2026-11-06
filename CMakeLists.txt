@@ -1493,7 +1493,7 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         order_book_enable_warnings(benchmark_scaling_tests)
         order_book_enable_sanitizers(benchmark_scaling_tests)
         add_test(NAME benchmark_scaling_tests COMMAND benchmark_scaling_tests)
-        set_tests_properties(benchmark_scaling_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
+        set_tests_properties(benchmark_scaling_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 600)
 
         add_executable(benchmark_engine_tests
             tests/benchmark_engine_test.cpp

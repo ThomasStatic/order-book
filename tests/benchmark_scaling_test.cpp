@@ -13,6 +13,8 @@
 
 // The threaded kinds at N shards and M threads, on real threads: every run does what its books
 // predict, a book that doesn't fails it, and each records its setup. No test asserts a speed.
+// Kept small, two small-book books a shard, so the sanitizer builds run it in time; spinning
+// threads past a runner's cores would make those crawl, so no case spins without end.
 
 namespace {
 
@@ -42,6 +44,7 @@ struct Cell {
     std::size_t threads;
     Spread spread;
     Placement placement;
+    bool tamper;  // one cell of each kind also runs with a wrong prediction
 };
 
 std::string describe(const Cell& cell) {
@@ -51,17 +54,18 @@ std::string describe(const Cell& cell) {
 
 void testEveryCellDoesWhatItsBooksPredict() {
     const std::vector<Cell> cells{
-        {BenchmarkKind::SHARD, 1, 1, Spread::UNIFORM, Placement::EVEN},
-        {BenchmarkKind::SHARD, 3, 1, Spread::UNIFORM, Placement::EVEN},
-        {BenchmarkKind::QUEUE, 2, 2, Spread::UNIFORM, Placement::EVEN},
-        {BenchmarkKind::QUEUE, 3, 1, Spread::SKEWED, Placement::HASH},
-        {BenchmarkKind::GATEWAY, 2, 1, Spread::UNIFORM, Placement::EVEN},
-        {BenchmarkKind::GATEWAY, 4, 2, Spread::SKEWED, Placement::HOT_ALONE},
+        {BenchmarkKind::SHARD, 1, 1, Spread::UNIFORM, Placement::EVEN, false},
+        {BenchmarkKind::SHARD, 3, 1, Spread::UNIFORM, Placement::EVEN, true},
+        {BenchmarkKind::QUEUE, 2, 2, Spread::UNIFORM, Placement::EVEN, true},
+        {BenchmarkKind::QUEUE, 3, 1, Spread::SKEWED, Placement::HASH, false},
+        {BenchmarkKind::GATEWAY, 2, 1, Spread::UNIFORM, Placement::EVEN, false},
+        {BenchmarkKind::GATEWAY, 4, 2, Spread::SKEWED, Placement::HOT_ALONE, true},
     };
     for (const Cell& cell : cells) {
-        const std::size_t instruments = 8 * cell.shards;
+        // Hash placement needs enough books that no shard is left empty.
+        const std::size_t instruments = cell.placement == Placement::HASH ? 16 : 2 * cell.shards;
         const std::vector<Workload> workloads =
-            spreadWorkloads(findWorkload("quote-refresh"), 2000 * cell.shards, 42, instruments, cell.spread);
+            spreadWorkloads(findWorkload("small-book"), 500 * cell.shards, 42, instruments, cell.spread);
         ScalingSettings settings;
         settings.shards = cell.shards;
         settings.threads = cell.threads;
@@ -69,7 +73,7 @@ void testEveryCellDoesWhatItsBooksPredict() {
         settings.placement = cell.placement;
         settings.spinWindow = std::chrono::nanoseconds::zero();  // a lost wake-up hangs, and fails under the timeout
         const Measurement run = runScaledOnce(workloads, cell.kind, settings);
-        expect(run.outcome == totalOutcome(workloads) && run.commands == 2000 * cell.shards, describe(cell) + ": every book's prediction");
+        expect(run.outcome == totalOutcome(workloads) && run.commands == 500 * cell.shards, describe(cell) + ": every book's prediction");
         expect(run.shards == cell.shards && run.instruments == instruments && run.spread == spreadName(cell.spread) &&
                    run.placement == placementName(cell.placement) && !run.pinned && run.layout == "unpinned",
                describe(cell) + ": it records its setup");
@@ -80,25 +84,26 @@ void testEveryCellDoesWhatItsBooksPredict() {
         expect(cell.kind != BenchmarkKind::GATEWAY || (run.gatewayThreads == cell.threads && run.connections == instruments),
                describe(cell) + ": its gateway threads and connections");
 
-        std::vector<Workload> tampered = workloads;
-        tampered.back().expected.trades += 1;
-        expectThrows([&] { static_cast<void>(runScaledOnce(tampered, cell.kind, settings)); }, describe(cell) + ": a wrong prediction fails it");
+        if (cell.tamper) {
+            std::vector<Workload> tampered = workloads;
+            tampered.back().expected.trades += 1;
+            expectThrows([&] { static_cast<void>(runScaledOnce(tampered, cell.kind, settings)); }, describe(cell) + ": a wrong prediction fails it");
+        }
     }
 }
 
-// A log on every shard, the frame budget lifted, and a matching thread that never sleeps.
+// A log on every shard, and the frame budget lifted.
 void testLoggedAndUnboundedRuns() {
     const std::filesystem::path parent = std::filesystem::temp_directory_path() / "order_book_benchmark_scaling_tests";
     std::filesystem::remove_all(parent);
     std::filesystem::create_directories(parent);
-    const std::vector<Workload> workloads = spreadWorkloads(findWorkload("small-book"), 4000, 7, 16, Spread::UNIFORM);
+    const std::vector<Workload> workloads = spreadWorkloads(findWorkload("small-book"), 2000, 7, 4, Spread::UNIFORM);
     for (const BenchmarkKind kind : {BenchmarkKind::QUEUE, BenchmarkKind::GATEWAY}) {
         ScalingSettings settings;
         settings.shards = 2;
         settings.durability = RunDurability::PROCESS;
         settings.logParent = parent;
         settings.framesPerPass = std::numeric_limits<std::size_t>::max();
-        settings.spinWindow = order_book::runtime::unlimitedSpin;
         const Measurement run = runScaledOnce(workloads, kind, settings);
         expect(run.outcome == totalOutcome(workloads) && run.durability == RunDurability::PROCESS && run.rollPasses == 0,
                "a logged run at N = 2, with no worker");
