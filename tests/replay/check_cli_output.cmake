@@ -15,8 +15,13 @@ if(CLEAN)
     file(REMOVE_RECURSE "${CLEAN}")
 endif()
 
+# PROBE: run Emscripten output under node
+set(probe_runner)
+if("${CLI}" MATCHES "[.]js$")
+    set(probe_runner "C:/dev/tools/emsdk/node/24.19.0_64bit/node.exe")
+endif()
 execute_process(
-    COMMAND "${CLI}" ${args}
+    COMMAND ${probe_runner} "${CLI}" ${args}
     WORKING_DIRECTORY "${WORKING_DIRECTORY}"
     RESULT_VARIABLE actual_exit
     OUTPUT_FILE "${actual_stdout_file}"

@@ -94,7 +94,7 @@ namespace order_book::runtime {
                 throw failure("rename " + source.string() + " to", target.string(), error);
             }
 #else
-#ifdef RENAME_NOREPLACE
+#if defined(RENAME_NOREPLACE) && !defined(__EMSCRIPTEN__)  // PROBE: no renameat2 in Emscripten's libc
             // rename replaces in one step, as POSIX has it.
             int renamed = replacing ? ::rename(source.c_str(), target.c_str())
                                     : ::renameat2(AT_FDCWD, source.c_str(), AT_FDCWD, target.c_str(), RENAME_NOREPLACE);
@@ -294,6 +294,10 @@ namespace order_book::runtime {
             // current file still has room, and Linux reads the unwritten extent as zeros. A file
             // system with no fallocate gets a sparse end instead, which a full drive fails later.
             void extend(std::uint64_t size) override {
+#ifdef __EMSCRIPTEN__
+                setEnd(size, "extend");  // PROBE: no fallocate in Emscripten's libc
+                return;
+#endif
                 for (;;) {
                     if (::fallocate(descriptor, 0, 0, static_cast<off_t>(size)) == 0) {
                         return;

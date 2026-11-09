@@ -3,8 +3,13 @@
 # ignores the exit status, and WILL_FAIL ignores the reason, so neither proves this alone.
 # Invoked by CTest with -D for PROGRAM, ARGS (separated by '|'), OUTPUT_REGEX, and EXPECTED_EXIT.
 string(REPLACE "|" ";" args "${ARGS}")
+# PROBE: run Emscripten output under node
+set(probe_runner)
+if("${PROGRAM}" MATCHES "[.]js$")
+    set(probe_runner "C:/dev/tools/emsdk/node/24.19.0_64bit/node.exe")
+endif()
 execute_process(
-    COMMAND "${PROGRAM}" ${args}
+    COMMAND ${probe_runner} "${PROGRAM}" ${args}
     RESULT_VARIABLE actual_exit
     OUTPUT_VARIABLE output
     ERROR_VARIABLE output)

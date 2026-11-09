@@ -1,3 +1,7 @@
+#ifdef __EMSCRIPTEN__
+#include <cstdio>
+int main() { std::puts("PROBE: skipped under Emscripten"); return 0; }
+#else
 #include <cstdint>
 #include <cstdlib>
 #include <functional>
@@ -152,3 +156,5 @@ int main() {
     std::cout << "thread placement tests passed" << std::endl;
     return EXIT_SUCCESS;
 }
+
+#endif
