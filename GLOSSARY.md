@@ -237,7 +237,7 @@ _Avoid_: restore, restart
 ## The gateway
 
 **Gateway**:
-The part of the engine that clients talk to over TCP. It takes commands from connections, refuses those that may not enter, and sends each command's events back to whoever sent it.
+The part of the engine that clients talk to. It takes commands from connections, refuses those that may not enter, and sends each command's events back to whoever sent it.
 _Avoid_: server, front end
 
 **Gateway thread**:
@@ -245,7 +245,7 @@ One of the threads that serve connections. A connection stays on one gateway thr
 _Avoid_: I/O thread, network thread
 
 **Connection**:
-One TCP connection from a client to the gateway. Nothing about it outlives it: no identity, no numbering, nothing to resume. Its resting orders are unaffected when it closes, and the book never knows which connection sent a command.
+One ordered stream of bytes each way between a client and the gateway: a TCP connection natively, an in-page connection in a browser tab, which behaves the same. Nothing about it outlives it: no identity, no numbering, nothing to resume. Its resting orders are unaffected when it closes, and the book never knows which connection sent a command.
 _Avoid_: session (nothing here survives a reconnect, and the word also names a trading session), client (a client may open several)
 
 **Frame**:
@@ -271,6 +271,12 @@ _Avoid_: rejected (a rejection is the book's answer to a command in its command 
 **Protocol error**:
 A fault in a connection's frames rather than in a command: nothing can answer it as a command, so the gateway answers what is in flight, reports the error, and closes the connection.
 _Avoid_: reject, parse error (a parse error belongs to a file)
+
+## In the browser
+
+**Engine worker**:
+The Web Worker that holds the engine when it runs in a browser tab. The page talks to the engine only through it, so nothing the page does can hold the engine up, and ending it ends the whole engine at once.
+_Avoid_: engine thread, wasm worker
 
 ## Measurement
 
