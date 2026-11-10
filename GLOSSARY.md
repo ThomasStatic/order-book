@@ -278,6 +278,10 @@ _Avoid_: reject, parse error (a parse error belongs to a file)
 The Web Worker that holds the engine when it runs in a browser tab. The page talks to the engine only through it, so nothing the page does can hold the engine up, and ending it ends the whole engine at once.
 _Avoid_: engine thread, wasm worker
 
+**Page store**:
+The copy of the engine's command logs and checkpoints that the page keeps, outside the engine worker, so ending the worker leaves it whole. Each new engine worker starts from it, and a reload loses it.
+_Avoid_: drive, mirror
+
 ## Measurement
 
 **Service time**:
