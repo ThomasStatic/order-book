@@ -24,11 +24,15 @@
 #include "order_book/network/in_memory_socket_set.hpp"
 #include "order_book/network/stop_source.hpp"
 #include "order_book/runtime/engine_settings.hpp"
+#include "order_book/runtime/instruments.hpp"
 #include "order_book/runtime/log_storage.hpp"
+#include "order_book/runtime/page_log_storage.hpp"
+#include "order_book/wasm/shadow_books.hpp"
+#include "shadow_check.hpp"
 
 // The whole engine in this process, through the injected-parts entry: gateway threads over a
-// THREADED InMemorySocketSet, the log and checkpoints in an InMemoryLogStorage, and a stop this
-// test sends. It stands in, under Emscripten, for the suites that need TCP or a child process.
+// THREADED InMemorySocketSet, the log and checkpoints in an in-memory store (for the session, the
+// page's, with shadow books following it), and a stop this test sends. It stands in, under Emscripten, for the suites that need TCP or a child process.
 // See docs/internals/network.md.
 namespace {
 
@@ -147,11 +151,27 @@ cli::CommandResult send(InMemorySocketSet& network, const std::string& file) {
     return cli::finishSend(session, stream);
 }
 
+// The four sample symbols, placed by hash on two shards, as settingsFor's engine places them.
+runtime::InstrumentDirectory directoryFor(const std::filesystem::path& list) {
+    runtime::InstrumentListResult parsed = runtime::parseInstrumentList(readFile(list), 2);
+    expect(std::holds_alternative<std::vector<runtime::Instrument>>(parsed), "the instrument list parses");
+    return runtime::InstrumentDirectory(std::get<std::vector<runtime::Instrument>>(parsed), 2);
+}
+
+const std::vector<replay::Symbol> sampleSymbols{*replay::Symbol::parse("AAPL"), *replay::Symbol::parse("BRK.B"),
+                                                *replay::Symbol::parse("MSFT"), *replay::Symbol::parse("ZZZ")};
+
 // Start, a session whose answers are what replay prints for the same file, a clean stop, and a
-// second start that recovers the first's log and checkpoints from the same store.
+// second start that recovers the first's log and checkpoints from the same store. The store is
+// the page's, with shadow books following it (ADR 0018), rebuilt before each start: at each
+// clean stop they equal the shards' books.
 void testASessionThenACleanStop(const std::filesystem::path& replayDir, const std::filesystem::path& list) {
-    const auto storage = std::make_shared<runtime::InMemoryLogStorage>();
+    wasm::ShadowBooks shadows(directoryFor(list));
+    const auto storage = std::make_shared<runtime::PageLogStorage>([&shadows](const runtime::PageLogStorage::Change& change) {
+        shadows.follow(change);
+    });
     {
+        shadows.rebuild(*storage);
         Run run(settingsFor(list), storage);
         run.waitUntilReady();
         const cli::CommandResult sent = send(*run.network, (replayDir / "valid/v3_two_instruments.csv").string());
@@ -165,12 +185,18 @@ void testASessionThenACleanStop(const std::filesystem::path& replayDir, const st
         expect(report.starts_with("stopped\n") && report.find("\ntotal: books=4 ") != std::string::npos,
                "the report starts with the stop and counts the four books, with nothing printed at ready:\n" + report);
         expect(!storage->names().empty(), "the log and checkpoints are in the store it was given");
+        const std::optional<std::string> difference = wasm_testing::shadowsDifferFromTheStop(shadows, sampleSymbols, storage->files());
+        expect(!difference, "each shadow equals its shard's book at the clean stop: " + difference.value_or(""));
+        expect(shadows.records(0) + shadows.records(1) == 6, "the shadows ran the file's six records");
     }
 
+    shadows.rebuild(*storage);
     Run again(settingsFor(list), storage);
     again.waitUntilReady();
     again.stop.request();
     expect(again.finish() == EngineExit::CLEAN_STOP, "the restart stops cleanly too:\n" + again.streams->diagnostics.str());
+    const std::optional<std::string> difference = wasm_testing::shadowsDifferFromTheStop(shadows, sampleSymbols, storage->files());
+    expect(!difference, "each shadow rebuilt from the store equals its shard's book: " + difference.value_or(""));
     // A clean stop publishes every book where its log ends, so each shard's replay begins at its
     // log's end (from= equals replayed=, which is that end), and the two ends hold the file's six
     // records, for the four books.

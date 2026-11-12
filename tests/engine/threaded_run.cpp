@@ -26,9 +26,11 @@
 #include "order_book/runtime/durable_position.hpp"
 #include "order_book/runtime/log_files.hpp"
 #include "order_book/runtime/log_storage.hpp"
+#include "order_book/runtime/page_log_storage.hpp"
 #include "order_book/runtime/log_writer.hpp"
 #include "order_book/runtime/ring.hpp"
 #include "order_book/runtime/shard.hpp"
+#include "order_book/wasm/shadow_books.hpp"
 
 namespace order_book::engine_testing {
 
@@ -107,6 +109,7 @@ namespace order_book::engine_testing {
             Doorbell writerBell;
             std::thread writerThread;
             std::uint64_t logEnd = 0;  // the writer's, once it has stopped
+            std::vector<std::vector<std::byte>> images;  // each book's by slot, once its matching thread stopped
         };
 
         void run(const ThreadedConfig& config, ThreadedResult& result) {
@@ -116,7 +119,10 @@ namespace order_book::engine_testing {
             const std::size_t commandSlots = config.ringSlots == 0 ? defaultCommandRingSlots : config.ringSlots;
             const std::size_t responseSlots = config.ringSlots == 0 ? defaultResponseRingSlots : config.ringSlots;
             const std::size_t logSlots = config.ringSlots == 0 ? defaultLogRingRecords : config.ringSlots;
-            InMemoryLogStorage storage;
+            // The page's store, which the shadow books follow (ADR 0018), so they can be held to
+            // the shards' books once every thread has stopped.
+            wasm::ShadowBooks shadows(directory);
+            PageLogStorage storage([&shadows](const PageLogStorage::Change& change) { shadows.follow(change); });
             Housekeeping housekeeping(storage, directory, Durability::MACHINE,
                                       leastLogFileBytes(directory) + (recordsPerSmallestFile - 1) * replay::logRecordBytes);
 
@@ -190,6 +196,11 @@ namespace order_book::engine_testing {
                         loop.run();
                         if (const std::optional<ShardViolation> violation = shard.checkInvariants()) {
                             throw std::runtime_error("the stopped shard, durable position included: " + violation->message);
+                        }
+                        for (std::uint32_t slot = 0; slot < shard.size(); ++slot) {
+                            const OrderBook& book = shard.books().book(slot);
+                            std::vector<std::byte>& image = own.images.emplace_back(book.imageSize());
+                            image.resize(book.writeImage(image));
                         }
                     } catch (...) {
                         failures.record("matching thread " + std::to_string(number));
@@ -285,6 +296,24 @@ namespace order_book::engine_testing {
                 }
                 for (const replay::ReplayRecord& record : read.records) {
                     logged[record.symbol.text()].push_back(record.command);
+                }
+            }
+            // Each shadow book ran every record again as it reached the store, so it equals its
+            // shard's book, or the engine isn't deterministic.
+            if (const std::optional<std::string> problem = shadows.problem()) {
+                result.differences.push_back("the shadow books stopped following the log: " + *problem);
+            }
+            for (std::uint32_t number = 0; number < config.shards; ++number) {
+                if (shadows.records(number) != shards[number]->logEnd) {
+                    result.differences.push_back("shard " + std::to_string(number) + "'s shadows ran " +
+                                                 std::to_string(shadows.records(number)) + " records of its log's " +
+                                                 std::to_string(shards[number]->logEnd));
+                }
+                const std::span<const Instrument> onShard = directory.onShard(number);
+                for (std::size_t slot = 0; slot < onShard.size(); ++slot) {
+                    if (shadows.image(onShard[slot].symbol) != shards[number]->images.at(slot)) {
+                        result.differences.push_back(onShard[slot].symbol.text() + "'s shadow book differs from its shard's");
+                    }
                 }
             }
 

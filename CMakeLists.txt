@@ -274,6 +274,19 @@ target_link_libraries(order_book_cli_commands PUBLIC order_book_network)
 order_book_enable_warnings(order_book_cli_commands)
 order_book_enable_sanitizers(order_book_cli_commands)
 
+# The browser engine's native half (docs/internals/wasm.md): the shipped settings, the shadow
+# books, and the engine started on the page store and in-page connections. Built and tested on
+# every platform; the module that wraps it for the page is Emscripten's alone.
+add_library(order_book_wasm STATIC
+    src/wasm/browser_engine.cpp
+    src/wasm/shadow_books.cpp
+)
+
+target_compile_features(order_book_wasm PUBLIC cxx_std_20)
+target_link_libraries(order_book_wasm PUBLIC order_book_network)
+order_book_enable_warnings(order_book_wasm)
+order_book_enable_sanitizers(order_book_wasm)
+
 add_executable(order_book_cli
     apps/order_book_cli.cpp
 )
@@ -1131,7 +1144,7 @@ if(BUILD_TESTING)
 
     target_compile_features(order_book_engine_testing PUBLIC cxx_std_20)
     target_include_directories(order_book_engine_testing PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/engine)
-    target_link_libraries(order_book_engine_testing PUBLIC order_book_randomized order_book_network)
+    target_link_libraries(order_book_engine_testing PUBLIC order_book_randomized order_book_network order_book_wasm)
     order_book_enable_warnings(order_book_engine_testing)
     order_book_enable_sanitizers(order_book_engine_testing)
 
@@ -1226,7 +1239,7 @@ if(BUILD_TESTING)
     )
 
     target_compile_features(engine_in_process_tests PRIVATE cxx_std_20)
-    target_link_libraries(engine_in_process_tests PRIVATE order_book_cli_commands)
+    target_link_libraries(engine_in_process_tests PRIVATE order_book_cli_commands order_book_wasm)
     order_book_enable_warnings(engine_in_process_tests)
     order_book_enable_sanitizers(engine_in_process_tests)
     add_test(NAME engine_in_process_tests
@@ -1235,6 +1248,19 @@ if(BUILD_TESTING)
         COMMAND engine_in_process_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay ${CMAKE_CURRENT_BINARY_DIR}/engine-in-process-forced forced)
     set_tests_properties(engine_in_process_tests engine_in_process_forced_stop PROPERTIES
         LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
+
+    # order_book_wasm's settings, image decoding, shadow books, and a BrowserEngine run.
+    add_executable(order_book_wasm_tests
+        tests/wasm_engine_test.cpp
+    )
+
+    target_compile_features(order_book_wasm_tests PRIVATE cxx_std_20)
+    target_link_libraries(order_book_wasm_tests PRIVATE order_book_wasm order_book_cli_commands)
+    order_book_enable_warnings(order_book_wasm_tests)
+    order_book_enable_sanitizers(order_book_wasm_tests)
+    add_test(NAME order_book_wasm_tests
+        COMMAND order_book_wasm_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay ${CMAKE_CURRENT_BINARY_DIR}/order-book-wasm)
+    set_tests_properties(order_book_wasm_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
 
     add_executable(engine_settings_tests
         tests/engine_settings_test.cpp

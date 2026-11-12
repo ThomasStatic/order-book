@@ -4,6 +4,8 @@
 #include <array>
 #include <atomic>
 #include <cstring>
+#include <functional>
+#include <map>
 #include <memory>
 #include <random>
 #include <span>
@@ -853,48 +855,74 @@ namespace order_book::engine_testing {
         };
     }  // namespace
 
-    ShardLogRecords readShardLog(const runtime::InMemoryLogStorage& storage, std::uint32_t shard) {
-        ShardLogRecords read;
-        // Named for their first positions, 20 digits each, so they sort in order.
-        const std::string prefix = runtime::logFileName(shard, 0).substr(0, 9);
-        for (const std::string& name : storage.names()) {
-            if (!name.starts_with(prefix)) {
-                continue;
+    namespace {
+
+        // readShardLog over any store: its names in order, and each file's bytes, checked whole.
+        ShardLogRecords readShardFiles(const std::vector<std::string>& names, std::uint32_t shard,
+                                       const std::function<std::vector<std::byte>(const std::string&)>& wholeFile) {
+            ShardLogRecords read;
+            // Named for their first positions, 20 digits each, so they sort in order.
+            const std::string prefix = runtime::logFileName(shard, 0).substr(0, 9);
+            for (const std::string& name : names) {
+                if (!name.starts_with(prefix)) {
+                    continue;
+                }
+                ++read.files;
+                const std::vector<std::byte> bytes = wholeFile(name);
+                std::istringstream input(std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()), std::ios::binary);
+                replay::CommandLogReader reader(input);
+                std::uint64_t position = read.firstPosition + read.records.size();
+                for (;;) {
+                    const replay::ReadResult next = reader.next();
+                    if (const auto* record = std::get_if<replay::ReplayRecord>(&next)) {
+                        read.records.push_back(*record);
+                    } else if (const auto* error = std::get_if<replay::ParseError>(&next)) {
+                        throw std::runtime_error(name + " doesn't read back: " + error->message);
+                    } else {
+                        break;
+                    }
+                }
+                if (read.files == 1 && reader.header() != nullptr) {
+                    read.firstPosition = reader.header()->firstPosition;  // retention may have deleted those before it
+                    position = read.firstPosition;
+                } else if (reader.header() != nullptr && reader.header()->firstPosition > position) {
+                    // Retention deleted the files between, and a machine crash brought back an older
+                    // one whose removal had not reached the drive: the log starts again here.
+                    read.records.erase(read.records.begin(), read.records.begin() + static_cast<std::ptrdiff_t>(position - read.firstPosition));
+                    read.firstPosition = reader.header()->firstPosition;
+                    position = read.firstPosition;
+                }
+                if (reader.header() == nullptr || reader.header()->firstPosition != position) {
+                    throw std::runtime_error(name + " doesn't start where the last file ended, " + std::to_string(position));
+                }
             }
-            ++read.files;
+            return read;
+        }
+
+    }  // namespace
+
+    ShardLogRecords readShardLog(const runtime::InMemoryLogStorage& storage, std::uint32_t shard) {
+        return readShardFiles(storage.names(), shard, [&](const std::string& name) {
             const std::optional<runtime::InMemoryLogStorage::File> file = storage.file(name);
             if (!file->closed || file->bytes.size() != file->size) {
                 throw std::runtime_error(name + " wasn't closed whole: " + std::to_string(file->bytes.size()) + " of " +
                                          std::to_string(file->size) + " bytes written");
             }
-            std::istringstream input(std::string(reinterpret_cast<const char*>(file->bytes.data()), file->bytes.size()), std::ios::binary);
-            replay::CommandLogReader reader(input);
-            std::uint64_t position = read.firstPosition + read.records.size();
-            for (;;) {
-                const replay::ReadResult next = reader.next();
-                if (const auto* record = std::get_if<replay::ReplayRecord>(&next)) {
-                    read.records.push_back(*record);
-                } else if (const auto* error = std::get_if<replay::ParseError>(&next)) {
-                    throw std::runtime_error(name + " doesn't read back: " + error->message);
-                } else {
-                    break;
-                }
-            }
-            if (read.files == 1 && reader.header() != nullptr) {
-                read.firstPosition = reader.header()->firstPosition;  // retention may have deleted those before it
-                position = read.firstPosition;
-            } else if (reader.header() != nullptr && reader.header()->firstPosition > position) {
-                // Retention deleted the files between, and a machine crash brought back an older
-                // one whose removal had not reached the drive: the log starts again here.
-                read.records.erase(read.records.begin(), read.records.begin() + static_cast<std::ptrdiff_t>(position - read.firstPosition));
-                read.firstPosition = reader.header()->firstPosition;
-                position = read.firstPosition;
-            }
-            if (reader.header() == nullptr || reader.header()->firstPosition != position) {
-                throw std::runtime_error(name + " doesn't start where the last file ended, " + std::to_string(position));
-            }
+            return file->bytes;
+        });
+    }
+
+    ShardLogRecords readShardLog(const runtime::PageLogStorage& storage, std::uint32_t shard) {
+        std::map<std::string, std::vector<std::byte>> files;
+        for (runtime::PageLogStorage::StoredFile& file : storage.files()) {
+            files.emplace(file.name, std::move(file.bytes));
         }
-        return read;
+        std::vector<std::string> names;
+        for (const auto& entry : files) {
+            names.push_back(entry.first);
+        }
+        // A zero tail, which a clean stop cuts, reads as a record that doesn't chain.
+        return readShardFiles(names, shard, [&](const std::string& name) { return files.at(name); });
     }
 
     std::optional<Command> convertForEngine(const Command& command) {

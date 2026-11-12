@@ -13,6 +13,7 @@
 #include "order_book/order_book.hpp"
 #include "order_book/runtime/durability.hpp"
 #include "order_book/runtime/log_storage.hpp"
+#include "order_book/runtime/page_log_storage.hpp"
 #include "order_book/symbol.hpp"
 
 // The engine's single-threaded harness: generated commands through the real entry check and
@@ -206,7 +207,9 @@ namespace order_book::engine_testing {
     // ended starts the log again: retention deleted the files between, and a machine crash brought
     // back an older one whose removal had not reached the drive, which no recovery reads. Throws
     // std::runtime_error if a file wasn't closed whole, doesn't read back, or starts before where
-    // the last one ended.
+    // the last one ended. The page's store can't say a file was closed, but a tail left uncut
+    // doesn't read back.
     ShardLogRecords readShardLog(const runtime::InMemoryLogStorage& storage, std::uint32_t shard);
+    ShardLogRecords readShardLog(const runtime::PageLogStorage& storage, std::uint32_t shard);
 
 }  // namespace order_book::engine_testing
