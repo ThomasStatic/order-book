@@ -224,6 +224,7 @@ add_library(order_book_runtime STATIC
     src/runtime/log_writer.cpp
     src/runtime/matching_loop.cpp
     src/runtime/offline.cpp
+    src/runtime/page_log_storage.cpp
     src/runtime/recovery.cpp
     src/runtime/roll_forward.cpp
     src/runtime/shard.cpp

@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <map>
 #include <memory>
 #include <optional>
 #include <span>
@@ -26,6 +27,7 @@
 #include "order_book/runtime/log_files.hpp"
 #include "order_book/runtime/log_storage.hpp"
 #include "order_book/runtime/log_writer.hpp"
+#include "order_book/runtime/page_log_storage.hpp"
 
 // The log writer and the housekeeping that makes its files, as plain objects over the in-memory
 // LogStorage, then on real threads, then on real files. What is written is read back through
@@ -588,6 +590,8 @@ void expectRecoveryCalls(LogStorage& storage, const std::string& which) {
 void testRecoveryCalls() {
     InMemoryLogStorage memory;
     expectRecoveryCalls(memory, "in memory");
+    PageLogStorage page([](const PageLogStorage::Change&) {});
+    expectRecoveryCalls(page, "the page store");
     const fs::path directory = fs::temp_directory_path() / "order_book_log_writer_tests_recovery";
     fs::remove_all(directory);
     fs::create_directories(directory);
@@ -940,6 +944,87 @@ void testWatchingEachChange() {
 
 }  // namespace
 
+// The page store's changes: each one told before its call returns, in order, so a page that
+// makes each in its own copy holds the store's files, which a new store is then built from. A
+// flush tells nothing, a rename never replaces, and a removed file's writes reach no one.
+void testThePageStore() {
+    using Kind = PageLogStorage::Change::Kind;
+    std::vector<std::string> told;
+    std::map<std::string, std::vector<std::byte>> copy;
+    PageLogStorage storage([&](const PageLogStorage::Change& change) {
+        static const char* const kinds[] = {"create", "write", "extend", "cut", "rename", "replace", "remove"};
+        std::string line = std::string(kinds[static_cast<int>(change.kind)]) + " " + change.name;
+        if (change.kind == Kind::WRITE) {
+            line += " " + std::to_string(change.offset) + "+" + std::to_string(change.bytes.size());
+        } else if (change.kind == Kind::EXTEND || change.kind == Kind::CUT) {
+            line += " " + std::to_string(change.size);
+        } else if (change.kind == Kind::RENAME || change.kind == Kind::REPLACE) {
+            line += " " + change.to;
+        }
+        told.push_back(line);
+        PageLogStorage::apply(copy, change);
+    });
+    const std::vector<std::byte> bytes{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}, std::byte{5}};
+    std::unique_ptr<LogFile> log = storage.create("log.tmp", Durability::MACHINE);
+    log->write(0, bytes);
+    log->extend(64);
+    log->extend(32);  // never shortens, so tells nothing
+    log->flush();
+    log->write(10, std::span<const std::byte>(bytes).first(2));
+    log->rename("log");
+    std::unique_ptr<LogFile> checkpoint = storage.create("ckpt.tmp", Durability::PROCESS);
+    checkpoint->write(0, std::span<const std::byte>(bytes).first(3));
+    try {
+        checkpoint->rename("log");
+        expect(false, "the page store: a rename never replaces a file");
+    } catch (const LogStorageError& error) {
+        expect(error.kind() == LogStorageError::Kind::EXISTS, std::string("the page store: it is refused as existing: ") + error.what());
+    }
+    checkpoint->rename("ckpt");
+    std::unique_ptr<LogFile> rewrapped = storage.create("ckpt.new", Durability::PROCESS);
+    rewrapped->write(0, std::span<const std::byte>(bytes).subspan(2));
+    rewrapped->replace("ckpt");
+    log->cut(12);
+    std::unique_ptr<LogFile> gone = storage.create("gone", Durability::PROCESS);
+    storage.remove("gone");
+    gone->write(0, bytes);  // to a removed file, so no one hears
+    try {
+        gone->rename("back");
+        expect(false, "the page store: a removed file can't be renamed into view");
+    } catch (const LogStorageError& error) {
+        expect(error.kind() == LogStorageError::Kind::FAILED, std::string("the page store: and that is a failure: ") + error.what());
+    }
+
+    const std::vector<std::string> expected{"create log.tmp", "write log.tmp 0+5", "extend log.tmp 64", "write log.tmp 10+2",
+                                            "rename log.tmp log",  "create ckpt.tmp",  "write ckpt.tmp 0+3",  "rename ckpt.tmp ckpt",
+                                            "create ckpt.new",     "write ckpt.new 0+3", "replace ckpt.new ckpt", "cut log 12",
+                                            "create gone",         "remove gone"};
+    std::string joined;
+    for (const std::string& line : told) {
+        joined += line + "\n";
+    }
+    expect(told == expected, "the page store tells every change, in order, and a flush nothing:\n" + joined);
+
+    std::vector<std::byte> log12(12, std::byte{0});
+    std::copy(bytes.begin(), bytes.end(), log12.begin());
+    log12[10] = std::byte{1};
+    log12[11] = std::byte{2};
+    const std::vector<PageLogStorage::StoredFile> files{{"ckpt", {std::byte{3}, std::byte{4}, std::byte{5}}}, {"log", log12}};
+    expect(storage.files() == files, "the page store holds every byte to each file's size, zeros included");
+    std::vector<PageLogStorage::StoredFile> copied;
+    for (const auto& [name, held] : copy) {
+        copied.push_back({name, held});
+    }
+    expect(copied == files, "and a copy that made each change it was told of holds the same files");
+
+    PageLogStorage rebuilt([](const PageLogStorage::Change&) {}, copied);
+    expect(rebuilt.files() == files && rebuilt.names() == std::vector<std::string>{"ckpt", "log"},
+           "a store built from that copy holds them too");
+    std::vector<std::byte> read(16, std::byte{9});
+    expect(rebuilt.open("log")->read(0, read) == 12 && std::equal(log12.begin(), log12.end(), read.begin()),
+           "and reads them back");
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 && std::string_view(argv[1]).starts_with("abort-")) {
         runFailingWriter(std::string_view(argv[1]).substr(6));
@@ -964,6 +1049,7 @@ int main(int argc, char** argv) {
     testCutsAndRemovesLandWhole();
     testAReplace();
     testWatchingEachChange();
+    testThePageStore();
     std::cout << "log writer tests passed" << std::endl;
     return EXIT_SUCCESS;
 }
