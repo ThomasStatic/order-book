@@ -1,0 +1,141 @@
+// engine-worker.js: the engine worker (spec #127, "The module and the engine worker";
+// docs/internals/wasm.md). Our own ES-module worker: it imports the module, whose pthread
+// workers start from the module's own .js, relays messages between the page and the module,
+// and services Emscripten's proxied calls by never blocking. The engine runs on a pthread of its
+// own, started by `start`.
+//
+// Page to worker, each a request {id, type, ...} answered by {id, ok, ...}:
+//   init {protocol, module, wasm, store}   first, and only once: nothing else is accepted before it
+//   start                                   a run on the store; `ready` follows, or `exited`
+//   stop                                    a first starts the clean stop, a second forces it
+//   run {line}                              a terminal line: {stdout, stderr, exit} once answered
+// Worker to page, in one ordered channel with the replies:
+//   create, write {offset, bytes}, extend {size}, cut {size}, rename {to}, replace {to}, remove,
+//     each {name}: one page-store change each
+//   line {stream: "report" | "diagnostics", text}
+//   seeded {stdout, stderr, exit}, ready {instruments, placement}, exited {code, name}
+//   aborted {message}
+// No JavaScript exception crosses postMessage: one escaping here, or the module aborting on any
+// thread, is posted as `aborted`.
+
+export const PROTOCOL_VERSION = 1;
+
+let module = null;
+let engine = null;
+let initializing = false;
+let pendingRun = null;  // the id of the run waiting for its answer
+
+function post(message, transfer = []) {
+    self.postMessage(message, transfer);
+}
+
+function reply(id, fields) {
+    post({id, ...fields});
+}
+
+function aborted(what) {
+    post({type: "aborted", message: String(what && what.message ? what.message : what)});
+}
+
+// Posts what the module gave, in its order, the terminal's answer as the reply to its request.
+function postEvents(events) {
+    for (const event of events) {
+        if (event.type === "answer") {
+            if (pendingRun !== null) {
+                const id = pendingRun;
+                pendingRun = null;
+                reply(id, {ok: true, stdout: event.stdout, stderr: event.stderr, exit: event.exit});
+            }
+        } else if (event.type === "write") {
+            post(event, [event.bytes.buffer]);
+        } else {
+            post(event);
+        }
+    }
+}
+
+// The module's call, on this thread, whenever its queue has something.
+function takeEvents() {
+    if (!engine) {
+        return;
+    }
+    try {
+        postEvents(engine.takeEvents());
+    } catch (error) {
+        aborted(error);
+    }
+}
+
+async function init(request) {
+    if (module || initializing) {
+        return {ok: false, error: "already initialized"};
+    }
+    if (request.protocol !== PROTOCOL_VERSION) {
+        return {ok: false, error: "protocol", protocol: PROTOCOL_VERSION};
+    }
+    initializing = true;
+    try {
+        const {default: createOrderBookModule} = await import(request.module);
+        module = await createOrderBookModule({
+            locateFile: (path) => (path.endsWith(".wasm") ? request.wasm : new URL(path, request.module).href),
+            onAbort: aborted,
+            print: (text) => post({type: "line", stream: "stdout", text}),
+            printErr: (text) => post({type: "line", stream: "stderr", text}),
+        });
+        module.onEngineEvents = takeEvents;
+        if (module.enterSamples() !== 0) {
+            return {ok: false, error: "the module's samples are missing"};
+        }
+        engine = new module.Engine(request.store || []);
+        return {ok: true, protocol: PROTOCOL_VERSION, release: module.release()};
+    } finally {
+        initializing = false;
+    }
+}
+
+async function handle(request) {
+    if (!request || typeof request.id !== "number") {
+        return;
+    }
+    const {id, type} = request;
+    try {
+        if (type === "init") {
+            reply(id, await init(request));
+            return;
+        }
+        if (!engine) {
+            reply(id, {ok: false, error: "init comes first"});
+            return;
+        }
+        if (type === "start") {
+            const started = engine.start();
+            reply(id, {ok: started.ok, ...(started.ok ? {} : {error: started.error})});
+        } else if (type === "stop") {
+            engine.stop();
+            reply(id, {ok: true});
+        } else if (type === "run") {
+            if (pendingRun !== null) {
+                reply(id, {ok: false, error: "the last line is still running"});
+                return;
+            }
+            const result = engine.run(String(request.line));
+            if (!result.done) {
+                pendingRun = id;  // its answer may be among the events
+            }
+            postEvents(result.events);
+            if (result.done) {
+                reply(id, {ok: true, stdout: result.stdout, stderr: result.stderr, exit: result.exit});
+            }
+        } else {
+            reply(id, {ok: false, error: "unknown request " + String(type)});
+        }
+    } catch (error) {
+        aborted(error);
+    }
+}
+
+// One request at a time, in the order they came, init's loading included.
+let queue = Promise.resolve();
+self.onmessage = (event) => {
+    queue = queue.then(() => handle(event.data));
+};

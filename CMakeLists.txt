@@ -289,6 +289,58 @@ target_link_libraries(order_book_wasm PUBLIC order_book_cli_commands)
 order_book_enable_warnings(order_book_wasm)
 order_book_enable_sanitizers(order_book_wasm)
 
+# The module the engine worker imports (docs/internals/wasm.md): order_book_wasm.js and .wasm,
+# only under Emscripten. Its link settings are the shipped ones and belong to this target alone:
+# 128 MiB of memory that never grows, a strict pool of exactly the engine's threads, counted from
+# include/order_book/wasm/settings.hpp so the count lives in one place, and its stacks. It embeds
+# the instrument list, the seed, and the replay samples, read-only.
+if(EMSCRIPTEN)
+    file(READ ${CMAKE_CURRENT_SOURCE_DIR}/include/order_book/wasm/settings.hpp order_book_wasm_settings)
+    foreach(count browserShards browserGatewayThreads browserRollWorkers)
+        string(REGEX MATCH "${count} = ([0-9]+);" order_book_wasm_count "${order_book_wasm_settings}")
+        if(NOT order_book_wasm_count)
+            message(FATAL_ERROR "settings.hpp no longer says '${count} = <number>;', which the module's pool is counted from")
+        endif()
+        set(order_book_wasm_${count} ${CMAKE_MATCH_1})
+    endforeach()
+    # 2N + M + R + 2: settings.hpp's browserEngineThreads.
+    math(EXPR order_book_wasm_pool
+         "2 * ${order_book_wasm_browserShards} + ${order_book_wasm_browserGatewayThreads} + ${order_book_wasm_browserRollWorkers} + 2")
+
+    add_executable(order_book_wasm_module
+        src/wasm/module/engine_module.cpp
+    )
+    set_target_properties(order_book_wasm_module PROPERTIES OUTPUT_NAME order_book_wasm SUFFIX ".js" ORDER_BOOK_WASM_MODULE TRUE)
+    target_compile_features(order_book_wasm_module PRIVATE cxx_std_20)
+    target_compile_definitions(order_book_wasm_module PRIVATE ORDER_BOOK_WASM_RELEASE="${PROJECT_VERSION}")
+    target_compile_options(order_book_wasm_module PRIVATE -O3)
+    target_link_libraries(order_book_wasm_module PRIVATE order_book_wasm)
+    order_book_enable_warnings(order_book_wasm_module)
+    order_book_enable_sanitizers(order_book_wasm_module)
+    target_link_options(order_book_wasm_module PRIVATE
+        -O3
+        -lembind
+        -sMODULARIZE=1
+        -sEXPORT_ES6=1
+        -sEXPORT_NAME=createOrderBookModule
+        -sENVIRONMENT=worker,node
+        -sINITIAL_MEMORY=128MB
+        -sALLOW_MEMORY_GROWTH=0
+        -sPTHREAD_POOL_SIZE=${order_book_wasm_pool}
+        -sPTHREAD_POOL_SIZE_STRICT=2
+        -sDEFAULT_PTHREAD_STACK_SIZE=256KB
+        -sSTACK_SIZE=1MB
+        "SHELL:--embed-file ${CMAKE_CURRENT_SOURCE_DIR}/src/wasm/instruments.csv@/engine/instruments.csv"
+        "SHELL:--embed-file ${CMAKE_CURRENT_SOURCE_DIR}/src/wasm/seed.csv@/engine/seed.csv"
+        "SHELL:--embed-file ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay/valid@/samples/valid"
+        "SHELL:--embed-file ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay/malformed@/samples/malformed")
+    if(ORDER_BOOK_ENABLE_ASAN)
+        target_link_options(order_book_wasm_module PRIVATE "SHELL:--pre-js ${CMAKE_CURRENT_SOURCE_DIR}/tests/wasm_asan_options.js")
+    endif()
+    set_property(TARGET order_book_wasm_module APPEND PROPERTY LINK_DEPENDS
+                 ${CMAKE_CURRENT_SOURCE_DIR}/src/wasm/instruments.csv ${CMAKE_CURRENT_SOURCE_DIR}/src/wasm/seed.csv)
+endif()
+
 add_executable(order_book_cli
     apps/order_book_cli.cpp
 )
@@ -1274,6 +1326,16 @@ if(BUILD_TESTING)
     target_link_libraries(wasm_terminal_tests PRIVATE order_book_wasm)
     order_book_enable_warnings(wasm_terminal_tests)
     order_book_enable_sanitizers(wasm_terminal_tests)
+    # The module in the real engine worker under node --test (docs/internals/testing.md), playing
+    # the same sessions.
+    if(EMSCRIPTEN)
+        add_test(NAME wasm_module_sessions
+            COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} --test ${CMAKE_CURRENT_SOURCE_DIR}/tests/wasm/node/terminal_sessions.test.mjs)
+        set_tests_properties(wasm_module_sessions PROPERTIES
+            ENVIRONMENT "ORDER_BOOK_WASM_MODULE=$<TARGET_FILE:order_book_wasm_module>"
+            LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
+    endif()
+
     foreach(session basic options errors files send restart)
         add_test(NAME wasm_terminal_${session}
             COMMAND wasm_terminal_tests ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/wasm-terminal ${session})
@@ -1741,7 +1803,8 @@ if(EMSCRIPTEN)
     get_property(order_book_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
     foreach(target_name IN LISTS order_book_targets)
         get_target_property(target_type ${target_name} TYPE)
-        if(NOT target_type STREQUAL "EXECUTABLE")
+        get_target_property(shipped ${target_name} ORDER_BOOK_WASM_MODULE)
+        if(NOT target_type STREQUAL "EXECUTABLE" OR shipped)
             continue()
         endif()
         get_target_property(threads ${target_name} ORDER_BOOK_WASM_THREADS)
