@@ -34,8 +34,8 @@
 > cancel AAPL 99
 line 2: CancelRejected id=99 reason=ORDER_NOT_FOUND
 > cancel ZZZZ 1
-line 3: Refused symbol=ZZZZ id=1 code=UNKNOWN_INSTRUMENT
-[exit 4]
+! cancel: ZZZZ is not on the instrument list
+[exit 2]
 > replace AAPL 1 100
 ! replace: usage: replace SYMBOL ID PRICE QUANTITY [post-only] [owner=N] [stp=MODE]
 [exit 2]
@@ -53,4 +53,4 @@ line 3: Refused symbol=ZZZZ id=1 code=UNKNOWN_INSTRUMENT
 [exit 2]
 > buy AAPL 1 90
 assigned id=7
-line 4: OrderAccepted id=7 side=BUY price=90 qty=1
+line 3: OrderAccepted id=7 side=BUY price=90 qty=1

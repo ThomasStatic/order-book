@@ -211,6 +211,11 @@ namespace order_book::wasm {
             return failed(verb, (error->column.empty() ? std::string() : error->column + ": ") + error->message);
         }
         replay::ReplayRecord record = std::get<replay::ReplayRecord>(parsed);
+        // The list is fixed, so a symbol off it is refused here for every client command alike,
+        // and takes no line.
+        if (!shadows.shardOf(record.symbol)) {
+            return failed(verb, record.symbol.text() + " is not on the instrument list");
+        }
         if (standing) {
             standing->pump();
         }
@@ -222,8 +227,7 @@ namespace order_book::wasm {
         if (auto* add = std::get_if<replay::AddCommand>(&record.command)) {
             const std::optional<OrderId> id = shadows.assignOrderId(record.symbol);
             if (!id) {
-                return failed(verb, shadows.shardOf(record.symbol) ? "no order ID is left for " + record.symbol.text()
-                                                                   : record.symbol.text() + " is not on the instrument list");
+                return failed(verb, "no order ID is left for " + record.symbol.text());
             }
             add->orderId = *id;
             assigned = "assigned id=" + std::to_string(*id) + "\n";

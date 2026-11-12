@@ -12,6 +12,7 @@
 #include "order_book/book_image.hpp"
 #include "order_book/command.hpp"
 #include "order_book/command_log.hpp"
+#include "order_book/little_endian.hpp"
 #include "order_book/runtime/recovery.hpp"
 #include "order_book/runtime/shard.hpp"
 
@@ -25,19 +26,9 @@ namespace order_book::wasm {
         constexpr std::size_t orderRecordBytes = 24;
         constexpr std::size_t stopRecordBytes = 32;
 
-        std::uint32_t load32(std::span<const std::byte> bytes, std::size_t at) {
-            std::uint32_t value = 0;
-            for (std::size_t i = 4; i-- > 0;) {
-                value = (value << 8) | std::to_integer<std::uint32_t>(bytes[at + i]);
-            }
-            return value;
-        }
-
-        std::uint64_t load64(std::span<const std::byte> bytes, std::size_t at) {
-            return std::uint64_t{load32(bytes, at)} | (std::uint64_t{load32(bytes, at + 4)} << 32);
-        }
-
-        std::uint8_t load8(std::span<const std::byte> bytes, std::size_t at) { return std::to_integer<std::uint8_t>(bytes[at]); }
+        using little_endian::load32;
+        using little_endian::load64;
+        using little_endian::load8;
 
         [[noreturn]] void notAnImage(const std::string& why) { throw std::invalid_argument("not a book image: " + why); }
 
@@ -73,7 +64,6 @@ namespace order_book::wasm {
 
         std::vector<LevelView> levels(Cursor& cursor, std::uint32_t count, std::uint32_t levelStride, std::uint32_t orderStride) {
             std::vector<LevelView> side;
-            side.reserve(count);
             for (std::uint32_t i = 0; i < count; ++i) {
                 const std::span<const std::byte> level = cursor.next(levelStride, "a level");
                 LevelView view{load32(level, 0), load64(level, 8), {}};
@@ -145,7 +135,6 @@ namespace order_book::wasm {
         book.bids = levels(cursor, load32(image, 36), levelStride, orderStride);
         book.asks = levels(cursor, load32(image, 40), levelStride, orderStride);
         const std::uint32_t stops = load32(image, 48);
-        book.stops.reserve(stops);
         for (std::uint32_t i = 0; i < stops; ++i) {
             const std::span<const std::byte> stop = cursor.next(stopStride, "a stop");
             PendingStopView view;

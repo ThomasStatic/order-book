@@ -3,10 +3,8 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
-#include <map>
 #include <memory>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -18,6 +16,7 @@
 #include "order_book/wasm/browser_engine.hpp"
 #include "order_book/wasm/page_connection.hpp"
 #include "order_book/wasm/terminal.hpp"
+#include "session_transcript.hpp"
 #include "wasm_page.hpp"
 
 // The browser terminal behind run(line), natively and under Emscripten: each committed session
@@ -40,15 +39,6 @@ std::string readFile(const std::filesystem::path& path) {
     std::string text(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>{});
     std::erase(text, '\r');
     return text;
-}
-
-std::vector<std::string> linesOf(const std::string& text) {
-    std::vector<std::string> lines;
-    std::istringstream input(text);
-    for (std::string line; std::getline(input, line);) {
-        lines.push_back(line);
-    }
-    return lines;
 }
 
 struct Paths {
@@ -104,17 +94,6 @@ std::string play(Terminal& terminal, Page& page, const std::vector<std::string>&
     return transcript;
 }
 
-// Each `line N:` line, by N, in the order printed.
-std::map<std::string, std::vector<std::string>> answersByLine(const std::string& text) {
-    std::map<std::string, std::vector<std::string>> byLine;
-    for (const std::string& line : linesOf(text)) {
-        if (line.starts_with("line ")) {
-            byLine[line.substr(0, line.find(':'))].push_back(line);
-        }
-    }
-    return byLine;
-}
-
 // Writes what came beside the scratch directory, so a changed session can be looked at.
 void expectFile(const std::string& actual, const std::filesystem::path& expected, const Paths& paths) {
     if (actual != readFile(expected)) {
@@ -149,9 +128,10 @@ void testASession(const Paths& paths, const std::string& name) {
     Seeded native(paths);
     expect(native.seeded.out == seededAnswers, name + ": the seed answers the same each time");
     const cli::CommandResult sent = sendFile(native.engine, native.page, paths.sessions / (name + ".csv"));
+    const ClientAnswers expected = clientAnswersOf(transcript);
+    expect(sent.exit == (expected.refused ? cli::someRefused : 0), name + ": send exits as the terminal's refusals say:\n" + sent.err);
     expect(sent.err.empty() || sent.exit == cli::someRefused, name + ": send answered every command:\n" + sent.err);
-    expect(answersByLine(sent.out) == answersByLine(transcript),
-           name + ": send prints each line's answers as the terminal did:\n" + sent.out);
+    expect(answersByLine(sent.out) == expected.byLine, name + ": send prints each line's answers as the terminal did:\n" + sent.out);
     expect(native.running.cleanStop() == network::EngineExit::CLEAN_STOP, name + ": the native run stops cleanly");
 }
 

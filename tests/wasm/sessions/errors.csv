@@ -1,4 +1,3 @@
 sequence,command,order_id,side,price,quantity,order_type,time_in_force,stop_price,post_only,owner,self_trade_prevention,symbol
 1,CANCEL,99,,,,,,,,,,AAPL
-2,CANCEL,1,,,,,,,,,,ZZZZ
-3,ADD,7,BUY,90,1,LIMIT,GTC,,,,,AAPL
+2,ADD,7,BUY,90,1,LIMIT,GTC,,,,,AAPL

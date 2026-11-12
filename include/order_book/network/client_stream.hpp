@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -78,6 +79,8 @@ namespace order_book::network {
 
         static std::string answerLine(const Answer& answer);
         void take(const Frame& frame);
+        // The index of the command under this correlation, if one is.
+        std::optional<std::size_t> commandOf(Correlation correlation) const;
         void broke(std::string why);
         void fill();
 

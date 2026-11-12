@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "child_process.hpp"
+#include "session_transcript.hpp"
 #include "order_book/command_log.hpp"
 #include "order_book/network/tcp.hpp"
 #include "order_book/runtime/checkpoint.hpp"
@@ -24,7 +25,8 @@
 
 // order_book_cli send against a real order_book_engine, both child processes, compared byte for
 // byte with order_book_cli replay of the same file, and then the engine's own log replayed, which
-// must give the same books. Takes the engine, the CLI, tests/replay, and tests/engine/samples.
+// must give the same books; and the browser terminal's sessions sent the same way. Takes the
+// engine, the CLI, tests/replay, tests/engine/samples, and the repository.
 // Threaded, so ThreadSanitizer and Arm run it. See docs/internals/testing.md.
 namespace {
 
@@ -38,6 +40,7 @@ std::string engine;
 std::string cli;
 fs::path replaySamples;
 fs::path engineSamples;
+fs::path source;  // the repository, for the browser's sessions, instrument list, and seed
 
 void expect(bool condition, const std::string& message) {
     if (!condition) {
@@ -87,6 +90,15 @@ std::string describe(const std::vector<std::string>& arguments, const Run& resul
            result.out + "\nand stderr:\n" + result.err;
 }
 
+// An instrument list naming these symbols, each placed by the engine.
+std::string listOf(const std::set<std::string>& symbols) {
+    std::string text = "symbol,shard,orders,stops,levels\n";
+    for (const std::string& symbol : symbols) {
+        text += symbol + ",,,,\n";
+    }
+    return text;
+}
+
 // One engine on port 0 with these instruments, stopped by closing its stdin, logging to a log
 // directory of its own at process durability and in 1 MiB files unless told otherwise, or to an
 // earlier engine's, which it then recovers.
@@ -95,15 +107,23 @@ public:
     Engine(std::string named, const std::set<std::string>& symbols, std::uint32_t shards, std::uint32_t gatewayThreads = 1,
            const std::string& durability = "process", const std::string& logFileSize = "1M",
            const std::optional<fs::path>& earlierLogs = std::nullopt)
+        : Engine(ListText{listOf(symbols)}, std::move(named), shards, gatewayThreads, durability, logFileSize, earlierLogs) {}
+
+    // One on the instrument list in this file, as it stands.
+    static Engine onList(std::string named, const fs::path& instrumentList, std::uint32_t shards) {
+        return Engine(ListText{readFile(instrumentList)}, std::move(named), shards, 1, "process", "1M", std::nullopt);
+    }
+
+private:
+    struct ListText {
+        std::string text;
+    };
+
+    Engine(ListText listText, std::string named, std::uint32_t shards, std::uint32_t gatewayThreads, const std::string& durability,
+           const std::string& logFileSize, const std::optional<fs::path>& earlierLogs)
         : name(std::move(named)), list(fs::temp_directory_path() / ("order_book_end_to_end_" + std::to_string(++started) + ".csv")) {
         logs = earlierLogs ? *earlierLogs : fs::temp_directory_path() / ("order_book_end_to_end_logs_" + std::to_string(started));
-        {
-            std::ofstream out(list, std::ios::binary);
-            out << "symbol,shard,orders,stops,levels\n";
-            for (const std::string& symbol : symbols) {
-                out << symbol << ",,,,\n";
-            }
-        }
+        std::ofstream(list, std::ios::binary) << listText.text;
         if (!earlierLogs) {
             fs::remove_all(logs);
             fs::create_directories(logs);
@@ -129,6 +149,7 @@ public:
         }
     }
 
+public:
     ~Engine() {
         std::error_code ignored;
         fs::remove(list, ignored);
@@ -683,6 +704,38 @@ void testOfflineCommands() {
     fs::remove(list);
 }
 
+// The browser terminal's committed sessions (tests/wasm/sessions): each session's client
+// commands, as its collected CSV, sent by order_book_cli to an order_book_engine on the browser's
+// instrument list after the browser's seed, print each `line N:` as the session's transcript
+// printed it, and send exits 4 exactly when the transcript has a refusal.
+void testTheBrowserSessions() {
+    const fs::path sessions = source / "tests/wasm/sessions";
+    int played = 0;
+    for (const fs::directory_entry& entry : fs::directory_iterator(sessions)) {
+        const fs::path collected = entry.path();
+        if (collected.extension() != ".csv") {
+            continue;
+        }
+        const std::string session = collected.stem().string();
+        Engine running = Engine::onList("the browser session " + session, source / "src/wasm/instruments.csv", 2);
+        const std::vector<std::string> seed{"send", (source / "src/wasm/seed.csv").string(), "--connect", running.address};
+        const Run seeded = run(seed);
+        expect(!seeded.status.killed && seeded.status.code == 0 && seeded.err.empty(), "the seed is answered whole: " + describe(seed, seeded));
+        const std::vector<std::string> arguments{"send", collected.string(), "--connect", running.address};
+        const Run sent = run(arguments);
+        fs::path transcript = collected;
+        transcript.replace_extension(".expected");
+        const wasm_testing::ClientAnswers expected = wasm_testing::clientAnswersOf(plain(readFile(transcript)));
+        expect(!sent.status.killed && sent.status.code == (expected.refused ? 4 : 0),
+               session + ": send exits as the transcript's refusals say: " + describe(arguments, sent));
+        expect(wasm_testing::answersByLine(plain(sent.out)) == expected.byLine,
+               session + ": send prints each line's answers as the terminal did: " + describe(arguments, sent));
+        running.stop();
+        ++played;
+    }
+    expect(played >= 3, "every committed session with a collected CSV is sent");
+}
+
 void testNoEngineExits1() {
     std::uint16_t port = 0;
     {
@@ -701,14 +754,15 @@ void testNoEngineExits1() {
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 5) {
-        std::cerr << "usage: engine_end_to_end_tests ENGINE CLI REPLAY_SAMPLES ENGINE_SAMPLES" << std::endl;
+    if (argc != 6) {
+        std::cerr << "usage: engine_end_to_end_tests ENGINE CLI REPLAY_SAMPLES ENGINE_SAMPLES SOURCE" << std::endl;
         return EXIT_FAILURE;
     }
     engine = argv[1];
     cli = argv[2];
     replaySamples = argv[3];
     engineSamples = argv[4];
+    source = argv[5];
     testEveryValidSample();
     testManyInstrumentsAtOneAndThreeShards();
     testAMalformedFileSendsItsPrefix();
@@ -717,6 +771,7 @@ int main(int argc, char** argv) {
     testAKilledEngineRestarts();
     testOfflineCommands();
     testNoEngineExits1();
+    testTheBrowserSessions();
     std::cout << "engine end-to-end tests passed" << std::endl;
     return EXIT_SUCCESS;
 }

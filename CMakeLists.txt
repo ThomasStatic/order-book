@@ -1371,7 +1371,8 @@ if(BUILD_TESTING)
         add_dependencies(engine_end_to_end_tests order_book_engine order_book_cli)
         add_test(NAME engine_end_to_end_tests
             COMMAND engine_end_to_end_tests $<TARGET_FILE:order_book_engine> $<TARGET_FILE:order_book_cli>
-                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay ${CMAKE_CURRENT_SOURCE_DIR}/tests/engine/samples)
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay ${CMAKE_CURRENT_SOURCE_DIR}/tests/engine/samples
+                    ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(engine_end_to_end_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
     endif()
 

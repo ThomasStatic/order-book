@@ -34,8 +34,11 @@ namespace order_book::network {
         if (command.correlation == 0 || (!commands.empty() && command.correlation <= commands[byCorrelation.back()].correlation)) {
             throw std::invalid_argument("a command added to a stream needs a correlation above every earlier one's");
         }
-        byCorrelation.push_back(commands.size());
+        // Each vector grows before anything indexes the new command, so a throw leaves it unseen.
+        byCorrelation.reserve(byCorrelation.size() + 1);
+        isAnswered.reserve(isAnswered.size() + 1);
         commands.push_back(std::move(command));
+        byCorrelation.push_back(commands.size() - 1);
         isAnswered.push_back(false);
         ++unanswered;
     }
@@ -115,11 +118,8 @@ namespace order_book::network {
             return;
         }
 
-        const auto found = std::lower_bound(byCorrelation.begin(), byCorrelation.end(), frame.correlation,
-                                            [this](std::size_t index, Correlation correlation) {
-                                                return commands[index].correlation < correlation;
-                                            });
-        if (found == byCorrelation.end() || commands[*found].correlation != frame.correlation || isAnswered[*found]) {
+        const std::optional<std::size_t> found = commandOf(frame.correlation);
+        if (!found || isAnswered[*found]) {
             broke("the engine answered line " + std::to_string(frame.correlation) + ", which awaits no answer");
             return;
         }
@@ -209,10 +209,18 @@ namespace order_book::network {
         return text;
     }
 
-    bool ClientStream::answered(Correlation correlation) const {
+    std::optional<std::size_t> ClientStream::commandOf(Correlation correlation) const {
         const auto found = std::lower_bound(byCorrelation.begin(), byCorrelation.end(), correlation,
                                             [this](std::size_t index, Correlation wanted) { return commands[index].correlation < wanted; });
-        return found != byCorrelation.end() && commands[*found].correlation == correlation && isAnswered[*found];
+        if (found == byCorrelation.end() || commands[*found].correlation != correlation) {
+            return std::nullopt;
+        }
+        return *found;
+    }
+
+    bool ClientStream::answered(Correlation correlation) const {
+        const std::optional<std::size_t> found = commandOf(correlation);
+        return found && isAnswered[*found];
     }
 
     std::string ClientStream::answerLines(Correlation correlation) const {
