@@ -4,6 +4,7 @@
 #include <array>
 #include <numeric>
 #include <optional>
+#include <stdexcept>
 #include <utility>
 #include <variant>
 
@@ -18,11 +19,25 @@ namespace order_book::network {
         constexpr std::size_t readBytes = 64 * 1024;
     }  // namespace
 
+    std::string ClientStream::answerLine(const Answer& answer) {
+        return "line " + std::to_string(answer.correlation) + ": " + answer.text + '\n';
+    }
+
     ClientStream::ClientStream(std::vector<ClientCommand> sent)
-        : commands(std::move(sent)), byCorrelation(commands.size()), answered(commands.size(), false), unanswered(commands.size()) {
+        : commands(std::move(sent)), byCorrelation(commands.size()), isAnswered(commands.size(), false), unanswered(commands.size()) {
         std::iota(byCorrelation.begin(), byCorrelation.end(), std::size_t{0});
         std::sort(byCorrelation.begin(), byCorrelation.end(),
                   [this](std::size_t a, std::size_t b) { return commands[a].correlation < commands[b].correlation; });
+    }
+
+    void ClientStream::add(ClientCommand command) {
+        if (command.correlation == 0 || (!commands.empty() && command.correlation <= commands[byCorrelation.back()].correlation)) {
+            throw std::invalid_argument("a command added to a stream needs a correlation above every earlier one's");
+        }
+        byCorrelation.push_back(commands.size());
+        commands.push_back(std::move(command));
+        isAnswered.push_back(false);
+        ++unanswered;
     }
 
     std::span<const std::byte> ClientStream::outgoing() {
@@ -104,7 +119,7 @@ namespace order_book::network {
                                             [this](std::size_t index, Correlation correlation) {
                                                 return commands[index].correlation < correlation;
                                             });
-        if (found == byCorrelation.end() || commands[*found].correlation != frame.correlation || answered[*found]) {
+        if (found == byCorrelation.end() || commands[*found].correlation != frame.correlation || isAnswered[*found]) {
             broke("the engine answered line " + std::to_string(frame.correlation) + ", which awaits no answer");
             return;
         }
@@ -132,7 +147,7 @@ namespace order_book::network {
         }
         answers.push_back(Answer{frame.correlation, command, std::move(text)});
         if (frame.last) {
-            answered[command] = true;
+            isAnswered[command] = true;
             --unanswered;
         }
     }
@@ -189,7 +204,23 @@ namespace order_book::network {
                 text += (section == nullptr ? "symbol " : "\nsymbol ") + symbol.text() + '\n';
                 section = &symbol;
             }
-            text += "line " + std::to_string(answer->correlation) + ": " + answer->text + '\n';
+            text += answerLine(*answer);
+        }
+        return text;
+    }
+
+    bool ClientStream::answered(Correlation correlation) const {
+        const auto found = std::lower_bound(byCorrelation.begin(), byCorrelation.end(), correlation,
+                                            [this](std::size_t index, Correlation wanted) { return commands[index].correlation < wanted; });
+        return found != byCorrelation.end() && commands[*found].correlation == correlation && isAnswered[*found];
+    }
+
+    std::string ClientStream::answerLines(Correlation correlation) const {
+        std::string text;
+        for (const Answer& answer : answers) {
+            if (answer.correlation == correlation) {
+                text += answerLine(answer);
+            }
         }
         return text;
     }

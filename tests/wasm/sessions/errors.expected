@@ -1,0 +1,56 @@
+> buy
+! buy: usage: buy|sell SYMBOL QUANTITY [PRICE] [stop=PRICE] [tif=gtc|ioc|fok] [post-only] [owner=N] [stp=MODE]
+[exit 2]
+> buy AAPL
+! buy: usage: buy|sell SYMBOL QUANTITY [PRICE] [stop=PRICE] [tif=gtc|ioc|fok] [post-only] [owner=N] [stp=MODE]
+[exit 2]
+> buy XYZ 1 100
+! buy: XYZ is not on the instrument list
+[exit 2]
+> buy AAPL ten 100
+! buy: quantity: 'ten' is not an unsigned whole number
+[exit 2]
+> buy AAPL 1 100 colour=red
+! buy: unknown option colour=red
+[exit 2]
+> buy AAPL 1 100 tif=gtc tif=ioc
+! buy: tif=ioc is given twice
+[exit 2]
+> sell AAPL 1 tif=gtc
+! sell: time_in_force: a MARKET order must be IOC or FOK, not GTC
+[exit 2]
+> buy AAPL 1 100 tif=ioc post-only
+! buy: post_only: post_only needs a GTC LIMIT order
+[exit 2]
+> buy AAPL 1 100 stp=cancel-both
+! buy: self_trade_prevention: self_trade_prevention needs an owner; leave it empty without one
+[exit 2]
+> buy AAPL 1 100 owner=
+! buy: owner= needs a value
+[exit 2]
+> cancel AAPL
+! cancel: usage: cancel SYMBOL ID
+[exit 2]
+> cancel AAPL 99
+line 2: CancelRejected id=99 reason=ORDER_NOT_FOUND
+> cancel ZZZZ 1
+line 3: Refused symbol=ZZZZ id=1 code=UNKNOWN_INSTRUMENT
+[exit 4]
+> replace AAPL 1 100
+! replace: usage: replace SYMBOL ID PRICE QUANTITY [post-only] [owner=N] [stp=MODE]
+[exit 2]
+> replace AAPL 1 100 5 stop=90
+! replace: stop_price: REPLACE must leave stop_price empty
+[exit 2]
+> frobnicate
+! frobnicate: unknown command
+[exit 2]
+> book XYZ
+! book: XYZ is not on the instrument list
+[exit 2]
+> status extra
+! status: usage: status
+[exit 2]
+> buy AAPL 1 90
+assigned id=7
+line 4: OrderAccepted id=7 side=BUY price=90 qty=1

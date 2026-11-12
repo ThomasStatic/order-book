@@ -47,6 +47,7 @@ namespace order_book::wasm {
               std::move(store))) {}
 
     network::EngineExit BrowserEngine::run(network::StopSource& stop, std::ostream& report, std::ostream& diagnostics) {
+        emptyAtStart.store(pageStore->names().empty());
         books.rebuild(*pageStore);
         auto made = std::make_shared<network::PageSocketSet>(
             [this] {

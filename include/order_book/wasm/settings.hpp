@@ -32,7 +32,8 @@ namespace order_book::wasm {
         runtime::EngineSettings settings;
         settings.instruments = instrumentList;
         settings.shards = browserShards;
-        settings.listen = runtime::ListenAddress{{127, 0, 0, 1}, 0};
+        // Nothing binds it: the address send's --connect names in the terminal, as native's default.
+        settings.listen = runtime::ListenAddress{{127, 0, 0, 1}, 9000};
         settings.commandRing = 1024;
         settings.responseRing = 4096;
         settings.logRing = 4096;

@@ -279,11 +279,13 @@ order_book_enable_sanitizers(order_book_cli_commands)
 # every platform; the module that wraps it for the page is Emscripten's alone.
 add_library(order_book_wasm STATIC
     src/wasm/browser_engine.cpp
+    src/wasm/page_connection.cpp
     src/wasm/shadow_books.cpp
+    src/wasm/terminal.cpp
 )
 
 target_compile_features(order_book_wasm PUBLIC cxx_std_20)
-target_link_libraries(order_book_wasm PUBLIC order_book_network)
+target_link_libraries(order_book_wasm PUBLIC order_book_cli_commands)
 order_book_enable_warnings(order_book_wasm)
 order_book_enable_sanitizers(order_book_wasm)
 
@@ -1261,6 +1263,22 @@ if(BUILD_TESTING)
     add_test(NAME order_book_wasm_tests
         COMMAND order_book_wasm_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay ${CMAKE_CURRENT_BINARY_DIR}/order-book-wasm)
     set_tests_properties(order_book_wasm_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
+
+    # The browser terminal: each committed session through run(line), then its collected CSV
+    # through send, after the shipped seed; and a restart.
+    add_executable(wasm_terminal_tests
+        tests/wasm_terminal_test.cpp
+    )
+
+    target_compile_features(wasm_terminal_tests PRIVATE cxx_std_20)
+    target_link_libraries(wasm_terminal_tests PRIVATE order_book_wasm)
+    order_book_enable_warnings(wasm_terminal_tests)
+    order_book_enable_sanitizers(wasm_terminal_tests)
+    foreach(session basic options errors restart)
+        add_test(NAME wasm_terminal_${session}
+            COMMAND wasm_terminal_tests ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/wasm-terminal ${session})
+        set_tests_properties(wasm_terminal_${session} PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
+    endforeach()
 
     add_executable(engine_settings_tests
         tests/engine_settings_test.cpp

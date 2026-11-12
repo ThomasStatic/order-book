@@ -1,0 +1,72 @@
+> buy MSFT 10
+assigned id=7
+line 2: OrderAccepted id=7 side=BUY price=MARKET qty=10
+line 2: TradeExecuted incoming=7 resting=4 price=201 qty=10
+> sell MSFT 5 tif=fok
+assigned id=8
+line 3: OrderAccepted id=8 side=SELL price=MARKET qty=5
+line 3: TradeExecuted incoming=8 resting=1 price=199 qty=5
+> buy MSFT 3 205 tif=ioc
+assigned id=9
+line 4: OrderAccepted id=9 side=BUY price=205 qty=3
+line 4: TradeExecuted incoming=9 resting=5 price=202 qty=3
+> buy MSFT 2 199 post-only
+assigned id=10
+line 5: OrderAccepted id=10 side=BUY price=199 qty=2
+> sell MSFT 4 201 owner=7
+assigned id=11
+line 6: OrderAccepted id=11 side=SELL price=201 qty=4
+> buy MSFT 4 201 owner=7 stp=cancel-both
+assigned id=12
+line 7: OrderAccepted id=12 side=BUY price=201 qty=4
+line 7: SelfTradePrevented incoming=12 resting=11 price=201 qty=4
+line 7: OrderExpired id=12 qty=4
+> book MSFT
+bids:
+  price=199 qty=7 orders=2
+  price=198 qty=20 orders=1
+  price=197 qty=30 orders=1
+asks:
+  price=202 qty=17 orders=1
+  price=203 qty=30 orders=1
+last trade price: 202
+> buy NVDA 1 stop=52
+assigned id=7
+line 8: OrderAccepted id=7 side=BUY price=MARKET qty=1
+> sell NVDA 2 48 stop=49
+assigned id=8
+line 9: OrderAccepted id=8 side=SELL price=48 qty=2
+> buy NVDA 1 60 stop=55 tif=gtc owner=3
+assigned id=9
+line 10: OrderAccepted id=9 side=BUY price=60 qty=1
+> book NVDA
+bids:
+  price=49 qty=10 orders=1
+  price=48 qty=20 orders=1
+  price=47 qty=30 orders=1
+asks:
+  price=51 qty=10 orders=1
+  price=52 qty=20 orders=1
+  price=53 qty=30 orders=1
+last trade price: none
+> replace MSFT 9 198 5 post-only
+line 11: ReplaceRejected id=9 reason=ORDER_NOT_FOUND
+> sell TSLA 1 151 owner=2 stp=cancel-incoming
+assigned id=7
+line 12: OrderAccepted id=7 side=SELL price=151 qty=1
+> buy TSLA 11 151 owner=2 stp=cancel-incoming
+assigned id=8
+line 13: OrderAccepted id=8 side=BUY price=151 qty=11
+line 13: TradeExecuted incoming=8 resting=4 price=151 qty=10
+line 13: SelfTradePrevented incoming=8 resting=7 price=151 qty=0
+line 13: OrderExpired id=8 qty=1
+> book TSLA
+bids:
+  price=149 qty=10 orders=1
+  price=148 qty=20 orders=1
+  price=147 qty=30 orders=1
+asks:
+  price=151 qty=1 orders=1
+  price=152 qty=20 orders=1
+  price=153 qty=30 orders=1
+last trade price: 151

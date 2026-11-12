@@ -111,6 +111,7 @@ namespace order_book::wasm {
         std::vector<std::byte> image(const replay::Symbol& symbol) const;
         BookView book(const replay::Symbol& symbol) const;
 
+        const runtime::InstrumentDirectory& instruments() const noexcept { return directory; }
         // The instrument's shard, or nothing for a symbol not on the list.
         std::optional<std::uint32_t> shardOf(const replay::Symbol& symbol) const noexcept;
         // How many records the shard's log holds: its next log position.

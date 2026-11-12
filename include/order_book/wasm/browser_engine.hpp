@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <iosfwd>
 #include <memory>
@@ -48,6 +49,10 @@ namespace order_book::wasm {
         // memory running out can.
         network::EngineExit run(network::StopSource& stop, std::ostream& report, std::ostream& diagnostics);
 
+        // Whether the current run started on an empty store, the first load's or a reset's: then
+        // the seed goes in over one connection before the page is told the engine is ready.
+        bool startedEmpty() const noexcept { return emptyAtStart.load(); }
+
         // The settings each run starts with.
         const runtime::EngineSettings& settings() const noexcept { return engineSettings; }
         // The current run's connections, made before it starts, so they are there by its ready;
@@ -62,6 +67,7 @@ namespace order_book::wasm {
         BrowserCallbacks told;
         ShadowBooks books;
         std::shared_ptr<runtime::PageLogStorage> pageStore;
+        std::atomic<bool> emptyAtStart{false};
         mutable std::mutex guard;
         std::shared_ptr<network::PageSocketSet> connections;  // under the guard
     };

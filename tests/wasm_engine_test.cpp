@@ -36,6 +36,7 @@
 #include "order_book/wasm/settings.hpp"
 #include "order_book/wasm/shadow_books.hpp"
 #include "shadow_check.hpp"
+#include "wasm_page.hpp"
 
 // order_book_wasm, natively and under Emscripten: the shipped settings, the book-image decoder,
 // the shadow books following a store's changes and rebuilt from it, ID assignment, and a whole
@@ -46,6 +47,8 @@ using namespace order_book;
 using namespace order_book::wasm;
 using Change = runtime::PageLogStorage::Change;
 using replay::Symbol;
+using wasm_testing::Page;
+using wasm_testing::Running;
 
 void expect(bool condition, const std::string& message) {
     if (!condition) {
@@ -96,6 +99,7 @@ void testTheSettings() {
     expect(pageSocketBuffer == 64 * 1024 && creditWindow == 64 * 1024, "64 KiB connection buffers and W = 64 KiB");
     expect(settings.highWaterMark == 64 * 1024 && settings.hardLimit == 1024 * 1024, "slow clients warned at 64 KiB, cut off at 1 MiB");
     expect(settings.maxConnections == 3, "three connections");
+    expect(runtime::formatListenAddress(settings.listen) == "127.0.0.1:9000", "the address send names in the terminal");
     expect(settings.durability == runtime::Durability::PROCESS, "process durability");
     expect(settings.logDir.empty() && settings.checkpointDir.empty(), "the store is injected, so no directory");
     expect(browserEngineThreads == 8, "2N + M + R + housekeeping + runEngine's own thread = 8");
@@ -283,57 +287,6 @@ void testWhatTheShadowsRefuse() {
     }
 }
 
-// What the engine worker would see: changes, wakes, and ready, under the engine's threads.
-class Page {
-public:
-    BrowserCallbacks callbacks() {
-        BrowserCallbacks told;
-        told.wake = [this] {
-            const std::lock_guard held(guard);
-            ++wakes;
-            woken.notify_all();
-        };
-        told.stored = [this](const Change& change) {
-            runtime::PageLogStorage::apply(copy, change);
-            ++changes;
-        };
-        told.ready = [this] {
-            const std::lock_guard held(guard);
-            readied = true;
-            woken.notify_all();
-        };
-        return told;
-    }
-
-    void waitUntilReady() {
-        std::unique_lock held(guard);
-        expect(woken.wait_for(held, std::chrono::seconds(60), [this] { return readied; }), "the engine became ready");
-        readied = false;
-    }
-
-    // Sleeps until the next wake after `seen`, and gives the count.
-    std::size_t waitPast(std::size_t seen) {
-        std::unique_lock held(guard);
-        expect(woken.wait_for(held, std::chrono::seconds(60), [&] { return wakes > seen; }), "the connections woke the page");
-        return wakes;
-    }
-
-    std::size_t wakesSoFar() {
-        const std::lock_guard held(guard);
-        return wakes;
-    }
-
-    // Under the store's lock, which every change is told under.
-    std::map<std::string, std::vector<std::byte>> copy;
-    std::size_t changes = 0;
-
-private:
-    std::mutex guard;
-    std::condition_variable woken;
-    std::size_t wakes = 0;
-    bool readied = false;
-};
-
 // `order_book_cli send <file>` over the in-page connections: everything written as the buffer
 // takes it, a half-close, and every answer read to the end, sleeping between wakes.
 cli::CommandResult send(network::PageSocketSet& sockets, Page& page, const std::string& file) {
@@ -372,37 +325,6 @@ cli::CommandResult send(network::PageSocketSet& sockets, Page& page, const std::
     sockets.clientRelease(*socket);
     return cli::finishSend(session, stream);
 }
-
-// One BrowserEngine run on a thread of its own, as the engine worker starts the entry.
-class Running {
-public:
-    explicit Running(BrowserEngine& browser) : engine(browser) {
-        thread = std::thread([this] { exit = engine.run(stop, report, diagnostics); });
-    }
-    Running(const Running&) = delete;
-    Running& operator=(const Running&) = delete;
-    ~Running() {
-        if (thread.joinable()) {
-            stop.request();
-            thread.join();
-        }
-    }
-
-    network::EngineExit cleanStop() {
-        stop.request();
-        thread.join();
-        return *exit;
-    }
-
-    BrowserEngine& engine;
-    network::StopSource stop;
-    std::ostringstream report;
-    std::ostringstream diagnostics;
-    std::optional<network::EngineExit> exit;
-
-private:
-    std::thread thread;
-};
 
 // The shadows hold what the shards held at the clean stop.
 void expectTheShadowsEqualTheShards(const BrowserEngine& engine, const std::vector<runtime::PageLogStorage::StoredFile>& files) {
