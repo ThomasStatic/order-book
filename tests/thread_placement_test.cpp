@@ -26,6 +26,7 @@
 
 // pinThisThread and setThisThreadPriority, each on a thread of its own, read back through the
 // system rather than through anything the functions report. See docs/internals/runtime.md.
+#ifndef __EMSCRIPTEN__
 namespace {
 
 using namespace order_book::runtime;
@@ -145,10 +146,17 @@ void testPriority() {
 }
 
 }  // namespace
+#endif
 
 int main() {
+#ifdef __EMSCRIPTEN__
+    // No thread IDs, affinity, or nice values to read back: CTest shows the exit as a skip.
+    std::cout << "thread placement tests skipped under Emscripten" << std::endl;
+    return 77;
+#else
     testPinning();
     testPriority();
     std::cout << "thread placement tests passed" << std::endl;
     return EXIT_SUCCESS;
+#endif
 }

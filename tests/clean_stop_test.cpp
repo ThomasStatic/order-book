@@ -427,7 +427,7 @@ void testACrashAtEveryStepOfACleanStop() {
                     if (durability == Durability::MACHINE || kind == InMemoryLogStorage::Crash::ENGINE) {
                         expect(survived >= steps[at].released, crash + ": every released response's command survives");
                     }
-                    expectImagesEqual(shard, witnessImages(commands, survived), crash + ", at the surviving position " + std::to_string(survived));
+                    expectImagesEqual(shard, witnessImages(commands, static_cast<std::size_t>(survived)), crash + ", at the surviving position " + std::to_string(survived));
                 }
             }
         }

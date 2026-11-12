@@ -1,10 +1,11 @@
 # Runs a program that must fail in one exact way: with EXPECTED_EXIT, or, with EXPECTED_EXIT unset,
 # any failure, and printing something that matches OUTPUT_REGEX. CTest's PASS_REGULAR_EXPRESSION
 # ignores the exit status, and WILL_FAIL ignores the reason, so neither proves this alone.
-# Invoked by CTest with -D for PROGRAM, ARGS (separated by '|'), OUTPUT_REGEX, and EXPECTED_EXIT.
+# Invoked by CTest with -D for PROGRAM, ARGS (separated by '|'), OUTPUT_REGEX, and EXPECTED_EXIT,
+# and EMULATOR, which runs PROGRAM (node under Emscripten) and is empty natively.
 string(REPLACE "|" ";" args "${ARGS}")
 execute_process(
-    COMMAND "${PROGRAM}" ${args}
+    COMMAND ${EMULATOR} "${PROGRAM}" ${args}
     RESULT_VARIABLE actual_exit
     OUTPUT_VARIABLE output
     ERROR_VARIABLE output)

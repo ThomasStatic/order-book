@@ -17,6 +17,7 @@ Read the matching note in `docs/internals/` before changing that area, and updat
 - `latency.md`: the latency harness: clock, histogram, drivers, run record, report.
 - `runtime.md`: `order_book_runtime`, and `EngineSettings`: the instrument list, placement, `InstrumentDirectory`, `BookSet`, `Shard`, the rings, `MatchingLoop`, `LogStorage`, log files and `Housekeeping`, `LogWriter`, the durable position, the directory lock, and recovery.
 - `network.md`: `order_book_network`: `FrameReader`, the frame encoders, `checkEntry`, `SocketSet`, `GatewayThread` and the hold, `TcpSocket`, `PollSocketSet`, `runEngine`, `StopSource`.
+- `wasm.md`: the Emscripten build: the toolchain, the CMake branch and test link settings, the `__EMSCRIPTEN__` portability branches, the suites not built there, and the two wasm CI jobs.
 
 ## Build and test
 
@@ -28,9 +29,21 @@ ctest --test-dir build -C Debug --output-on-failure
 ctest --test-dir build -C Debug -R price_level_tests --output-on-failure
 ```
 
+The Emscripten build (`docs/internals/wasm.md`) has its own directory. emsdk 7.0.0 is at `C:/dev/tools/emsdk`, not on `PATH`, so a shell first runs:
+
+```bash
+export EMSDK=C:/dev/tools/emsdk
+export PATH="/c/dev/tools/emsdk/upstream/emscripten:/c/dev/tools/emsdk/node/24.19.0_64bit:/c/dev/tools/emsdk/python/3.13.3_64bit:$PATH"
+emcmake cmake -S . -B build-wasm -G Ninja -DCMAKE_BUILD_TYPE=Release -DORDER_BOOK_WARNINGS_AS_ERRORS=ON
+cmake --build build-wasm
+ctest --test-dir build-wasm -j8 --output-on-failure
+```
+
+Before a push, build `build-clang/` (clang-cl, warnings as errors; see `docs/internals/testing.md`), and, when the push touches `src/`, `include/`, `tests/`, `CMakeLists.txt`, or the wasm sources, build `build-wasm/` and run its CTest too; docs-only pushes skip the wasm build.
+
 Warnings are high (`/W4`, or `-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), so watch for sign/narrowing conversions.
 
-CI (`.github/workflows/ci.yml`) runs on every push and pull request with `ORDER_BOOK_WARNINGS_AS_ERRORS=ON`: on Linux, GCC and Clang Debug/Release, GCC and Clang ASan+UBSan Debug, and Clang ASan+UBSan RelWithDebInfo; on Windows, MSVC Debug/Release and ASan Debug/Release. ThreadSanitizer (Clang RelWithDebInfo, GCC Debug) and Linux Arm Clang Release run the tests labelled `threaded`. A new push to a pull request cancels that pull request's run still in progress; push runs are never cancelled. Code that builds cleanly with MSVC can still fail there on a GCC/Clang warning. No Linux numbers are recorded: the manual `linux-sanity.yml` workflow checks Linux performance for large effects only, on shared runners, and its numbers are never quoted (see `docs/internals/benchmarks.md`).
+CI (`.github/workflows/ci.yml`) runs on every push and pull request with `ORDER_BOOK_WARNINGS_AS_ERRORS=ON`: on Linux, GCC and Clang Debug/Release, GCC and Clang ASan+UBSan Debug, and Clang ASan+UBSan RelWithDebInfo; on Windows, MSVC Debug/Release and ASan Debug/Release; and Emscripten Release and ASan+UBSan Debug, every test under `node`. ThreadSanitizer (Clang RelWithDebInfo, GCC Debug) and Linux Arm Clang Release run the tests labelled `threaded`. A new push to a pull request cancels that pull request's run still in progress; push runs are never cancelled. Code that builds cleanly with MSVC can still fail there on a GCC/Clang warning. No Linux numbers are recorded: the manual `linux-sanity.yml` workflow checks Linux performance for large effects only, on shared runners, and its numbers are never quoted (see `docs/internals/benchmarks.md`).
 
 ## Writing tests
 

@@ -2,7 +2,8 @@
 # and stderr byte for byte with the expected ones. Invoked by CTest with -D for NAME, CLI,
 # ARGS (separated by '|', since add_test splits on ';'), WORKING_DIRECTORY, OUTPUT_DIR (for
 # the captured output), EXPECTED_EXIT, and the optional EXPECTED_STDOUT and EXPECTED_STDERR
-# files; a stream without one must be empty. CLEAN, if given, is removed first, since a command
+# files; a stream without one must be empty. EMULATOR runs CLI (node under Emscripten) and is
+# empty natively. CLEAN, if given, is removed first, since a command
 # that writes a file refuses one that exists.
 #
 # Output is captured to files and compared as hex: execute_process's OUTPUT_VARIABLE and a
@@ -16,7 +17,7 @@ if(CLEAN)
 endif()
 
 execute_process(
-    COMMAND "${CLI}" ${args}
+    COMMAND ${EMULATOR} "${CLI}" ${args}
     WORKING_DIRECTORY "${WORKING_DIRECTORY}"
     RESULT_VARIABLE actual_exit
     OUTPUT_FILE "${actual_stdout_file}"

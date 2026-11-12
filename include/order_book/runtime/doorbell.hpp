@@ -3,6 +3,11 @@
 #include <atomic>
 #include <cstdint>
 
+#ifdef __EMSCRIPTEN__
+#include <cmath>
+#include <emscripten/threading.h>
+#endif
+
 namespace order_book {
     struct OrderBookTestAccess;
 }
@@ -20,11 +25,19 @@ namespace order_book::runtime {
     // the sleeper's re-check sees everything pushed before the ring. A plain store anywhere would
     // break the chain, and a producer that only read a flag could have its load pass its own
     // earlier push.
+    //
+    // Under Emscripten the sleep and the wake are a futex on the same atomic: libc++'s
+    // std::atomic::wait polls there, waking up to every few milliseconds, so an idle thread would
+    // never quite sleep. The exchanges are the same, so the reasoning above holds unchanged.
     class Doorbell {
     public:
         void ring() noexcept {
             if (state.exchange(awake, std::memory_order_seq_cst) == asleep) {
+#ifdef __EMSCRIPTEN__
+                emscripten_futex_wake(futexAddress(), 1);
+#else
                 state.notify_one();
+#endif
             }
         }
 
@@ -32,7 +45,16 @@ namespace order_book::runtime {
         // it calls cancelSleep, and otherwise wait, then cancelSleep.
         void announceSleep() noexcept { state.exchange(asleep, std::memory_order_seq_cst); }
         void cancelSleep() noexcept { state.exchange(awake, std::memory_order_seq_cst); }
+#ifdef __EMSCRIPTEN__
+        // As std::atomic::wait: returns once the state isn't asleep, however the futex woke.
+        void wait() noexcept {
+            while (state.load(std::memory_order_seq_cst) == asleep) {
+                emscripten_futex_wait(futexAddress(), asleep, INFINITY);
+            }
+        }
+#else
         void wait() noexcept { state.wait(asleep, std::memory_order_seq_cst); }
+#endif
 
     private:
         friend struct order_book::OrderBookTestAccess;
@@ -41,6 +63,12 @@ namespace order_book::runtime {
         static constexpr std::uint32_t asleep = 1;
 
         std::atomic<std::uint32_t> state{awake};
+
+#ifdef __EMSCRIPTEN__
+        static_assert(sizeof(std::atomic<std::uint32_t>) == sizeof(std::uint32_t) && std::atomic<std::uint32_t>::is_always_lock_free,
+                      "the futex waits on the atomic's own word");
+        volatile void* futexAddress() noexcept { return &state; }
+#endif
     };
 
 }  // namespace order_book::runtime

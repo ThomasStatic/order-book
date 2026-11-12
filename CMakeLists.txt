@@ -45,6 +45,26 @@ if(MSVC AND ORDER_BOOK_ENABLE_UBSAN)
     message(WARNING "UndefinedBehaviorSanitizer is not available with MSVC; ORDER_BOOK_ENABLE_UBSAN is ignored.")
 endif()
 
+# Emscripten (docs/internals/wasm.md): the toolchain is the switch, with no option of its own.
+# Real pthreads and legacy wasm exceptions for every target; what test executables add is at
+# the end of this file, once every target exists.
+if(EMSCRIPTEN)
+    if(ORDER_BOOK_ENABLE_TSAN)
+        message(FATAL_ERROR "ThreadSanitizer is not available with Emscripten.")
+    endif()
+    if(ORDER_BOOK_BUILD_BENCHMARKS)
+        message(FATAL_ERROR "The benchmarks are not built with Emscripten: nothing is measured in wasm.")
+    endif()
+    add_compile_options(-pthread -fwasm-exceptions)
+    add_link_options(-pthread -fwasm-exceptions)
+endif()
+
+# Under Emscripten a pthread comes from a fixed pool made at start, and asking for more than the
+# pool holds aborts. Test executables get 16; this raises one that needs more.
+function(order_book_wasm_threads target_name count)
+    set_property(TARGET ${target_name} PROPERTY ORDER_BOOK_WASM_THREADS ${count})
+endfunction()
+
 function(order_book_enable_warnings target_name)
     if(MSVC)
         target_compile_options(${target_name} PRIVATE /W4)
@@ -241,23 +261,37 @@ target_link_libraries(order_book_network PUBLIC order_book_runtime)
 order_book_enable_warnings(order_book_network)
 order_book_enable_sanitizers(order_book_network)
 
+# The CLI's send, replay, and verify, each returning what it printed and its exit status, so the
+# browser's terminal runs them too (docs/internals/replay.md). Not public API.
+add_library(order_book_cli_commands STATIC
+    src/cli/commands.cpp
+)
+
+target_compile_features(order_book_cli_commands PUBLIC cxx_std_20)
+target_link_libraries(order_book_cli_commands PUBLIC order_book_network)
+order_book_enable_warnings(order_book_cli_commands)
+order_book_enable_sanitizers(order_book_cli_commands)
+
 add_executable(order_book_cli
     apps/order_book_cli.cpp
 )
 
 # The engine as a process (docs/internals/network.md): only parsing and the exit status are here.
-add_executable(order_book_engine
-    apps/order_book_engine.cpp
-    apps/engine_handlers.cpp
-)
+# Not under Emscripten, where nothing can listen.
+if(NOT EMSCRIPTEN)
+    add_executable(order_book_engine
+        apps/order_book_engine.cpp
+        apps/engine_handlers.cpp
+    )
 
-target_compile_features(order_book_engine PRIVATE cxx_std_20)
-target_link_libraries(order_book_engine PRIVATE order_book_network)
-order_book_enable_warnings(order_book_engine)
-order_book_enable_sanitizers(order_book_engine)
+    target_compile_features(order_book_engine PRIVATE cxx_std_20)
+    target_link_libraries(order_book_engine PRIVATE order_book_network)
+    order_book_enable_warnings(order_book_engine)
+    order_book_enable_sanitizers(order_book_engine)
+endif()
 
 target_compile_features(order_book_cli PRIVATE cxx_std_20)
-target_link_libraries(order_book_cli PRIVATE order_book_network)
+target_link_libraries(order_book_cli PRIVATE order_book_cli_commands)
 order_book_enable_warnings(order_book_cli)
 order_book_enable_sanitizers(order_book_cli)
 
@@ -610,13 +644,13 @@ if(BUILD_TESTING)
         add_test(NAME log_writer_abort_${failing}
             COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:log_writer_tests> -DARGS=abort-${failing}
                     "-DOUTPUT_REGEX=order book runtime: shard 0 log writer: log-0000-0+[.]oblog: cannot ${failing} "
-                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
+                    -DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
     endforeach()
     # So must a next log file that can't be made, while the current file still has room.
     add_test(NAME log_writer_abort_next_file
         COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:log_writer_tests> -DARGS=abort-next-file
                 "-DOUTPUT_REGEX=order book runtime: housekeeping: cannot make shard 0's next log file: cannot create log-0000-0+[1-9][0-9]*[.]oblog[.]tmp"
-                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
+                -DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
 
     add_executable(matching_abort_tests
         tests/matching_abort_test.cpp
@@ -644,7 +678,7 @@ if(BUILD_TESTING)
         order_book_enable_sanitizers(tsan_control_tests)
         add_test(NAME tsan_control_tests
             COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:tsan_control_tests>
-                    "-DOUTPUT_REGEX=ThreadSanitizer: data race" -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
+                    "-DOUTPUT_REGEX=ThreadSanitizer: data race" -DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
         set_tests_properties(tsan_control_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads)
     endif()
 
@@ -694,7 +728,7 @@ if(BUILD_TESTING)
     add_test(NAME roll_forward_abort_proof
         COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:roll_forward_tests> -DARGS=abort-proof
                 "-DOUTPUT_REGEX=order book runtime: roll forward: shard 0 AAPL at 25: the image proof failed: restore refused it: NONZERO_RESERVED"
-                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
+                -DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
 
     # The offline commands' work (D7): verify, checkpoint roll, and cut-log on the in-memory storage.
     add_executable(offline_tests
@@ -723,11 +757,11 @@ if(BUILD_TESTING)
     add_test(NAME clean_stop_abort_index
         COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:clean_stop_tests> -DARGS=abort-index
                 "-DOUTPUT_REGEX=order book runtime: clean stop: shard 0 AAPL: the live book fails its check: INVALID_INDEX_ENTRY"
-                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
+                -DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
     add_test(NAME clean_stop_abort_level_handle
         COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:clean_stop_tests> -DARGS=abort-level-handle
                 "-DOUTPUT_REGEX=order book runtime: clean stop: shard 0 AAPL: the live book fails its check: "
-                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
+                -DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
 
     add_executable(shard_invariant_tests
         tests/shard_invariant_test.cpp
@@ -825,7 +859,7 @@ if(BUILD_TESTING)
         if(cli_STDERR)
             list(APPEND defines -DEXPECTED_STDERR=${dir}/expected/${cli_STDERR})
         endif()
-        add_test(NAME replay_cli_${name} COMMAND ${CMAKE_COMMAND} ${defines} -P ${dir}/check_cli_output.cmake)
+        add_test(NAME replay_cli_${name} COMMAND ${CMAKE_COMMAND} ${defines} -DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR} -P ${dir}/check_cli_output.cmake)
     endfunction()
 
     # --events --book prints everything: each event, the statistics, and the final book.
@@ -1156,16 +1190,19 @@ if(BUILD_TESTING)
     add_test(NAME engine_thread_tests COMMAND engine_thread_tests)
     set_tests_properties(engine_thread_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 600)
 
-    add_executable(gateway_socket_tests
-        tests/gateway_socket_test.cpp
-    )
+    # Not under Emscripten: it needs real TCP sockets.
+    if(NOT EMSCRIPTEN)
+        add_executable(gateway_socket_tests
+            tests/gateway_socket_test.cpp
+        )
 
-    target_compile_features(gateway_socket_tests PRIVATE cxx_std_20)
-    target_link_libraries(gateway_socket_tests PRIVATE order_book_network)
-    order_book_enable_warnings(gateway_socket_tests)
-    order_book_enable_sanitizers(gateway_socket_tests)
-    add_test(NAME gateway_socket_tests COMMAND gateway_socket_tests)
-    set_tests_properties(gateway_socket_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
+        target_compile_features(gateway_socket_tests PRIVATE cxx_std_20)
+        target_link_libraries(gateway_socket_tests PRIVATE order_book_network)
+        order_book_enable_warnings(gateway_socket_tests)
+        order_book_enable_sanitizers(gateway_socket_tests)
+        add_test(NAME gateway_socket_tests COMMAND gateway_socket_tests)
+        set_tests_properties(gateway_socket_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
+    endif()
 
     add_executable(engine_settings_tests
         tests/engine_settings_test.cpp
@@ -1186,74 +1223,81 @@ if(BUILD_TESTING)
     order_book_enable_warnings(thread_placement_tests)
     order_book_enable_sanitizers(thread_placement_tests)
     add_test(NAME thread_placement_tests COMMAND thread_placement_tests)
-    set_tests_properties(thread_placement_tests PROPERTIES LABELS threaded)
+    # Exits 77 under Emscripten, which has no thread IDs or affinity to check.
+    set_tests_properties(thread_placement_tests PROPERTIES LABELS threaded SKIP_RETURN_CODE 77)
 
-    add_executable(engine_tests
-        tests/engine_test.cpp
-    )
+    # The engine as a whole over TCP, and as a process: none of these are built under Emscripten.
+    # engine_tests and engine_start_allocation_tests listen on TCP; engine_process_tests,
+    # engine_signal_tests, and engine_end_to_end_tests run order_book_engine as a child process,
+    # and engine_signal_tests sends it signals too.
+    if(NOT EMSCRIPTEN)
+        add_executable(engine_tests
+            tests/engine_test.cpp
+        )
 
-    target_compile_features(engine_tests PRIVATE cxx_std_20)
-    target_link_libraries(engine_tests PRIVATE order_book_network)
-    order_book_enable_warnings(engine_tests)
-    order_book_enable_sanitizers(engine_tests)
-    add_test(NAME engine_tests COMMAND engine_tests)
-    set_tests_properties(engine_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
+        target_compile_features(engine_tests PRIVATE cxx_std_20)
+        target_link_libraries(engine_tests PRIVATE order_book_network)
+        order_book_enable_warnings(engine_tests)
+        order_book_enable_sanitizers(engine_tests)
+        add_test(NAME engine_tests COMMAND engine_tests)
+        set_tests_properties(engine_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
 
-    # Replaces operator new, so it is its own executable.
-    add_executable(engine_start_allocation_tests
-        tests/engine_start_allocation_test.cpp
-    )
+        # Replaces operator new, so it is its own executable.
+        add_executable(engine_start_allocation_tests
+            tests/engine_start_allocation_test.cpp
+        )
 
-    target_compile_features(engine_start_allocation_tests PRIVATE cxx_std_20)
-    target_link_libraries(engine_start_allocation_tests PRIVATE order_book_network)
-    order_book_enable_warnings(engine_start_allocation_tests)
-    order_book_enable_sanitizers(engine_start_allocation_tests)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        # Names in the backtrace a terminate prints.
-        target_link_options(engine_start_allocation_tests PRIVATE -rdynamic)
+        target_compile_features(engine_start_allocation_tests PRIVATE cxx_std_20)
+        target_link_libraries(engine_start_allocation_tests PRIVATE order_book_network)
+        order_book_enable_warnings(engine_start_allocation_tests)
+        order_book_enable_sanitizers(engine_start_allocation_tests)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            # Names in the backtrace a terminate prints.
+            target_link_options(engine_start_allocation_tests PRIVATE -rdynamic)
+        endif()
+        add_test(NAME engine_start_allocation_tests COMMAND engine_start_allocation_tests)
+        set_tests_properties(engine_start_allocation_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+
+        add_executable(engine_process_tests
+            tests/engine_process_test.cpp
+        )
+
+        target_compile_features(engine_process_tests PRIVATE cxx_std_20)
+        target_link_libraries(engine_process_tests PRIVATE order_book_process_testing order_book_network)
+        order_book_enable_warnings(engine_process_tests)
+        order_book_enable_sanitizers(engine_process_tests)
+        add_test(NAME engine_process_tests COMMAND engine_process_tests $<TARGET_FILE:order_book_engine>)
+        set_tests_properties(engine_process_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 180)
+
+        # Real signals and the abort handler, so it builds apps/' handlers in with the test.
+        add_executable(engine_signal_tests
+            tests/engine_signal_test.cpp
+            apps/engine_handlers.cpp
+        )
+
+        target_compile_features(engine_signal_tests PRIVATE cxx_std_20)
+        target_include_directories(engine_signal_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/apps)
+        target_link_libraries(engine_signal_tests PRIVATE order_book_process_testing order_book_network)
+        order_book_enable_warnings(engine_signal_tests)
+        order_book_enable_sanitizers(engine_signal_tests)
+        add_dependencies(engine_signal_tests order_book_engine)
+        add_test(NAME engine_signal_tests COMMAND engine_signal_tests $<TARGET_FILE:order_book_engine>)
+        set_tests_properties(engine_signal_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads SKIP_RETURN_CODE 77 TIMEOUT 180)
+
+        add_executable(engine_end_to_end_tests
+            tests/engine_end_to_end_test.cpp
+        )
+
+        target_compile_features(engine_end_to_end_tests PRIVATE cxx_std_20)
+        target_link_libraries(engine_end_to_end_tests PRIVATE order_book_process_testing order_book_network)
+        order_book_enable_warnings(engine_end_to_end_tests)
+        order_book_enable_sanitizers(engine_end_to_end_tests)
+        add_dependencies(engine_end_to_end_tests order_book_engine order_book_cli)
+        add_test(NAME engine_end_to_end_tests
+            COMMAND engine_end_to_end_tests $<TARGET_FILE:order_book_engine> $<TARGET_FILE:order_book_cli>
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay ${CMAKE_CURRENT_SOURCE_DIR}/tests/engine/samples)
+        set_tests_properties(engine_end_to_end_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
     endif()
-    add_test(NAME engine_start_allocation_tests COMMAND engine_start_allocation_tests)
-    set_tests_properties(engine_start_allocation_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
-
-    add_executable(engine_process_tests
-        tests/engine_process_test.cpp
-    )
-
-    target_compile_features(engine_process_tests PRIVATE cxx_std_20)
-    target_link_libraries(engine_process_tests PRIVATE order_book_process_testing order_book_network)
-    order_book_enable_warnings(engine_process_tests)
-    order_book_enable_sanitizers(engine_process_tests)
-    add_test(NAME engine_process_tests COMMAND engine_process_tests $<TARGET_FILE:order_book_engine>)
-    set_tests_properties(engine_process_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 180)
-
-    # Real signals and the abort handler, so it builds apps/' handlers in with the test.
-    add_executable(engine_signal_tests
-        tests/engine_signal_test.cpp
-        apps/engine_handlers.cpp
-    )
-
-    target_compile_features(engine_signal_tests PRIVATE cxx_std_20)
-    target_include_directories(engine_signal_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/apps)
-    target_link_libraries(engine_signal_tests PRIVATE order_book_process_testing order_book_network)
-    order_book_enable_warnings(engine_signal_tests)
-    order_book_enable_sanitizers(engine_signal_tests)
-    add_dependencies(engine_signal_tests order_book_engine)
-    add_test(NAME engine_signal_tests COMMAND engine_signal_tests $<TARGET_FILE:order_book_engine>)
-    set_tests_properties(engine_signal_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads SKIP_RETURN_CODE 77 TIMEOUT 180)
-
-    add_executable(engine_end_to_end_tests
-        tests/engine_end_to_end_test.cpp
-    )
-
-    target_compile_features(engine_end_to_end_tests PRIVATE cxx_std_20)
-    target_link_libraries(engine_end_to_end_tests PRIVATE order_book_process_testing order_book_network)
-    order_book_enable_warnings(engine_end_to_end_tests)
-    order_book_enable_sanitizers(engine_end_to_end_tests)
-    add_dependencies(engine_end_to_end_tests order_book_engine order_book_cli)
-    add_test(NAME engine_end_to_end_tests
-        COMMAND engine_end_to_end_tests $<TARGET_FILE:order_book_engine> $<TARGET_FILE:order_book_cli>
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay ${CMAKE_CURRENT_SOURCE_DIR}/tests/engine/samples)
-    set_tests_properties(engine_end_to_end_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
 
     add_executable(randomized_harness_tests
         tests/randomized/harness_test.cpp
@@ -1533,7 +1577,7 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         add_test(NAME benchmark_queue_tampered
             COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:order_book_benchmarks> -DEXPECTED_EXIT=1
                     "-DARGS=--workload|small-book|--commands|2000|--kind|queue|--tamper-prediction|--repetitions|1|--warmup|0|--allow-unoptimized"
-                    "-DOUTPUT_REGEX=but the workload predicted" -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
+                    "-DOUTPUT_REGEX=but the workload predicted" -DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
         # The same with the shard logging to real files, written through to the drive.
         add_test(NAME benchmark_queue_smoke_machine
             COMMAND order_book_benchmarks --workload small-book --commands 2000 --kind queue --instruments 4
@@ -1547,7 +1591,7 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         add_test(NAME benchmark_gateway_tampered
             COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:order_book_benchmarks> -DEXPECTED_EXIT=1
                     "-DARGS=--workload|small-book|--commands|2000|--kind|gateway|--tamper-prediction|--repetitions|1|--warmup|0|--allow-unoptimized"
-                    "-DOUTPUT_REGEX=but the workload predicted" -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
+                    "-DOUTPUT_REGEX=but the workload predicted" -DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
         add_test(NAME benchmark_gateway_smoke_process
             COMMAND order_book_benchmarks --workload small-book --commands 2000 --kind gateway --instruments 4
                     --durability process --log-dir ${CMAKE_CURRENT_BINARY_DIR} --repetitions 1 --warmup 0 --allow-unoptimized)
@@ -1560,7 +1604,7 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         add_test(NAME benchmark_engine_tampered
             COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:order_book_benchmarks> -DEXPECTED_EXIT=1
                     "-DARGS=--workload|small-book|--commands|2000|--kind|engine|--engine|$<TARGET_FILE:order_book_engine>|--tamper-prediction|--repetitions|1|--warmup|0|--allow-unoptimized"
-                    "-DOUTPUT_REGEX=but the workload predicted" -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
+                    "-DOUTPUT_REGEX=but the workload predicted" -DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
         set_tests_properties(benchmark_engine_smoke benchmark_engine_tampered PROPERTIES
             LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
         add_test(NAME benchmark_shard_smoke
@@ -1582,7 +1626,7 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
         add_test(NAME benchmark_scaled_tampered
             COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:order_book_benchmarks> -DEXPECTED_EXIT=1
                     "-DARGS=--workload|small-book|--commands|2000|--kind|gateway|--shards|2|--gateway-threads|2|--instruments|16|--tamper-prediction|--repetitions|1|--warmup|0|--allow-unoptimized"
-                    "-DOUTPUT_REGEX=but the workload predicted" -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
+                    "-DOUTPUT_REGEX=but the workload predicted" -DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_failure.cmake)
         set_tests_properties(benchmark_scaled_shard_smoke benchmark_scaled_queue_smoke benchmark_scaled_gateway_smoke
             benchmark_scaled_tampered PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
         # The program end to end on a tiny run of one workload, both kinds, writing both
@@ -1608,4 +1652,37 @@ if(ORDER_BOOK_BUILD_BENCHMARKS)
             order_book_enable_warnings(sampling_profiler)
         endif()
     endif()
+endif()
+
+# Emscripten: every executable here runs under node in CTest, the CLI included, so each reads
+# the host's files (NODERAWFS), exits when main returns (EXIT_RUNTIME), checks its stacks, which
+# are the shipped module's sizes rather than Emscripten's 64 KiB, and grows its memory, which only
+# these targets may do while running pthreads. Each gets a strict
+# pool of 16 threads, or what order_book_wasm_threads gave it: one more aborts. Under ASan each
+# also takes tests/wasm_asan_options.js, which turns off allocation stacks, far too slow there.
+if(EMSCRIPTEN)
+    get_property(order_book_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(target_name IN LISTS order_book_targets)
+        get_target_property(target_type ${target_name} TYPE)
+        if(NOT target_type STREQUAL "EXECUTABLE")
+            continue()
+        endif()
+        get_target_property(threads ${target_name} ORDER_BOOK_WASM_THREADS)
+        if(NOT threads)
+            set(threads 16)
+        endif()
+        target_link_options(${target_name} PRIVATE
+            -sNODERAWFS=1
+            -sEXIT_RUNTIME=1
+            -sSTACK_OVERFLOW_CHECK=2
+            -sSTACK_SIZE=1MB
+            -sDEFAULT_PTHREAD_STACK_SIZE=256KB
+            -sALLOW_MEMORY_GROWTH=1
+            -Wno-pthreads-mem-growth
+            -sPTHREAD_POOL_SIZE=${threads}
+            -sPTHREAD_POOL_SIZE_STRICT=2)
+        if(ORDER_BOOK_ENABLE_ASAN)
+            target_link_options(${target_name} PRIVATE "SHELL:--pre-js ${CMAKE_CURRENT_SOURCE_DIR}/tests/wasm_asan_options.js")
+        endif()
+    endforeach()
 endif()

@@ -134,26 +134,29 @@ void testOtherRequestsGoToTheHeap() {
     NodePool pool;
     PoolAllocator<Node> nodes(&pool);
     PoolAllocator<double> doubles(nodes);
+    // Sizes above the node's, so none shares its class where pointers are 32 bits, and a seventh
+    // past the largest of them.
+    constexpr std::size_t step = 16;
     PoolAllocator<char[24]> twentyFours(nodes);
-    PoolAllocator<char[40]> forties(nodes);
-    PoolAllocator<char[72]> seventyTwos(nodes);
-    PoolAllocator<char[88]> eightyEights(nodes);
-    PoolAllocator<char[104]> oneHundredFours(nodes);
+    PoolAllocator<char[sizeof(Node) + step]> fourths(nodes);
+    PoolAllocator<char[sizeof(Node) + 2 * step]> fifths(nodes);
+    PoolAllocator<char[sizeof(Node) + 3 * step]> sixths(nodes);
+    PoolAllocator<char[sizeof(Node) + 4 * step]> sevenths(nodes);
     PoolAllocator<Node> heapOnly;
 
     // Six sizes claim the pool's six classes; each is then served from its own blocks.
     Node* const node = nodes.allocate(1);
     double* const single = doubles.allocate(1);
     auto* const twentyFour = twentyFours.allocate(1);
-    auto* const forty = forties.allocate(1);
-    auto* const seventyTwo = seventyTwos.allocate(1);
-    auto* const eightyEight = eightyEights.allocate(1);
-    escaped = seventyTwo;
-    escaped = eightyEight;
+    auto* const fourth = fourths.allocate(1);
+    auto* const fifth = fifths.allocate(1);
+    auto* const sixth = sixths.allocate(1);
+    escaped = fifth;
+    escaped = sixth;
     escaped = node;
     escaped = single;
     escaped = twentyFour;
-    escaped = forty;
+    escaped = fourth;
     doubles.deallocate(single, 1);
     const long beforeReuse = allocations;
     double* const reusedSingle = doubles.allocate(1);
@@ -162,8 +165,8 @@ void testOtherRequestsGoToTheHeap() {
 
     // All readings first, then the checks (see above).
     const long before = allocations;
-    auto* const oneHundredFour = oneHundredFours.allocate(1);  // a seventh size: the heap
-    escaped = oneHundredFour;
+    auto* const seventh = sevenths.allocate(1);  // a seventh size: the heap
+    escaped = seventh;
     const long afterSeventh = allocations;
     double* const array = doubles.allocate(4);  // more than one object: the heap
     escaped = array;
@@ -180,15 +183,15 @@ void testOtherRequestsGoToTheHeap() {
     expect(afterUnpooled == afterArrays + 1, "an allocator without a pool uses the heap");
     expect(!(heapOnly == nodes) && nodes == doubles, "allocators are equal exactly when they share a pool");
 
-    oneHundredFours.deallocate(oneHundredFour, 1);
-    eightyEights.deallocate(eightyEight, 1);
-    seventyTwos.deallocate(seventyTwo, 1);
+    sevenths.deallocate(seventh, 1);
+    sixths.deallocate(sixth, 1);
+    fifths.deallocate(fifth, 1);
     doubles.deallocate(array, 4);
     nodes.deallocate(nodeArray, 3);
     heapOnly.deallocate(unpooled, 1);
     doubles.deallocate(reusedSingle, 1);
     twentyFours.deallocate(twentyFour, 1);
-    forties.deallocate(forty, 1);
+    fourths.deallocate(fourth, 1);
     nodes.deallocate(node, 1);
 }
 
