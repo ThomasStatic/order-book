@@ -1658,7 +1658,8 @@ endif()
 # the host's files (NODERAWFS), exits when main returns (EXIT_RUNTIME), checks its stacks, which
 # are the shipped module's sizes rather than Emscripten's 64 KiB, and grows its memory, which only
 # these targets may do while running pthreads. Each gets a strict
-# pool of 16 threads, or what order_book_wasm_threads gave it: one more aborts.
+# pool of 16 threads, or what order_book_wasm_threads gave it: one more aborts. Under ASan each
+# also takes tests/wasm_asan_options.js, which turns off allocation stacks, far too slow there.
 if(EMSCRIPTEN)
     get_property(order_book_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
     foreach(target_name IN LISTS order_book_targets)
@@ -1680,5 +1681,8 @@ if(EMSCRIPTEN)
             -Wno-pthreads-mem-growth
             -sPTHREAD_POOL_SIZE=${threads}
             -sPTHREAD_POOL_SIZE_STRICT=2)
+        if(ORDER_BOOK_ENABLE_ASAN)
+            target_link_options(${target_name} PRIVATE "SHELL:--pre-js ${CMAKE_CURRENT_SOURCE_DIR}/tests/wasm_asan_options.js")
+        endif()
     endforeach()
 endif()
