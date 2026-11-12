@@ -1,0 +1,11 @@
+status
+book AAPL
+buy AAPL 5 101
+book AAPL
+sell AAPL 15 98
+book AAPL
+cancel AAPL 2
+cancel AAPL 2
+replace AAPL 3 97 40
+book AAPL
+status

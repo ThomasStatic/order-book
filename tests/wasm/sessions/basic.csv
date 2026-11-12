@@ -1,0 +1,6 @@
+sequence,command,order_id,side,price,quantity,order_type,time_in_force,stop_price,post_only,owner,self_trade_prevention,symbol
+1,ADD,7,BUY,101,5,LIMIT,GTC,,,,,AAPL
+2,ADD,8,SELL,98,15,LIMIT,GTC,,,,,AAPL
+3,CANCEL,2,,,,,,,,,,AAPL
+4,CANCEL,2,,,,,,,,,,AAPL
+5,REPLACE,3,,97,40,,,,,,,AAPL

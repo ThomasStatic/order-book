@@ -1,0 +1,19 @@
+buy
+buy AAPL
+buy XYZ 1 100
+buy AAPL ten 100
+buy AAPL 1 100 colour=red
+buy AAPL 1 100 tif=gtc tif=ioc
+sell AAPL 1 tif=gtc
+buy AAPL 1 100 tif=ioc post-only
+buy AAPL 1 100 stp=cancel-both
+buy AAPL 1 100 owner=
+cancel AAPL
+cancel AAPL 99
+cancel ZZZZ 1
+replace AAPL 1 100
+replace AAPL 1 100 5 stop=90
+frobnicate
+book XYZ
+status extra
+buy AAPL 1 90

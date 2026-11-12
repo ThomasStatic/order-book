@@ -1,0 +1,15 @@
+buy MSFT 10
+sell MSFT 5 tif=fok
+buy MSFT 3 205 tif=ioc
+buy MSFT 2 199 post-only
+sell MSFT 4 201 owner=7
+buy MSFT 4 201 owner=7 stp=cancel-both
+book MSFT
+buy NVDA 1 stop=52
+sell NVDA 2 48 stop=49
+buy NVDA 1 60 stop=55 tif=gtc owner=3
+book NVDA
+replace MSFT 9 198 5 post-only
+sell TSLA 1 151 owner=2 stp=cancel-incoming
+buy TSLA 11 151 owner=2 stp=cancel-incoming
+book TSLA

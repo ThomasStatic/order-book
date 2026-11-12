@@ -1,0 +1,58 @@
+> status
+shard 0: AAPL MSFT records=12
+shard 1: NVDA TSLA records=12
+> book AAPL
+bids:
+  price=99 qty=10 orders=1
+  price=98 qty=20 orders=1
+  price=97 qty=30 orders=1
+asks:
+  price=101 qty=10 orders=1
+  price=102 qty=20 orders=1
+  price=103 qty=30 orders=1
+last trade price: none
+> buy AAPL 5 101
+assigned id=7
+line 2: OrderAccepted id=7 side=BUY price=101 qty=5
+line 2: TradeExecuted incoming=7 resting=4 price=101 qty=5
+> book AAPL
+bids:
+  price=99 qty=10 orders=1
+  price=98 qty=20 orders=1
+  price=97 qty=30 orders=1
+asks:
+  price=101 qty=5 orders=1
+  price=102 qty=20 orders=1
+  price=103 qty=30 orders=1
+last trade price: 101
+> sell AAPL 15 98
+assigned id=8
+line 3: OrderAccepted id=8 side=SELL price=98 qty=15
+line 3: TradeExecuted incoming=8 resting=1 price=99 qty=10
+line 3: TradeExecuted incoming=8 resting=2 price=98 qty=5
+> book AAPL
+bids:
+  price=98 qty=15 orders=1
+  price=97 qty=30 orders=1
+asks:
+  price=101 qty=5 orders=1
+  price=102 qty=20 orders=1
+  price=103 qty=30 orders=1
+last trade price: 98
+> cancel AAPL 2
+line 4: OrderCancelled id=2 qty=15
+> cancel AAPL 2
+line 5: CancelRejected id=2 reason=ORDER_NOT_FOUND
+> replace AAPL 3 97 40
+line 6: OrderReplaced id=3 side=BUY price=97 qty=40 open=40 priority=LOST
+> book AAPL
+bids:
+  price=97 qty=40 orders=1
+asks:
+  price=101 qty=5 orders=1
+  price=102 qty=20 orders=1
+  price=103 qty=30 orders=1
+last trade price: 98
+> status
+shard 0: AAPL MSFT records=17
+shard 1: NVDA TSLA records=12

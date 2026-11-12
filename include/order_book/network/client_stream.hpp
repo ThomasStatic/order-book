@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -45,6 +46,10 @@ namespace order_book::network {
         // Everything is written, so the caller half-closes.
         bool allWritten() const noexcept;
 
+        // One more command, after those given, for a connection that stays open: the browser
+        // terminal's. Its correlation must be above every earlier one's.
+        void add(ClientCommand command);
+
         // What the engine sent.
         void received(std::span<const std::byte> bytes);
         // The engine's stream ended, or the connection failed.
@@ -58,6 +63,10 @@ namespace order_book::network {
         // bytes, each line tagged "line N:" with its correlation, sorted by it, and a line's
         // frames in the order they came. A refusal prints in place.
         std::string sections() const;
+        // Whether a frame flagged last has come for this correlation's command.
+        bool answered(Correlation correlation) const;
+        // That command's lines alone, as sections prints them, in the order they came.
+        std::string answerLines(Correlation correlation) const;
         // What went wrong, one line each, without a program's prefix.
         const std::vector<std::string>& diagnostics() const noexcept { return problems; }
 
@@ -68,13 +77,16 @@ namespace order_book::network {
             std::string text;     // formatEvent's, or the refusal's
         };
 
+        static std::string answerLine(const Answer& answer);
         void take(const Frame& frame);
+        // The index of the command under this correlation, if one is.
+        std::optional<std::size_t> commandOf(Correlation correlation) const;
         void broke(std::string why);
         void fill();
 
         std::vector<ClientCommand> commands;
         std::vector<std::size_t> byCorrelation;  // command indices, sorted by correlation
-        std::vector<bool> answered;              // by command index
+        std::vector<bool> isAnswered;            // by command index
         std::size_t unanswered;
         std::vector<Answer> answers;
 

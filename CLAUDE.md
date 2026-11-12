@@ -17,7 +17,7 @@ Read the matching note in `docs/internals/` before changing that area, and updat
 - `latency.md`: the latency harness: clock, histogram, drivers, run record, report.
 - `runtime.md`: `order_book_runtime`, and `EngineSettings`: the instrument list, placement, `InstrumentDirectory`, `BookSet`, `Shard`, the rings, `MatchingLoop`, `LogStorage`, log files and `Housekeeping`, `LogWriter`, the durable position, the directory lock, and recovery.
 - `network.md`: `order_book_network`: `FrameReader`, the frame encoders, `checkEntry`, `SocketSet`, `GatewayThread` and the hold, `TcpSocket`, `PollSocketSet`, `runEngine`, `StopSource`.
-- `wasm.md`: the Emscripten build: the toolchain, the CMake branch and test link settings, the `__EMSCRIPTEN__` portability branches, the suites not built there, and the two wasm CI jobs.
+- `wasm.md`: the Emscripten build: the toolchain, the CMake branch and test link settings, the `__EMSCRIPTEN__` portability branches, `order_book_wasm` (the browser settings, `ShadowBooks`, book-image views, ID assignment, `BrowserEngine`, `PageConnection`, the terminal and its sessions, seeding), the suites not built there, and the two wasm CI jobs.
 
 ## Build and test
 
