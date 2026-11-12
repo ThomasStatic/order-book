@@ -36,7 +36,7 @@ namespace order_book::network {
         // Room in each direction of each connection.
         static constexpr std::size_t defaultBufferBytes = 64 * 1024;
 
-        explicit PageSocketSet(std::function<void()> clientHasSomething, std::size_t bufferBytes = defaultBufferBytes);
+        explicit PageSocketSet(std::function<void()> tellTheClient, std::size_t buffer = defaultBufferBytes);
         PageSocketSet(const PageSocketSet&) = delete;
         PageSocketSet& operator=(const PageSocketSet&) = delete;
 
@@ -97,7 +97,6 @@ namespace order_book::network {
         const Slot& slotOf(SocketId socket) const;
         bool ready(std::span<const SocketInterest> interest) const;
         void freeIfDone(Slot& slot);
-        void tellClient();
 
         const std::function<void()> clientHasSomething;
         const std::size_t bufferBytes;

@@ -687,37 +687,19 @@ void testACrashAtEveryStepOfAStart() {
 // holds, every released response's command among it, then goes on with the rest, as a client
 // would send them again, and recovers to the uninterrupted run's books. At the end the copy holds
 // exactly the store's files.
-std::vector<PageLogStorage::StoredFile> storedFiles(const std::map<std::string, std::vector<std::byte>>& copy) {
-    std::vector<PageLogStorage::StoredFile> files;
-    for (const auto& [name, bytes] : copy) {
-        files.push_back({name, bytes});
-    }
-    return files;
-}
+struct PageStep {
+    std::vector<PageLogStorage::StoredFile> copy;
+    std::uint64_t released = 0;
+};
 
-void testAPageStoreRecoversAtEveryStep() {
-    const InstrumentDirectory directory = twoShards();
-    const std::vector<Placed> commands = commandsFor(2, 70);
-    const std::uint64_t fileBytes = fileBytesFor(directory, 0, recordsPerStepFile);
-    struct PageStep {
-        std::vector<PageLogStorage::StoredFile> copy;
-        std::uint64_t released = 0;
-    };
-    std::map<std::string, std::vector<std::byte>> copy;
-    DurablePosition durable;
-    std::vector<PageStep> steps;
-    PageLogStorage storage([&](const PageLogStorage::Change& change) {
-        PageLogStorage::apply(copy, change);
-        steps.push_back(PageStep{storedFiles(copy), durable.load()});
-    });
-    writeInSteps(storage, directory, Durability::PROCESS, fileBytes, commands, 0, durable);
-    expect(storedFiles(copy) == storage.files(), "the page's copy holds exactly the store's files");
-    expect(steps.size() > 20, "the page store: many steps to crash at");
-
+// After each step a store built from the copy recovers, at least what was released, then goes
+// on to the whole run.
+void recoverEachPageStep(const std::vector<PageStep>& steps, const InstrumentDirectory& directory, const std::vector<Placed>& commands,
+                         std::uint64_t fileBytes, const std::string& run) {
+    expect(steps.size() > 10, run + ": many steps to crash at, " + std::to_string(steps.size()));  // flushes tell nothing
     for (std::size_t i = 0; i < steps.size(); ++i) {
-        const std::string what = "the page store, step " + std::to_string(i);
+        const std::string what = run + ", step " + std::to_string(i);
         PageLogStorage rebuilt([](const PageLogStorage::Change&) {}, steps[i].copy);
-        expect(rebuilt.files() == steps[i].copy, what + ": a store built from the copy holds its files");
         const std::unique_ptr<StorageLock> held = rebuilt.lock();
         const LogSurvey survey = surveyLog(rebuilt, directory);
         for (const std::string& temporary : survey.temporaries) {
@@ -741,6 +723,61 @@ void testAPageStoreRecoversAtEveryStep() {
         const RecoveredShard whole = recover(rebuilt, directory, 0, again);
         expect(whole.replayed == commands.size() && whole.tailCutBytes == 0, what + ": after the restart, the whole log recovers");
         expectBooksEqual(again, witnessOf(2, commands), what + ", against the uninterrupted run");
+    }
+}
+
+void testAPageStoreRecoversAtEveryStep() {
+    const InstrumentDirectory directory = twoShards();
+    const std::vector<Placed> commands = commandsFor(2, 70);
+    const std::uint64_t fileBytes = fileBytesFor(directory, 0, recordsPerStepFile);
+
+    // Rotation, as testACrashAtEveryStepOfRotation runs it.
+    {
+        std::map<std::string, std::vector<std::byte>> copy;
+        DurablePosition durable;
+        std::vector<PageStep> steps;
+        PageLogStorage storage([&](const PageLogStorage::Change& change) {
+            PageLogStorage::apply(copy, change);
+            steps.push_back(PageStep{PageLogStorage::storedFiles(copy), durable.load()});
+        });
+        writeInSteps(storage, directory, Durability::PROCESS, fileBytes, commands, 0, durable);
+        expect(PageLogStorage::storedFiles(copy) == storage.files(), "rotation: the page's copy holds exactly the store's files");
+        recoverEachPageStep(steps, directory, commands, fileBytes, "the page store's rotation");
+    }
+
+    // A start, as testACrashAtEveryStepOfAStart runs it: an earlier run's torn tail and a file
+    // being made, which the start removes and cuts, every change of it told and copied too.
+    {
+        constexpr std::uint64_t before = 40;
+        std::map<std::string, std::vector<std::byte>> copy;
+        DurablePosition durable;
+        std::vector<PageStep> steps;
+        bool recording = false;
+        PageLogStorage storage([&](const PageLogStorage::Change& change) {
+            PageLogStorage::apply(copy, change);
+            if (recording) {
+                steps.push_back(PageStep{PageLogStorage::storedFiles(copy), std::max(before, durable.load())});
+            }
+        });
+        writeLog(storage, directory, 0, firstOf(commands, before), false, fileBytes, Durability::PROCESS);
+        const std::uint64_t header = headerBytesOf(directory, 0);
+        storage.open(logFileName(0, 30))->write(header + 10 * replay::logRecordBytes, std::vector<std::byte>(20, std::byte{0xab}));
+        storage.create(logFileName(0, 60) + ".tmp", Durability::PROCESS)->write(0, std::vector<std::byte>{std::byte{1}});
+        recording = true;
+        {
+            const std::unique_ptr<StorageLock> held = storage.lock();
+            const LogSurvey survey = surveyLog(storage, directory);
+            for (const std::string& temporary : survey.temporaries) {
+                storage.remove(temporary);
+            }
+            Shard shard(directory, 0);
+            const RecoveredShard recovered =
+                recoverShard(storage, storage, directory, survey.shards[0], survey.checkpoints[0], shard, defaultBookCapacity, running);
+            expect(recovered.replayed == before && recovered.tailCutBytes == 20, "the page store's start recovers forty, cutting the torn tail");
+        }
+        writeInSteps(storage, directory, Durability::PROCESS, fileBytes, commands, before, durable);
+        expect(PageLogStorage::storedFiles(copy) == storage.files(), "a start: the page's copy holds exactly the store's files");
+        recoverEachPageStep(steps, directory, commands, fileBytes, "the page store's start");
     }
 }
 

@@ -1,3 +1,4 @@
+#include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -7,6 +8,7 @@
 #include <iostream>
 #include <iterator>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <regex>
 #include <sstream>
@@ -192,7 +194,18 @@ void testASessionThenACleanStop(const std::filesystem::path& replayDir, const st
 void testAForcedStop(const std::filesystem::path& replayDir, const std::filesystem::path& list) {
     runtime::EngineSettings settings = settingsFor(list);
     settings.stopGrace = std::chrono::seconds(600);
-    auto* run = new Run(settings, std::make_shared<runtime::InMemoryLogStorage>());  // left with its threads
+    // Each change to the log, which follows every command the engine reads, wakes the wait below.
+    struct Changes {
+        std::mutex guard;
+        std::condition_variable changed;
+    };
+    auto* changes = new Changes;  // left with the engine's threads, which still tell it
+    const auto storage = std::make_shared<runtime::InMemoryLogStorage>();
+    storage->watch([changes](const runtime::InMemoryLogStorage::Contents&) {
+        const std::lock_guard<std::mutex> held(changes->guard);
+        changes->changed.notify_all();
+    });
+    auto* run = new Run(settings, storage);  // left with its threads
     run->waitUntilReady();
     run->network->limitWrite(0);  // nothing reaches the client: the clean stop waits for it
     std::variant<cli::PreparedSend, cli::CommandResult> prepared =
@@ -206,11 +219,12 @@ void testAForcedStop(const std::filesystem::path& replayDir, const std::filesyst
         stream.wrote(out.size());
         sent += out.size();
     }
-    // Every command read, so each one's answer is owed and can't be sent. The set has no way to
-    // wait for a read, so this looks at it until it has happened.
-    for (int tries = 0; run->network->bytesRead(socket) < sent; ++tries) {
-        expect(tries < 60'000, "the engine read every command");
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    // Every command read, so each one's answer is owed and can't be sent: the engine reads them
+    // before it logs the last.
+    {
+        std::unique_lock<std::mutex> held(changes->guard);
+        const bool read = changes->changed.wait_for(held, std::chrono::seconds(60), [&] { return run->network->bytesRead(socket) >= sent; });
+        expect(read, "the engine read every command");
     }
     run->stop.request();
     run->stop.request();

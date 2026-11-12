@@ -246,7 +246,7 @@ void testAThreadedEcho() {
         set.shutdownSend(*socket);
         set.close(*socket);
     });
-    set.wake();  // the first wait may have begun before the connection
+    set.wake();  // a wake the gateway thread's first wait may meet, which changes nothing
 
     const std::vector<std::byte> sent = bytesOf(10'000);
     std::size_t written = 0;

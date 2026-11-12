@@ -12,15 +12,22 @@ namespace order_book::runtime {
             }
             std::copy(bytes.begin(), bytes.end(), into.begin() + static_cast<std::ptrdiff_t>(offset));
         }
+
+        PageLogStorage::Change changeOf(PageLogStorage::Change::Kind kind, std::string name) {
+            PageLogStorage::Change change;
+            change.kind = kind;
+            change.name = std::move(name);
+            return change;
+        }
     }  // namespace
 
     // One handle on a file. Each change is made, then told, under the store's lock, so the
     // callback sees changes in the order they were made, and only those to a file the store
-    // still holds under the handle's name: a removed file's writes reach no one.
+    // still holds: a removed file's writes reach no one. A file carries its own name, so a
+    // change through any handle names it as the store does.
     class PageLogStorage::OpenFile final : public LogFile {
     public:
-        OpenFile(PageLogStorage& owner, std::shared_ptr<File> opened, std::string named)
-            : storage(owner), file(std::move(opened)), name(std::move(named)) {}
+        OpenFile(PageLogStorage& owner, std::shared_ptr<File> opened) : storage(owner), file(std::move(opened)) {}
 
         std::size_t read(std::uint64_t offset, std::span<std::byte> out) override {
             const std::lock_guard<std::mutex> held(storage.guard);
@@ -44,11 +51,10 @@ namespace order_book::runtime {
             const std::lock_guard<std::mutex> held(storage.guard);
             place(file->bytes, offset, bytes);
             file->size = std::max<std::uint64_t>(file->size, offset + bytes.size());
-            Change change;
-            change.kind = Change::Kind::WRITE;
+            Change change = changeOf(Change::Kind::WRITE, file->name);
             change.offset = offset;
             change.bytes = bytes;
-            tell(std::move(change));
+            tell(change);
         }
 
         void flush() override {}  // process durability: nothing to tell
@@ -59,10 +65,9 @@ namespace order_book::runtime {
                 return;  // never shortens, so nothing changed
             }
             file->size = size;
-            Change change;
-            change.kind = Change::Kind::EXTEND;
+            Change change = changeOf(Change::Kind::EXTEND, file->name);
             change.size = size;
-            tell(std::move(change));
+            tell(change);
         }
 
         void cut(std::uint64_t size) override {
@@ -71,10 +76,9 @@ namespace order_book::runtime {
                 file->bytes.resize(static_cast<std::size_t>(size));
             }
             file->size = size;
-            Change change;
-            change.kind = Change::Kind::CUT;
+            Change change = changeOf(Change::Kind::CUT, file->name);
             change.size = size;
-            tell(std::move(change));
+            tell(change);
         }
 
         void close() override {}
@@ -84,43 +88,41 @@ namespace order_book::runtime {
 
     private:
         bool current() const {
-            const auto found = storage.stored.find(name);
+            const auto found = storage.stored.find(file->name);
             return found != storage.stored.end() && found->second == file;
         }
 
         // Under the store's lock.
-        void tell(Change change) {
-            if (!current()) {
-                return;
+        void tell(const Change& change) {
+            if (current()) {
+                storage.onChange(change);
             }
-            change.name = name;
-            storage.onChange(change);
         }
 
         void moveTo(const std::string& to, bool replacing) {
             const std::lock_guard<std::mutex> held(storage.guard);
             if (!current()) {
-                throw LogStorageError(LogStorageError::Kind::FAILED, "cannot rename " + name + ": it was removed");
+                throw LogStorageError(LogStorageError::Kind::FAILED, "cannot rename " + file->name + ": it was removed");
             }
-            if (storage.stored.contains(to)) {
-                if (!replacing) {
-                    throw LogStorageError(LogStorageError::Kind::EXISTS, to + " already exists");
-                }
-                storage.stored.erase(to);
+            if (!replacing && storage.stored.contains(to)) {
+                throw LogStorageError(LogStorageError::Kind::EXISTS, to + " already exists");
             }
-            storage.stored.erase(name);
-            storage.stored.insert_or_assign(to, file);
-            Change change;
-            change.kind = replacing ? Change::Kind::REPLACE : Change::Kind::RENAME;
-            change.name = name;
+            // Everything that allocates first, then the name moves in one assignment, so a
+            // failure leaves both files as they were.
+            Change change = changeOf(replacing ? Change::Kind::REPLACE : Change::Kind::RENAME, file->name);
             change.to = to;
-            name = to;
+            std::string from = file->name;
+            std::string named = to;
+            storage.stored.insert_or_assign(to, file);  // over the replaced file, if there was one
+            if (from != to) {
+                storage.stored.erase(from);
+            }
+            file->name = std::move(named);
             storage.onChange(change);
         }
 
         PageLogStorage& storage;
         std::shared_ptr<File> file;
-        std::string name;
     };
 
     class PageLogStorage::HeldLock final : public StorageLock {
@@ -146,6 +148,7 @@ namespace order_book::runtime {
             auto file = std::make_shared<File>();
             file->size = given.bytes.size();
             file->bytes = std::move(given.bytes);
+            file->name = given.name;
             stored.insert_or_assign(std::move(given.name), std::move(file));
         }
     }
@@ -177,21 +180,19 @@ namespace order_book::runtime {
         if (found == stored.end()) {
             throw LogStorageError(LogStorageError::Kind::FAILED, "cannot open " + name + ": no such file");
         }
-        return std::make_unique<OpenFile>(*this, found->second, name);
+        return std::make_unique<OpenFile>(*this, found->second);
     }
 
     std::unique_ptr<LogFile> PageLogStorage::create(const std::string& name, Durability) {
         auto file = std::make_shared<File>();
-        auto opened = std::make_unique<OpenFile>(*this, file, name);
+        file->name = name;
+        auto opened = std::make_unique<OpenFile>(*this, file);
         const std::lock_guard<std::mutex> lockHeld(guard);
         if (stored.contains(name)) {
             throw LogStorageError(LogStorageError::Kind::EXISTS, name + " already exists");
         }
         stored.emplace(name, std::move(file));
-        Change change;
-        change.kind = Change::Kind::CREATE;
-        change.name = name;
-        onChange(change);
+        onChange(changeOf(Change::Kind::CREATE, name));
         return opened;
     }
 
@@ -200,10 +201,7 @@ namespace order_book::runtime {
         if (stored.erase(name) == 0) {
             throw LogStorageError(LogStorageError::Kind::FAILED, "cannot remove " + name + ": no such file");
         }
-        Change change;
-        change.kind = Change::Kind::REMOVE;
-        change.name = name;
-        onChange(change);
+        onChange(changeOf(Change::Kind::REMOVE, name));
     }
 
     std::string PageLogStorage::describe(const std::string& name) const {
@@ -220,6 +218,15 @@ namespace order_book::runtime {
             all.push_back(StoredFile{name, std::move(bytes)});
         }
         return all;
+    }
+
+    std::vector<PageLogStorage::StoredFile> PageLogStorage::storedFiles(const std::map<std::string, std::vector<std::byte>>& store) {
+        std::vector<StoredFile> files;
+        files.reserve(store.size());
+        for (const auto& [name, bytes] : store) {
+            files.push_back(StoredFile{name, bytes});
+        }
+        return files;
     }
 
     void PageLogStorage::apply(std::map<std::string, std::vector<std::byte>>& store, const Change& change) {

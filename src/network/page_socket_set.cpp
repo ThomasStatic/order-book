@@ -13,8 +13,8 @@ namespace order_book::network {
         constexpr std::size_t mostSlots = std::size_t{1} << indexBits;
     }  // namespace
 
-    PageSocketSet::PageSocketSet(std::function<void()> clientHasSomethingCallback, std::size_t bytes)
-        : clientHasSomething(std::move(clientHasSomethingCallback)), bufferBytes(bytes) {
+    PageSocketSet::PageSocketSet(std::function<void()> tellTheClient, std::size_t buffer)
+        : clientHasSomething(std::move(tellTheClient)), bufferBytes(buffer) {
         if (!clientHasSomething) {
             throw std::invalid_argument("a PageSocketSet needs its client's callback");
         }
@@ -47,10 +47,6 @@ namespace order_book::network {
             slot = Slot{};
             slot.generation = generation;
         }
-    }
-
-    void PageSocketSet::tellClient() {
-        clientHasSomething();
     }
 
     std::optional<SocketId> PageSocketSet::clientConnect() {
@@ -179,7 +175,7 @@ namespace order_book::network {
         const ReadStatus status = taken == 0 && slot.clientHalfClosed ? ReadStatus::ENDED : ReadStatus::OPEN;
         held.unlock();
         if (taken != 0) {
-            tellClient();  // room freed
+            clientHasSomething();  // room freed
         }
         return ReadResult{taken, status};
     }
@@ -194,7 +190,7 @@ namespace order_book::network {
         slot.toClient.insert(slot.toClient.end(), bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(taken));
         held.unlock();
         if (taken != 0) {
-            tellClient();
+            clientHasSomething();
         }
         return taken;
     }
@@ -204,7 +200,7 @@ namespace order_book::network {
             const std::lock_guard<std::mutex> held(lock);
             slotOf(socket).sendShutDown = true;
         }
-        tellClient();
+        clientHasSomething();
     }
 
     // After shutdownSend, a close lets the client take what is still waiting, then end; without
@@ -222,7 +218,7 @@ namespace order_book::network {
             }
             freeIfDone(slot);
         }
-        tellClient();
+        clientHasSomething();
     }
 
     // As closing a listener resets the connections waiting on it.
@@ -238,7 +234,7 @@ namespace order_book::network {
             }
             waitingToBeAccepted.clear();
         }
-        tellClient();
+        clientHasSomething();
     }
 
     void PageSocketSet::wake() noexcept {

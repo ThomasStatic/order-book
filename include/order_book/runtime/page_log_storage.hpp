@@ -49,7 +49,7 @@ namespace order_book::runtime {
         };
 
         // An empty store, or one holding these files, as a new engine worker is given them.
-        explicit PageLogStorage(std::function<void(const Change&)> onChange, std::vector<StoredFile> from = {});
+        explicit PageLogStorage(std::function<void(const Change&)> changes, std::vector<StoredFile> from = {});
 
         std::unique_ptr<StorageLock> lock() override;
         std::vector<std::string> names() const override;
@@ -64,11 +64,14 @@ namespace order_book::runtime {
         // Makes change in a page store's files, as the page does with each one it is told of. A
         // change to a file the store doesn't hold is ignored.
         static void apply(std::map<std::string, std::vector<std::byte>>& store, const Change& change);
+        // Such a copy as the list of files a store is built from.
+        static std::vector<StoredFile> storedFiles(const std::map<std::string, std::vector<std::byte>>& store);
 
     private:
         struct File {
             std::vector<std::byte> bytes;  // up to the end of the last write; zeros follow, to size
             std::uint64_t size = 0;
+            std::string name;  // what the store holds it under, whichever handle renamed it
         };
         class OpenFile;
         class HeldLock;

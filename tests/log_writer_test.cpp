@@ -808,7 +808,8 @@ void testAReplace() {
     {
         FileLogStorage files(directory);
         InMemoryLogStorage memory;
-        for (LogStorage* storage : {static_cast<LogStorage*>(&files), static_cast<LogStorage*>(&memory)}) {
+        PageLogStorage page([](const PageLogStorage::Change&) {});
+        for (LogStorage* storage : {static_cast<LogStorage*>(&files), static_cast<LogStorage*>(&memory), static_cast<LogStorage*>(&page)}) {
             putFile(*storage, "ckpt", before);
             std::unique_ptr<LogFile> file = storage->create("ckpt.new", Durability::MACHINE);
             file->write(0, after);
@@ -942,7 +943,19 @@ void testWatchingEachChange() {
     std::exit(EXIT_SUCCESS);
 }
 
-}  // namespace
+std::string kindName(PageLogStorage::Change::Kind kind) {
+    using Kind = PageLogStorage::Change::Kind;
+    switch (kind) {
+        case Kind::CREATE: return "create";
+        case Kind::WRITE: return "write";
+        case Kind::EXTEND: return "extend";
+        case Kind::CUT: return "cut";
+        case Kind::RENAME: return "rename";
+        case Kind::REPLACE: return "replace";
+        case Kind::REMOVE: return "remove";
+    }
+    return "unknown";
+}
 
 // The page store's changes: each one told before its call returns, in order, so a page that
 // makes each in its own copy holds the store's files, which a new store is then built from. A
@@ -952,8 +965,7 @@ void testThePageStore() {
     std::vector<std::string> told;
     std::map<std::string, std::vector<std::byte>> copy;
     PageLogStorage storage([&](const PageLogStorage::Change& change) {
-        static const char* const kinds[] = {"create", "write", "extend", "cut", "rename", "replace", "remove"};
-        std::string line = std::string(kinds[static_cast<int>(change.kind)]) + " " + change.name;
+        std::string line = kindName(change.kind) + " " + change.name;
         if (change.kind == Kind::WRITE) {
             line += " " + std::to_string(change.offset) + "+" + std::to_string(change.bytes.size());
         } else if (change.kind == Kind::EXTEND || change.kind == Kind::CUT) {
@@ -1011,10 +1023,7 @@ void testThePageStore() {
     log12[11] = std::byte{2};
     const std::vector<PageLogStorage::StoredFile> files{{"ckpt", {std::byte{3}, std::byte{4}, std::byte{5}}}, {"log", log12}};
     expect(storage.files() == files, "the page store holds every byte to each file's size, zeros included");
-    std::vector<PageLogStorage::StoredFile> copied;
-    for (const auto& [name, held] : copy) {
-        copied.push_back({name, held});
-    }
+    const std::vector<PageLogStorage::StoredFile> copied = PageLogStorage::storedFiles(copy);
     expect(copied == files, "and a copy that made each change it was told of holds the same files");
 
     PageLogStorage rebuilt([](const PageLogStorage::Change&) {}, copied);
@@ -1024,6 +1033,8 @@ void testThePageStore() {
     expect(rebuilt.open("log")->read(0, read) == 12 && std::equal(log12.begin(), log12.end(), read.begin()),
            "and reads them back");
 }
+
+}  // namespace
 
 int main(int argc, char** argv) {
     if (argc == 2 && std::string_view(argv[1]).starts_with("abort-")) {

@@ -128,6 +128,9 @@ namespace order_book::network {
         constexpr std::size_t noGateway = static_cast<std::size_t>(-1);
 
         std::optional<Refusal> refusedValue(const runtime::EngineSettings& settings, bool injectedLog) {
+            if (injectedLog && (!settings.logDir.empty() || !settings.checkpointDir.empty())) {
+                return Refusal{"an engine given its log storage takes no --log-dir or --checkpoint-dir"};
+            }
             if (settings.shards == 0) {
                 return Refusal{"--shards must be at least 1"};
             }
@@ -157,9 +160,6 @@ namespace order_book::network {
             }
             if (!settings.checkpointDir.empty() && settings.logDir.empty()) {
                 return Refusal{"--checkpoint-dir needs --log-dir, since there are no checkpoints without a log"};
-            }
-            if (injectedLog && !settings.logDir.empty()) {
-                return Refusal{"an engine given its log storage takes no --log-dir"};
             }
             if (!settings.pinLogWriters.empty() && settings.logDir.empty() && !injectedLog) {
                 return Refusal{"--pin-log-writers needs --log-dir, since there are no log writers without a log"};
@@ -632,14 +632,14 @@ namespace order_book::network {
         }
 
         void Engine::startShards() {
-            const bool logged = this->logged();
+            const bool withLog = logged();
             std::vector<std::future<void>> started;
             std::vector<std::future<void>> writersStarted;
             started.reserve(settings.shards);
             for (std::uint32_t number = 0; number < settings.shards; ++number) {
                 shards.push_back(std::make_unique<ShardRuntime>(settings.commandRing, settings.responseRing, settings.gatewayThreads,
-                                                                logged ? settings.logRing : 0));
-                if (logged) {
+                                                                withLog ? settings.logRing : 0));
+                if (withLog) {
                     shards.back()->logFiles = std::move(logFiles[number]);
                     shards.back()->newBooks = std::move(newBooks[number]);
                     shards.back()->checkpoints = std::move(bookCheckpoints[number]);
@@ -653,7 +653,7 @@ namespace order_book::network {
                 try {
                     // The matching thread first, since its log writer waits for its recovery.
                     shards[number]->thread = std::thread([this, number] { runShard(number); });
-                    if (logged) {
+                    if (withLog) {
                         shards[number]->writerThread = std::thread([this, number] { runLogWriter(number); });
                     }
                 } catch (...) {
@@ -682,6 +682,9 @@ namespace order_book::network {
         }
 
         EngineExit Engine::run() {
+            if (!parts.sockets || !parts.ready) {
+                throw Refusal{"an engine needs its parts' sockets and ready"};
+            }
             if (const std::optional<Refusal> refusal = refusedValue(settings, parts.logStorage != nullptr)) {
                 throw *refusal;
             }
@@ -716,6 +719,9 @@ namespace order_book::network {
                 gateways.push_back(std::make_unique<GatewayRuntime>());
                 try {
                     gateways[thread]->sockets = parts.sockets(thread);
+                    if (!gateways[thread]->sockets) {
+                        throw Refusal{"gateway thread " + std::to_string(thread) + " was given no sockets"};
+                    }
                 } catch (const std::system_error& error) {
                     if (thread != 0) {
                         throw;
