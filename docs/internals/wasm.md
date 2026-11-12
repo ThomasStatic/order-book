@@ -38,6 +38,7 @@ Every wasm-only branch is under `__EMSCRIPTEN__`, and the wasm jobs are their on
 - `FileLogStorage::lock` takes `flock`, which Emscripten accepts without locking anything, then holds the lock in a process-wide registry by path. A module is one process that shares its files with nothing, so that registry is the whole of "one holder at a time".
 - `size_t` is 32 bits on wasm32. The 14 conversions only that target saw (`-Wshorten-64-to-32`) are fixed with types or casts, never a `-Wno-` flag: 10 in the command generator, through `indexBelow`, which draws exactly what `below` does, so every pinned fingerprint and `generatorVersion` 9 are unchanged.
 - `pastTheLast` in `thread_placement.cpp` is defined only where a branch uses it.
+- **`Doorbell`** sleeps on `emscripten_futex_wait` and wakes with `emscripten_futex_wake`, on its own atomic's word, exactly where native calls `std::atomic::wait` and `notify_one`. libc++'s `std::atomic::wait` polls under Emscripten, waking up to every few milliseconds, so idle matching threads and log writers would never quite sleep. Every change to the atomic is still an exchange, so the lost-wake-up reasoning in `runtime.md` holds unchanged, and `wait` loops on a load until the state isn't asleep, as `std::atomic::wait` does. `matching_loop_tests`' `testARingWakesASleeper`, which hangs without the wake, runs in both wasm jobs.
 
 ## Tests under node
 
