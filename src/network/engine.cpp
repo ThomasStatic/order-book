@@ -116,7 +116,7 @@ namespace order_book::network {
 
         // One gateway thread, its sockets, and how its start and its end went.
         struct GatewayRuntime {
-            std::unique_ptr<PollSocketSet> sockets;
+            std::shared_ptr<SocketSet> sockets;
             std::thread thread;
             // Here, not on the starting thread's stack, since the gateway thread may still be
             // inside set_value when get returns.
@@ -127,7 +127,10 @@ namespace order_book::network {
 
         constexpr std::size_t noGateway = static_cast<std::size_t>(-1);
 
-        std::optional<Refusal> refusedValue(const runtime::EngineSettings& settings) {
+        std::optional<Refusal> refusedValue(const runtime::EngineSettings& settings, bool injectedLog) {
+            if (injectedLog && (!settings.logDir.empty() || !settings.checkpointDir.empty())) {
+                return Refusal{"an engine given its log storage takes no --log-dir or --checkpoint-dir"};
+            }
             if (settings.shards == 0) {
                 return Refusal{"--shards must be at least 1"};
             }
@@ -158,7 +161,7 @@ namespace order_book::network {
             if (!settings.checkpointDir.empty() && settings.logDir.empty()) {
                 return Refusal{"--checkpoint-dir needs --log-dir, since there are no checkpoints without a log"};
             }
-            if (!settings.pinLogWriters.empty() && settings.logDir.empty()) {
+            if (!settings.pinLogWriters.empty() && settings.logDir.empty() && !injectedLog) {
                 return Refusal{"--pin-log-writers needs --log-dir, since there are no log writers without a log"};
             }
             if (settings.rollWorkers == 0 || settings.rollWorkers > settings.shards) {
@@ -191,9 +194,13 @@ namespace order_book::network {
 
         class Engine {
         public:
-            Engine(const runtime::EngineSettings& engineSettings, StopSource& stopSource, std::ostream& reportStream,
+            Engine(const runtime::EngineSettings& engineSettings, EngineParts engineParts, StopSource& stopSource, std::ostream& reportStream,
                    std::ostream& diagnosticsStream)
-                : settings(engineSettings), stop(stopSource), report(reportStream), diagnostics(diagnosticsStream) {}
+                : settings(engineSettings),
+                  parts(std::move(engineParts)),
+                  stop(stopSource),
+                  report(reportStream),
+                  diagnostics(diagnosticsStream) {}
 
             Engine(const Engine&) = delete;
             Engine& operator=(const Engine&) = delete;
@@ -291,12 +298,16 @@ namespace order_book::network {
                 }
             }
 
+            // Whether the engine has a log: files in settings.logDir, or a store it was given.
+            bool logged() const noexcept { return !settings.logDir.empty() || parts.logStorage != nullptr; }
+
             const runtime::EngineSettings& settings;
+            EngineParts parts;
             StopSource& stop;
             std::ostream& report;
             std::ostream& diagnostics;
             std::unique_ptr<runtime::InstrumentDirectory> directory;
-            std::unique_ptr<runtime::LogStorage> logStorage;  // with --log-dir
+            std::shared_ptr<runtime::LogStorage> logStorage;  // with a log: settings.logDir's files, or the one given
             std::unique_ptr<runtime::StorageLock> logLock;    // held for the engine's life
             // With --checkpoint-dir naming another directory, and its own lock; otherwise the log's.
             std::unique_ptr<runtime::LogStorage> checkpointStorage;
@@ -563,7 +574,11 @@ namespace order_book::network {
         // Recovery's start, before any book exists: the lock, then what the log holds, then the
         // files a crash left being made, which held nothing anyone was told of.
         void Engine::recoverOnThisThread() {
-            logStorage = std::make_unique<runtime::FileLogStorage>(settings.logDir);
+            if (parts.logStorage) {
+                logStorage = parts.logStorage;
+            } else {
+                logStorage = std::make_shared<runtime::FileLogStorage>(settings.logDir);
+            }
             try {
                 logLock = logStorage->lock();
             } catch (const runtime::LogStorageError& error) {
@@ -617,14 +632,14 @@ namespace order_book::network {
         }
 
         void Engine::startShards() {
-            const bool logged = !settings.logDir.empty();
+            const bool withLog = logged();
             std::vector<std::future<void>> started;
             std::vector<std::future<void>> writersStarted;
             started.reserve(settings.shards);
             for (std::uint32_t number = 0; number < settings.shards; ++number) {
                 shards.push_back(std::make_unique<ShardRuntime>(settings.commandRing, settings.responseRing, settings.gatewayThreads,
-                                                                logged ? settings.logRing : 0));
-                if (logged) {
+                                                                withLog ? settings.logRing : 0));
+                if (withLog) {
                     shards.back()->logFiles = std::move(logFiles[number]);
                     shards.back()->newBooks = std::move(newBooks[number]);
                     shards.back()->checkpoints = std::move(bookCheckpoints[number]);
@@ -638,7 +653,7 @@ namespace order_book::network {
                 try {
                     // The matching thread first, since its log writer waits for its recovery.
                     shards[number]->thread = std::thread([this, number] { runShard(number); });
-                    if (logged) {
+                    if (withLog) {
                         shards[number]->writerThread = std::thread([this, number] { runLogWriter(number); });
                     }
                 } catch (...) {
@@ -667,7 +682,10 @@ namespace order_book::network {
         }
 
         EngineExit Engine::run() {
-            if (const std::optional<Refusal> refusal = refusedValue(settings)) {
+            if (!parts.sockets || !parts.ready) {
+                throw Refusal{"an engine needs its parts' sockets and ready"};
+            }
+            if (const std::optional<Refusal> refusal = refusedValue(settings, parts.logStorage != nullptr)) {
                 throw *refusal;
             }
             std::ifstream file(settings.instruments, std::ios::binary);
@@ -680,9 +698,9 @@ namespace order_book::network {
                 throw Refusal{runtime::formatInstrumentListError(settings.instruments, *error)};
             }
             directory = std::make_unique<runtime::InstrumentDirectory>(std::get<std::vector<runtime::Instrument>>(std::move(list)), settings.shards);
-            if (!settings.logDir.empty()) {
+            if (logged()) {
                 std::error_code error;
-                if (!std::filesystem::is_directory(settings.logDir, error)) {
+                if (!settings.logDir.empty() && !std::filesystem::is_directory(settings.logDir, error)) {
                     throw Refusal{"cannot use log directory " + settings.logDir + ": no such directory"};
                 }
                 if (!settings.checkpointDir.empty() && !std::filesystem::is_directory(settings.checkpointDir, error)) {
@@ -699,14 +717,16 @@ namespace order_book::network {
             std::vector<SocketSet*> threadSockets;
             for (std::size_t thread = 0; thread < settings.gatewayThreads; ++thread) {
                 gateways.push_back(std::make_unique<GatewayRuntime>());
-                if (thread == 0) {
-                    try {
-                        gateways[0]->sockets = std::make_unique<PollSocketSet>(settings.listen.host, settings.listen.port);
-                    } catch (const std::system_error& error) {
-                        throw Refusal{"cannot listen on " + runtime::formatListenAddress(settings.listen) + ": " + error.what()};
+                try {
+                    gateways[thread]->sockets = parts.sockets(thread);
+                    if (!gateways[thread]->sockets) {
+                        throw Refusal{"gateway thread " + std::to_string(thread) + " was given no sockets"};
                     }
-                } else {
-                    gateways[thread]->sockets = std::make_unique<PollSocketSet>(PollSocketSet::NoListener{});
+                } catch (const std::system_error& error) {
+                    if (thread != 0) {
+                        throw;
+                    }
+                    throw Refusal{"cannot listen on " + runtime::formatListenAddress(settings.listen) + ": " + error.what()};
                 }
                 threadSockets.push_back(gateways[thread]->sockets.get());
             }
@@ -718,7 +738,7 @@ namespace order_book::network {
                 wakeGateways();
             });
 
-            if (!settings.logDir.empty()) {
+            if (logged()) {
                 recoverOnThisThread();
                 if (stop.requests() != 0) {
                     return stoppedBeforeReady();
@@ -733,7 +753,7 @@ namespace order_book::network {
                 }
                 throw;
             }
-            if (!settings.logDir.empty()) {
+            if (logged()) {
                 for (std::uint32_t number = 0; number < shards.size(); ++number) {
                     const runtime::RecoveredShard& recovered = shards[number]->recovery;
                     diagnostics << prefix << "shard " << number << ": recovered books=" << recovered.warmed.size()
@@ -762,8 +782,7 @@ namespace order_book::network {
             if (stop.requests() != 0) {
                 return stoppedBeforeReady();
             }
-            report << "listening "
-                   << runtime::formatListenAddress(runtime::ListenAddress{settings.listen.host, gateways[0]->sockets->port()}) << std::endl;
+            parts.ready();
             listening = true;
             releaseGateways();
             return waitForStop();
@@ -976,12 +995,37 @@ namespace order_book::network {
         }
     }  // namespace
 
+    // TCP and settings.logDir's files. Each lambda holds one pointer, which std::function keeps
+    // without allocating, and the sockets and the files are made inside the start, so a failed
+    // allocation is a start refused, never an exception.
     EngineExit runEngine(const runtime::EngineSettings& settings, StopSource& stop, std::ostream& report, std::ostream& diagnostics) {
+        struct OverTcp {
+            const runtime::EngineSettings& settings;
+            std::ostream& report;
+            std::shared_ptr<PollSocketSet> listener;
+        } tcp{settings, report, nullptr};
+        EngineParts parts;
+        parts.sockets = [&tcp](std::size_t thread) -> std::shared_ptr<SocketSet> {
+            if (thread != 0) {
+                return std::make_shared<PollSocketSet>(PollSocketSet::NoListener{});
+            }
+            tcp.listener = std::make_shared<PollSocketSet>(tcp.settings.listen.host, tcp.settings.listen.port);
+            return tcp.listener;
+        };
+        parts.ready = [&tcp] {
+            tcp.report << "listening " << runtime::formatListenAddress(runtime::ListenAddress{tcp.settings.listen.host, tcp.listener->port()})
+                       << std::endl;
+        };
+        return runEngine(settings, std::move(parts), stop, report, diagnostics);
+    }
+
+    EngineExit runEngine(const runtime::EngineSettings& settings, EngineParts parts, StopSource& stop, std::ostream& report,
+                         std::ostream& diagnostics) {
         std::unique_ptr<Engine> engine;
         try {
             // Inside the try, since even the record's line allocates.
             diagnostics << prefix << runtime::formatEngineSettings(settings) << std::endl;
-            engine = std::make_unique<Engine>(settings, stop, report, diagnostics);
+            engine = std::make_unique<Engine>(settings, std::move(parts), stop, report, diagnostics);
             const EngineExit exit = engine->run();
             if (engine->abandoned()) {
                 static_cast<void>(engine.release());  // its threads still use it

@@ -224,6 +224,7 @@ add_library(order_book_runtime STATIC
     src/runtime/log_writer.cpp
     src/runtime/matching_loop.cpp
     src/runtime/offline.cpp
+    src/runtime/page_log_storage.cpp
     src/runtime/recovery.cpp
     src/runtime/roll_forward.cpp
     src/runtime/shard.cpp
@@ -247,6 +248,7 @@ add_library(order_book_network STATIC
     src/network/entry_check.cpp
     src/network/gateway_thread.cpp
     src/network/in_memory_socket_set.cpp
+    src/network/page_socket_set.cpp
     src/network/poll_socket_set.cpp
     src/network/stop_source.cpp
     src/network/tcp.cpp
@@ -1203,6 +1205,36 @@ if(BUILD_TESTING)
         add_test(NAME gateway_socket_tests COMMAND gateway_socket_tests)
         set_tests_properties(gateway_socket_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
     endif()
+
+    add_executable(page_socket_set_tests
+        tests/page_socket_set_test.cpp
+    )
+
+    target_compile_features(page_socket_set_tests PRIVATE cxx_std_20)
+    target_link_libraries(page_socket_set_tests PRIVATE order_book_network)
+    order_book_enable_warnings(page_socket_set_tests)
+    order_book_enable_sanitizers(page_socket_set_tests)
+    add_test(NAME page_socket_set_tests COMMAND page_socket_set_tests)
+    # One case runs a gateway thread beside the client; a lost wake-up hangs it.
+    set_tests_properties(page_socket_set_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
+
+    # The whole engine in this process through the injected-parts entry, natively and under
+    # Emscripten, where it stands in for the TCP and process suites. A forced stop leaves the
+    # engine running, so it is a run of its own.
+    add_executable(engine_in_process_tests
+        tests/engine_in_process_test.cpp
+    )
+
+    target_compile_features(engine_in_process_tests PRIVATE cxx_std_20)
+    target_link_libraries(engine_in_process_tests PRIVATE order_book_cli_commands)
+    order_book_enable_warnings(engine_in_process_tests)
+    order_book_enable_sanitizers(engine_in_process_tests)
+    add_test(NAME engine_in_process_tests
+        COMMAND engine_in_process_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay ${CMAKE_CURRENT_BINARY_DIR}/engine-in-process)
+    add_test(NAME engine_in_process_forced_stop
+        COMMAND engine_in_process_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay ${CMAKE_CURRENT_BINARY_DIR}/engine-in-process-forced forced)
+    set_tests_properties(engine_in_process_tests engine_in_process_forced_stop PROPERTIES
+        LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
 
     add_executable(engine_settings_tests
         tests/engine_settings_test.cpp

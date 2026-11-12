@@ -64,6 +64,9 @@ namespace order_book::network {
         virtual HandedSocket release(SocketId socket) = 0;
         // Takes on a connection another set released, as if just accepted.
         virtual SocketId adopt(HandedSocket socket) = 0;
+        // Starts taking connections on a listener bound but not yet listening, once the engine is
+        // ready for them. A set with no such step does nothing.
+        virtual void startListening() {}
     };
 
 }  // namespace order_book::network

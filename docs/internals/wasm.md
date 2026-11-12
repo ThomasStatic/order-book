@@ -46,6 +46,7 @@ Every registered test runs under `node`, against the very expected files and fin
 
 - **Script tests** (`replay_cli_*`, the `*_abort_*` cases, `convert`, `checkpoint`, `verify`, `cut-log`): each `add_test` passes `-DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR}`, empty natively, and `tests/expect_failure.cmake` and `tests/replay/check_cli_output.cmake` run `${EMULATOR} ${PROGRAM}`, since CMake puts the emulator only in front of a command that names a target.
 - **Not built under Emscripten**, each needing TCP, a child process, a signal, or the engine executable: `engine_tests`, `engine_start_allocation_tests`, `gateway_socket_tests`, `engine_process_tests`, `engine_signal_tests`, `engine_end_to_end_tests`.
+- `engine_in_process_tests` and `engine_in_process_forced_stop` run the whole engine through the injected-parts entry (`network.md`): start, a session, a clean stop, a recovering restart, and a forced stop, which is what wasm has in place of those six.
 - `thread_placement_tests` exits 77, which its `SKIP_RETURN_CODE` shows as Skipped.
 - `log_writer_tests` skips only "a rename never replaces a file" on real files, printing why.
 - `node_pool_tests` sizes its size classes from its `Node`, which is 40 bytes on wasm32 rather than 48, so six sizes still claim six classes and the seventh, past the largest, goes to the heap.
