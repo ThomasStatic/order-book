@@ -47,7 +47,9 @@ namespace order_book::wasm {
     // so a bad one prints the replay parser's column and message, exiting 2. A symbol off the
     // instrument list is refused before it takes a line.
     //
-    // The CLI's own commands, each printing exactly what order_book_cli prints, and the sample
+    // The CLI's own commands, send and replay printing exactly what order_book_cli prints and
+    // verify what it prints of a store, with its own argument errors, since it takes no
+    // directories; and the sample
     // files, named from the working directory, which is the samples' root (valid/ and
     // malformed/, as in tests/replay), so a path prints as typed:
     //
@@ -70,7 +72,7 @@ namespace order_book::wasm {
         // Call pump first to collect a command a disconnect lost: none may be waiting.
         void connect(std::shared_ptr<network::PageSocketSet> set);
         // The run has ended, so its connection is gone; a command waiting on it is lost, and
-        // pump says so. A send under way ends as its own connection does.
+        // pump says so, as it does a send under way, reported as send reports a connection lost.
         void disconnect();
 
         // One typed line: its result now, or nothing while it waits on the engine, when pump on

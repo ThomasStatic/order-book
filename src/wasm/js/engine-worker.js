@@ -33,8 +33,23 @@ function reply(id, fields) {
     post({id, ...fields});
 }
 
+// What a thrown value says: a C++ exception's type and what(), through the module's helper,
+// or a JavaScript error's message.
+function describe(what) {
+    if (module && typeof WebAssembly.Exception === "function" && what instanceof WebAssembly.Exception) {
+        try {
+            const said = module.getExceptionMessage(what).filter(Boolean).join(": ");
+            module.decrementExceptionRefcount(what);
+            return said;
+        } catch {
+            // fall through to what the value itself says
+        }
+    }
+    return String(what && what.message ? what.message : what);
+}
+
 function aborted(what) {
-    post({type: "aborted", message: String(what && what.message ? what.message : what)});
+    post({type: "aborted", message: describe(what)});
 }
 
 // Posts what the module gave, in its order, the terminal's answer as the reply to its request.
@@ -66,8 +81,10 @@ function takeEvents() {
     }
 }
 
+// Loads the module and makes the engine from the page store. A failure leaves nothing set, so
+// init can be tried again.
 async function init(request) {
-    if (module || initializing) {
+    if (engine || initializing) {
         return {ok: false, error: "already initialized"};
     }
     if (request.protocol !== PROTOCOL_VERSION) {
@@ -76,18 +93,23 @@ async function init(request) {
     initializing = true;
     try {
         const {default: createOrderBookModule} = await import(request.module);
-        module = await createOrderBookModule({
+        const loaded = await createOrderBookModule({
             locateFile: (path) => (path.endsWith(".wasm") ? request.wasm : new URL(path, request.module).href),
             onAbort: aborted,
-            print: (text) => post({type: "line", stream: "stdout", text}),
-            printErr: (text) => post({type: "line", stream: "stderr", text}),
+            // Nothing in the module prints, but if anything did it would be the engine's.
+            print: (text) => post({type: "line", stream: "report", text}),
+            printErr: (text) => post({type: "line", stream: "diagnostics", text}),
         });
-        module.onEngineEvents = takeEvents;
-        if (module.enterSamples() !== 0) {
+        module = loaded;
+        if (loaded.enterSamples() !== 0) {
             return {ok: false, error: "the module's samples are missing"};
         }
-        engine = new module.Engine(request.store || []);
-        return {ok: true, protocol: PROTOCOL_VERSION, release: module.release()};
+        const made = new loaded.Engine(request.store || []);
+        loaded.onEngineEvents = takeEvents;
+        engine = made;
+        return {ok: true, protocol: PROTOCOL_VERSION, release: loaded.release()};
+    } catch (error) {
+        return {ok: false, error: describe(error)};
     } finally {
         initializing = false;
     }
@@ -130,6 +152,8 @@ async function handle(request) {
             reply(id, {ok: false, error: "unknown request " + String(type)});
         }
     } catch (error) {
+        // The request still gets its reply; the module may be broken, so the page hears that too.
+        reply(id, {ok: false, error: describe(error)});
         aborted(error);
     }
 }

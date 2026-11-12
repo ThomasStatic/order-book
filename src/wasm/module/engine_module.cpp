@@ -61,19 +61,6 @@ namespace order_book::wasm {
             return "UNKNOWN";
         }
 
-        std::string_view changeName(PageLogStorage::Change::Kind kind) {
-            switch (kind) {
-                case PageLogStorage::Change::Kind::CREATE: return "create";
-                case PageLogStorage::Change::Kind::WRITE: return "write";
-                case PageLogStorage::Change::Kind::EXTEND: return "extend";
-                case PageLogStorage::Change::Kind::CUT: return "cut";
-                case PageLogStorage::Change::Kind::RENAME: return "rename";
-                case PageLogStorage::Change::Kind::REPLACE: return "replace";
-                case PageLogStorage::Change::Kind::REMOVE: return "remove";
-            }
-            return "unknown";
-        }
-
         // A copy of bytes in the module's memory as a Uint8Array of its own, which can be
         // transferred: the module's memory is shared, and a view of it can't leave the worker.
         val copyOut(std::span<const std::byte> bytes) {
@@ -138,30 +125,44 @@ namespace order_book::wasm {
         ModuleEngine(const ModuleEngine&) = delete;
         ModuleEngine& operator=(const ModuleEngine&) = delete;
 
-        // The module ends with its worker; a run still going keeps its thread.
+        // The module ends with its worker, so this runs only if the page deletes the object: a
+        // run still going is forced to stop, which returns at once, and its thread joined, since
+        // it holds this.
         ~ModuleEngine() {
+            if (isRunning && stopping) {
+                stopping->request();
+                stopping->request();
+            }
             if (runner.joinable()) {
-                runner.detach();
+                runner.join();
             }
         }
 
         // Starts a run on a pthread of its own, returning at once: {ok} or {ok: false, error}.
         val start() {
             val reply = val::object();
+            reply.set("ok", false);
             if (isRunning) {
-                reply.set("ok", false);
                 reply.set("error", std::string("the engine is already running"));
                 return reply;
             }
-            if (runner.joinable()) {
-                runner.join();  // a run whose end has been taken: its thread has returned
+            try {
+                if (runner.joinable()) {
+                    // A run whose end has been taken: its thread queued that end as it returned,
+                    // so this waits only for it to finish returning to the pool.
+                    runner.join();
+                }
+                readySeen = false;
+                announced = false;
+                seeding.reset();
+                seeded.reset();
+                stopping = std::make_unique<network::StopSource>();
+                runner = std::thread([this, stop = stopping.get()] { runOnce(*stop); });
+            } catch (const std::exception& error) {
+                reply.set("error", "the engine can't start: " + std::string(error.what()));
+                return reply;
             }
             isRunning = true;
-            readySeen = false;
-            announced = false;
-            seeding.reset();
-            stopping = std::make_unique<network::StopSource>();
-            runner = std::thread([this, stop = stopping.get()] { runOnce(*stop); });
             reply.set("ok", true);
             return reply;
         }
@@ -197,16 +198,24 @@ namespace order_book::wasm {
         // `seeded`, `ready`, and `exited`. The engine writes a record to the store before it
         // sends the answer that waited for it, so once pumping has read an answer, its write is
         // in the queue: the queue is taken again after pumping, and what pumping gave goes last.
+        // Anything thrown here, which only memory running out can, is posted as `aborted`.
         val takeEvents() {
             scheduled = false;
             val out = val::array();
-            val gave = val::array();
-            takeQueued(out, gave);
-            pump(gave);
-            takeQueued(out, gave);
-            const std::size_t count = gave["length"].as<std::size_t>();
-            for (std::size_t i = 0; i < count; ++i) {
-                out.call<void>("push", gave[i]);
+            try {
+                val pumped = val::array();
+                takeQueued(out, pumped);
+                pump(pumped);
+                takeQueued(out, pumped);
+                const std::size_t count = pumped["length"].as<std::size_t>();
+                for (std::size_t i = 0; i < count; ++i) {
+                    out.call<void>("push", pumped[i]);
+                }
+            } catch (const std::exception& error) {
+                val posted = val::object();
+                posted.set("type", std::string("aborted"));
+                posted.set("message", std::string(error.what()));
+                out.call<void>("push", posted);
             }
             return out;
         }
@@ -235,7 +244,7 @@ namespace order_book::wasm {
 
         // The queue as it stands: changes and lines into out in order, ready and the run's end
         // acted on where they fall, which may give more.
-        void takeQueued(val& out, val& gave) {
+        void takeQueued(val& out, val& pumped) {
             std::vector<Event> taken;
             {
                 const std::lock_guard<std::mutex> held(guard);
@@ -253,8 +262,8 @@ namespace order_book::wasm {
                 } else if (std::holds_alternative<Ready>(event)) {
                     readySeen = true;
                 } else if (auto* exited = std::get_if<Exited>(&event)) {
-                    pump(gave);  // what came before the end
-                    finish(gave, exited->exit);
+                    pump(pumped);  // what came before the end
+                    finish(pumped, exited->exit);
                 }
                 // A wake asks only for the pump, which every look does.
             }
@@ -278,12 +287,12 @@ namespace order_book::wasm {
         // The engine's lines as `line` events, each whole line as it ends.
         class LineStream final : public std::streambuf {
         public:
-            LineStream(ModuleEngine& owner, std::string name) : engine(owner), stream(std::move(name)) {}
+            LineStream(ModuleEngine& engine, std::string name) : owner(engine), stream(std::move(name)) {}
 
             void flushPartial() {
                 const std::lock_guard<std::mutex> held(guard);
                 if (!pending.empty()) {
-                    engine.queue(Line{stream, std::exchange(pending, {})});
+                    owner.queue(Line{stream, std::exchange(pending, {})});
                 }
             }
 
@@ -308,13 +317,13 @@ namespace order_book::wasm {
         private:
             void take(char character) {
                 if (character == '\n') {
-                    engine.queue(Line{stream, std::exchange(pending, {})});
+                    owner.queue(Line{stream, std::exchange(pending, {})});
                 } else {
                     pending.push_back(character);
                 }
             }
 
-            ModuleEngine& engine;
+            ModuleEngine& owner;
             std::string stream;
             std::mutex guard;
             std::string pending;
@@ -419,25 +428,34 @@ namespace order_book::wasm {
             return posted;
         }
 
+        // One page-store change as the page applies it: its type, its name, and what the type needs.
         static val changeEvent(const StoreChange& change) {
             val posted = val::object();
-            posted.set("type", std::string(changeName(change.kind)));
             posted.set("name", change.name);
+            const auto typed = [&posted](const char* type) { posted.set("type", std::string(type)); };
             switch (change.kind) {
+                case PageLogStorage::Change::Kind::CREATE: typed("create"); break;
+                case PageLogStorage::Change::Kind::REMOVE: typed("remove"); break;
                 case PageLogStorage::Change::Kind::WRITE:
+                    typed("write");
                     posted.set("offset", static_cast<double>(change.offset));
                     posted.set("bytes", copyOut(change.bytes));
                     break;
                 case PageLogStorage::Change::Kind::EXTEND:
+                    typed("extend");
+                    posted.set("size", static_cast<double>(change.size));
+                    break;
                 case PageLogStorage::Change::Kind::CUT:
+                    typed("cut");
                     posted.set("size", static_cast<double>(change.size));
                     break;
                 case PageLogStorage::Change::Kind::RENAME:
-                case PageLogStorage::Change::Kind::REPLACE:
+                    typed("rename");
                     posted.set("to", change.to);
                     break;
-                case PageLogStorage::Change::Kind::CREATE:
-                case PageLogStorage::Change::Kind::REMOVE:
+                case PageLogStorage::Change::Kind::REPLACE:
+                    typed("replace");
+                    posted.set("to", change.to);
                     break;
             }
             return posted;
@@ -460,10 +478,15 @@ namespace order_book::wasm {
         std::optional<cli::CommandResult> seeded;
     };
 
-    // What the module's files are named from: the samples' root, as the terminal expects.
-    // The protocol version the worker and the client exchange.
+    // CMake sizes the module's strict pool from settings.hpp's counts; this holds it to the
+    // formula there.
+    static_assert(browserEngineThreads == ORDER_BOOK_WASM_POOL, "the module's pool is the engine's threads");
+
+    // Makes the samples' root the working directory, as the terminal's file commands expect: 0,
+    // or chdir's -1.
     int enterSamples() { return ::chdir(samplesRoot); }
 
+    // The release the module was built as.
     std::string release() { return ORDER_BOOK_WASM_RELEASE; }
 
     EMSCRIPTEN_BINDINGS(order_book_wasm_module) {

@@ -62,6 +62,8 @@ namespace order_book::wasm {
 
         // On each wake: send's result once the stream has ended, otherwise nothing yet.
         std::optional<cli::CommandResult> pump();
+        // The run has ended: what hasn't come never will, so the next pump gives the result.
+        void abandon() { connection.stream().ended(); }
 
     private:
         PageSend(cli::PreparedSend prepared, PageConnection connection);

@@ -105,7 +105,7 @@ namespace order_book::wasm_testing {
     // the same books only if no client command came before a send, which this checks.
     struct Sends {
         std::vector<Typed> sends;
-        bool first = true;
+        bool allBeforeClientCommands = true;
     };
 
     inline Sends sendsOf(const std::string& transcript) {
@@ -114,7 +114,7 @@ namespace order_book::wasm_testing {
         for (const Typed& command : commandsOf(transcript)) {
             if (command.verb() == "send") {
                 found.sends.push_back(command);
-                found.first = found.first && !clientSeen;
+                found.allBeforeClientCommands = found.allBeforeClientCommands && !clientSeen;
             }
             clientSeen = clientSeen || command.isClientCommand();
         }

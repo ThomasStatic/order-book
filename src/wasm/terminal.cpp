@@ -212,6 +212,9 @@ namespace order_book::wasm {
 
     void Terminal::disconnect() {
         sockets.reset();
+        if (sending) {
+            sending->abandon();
+        }
         if (!waiting) {
             standing.reset();
         }

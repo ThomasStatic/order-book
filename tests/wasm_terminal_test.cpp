@@ -131,7 +131,7 @@ void testASession(const Paths& paths, const std::string& name) {
     Seeded native(paths);
     expect(native.seeded.out == seededAnswers, name + ": the seed answers the same each time");
     const Sends sends = sendsOf(transcript);
-    expect(sends.first, name + ": every send comes before the first client command, so sending them first gives the same books");
+    expect(sends.allBeforeClientCommands, name + ": every send comes before the first client command, so sending them first gives the same books");
     for (const Typed& sent : sends.sends) {
         const cli::CommandResult again = send(native.engine, native.page, std::vector<std::string>(sent.words.begin() + 1, sent.words.end()));
         expect(again.out == sent.out && again.err == sent.err && again.exit == sent.exit,

@@ -312,7 +312,9 @@ if(EMSCRIPTEN)
     )
     set_target_properties(order_book_wasm_module PROPERTIES OUTPUT_NAME order_book_wasm SUFFIX ".js" ORDER_BOOK_WASM_MODULE TRUE)
     target_compile_features(order_book_wasm_module PRIVATE cxx_std_20)
-    target_compile_definitions(order_book_wasm_module PRIVATE ORDER_BOOK_WASM_RELEASE="${PROJECT_VERSION}")
+    # The pool's size goes in too, where a static_assert holds it to browserEngineThreads.
+    target_compile_definitions(order_book_wasm_module PRIVATE ORDER_BOOK_WASM_RELEASE="${PROJECT_VERSION}"
+                               ORDER_BOOK_WASM_POOL=${order_book_wasm_pool})
     target_compile_options(order_book_wasm_module PRIVATE -O3)
     target_link_libraries(order_book_wasm_module PRIVATE order_book_wasm)
     order_book_enable_warnings(order_book_wasm_module)
@@ -320,6 +322,7 @@ if(EMSCRIPTEN)
     target_link_options(order_book_wasm_module PRIVATE
         -O3
         -lembind
+        -sEXPORTED_RUNTIME_METHODS=getExceptionMessage,decrementExceptionRefcount
         -sMODULARIZE=1
         -sEXPORT_ES6=1
         -sEXPORT_NAME=createOrderBookModule
