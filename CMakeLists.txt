@@ -261,6 +261,17 @@ target_link_libraries(order_book_network PUBLIC order_book_runtime)
 order_book_enable_warnings(order_book_network)
 order_book_enable_sanitizers(order_book_network)
 
+# The CLI's send, replay, and verify, each returning what it printed and its exit status, so the
+# browser's terminal runs them too (docs/internals/replay.md). Not public API.
+add_library(order_book_cli_commands STATIC
+    src/cli/commands.cpp
+)
+
+target_compile_features(order_book_cli_commands PUBLIC cxx_std_20)
+target_link_libraries(order_book_cli_commands PUBLIC order_book_network)
+order_book_enable_warnings(order_book_cli_commands)
+order_book_enable_sanitizers(order_book_cli_commands)
+
 add_executable(order_book_cli
     apps/order_book_cli.cpp
 )
@@ -280,7 +291,7 @@ if(NOT EMSCRIPTEN)
 endif()
 
 target_compile_features(order_book_cli PRIVATE cxx_std_20)
-target_link_libraries(order_book_cli PRIVATE order_book_network)
+target_link_libraries(order_book_cli PRIVATE order_book_cli_commands)
 order_book_enable_warnings(order_book_cli)
 order_book_enable_sanitizers(order_book_cli)
 
