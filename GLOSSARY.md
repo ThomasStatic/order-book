@@ -282,6 +282,14 @@ _Avoid_: engine thread, wasm worker
 The copy of the engine's command logs and checkpoints that the page keeps, outside the engine worker, so ending the worker leaves it whole. Each new engine worker starts from it, and a reload loses it.
 _Avoid_: drive, mirror
 
+**Engine client**:
+The part of the page that speaks to the engine worker. It holds the page store, hands it to each new engine worker, and is the only way the rest of the page reaches the engine.
+_Avoid_: bindings, SDK, wrapper
+
+**Shadow book**:
+A copy of one instrument's book that the engine worker keeps by running every logged command again, so the page can see the whole book (every level, owner, and pending stop) without asking the engine. Because each answer reaches the page only after its log write, a shadow book already holds every command the page has seen answered.
+_Avoid_: mirror book, snapshot, replica
+
 ## Measurement
 
 **Service time**:
