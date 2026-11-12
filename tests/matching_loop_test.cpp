@@ -298,7 +298,7 @@ void testAFullLogRingWaitsBeforeATake() {
     MatchingLoop loop(shard, doorbell, {RingPair{&commands, &responses}}, std::chrono::nanoseconds::zero(),
                       [&] {
                           if (waits++ == 0) {
-                              takenAtFirstWait = shard.commandsTaken();
+                              takenAtFirstWait = static_cast<std::size_t>(shard.commandsTaken());
                           }
                           drainLog(log);  // as the log writer would
                       },

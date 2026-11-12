@@ -21,11 +21,13 @@
 
 namespace order_book::runtime {
 
+#if defined(_WIN32) || defined(__linux__)
     namespace {
         std::string pastTheLast(std::uint32_t core, unsigned long long last) {
             return "core " + std::to_string(core) + " is past the last this build can pin, " + std::to_string(last);
         }
     }  // namespace
+#endif
 
 #ifdef _WIN32
     std::optional<std::string> pinThisThread(std::uint32_t core) {

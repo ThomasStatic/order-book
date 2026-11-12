@@ -41,10 +41,15 @@ jobs:
           - { name: "Linux Clang TSan Optimized",      os: ubuntu-24.04, cxx: clang++, config: RelWithDebInfo, tsan: true, threaded: true }
           - { name: "Linux GCC TSan Debug",            os: ubuntu-24.04, cxx: g++,     config: Debug,          tsan: true, threaded: true }
           - { name: "Linux Arm Clang Release",         os: ubuntu-24.04-arm, cxx: clang++, config: Release,    threaded: true }
+          # The browser build (docs/internals/wasm.md), every test under node: Release with
+          # invariant checks off, as shipped, and Debug with them on.
+          - { name: "Emscripten Release",              os: ubuntu-24.04, config: Release, emscripten: true }
+          - { name: "Emscripten ASan+UBSan Debug",     os: ubuntu-24.04, config: Debug,   emscripten: true, sanitizers: true }
 
     env:
-      # Linux only: MSVC's ASan runtime refuses to start when asked for leak detection.
-      ASAN_OPTIONS: ${{ startsWith(matrix.os, 'ubuntu') && 'detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1' || '' }}
+      # Linux only: MSVC's ASan runtime refuses to start when asked for leak detection. Emscripten
+      # takes its own defaults.
+      ASAN_OPTIONS: ${{ (startsWith(matrix.os, 'ubuntu') && !matrix.emscripten) && 'detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1' || '' }}
       UBSAN_OPTIONS: print_stacktrace=1
 
     defaults:
@@ -58,6 +63,21 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ninja-build
 
+      # emsdk and the system libraries it builds on first use, both kept under emsdk-cache.
+      - name: Cache emsdk
+        if: matrix.emscripten
+        uses: actions/cache@v4
+        with:
+          path: emsdk-cache
+          key: emsdk-7.0.0-${{ matrix.name }}
+
+      - name: Install emsdk
+        if: matrix.emscripten
+        uses: emscripten-core/setup-emsdk@v16
+        with:
+          version: 7.0.0
+          actions-cache-folder: emsdk-cache
+
       # ThreadSanitizer needs a smaller address-space randomization than these runners default to.
       - name: Make room for ThreadSanitizer
         if: matrix.tsan
@@ -65,11 +85,16 @@ jobs:
 
       - name: Configure
         run: |
-          args=(-DORDER_BOOK_WARNINGS_AS_ERRORS=ON -DORDER_BOOK_BUILD_BENCHMARKS=ON)
+          args=(-DORDER_BOOK_WARNINGS_AS_ERRORS=ON)
+          if [ "${{ matrix.emscripten }}" != "true" ]; then
+            args+=(-DORDER_BOOK_BUILD_BENCHMARKS=ON)
+          fi
           if [ "${{ matrix.tsan }}" = "true" ]; then
             args+=(-DORDER_BOOK_ENABLE_TSAN=ON)
           fi
-          if [ "${{ runner.os }}" = "Linux" ]; then
+          if [ "${{ matrix.emscripten }}" = "true" ]; then
+            args+=(-G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          elif [ "${{ runner.os }}" = "Linux" ]; then
             args+=(-G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx }})
           fi
           if [ "${{ matrix.sanitizers }}" = "true" ]; then
@@ -78,7 +103,11 @@ jobs:
               args+=(-DORDER_BOOK_ENABLE_UBSAN=ON)
             fi
           fi
-          cmake -S . -B build "${args[@]}"
+          if [ "${{ matrix.emscripten }}" = "true" ]; then
+            emcmake cmake -S . -B build "${args[@]}"
+          else
+            cmake -S . -B build "${args[@]}"
+          fi
 
       # Ninja keeps going past a failed target (-k 0), so one run reports every warning.
       - name: Build
@@ -95,10 +124,12 @@ jobs:
       - name: Run the CLI
         if: ${{ !matrix.threaded }}
         run: |
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            cli=./build/${{ matrix.config }}/order_book_cli.exe
+          if [ "${{ matrix.emscripten }}" = "true" ]; then
+            cli=(node ./build/order_book_cli.js)
+          elif [ "${{ runner.os }}" = "Windows" ]; then
+            cli=(./build/${{ matrix.config }}/order_book_cli.exe)
           else
-            cli=./build/order_book_cli
+            cli=(./build/order_book_cli)
           fi
-          "$cli" demo
-          "$cli" replay tests/replay/valid/price_time_priority.csv --trades --book
+          "${cli[@]}" demo
+          "${cli[@]}" replay tests/replay/valid/price_time_priority.csv --trades --book

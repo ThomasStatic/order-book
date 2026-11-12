@@ -118,6 +118,9 @@ private:
     // Uniform in [0, bound); bound must be positive.
     std::uint64_t below(std::uint64_t bound);
     bool chance(unsigned int percent) { return below(100) < percent; }
+    // An index into a container of size elements, drawn as below(size) is, so the stream is the
+    // same where size_t is 32 bits.
+    std::size_t indexBelow(std::size_t size) { return static_cast<std::size_t>(below(size)); }
 
     Command nextSubmit(const ReferenceBook& model, bool invalid);
     Command nextCancel(const ReferenceBook& model, bool invalid);

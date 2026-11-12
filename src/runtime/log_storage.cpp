@@ -7,6 +7,11 @@
 #include <system_error>
 #include <utility>
 
+#ifdef __EMSCRIPTEN__
+#include <mutex>
+#include <set>
+#endif
+
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -94,7 +99,7 @@ namespace order_book::runtime {
                 throw failure("rename " + source.string() + " to", target.string(), error);
             }
 #else
-#ifdef RENAME_NOREPLACE
+#if defined(RENAME_NOREPLACE) && !defined(__EMSCRIPTEN__)
             // rename replaces in one step, as POSIX has it.
             int renamed = replacing ? ::rename(source.c_str(), target.c_str())
                                     : ::renameat2(AT_FDCWD, source.c_str(), AT_FDCWD, target.c_str(), RENAME_NOREPLACE);
@@ -104,6 +109,8 @@ namespace order_book::runtime {
                 renamed = ::rename(source.c_str(), target.c_str());
             }
 #else
+            // Emscripten's libc has no renameat2 either. In the browser the log lives in
+            // PageLogStorage, which refuses to replace; this branch is only CTest's under node.
             static_cast<void>(replacing);  // rename replaces, which the start's checks make safe
             const int renamed = ::rename(source.c_str(), target.c_str());
 #endif
@@ -292,8 +299,12 @@ namespace order_book::runtime {
 
             // Allocates the space without writing it, so a full drive is known now, while the
             // current file still has room, and Linux reads the unwritten extent as zeros. A file
-            // system with no fallocate gets a sparse end instead, which a full drive fails later.
+            // system with no fallocate gets a sparse end instead, which a full drive fails later,
+            // as does Emscripten, whose libc has no fallocate.
             void extend(std::uint64_t size) override {
+#ifdef __EMSCRIPTEN__
+                setEnd(size, "extend");
+#else
                 for (;;) {
                     if (::fallocate(descriptor, 0, 0, static_cast<off_t>(size)) == 0) {
                         return;
@@ -307,6 +318,7 @@ namespace order_book::runtime {
                     }
                     throw failure("extend", path, lastError());
                 }
+#endif
             }
             void cut(std::uint64_t size) override { setEnd(size, "cut"); }
 
@@ -358,12 +370,42 @@ namespace order_book::runtime {
 #else
             void adopt(int opened) noexcept { descriptor = opened; }
             ~NativeLock() override {
+#ifdef __EMSCRIPTEN__
+                if (!registered.empty()) {
+                    const std::lock_guard<std::mutex> held(emscriptenLocks().guard);
+                    emscriptenLocks().held.erase(registered);
+                }
+#endif
                 if (descriptor >= 0) {
                     ::close(descriptor);
                 }
             }
 
+#ifdef __EMSCRIPTEN__
+            // Emscripten's flock succeeds without locking anything, and a module is one process
+            // that nothing else shares its files with, so the lock is held here, by path.
+            struct Registry {
+                std::mutex guard;
+                std::set<std::string> held;
+            };
+            static Registry& emscriptenLocks() {
+                static Registry registry;
+                return registry;
+            }
+            bool registerHeld(std::string key) {
+                const std::lock_guard<std::mutex> held(emscriptenLocks().guard);
+                if (!emscriptenLocks().held.insert(key).second) {
+                    return false;
+                }
+                registered = std::move(key);
+                return true;
+            }
+
         private:
+            std::string registered;
+#else
+        private:
+#endif
             int descriptor = -1;
 #endif
         };
@@ -440,6 +482,11 @@ namespace order_book::runtime {
         held->adopt(descriptor);
         for (;;) {
             if (::flock(descriptor, LOCK_EX | LOCK_NB) == 0) {
+#ifdef __EMSCRIPTEN__
+                if (!held->registerHeld(std::filesystem::absolute(path).lexically_normal().string())) {
+                    throw LogStorageError(LogStorageError::Kind::LOCKED, locked);
+                }
+#endif
                 return held;
             }
             const int error = lastError();

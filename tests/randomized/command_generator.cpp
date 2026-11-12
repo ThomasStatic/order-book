@@ -235,7 +235,7 @@ Command RandomCommandGenerator::nextReplace(const ReferenceBook& model, bool inv
             // Nothing rests to replace; submit instead, so the command stays valid.
             return validSubmit(model);
         }
-        const ModelOrder& order = *model.find(resting.at(below(resting.size())));
+        const ModelOrder& order = *model.find(resting.at(indexBelow(resting.size())));
         const Quantity executed = order.total - order.open;
         const std::uint64_t roll = below(100);
         CommandIntent intent = roll < 30   ? CommandIntent::REPLACE_DECREASE
@@ -300,7 +300,7 @@ Command RandomCommandGenerator::nextReplace(const ReferenceBook& model, bool inv
         case CommandIntent::REPLACE_ZERO_QUANTITY:
         case CommandIntent::REPLACE_INVALID_MODE:
             // Malformed, so refused before the ID is looked up; any ID will do.
-            command.orderId = resting.empty() ? freshId() : resting.at(below(resting.size()));
+            command.orderId = resting.empty() ? freshId() : resting.at(indexBelow(resting.size()));
             if (fault == CommandIntent::REPLACE_ZERO_PRICE) {
                 command.price = 0;
             } else if (fault == CommandIntent::REPLACE_ZERO_QUANTITY) {
@@ -315,19 +315,19 @@ Command RandomCommandGenerator::nextReplace(const ReferenceBook& model, bool inv
             break;
         }
         case CommandIntent::REPLACE_REMOVED:
-            command.orderId = model.removedIds().at(below(model.removedIds().size()));
+            command.orderId = model.removedIds().at(indexBelow(model.removedIds().size()));
             break;
         case CommandIntent::REPLACE_PENDING_STOP:
-            command.orderId = model.pendingIds().at(below(model.pendingIds().size()));
+            command.orderId = model.pendingIds().at(indexBelow(model.pendingIds().size()));
             break;
         default: {
             // A total at or below what a resting order has executed; with nothing executed,
             // that is only possible at zero, which is another check. Partly filled orders can be
             // rare (and below needs at least two executed), so up to sixteen are looked at.
             const Quantity wanted = fault == CommandIntent::REPLACE_BELOW_EXECUTED ? 2 : 1;
-            const ModelOrder* candidate = model.find(resting.at(below(resting.size())));
+            const ModelOrder* candidate = model.find(resting.at(indexBelow(resting.size())));
             for (int attempt = 1; attempt < 16 && candidate->total - candidate->open < wanted; ++attempt) {
-                candidate = model.find(resting.at(below(resting.size())));
+                candidate = model.find(resting.at(indexBelow(resting.size())));
             }
             const ModelOrder& order = *candidate;
             const Quantity executed = order.total - order.open;
@@ -351,7 +351,7 @@ Command RandomCommandGenerator::nextReplace(const ReferenceBook& model, bool inv
 Command RandomCommandGenerator::validSubmit(const ReferenceBook& model) {
     const IdPool& removed = model.removedIds();
     const bool reuse = !removed.empty() && chance(config.reuseIdPercent);
-    const OrderId orderId = reuse ? removed.at(below(removed.size())) : freshId();
+    const OrderId orderId = reuse ? removed.at(indexBelow(removed.size())) : freshId();
     const Side side = chance(config.buyPercent) ? Side::BUY : Side::SELL;
     const Price price = pickPrice(model, side);
     Command command = Command::submit(orderId, side, price, pickQuantity(),
@@ -552,9 +552,9 @@ Command RandomCommandGenerator::nextCancel(const ReferenceBook& model, bool inva
         }
         const bool cancelStop = !pendingStops.empty() && (resting.empty() || chance(config.cancelPendingPercent));
         if (cancelStop) {
-            return Command::cancel(pendingStops.at(below(pendingStops.size())), CommandIntent::CANCEL_PENDING_STOP);
+            return Command::cancel(pendingStops.at(indexBelow(pendingStops.size())), CommandIntent::CANCEL_PENDING_STOP);
         }
-        return Command::cancel(resting.at(below(resting.size())), CommandIntent::CANCEL_ACTIVE);
+        return Command::cancel(resting.at(indexBelow(resting.size())), CommandIntent::CANCEL_ACTIVE);
     }
 
     const IdPool& removed = model.removedIds();
@@ -571,7 +571,7 @@ Command RandomCommandGenerator::nextCancel(const ReferenceBook& model, bool inva
         case CommandIntent::CANCEL_ZERO_ID:
             return Command::cancel(0, fault);
         default:
-            return Command::cancel(removed.at(below(removed.size())), fault);
+            return Command::cancel(removed.at(indexBelow(removed.size())), fault);
     }
 }
 

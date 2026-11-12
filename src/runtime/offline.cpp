@@ -302,8 +302,8 @@ namespace order_book::runtime {
                 while (written > fileHeaderBytes && bytes[written - 1] == std::byte{0}) {
                     --written;
                 }
-                const std::size_t slots = written <= fileHeaderBytes ? 0 : (written - fileHeaderBytes + header.recordBytes - 1) / header.recordBytes;
-                bytes.resize(std::max<std::size_t>(bytes.size(), fileHeaderBytes + slots * header.recordBytes));
+                const std::size_t slots = written <= fileHeaderBytes ? 0 : static_cast<std::size_t>((written - fileHeaderBytes + header.recordBytes - 1) / header.recordBytes);
+                bytes.resize(std::max(bytes.size(), static_cast<std::size_t>(fileHeaderBytes + slots * header.recordBytes)));
                 std::uint32_t chain = header.chainSeed;
                 for (std::uint64_t at = fileHeaderBytes, index = 0; index < slots; at += header.recordBytes, ++index) {
                     const std::span<const std::byte> record(bytes.data() + at, header.recordBytes);
