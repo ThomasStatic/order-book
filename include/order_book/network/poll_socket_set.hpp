@@ -32,7 +32,7 @@ namespace order_book::network {
         // fails here and no client can connect before the engine is ready.
         PollSocketSet(const std::array<std::uint8_t, 4>& host, std::uint16_t port, Clock clock = std::chrono::steady_clock::now);
 
-        void startListening();
+        void startListening() override;
         // The port bound, which the system picked if it was asked for 0.
         std::uint16_t port() const noexcept { return listeningPort; }
         // Ends a sleeping wait, from any thread, through a loopback socket of this set's own. Every

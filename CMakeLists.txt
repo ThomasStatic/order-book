@@ -1204,6 +1204,24 @@ if(BUILD_TESTING)
         set_tests_properties(gateway_socket_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 120)
     endif()
 
+    # The whole engine in this process through the injected-parts entry, natively and under
+    # Emscripten, where it stands in for the TCP and process suites. A forced stop leaves the
+    # engine running, so it is a run of its own.
+    add_executable(engine_in_process_tests
+        tests/engine_in_process_test.cpp
+    )
+
+    target_compile_features(engine_in_process_tests PRIVATE cxx_std_20)
+    target_link_libraries(engine_in_process_tests PRIVATE order_book_cli_commands)
+    order_book_enable_warnings(engine_in_process_tests)
+    order_book_enable_sanitizers(engine_in_process_tests)
+    add_test(NAME engine_in_process_tests
+        COMMAND engine_in_process_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay ${CMAKE_CURRENT_BINARY_DIR}/engine-in-process)
+    add_test(NAME engine_in_process_forced_stop
+        COMMAND engine_in_process_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay ${CMAKE_CURRENT_BINARY_DIR}/engine-in-process-forced forced)
+    set_tests_properties(engine_in_process_tests engine_in_process_forced_stop PROPERTIES
+        LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
+
     add_executable(engine_settings_tests
         tests/engine_settings_test.cpp
     )
