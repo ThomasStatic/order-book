@@ -1274,7 +1274,7 @@ if(BUILD_TESTING)
     target_link_libraries(wasm_terminal_tests PRIVATE order_book_wasm)
     order_book_enable_warnings(wasm_terminal_tests)
     order_book_enable_sanitizers(wasm_terminal_tests)
-    foreach(session basic options errors restart)
+    foreach(session basic options errors files send restart)
         add_test(NAME wasm_terminal_${session}
             COMMAND wasm_terminal_tests ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/wasm-terminal ${session})
         set_tests_properties(wasm_terminal_${session} PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)

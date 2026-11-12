@@ -11,6 +11,7 @@
 #include "order_book/cli/commands.hpp"
 #include "order_book/network/page_socket_set.hpp"
 #include "order_book/network/wire_codec.hpp"
+#include "order_book/runtime/log_storage.hpp"
 #include "order_book/wasm/page_connection.hpp"
 #include "order_book/wasm/shadow_books.hpp"
 
@@ -43,17 +44,33 @@ namespace order_book::wasm {
     // A price makes a LIMIT order, none a MARKET order; stop= makes them STOP_LIMIT and STOP.
     // The time in force is GTC for a LIMIT or STOP_LIMIT order and IOC otherwise, unless given;
     // an owner with no stp= is CANCEL_RESTING. The row is then checked exactly as a replay row,
-    // so a bad one prints the replay parser's column and message, exiting 2.
+    // so a bad one prints the replay parser's column and message, exiting 2. A symbol off the
+    // instrument list is refused before it takes a line.
+    //
+    // The CLI's own commands, each printing exactly what order_book_cli prints, and the sample
+    // files, named from the working directory, which is the samples' root (valid/ and
+    // malformed/, as in tests/replay), so a path prints as typed:
+    //
+    //   send FILE [--symbol SYMBOL] [--connect ADDR]   on a connection of its own, to its end
+    //   replay FILE... [OPTIONS]                       on fresh books, not the engine's
+    //   verify [--validate final|per-command]          of the page store; refused while the
+    //                                                  engine runs, since the engine holds its lock
+    //   ls [DIRECTORY]   a sample directory's entries, a directory's with a trailing /
+    //   cat FILE         a sample file's bytes
+    //   help             every command, the page's own (start, stop, crash, reset, clear) too
+    //
+    // send, replay, and verify may keep the program name, as a recorded session types them
+    // (`order_book_cli replay valid/stops.csv`). Anything else prints `<word>: ...` and exits 2.
     class Terminal {
     public:
-        explicit Terminal(ShadowBooks& books) : shadows(books) {}
+        Terminal(ShadowBooks& books, runtime::LogStorage& pageStore) : shadows(books), store(pageStore) {}
 
         // The engine is ready: the standing connection opens on this run's set, in place of any
-        // earlier one. Nothing opens if the set takes no connection.
+        // earlier one, and send connects there. Nothing opens if the set takes no connection.
         // Call pump first to collect a command a disconnect lost: none may be waiting.
-        void connect(std::shared_ptr<network::PageSocketSet> sockets);
+        void connect(std::shared_ptr<network::PageSocketSet> set);
         // The run has ended, so its connection is gone; a command waiting on it is lost, and
-        // pump says so.
+        // pump says so. A send under way ends as its own connection does.
         void disconnect();
 
         // One typed line: its result now, or nothing while it waits on the engine, when pump on
@@ -71,13 +88,21 @@ namespace order_book::wasm {
             std::string assigned;  // "assigned id=N\n" for a buy or sell
         };
 
+        std::optional<cli::CommandResult> clientCommand(std::string_view verb, std::span<const std::string_view> words);
         std::optional<cli::CommandResult> send(std::string_view verb, const replay::ReplayRecord& record, std::string assigned);
         std::optional<cli::CommandResult> answer();
+        std::optional<cli::CommandResult> sendFile(std::span<const std::string_view> args);
+        std::optional<cli::CommandResult> sent();
         cli::CommandResult book(std::string_view symbol) const;
         cli::CommandResult status() const;
+        cli::CommandResult verify(std::span<const std::string_view> args);
+        cli::CommandResult help() const;
 
         ShadowBooks& shadows;
+        runtime::LogStorage& store;
+        std::shared_ptr<network::PageSocketSet> sockets;  // this run's, while it runs
         std::optional<PageConnection> standing;
+        std::optional<PageSend> sending;
         std::size_t commands = 0;  // client commands sent so far
         std::string rows;
         std::optional<Waiting> waiting;

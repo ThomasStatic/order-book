@@ -1,0 +1,11 @@
+send valid/v3_two_instruments.csv
+order_book_cli send valid/basic.csv --symbol NVDA
+send valid/basic.csv
+send malformed/price_zero.csv --symbol TSLA
+send valid/nothing.csv --symbol AAPL
+book MSFT
+book NVDA
+status
+buy MSFT 3 102
+sell NVDA 10 50
+cancel NVDA 1001

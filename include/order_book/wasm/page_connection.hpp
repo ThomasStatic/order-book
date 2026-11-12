@@ -15,8 +15,8 @@ namespace order_book::wasm {
 
     class PageConnection {
     public:
-        // Connects, writing Hello and these commands as room allows. Nothing if the set takes no
-        // connection, as once its listener has closed.
+        // Connects, writing Hello and these commands as room allows. Nothing if there is no set,
+        // with no engine running, or the set takes no connection, as once its listener has closed.
         static std::optional<PageConnection> open(std::shared_ptr<network::PageSocketSet> sockets,
                                                    std::vector<network::ClientCommand> commands = {});
 
@@ -57,7 +57,7 @@ namespace order_book::wasm {
     // the seed use it: every command, a half-close, and every answer to the end of the stream.
     class PageSend {
     public:
-        // Nothing if the set takes no connection.
+        // Nothing if there is no set or it takes no connection.
         static std::optional<PageSend> start(std::shared_ptr<network::PageSocketSet> sockets, cli::PreparedSend prepared);
 
         // On each wake: send's result once the stream has ended, otherwise nothing yet.

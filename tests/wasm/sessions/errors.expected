@@ -43,7 +43,7 @@ line 2: CancelRejected id=99 reason=ORDER_NOT_FOUND
 ! replace: stop_price: REPLACE must leave stop_price empty
 [exit 2]
 > frobnicate
-! frobnicate: unknown command
+! frobnicate: unknown command; help lists them
 [exit 2]
 > book XYZ
 ! book: XYZ is not on the instrument list
