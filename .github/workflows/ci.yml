@@ -130,6 +130,15 @@ jobs:
           --target es2022 --module es2022 --moduleResolution bundler --lib es2022,dom
           src/wasm/js/engine-client.js src/wasm/js/engine-client.d.ts
 
+      # The release asset, built and checked by the Release wasm build (wasm_zip), on every run.
+      - name: Upload the order_book_wasm zip
+        if: matrix.emscripten && matrix.config == 'Release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: order_book_wasm
+          path: build/order_book_wasm-*.zip
+          if-no-files-found: error
+
       - name: Run the CLI
         if: ${{ !matrix.threaded }}
         run: |

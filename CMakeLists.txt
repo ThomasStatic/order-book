@@ -57,6 +57,12 @@ if(EMSCRIPTEN)
     endif()
     add_compile_options(-pthread -fwasm-exceptions)
     add_link_options(-pthread -fwasm-exceptions)
+    # A Release build optimizes for size, as the shipped module must fit its budget (at most 400 KB
+    # gzip -9 for the module and the worker): at -O3 it came to 417 KB, and -Oz on the module
+    # alone shrank only its own code. So everything the module links, and the tests that run
+    # the same code, is built at -Oz.
+    set(CMAKE_CXX_FLAGS_RELEASE "-Oz -DNDEBUG")
+    set(CMAKE_C_FLAGS_RELEASE "-Oz -DNDEBUG")
 endif()
 
 # Under Emscripten a pthread comes from a fixed pool made at start, and asking for more than the
@@ -316,12 +322,12 @@ if(EMSCRIPTEN)
     # The pool's size goes in too, where a static_assert holds it to browserEngineThreads.
     target_compile_definitions(order_book_wasm_module PRIVATE ORDER_BOOK_WASM_RELEASE="${PROJECT_VERSION}"
                                ORDER_BOOK_WASM_POOL=${order_book_wasm_pool})
-    target_compile_options(order_book_wasm_module PRIVATE -O3)
+    target_compile_options(order_book_wasm_module PRIVATE -Oz)
     target_link_libraries(order_book_wasm_module PRIVATE order_book_wasm)
     order_book_enable_warnings(order_book_wasm_module)
     order_book_enable_sanitizers(order_book_wasm_module)
     target_link_options(order_book_wasm_module PRIVATE
-        -O3
+        -Oz
         -lembind
         -sEXPORTED_RUNTIME_METHODS=getExceptionMessage,decrementExceptionRefcount
         -sMODULARIZE=1
@@ -352,6 +358,20 @@ if(EMSCRIPTEN)
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/engine-client/engine-client.js "${order_book_engine_client}")
     configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/wasm/js/engine-client.d.ts ${CMAKE_CURRENT_BINARY_DIR}/engine-client/engine-client.d.ts COPYONLY)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/wasm/js/engine-client.js)
+
+    # The release asset, order_book_wasm-v<version>.zip (docs/internals/wasm.md, "The zip"), on every
+    # build of a Release that ships: the module, the worker, the client and its types, and
+    # manifest.json. Not under a sanitizer, whose module is no release's.
+    if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT ORDER_BOOK_ENABLE_ASAN AND NOT ORDER_BOOK_ENABLE_UBSAN)
+        set(order_book_wasm_zip ${CMAKE_CURRENT_BINARY_DIR}/order_book_wasm-v${PROJECT_VERSION}.zip)
+        add_custom_target(order_book_wasm_zip ALL
+            COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR} -DBINARY=${CMAKE_CURRENT_BINARY_DIR}
+                    -DRELEASE=v${PROJECT_VERSION} -DPROTOCOL=1 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/order_book_wasm_zip.cmake
+            BYPRODUCTS ${order_book_wasm_zip}
+            COMMENT "Zipping order_book_wasm-v${PROJECT_VERSION}.zip"
+            VERBATIM)
+        add_dependencies(order_book_wasm_zip order_book_wasm_module)
+    endif()
 
     set_property(TARGET order_book_wasm_module APPEND PROPERTY LINK_DEPENDS
                  ${CMAKE_CURRENT_SOURCE_DIR}/src/wasm/instruments.csv ${CMAKE_CURRENT_SOURCE_DIR}/src/wasm/seed.csv)
@@ -1372,6 +1392,13 @@ if(BUILD_TESTING)
         set_tests_properties(wasm_engine_client_crash PROPERTIES
             ENVIRONMENT "ORDER_BOOK_WASM_MODULE=$<TARGET_FILE:order_book_wasm_module>;ORDER_BOOK_ENGINE_CLIENT=${CMAKE_CURRENT_BINARY_DIR}/engine-client/engine-client.js"
             LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
+        if(TARGET order_book_wasm_zip)
+            add_test(NAME wasm_zip
+                COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} --test ${CMAKE_CURRENT_SOURCE_DIR}/tests/wasm/node/zip.test.mjs)
+            set_tests_properties(wasm_zip PROPERTIES
+                ENVIRONMENT "ORDER_BOOK_WASM_ZIP=${order_book_wasm_zip};CMAKE_COMMAND=${CMAKE_COMMAND};ORDER_BOOK_ENGINE_CLIENT=${CMAKE_CURRENT_BINARY_DIR}/engine-client/engine-client.js"
+                TIMEOUT 120)
+        endif()
         add_test(NAME wasm_module_worst_case
             COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} --test ${CMAKE_CURRENT_SOURCE_DIR}/tests/wasm/node/worst_case.test.mjs)
         set_tests_properties(wasm_module_worst_case PROPERTIES

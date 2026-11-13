@@ -62,7 +62,7 @@ A static library that builds and is tested on every platform (`include/order_boo
 
 The module is the executable `order_book_wasm_module` (`src/wasm/module/engine_module.cpp`), defined only under Emscripten and built as `order_book_wasm.js` and `.wasm`. It holds the embind declarations and the `EM_JS` glue, and links `order_book_wasm`.
 
-- **Flags, on this target alone:** `-sMODULARIZE -sEXPORT_ES6 -sEXPORT_NAME=createOrderBookModule -sENVIRONMENT=worker,node` (`node` for the tests), `-O3`, and `-lembind`, beside the global `-pthread` and `-fwasm-exceptions`. Memory is a fixed `-sINITIAL_MEMORY=128MB` with no growth, the stacks are `-sSTACK_SIZE=1MB` and `-sDEFAULT_PTHREAD_STACK_SIZE=256KB`, and the pool is strict (`-sPTHREAD_POOL_SIZE_STRICT=2`) at exactly the engine's threads. CMake counts the pool from `settings.hpp`'s `browserShards`, `browserGatewayThreads`, and `browserRollWorkers`, as `browserEngineThreads` does (2N + M + R + 2 = 8), and stops configuring if it can't read them; the module gets the size as `ORDER_BOOK_WASM_POOL`, and a `static_assert` holds it to `browserEngineThreads`. Never `-sBUILD_AS_WORKER`, which `-pthread` rejects. `-sEXIT_RUNTIME=0` is said outright, since a sanitizer build turns it on to check for leaks at exit: with it on, the module, which has no `main`, exited its runtime under the engine's threads the first time nothing kept it alive, at the engine's start, and the page hung. Under ASan it takes `src/wasm/module/asan_options.js`: no allocation stacks, as the tests' options, and ASan's quarantine of freed memory cut from wasm32's 64 MiB to 16 MiB, since the module keeps the shipped 128 MiB and the worst-case session ran out of it under ASan alone.
+- **Flags, on this target alone:** `-sMODULARIZE -sEXPORT_ES6 -sEXPORT_NAME=createOrderBookModule -sENVIRONMENT=worker,node` (`node` for the tests), `-Oz`, and `-lembind`, beside the global `-pthread` and `-fwasm-exceptions`. Memory is a fixed `-sINITIAL_MEMORY=128MB` with no growth, the stacks are `-sSTACK_SIZE=1MB` and `-sDEFAULT_PTHREAD_STACK_SIZE=256KB`, and the pool is strict (`-sPTHREAD_POOL_SIZE_STRICT=2`) at exactly the engine's threads. CMake counts the pool from `settings.hpp`'s `browserShards`, `browserGatewayThreads`, and `browserRollWorkers`, as `browserEngineThreads` does (2N + M + R + 2 = 8), and stops configuring if it can't read them; the module gets the size as `ORDER_BOOK_WASM_POOL`, and a `static_assert` holds it to `browserEngineThreads`. Never `-sBUILD_AS_WORKER`, which `-pthread` rejects. `-sEXIT_RUNTIME=0` is said outright, since a sanitizer build turns it on to check for leaks at exit: with it on, the module, which has no `main`, exited its runtime under the engine's threads the first time nothing kept it alive, at the engine's start, and the page hung. Under ASan it takes `src/wasm/module/asan_options.js`: no allocation stacks, as the tests' options, and ASan's quarantine of freed memory cut from wasm32's 64 MiB to 16 MiB, since the module keeps the shipped 128 MiB and the worst-case session ran out of it under ASan alone.
 - **Embedded, read-only** (`--embed-file`): `src/wasm/instruments.csv` and `seed.csv` at `/engine/`, and `tests/replay/valid` and `malformed` at `/samples/`. `enterSamples()` makes `/samples` the working directory, as the terminal's file commands expect.
 - **The embind class `Engine`**, one per module, made from the page store as the page holds it (`[{name, bytes}]`): `start()` begins a run on a pthread of its own (runEngine's, the pool's eighth) and returns at once, `stop()` requests a stop (a second forces it), `run(line)` is `Terminal::run`, and `takeEvents()` gives what happened. `release()` names the version.
 - **One ordered queue.** Every engine thread's report goes into one queue, in the order it happened: each page-store change (`stored`, copied under the store's lock), each whole line of the report and the diagnostics, `ready`, each wake, and the run's end. The first event after a look asks the worker's thread to look again, through `emscripten_async_run_in_main_runtime_thread` and the `EM_JS` function that calls `Module.onEngineEvents`. A look, `takeEvents()`, takes the queue, then pumps the seed's connection and the terminal's, then takes the queue again, and puts what pumping gave last. The engine writes a record to the store before it sends the answer that waited for it, so once pumping has read an answer, that write is in the queue: the second take is what keeps an answer from overtaking its log write. `run(line)` returns the same events for the worker to post before an answer that came at once. A look never runs inside another call into the module: when the worker's thread waits on a lock an engine thread holds (the in-page set's, `malloc`'s), Emscripten runs the calls queued for it meanwhile, the request to look among them, so a look could start inside a pump, ending a send the outer pump was still driving (`connection N is not one this PageSocketSet holds`, or a send that never answers), or inside `run`'s embind wrapper, before the worker had made that request the one waiting for the answer, which then went unclaimed. The worker counts its calls into the module, and a look asked for during one waits for a task of its own once the outermost returns.
@@ -129,11 +129,33 @@ Every registered test runs under `node`, against the very expected files and fin
 - `log_writer_tests` skips only "a rename never replaces a file" on real files, printing why.
 - `node_pool_tests` sizes its size classes from its `Node`, which is 40 bytes on wasm32 rather than 48, so six sizes still claim six classes and the seventh, past the largest, goes to the heap.
 
+## The zip
+
+The release asset, `order_book_wasm-v<version>.zip`, comes from `order_book_wasm_zip`. That is a custom target in every Emscripten Release build without a sanitizer, depending on the module, and it runs `cmake/order_book_wasm_zip.cmake`. The script stages the files in `build-wasm/order_book_wasm-zip/`:
+
+- `order_book_wasm.js` and `.wasm`;
+- `engine-worker.js`;
+- the configured `engine-client.js` and `engine-client.d.ts`.
+
+It writes `manifest.json` beside them: `release` (`v` and the project version, which the zip's name and `ENGINE_RELEASE` carry), `tag` (`git describe --tags --always --dirty`, so only the tag's own run names the tag), `commit` (`git rev-parse HEAD`), `protocol` (1), and `files`, each file's sha256 (`file(SHA256)`). It then zips the six flat with `cmake -E tar --format=zip`.
+
+**The budget**: at most 400 KB (400,000 bytes) at gzip -9 for the module's `.wasm` and `.js` and `engine-worker.js` together.
+- At `-O3` they came to 417,152.
+- `-Oz` on the module target alone came to 413,944, since it shrank only the module's own code.
+- So an Emscripten Release build compiles everything at `-Oz` (`CMAKE_CXX_FLAGS_RELEASE`, set in the top `if(EMSCRIPTEN)` block), and the tests run the code that ships. That came to 313,062, with no need for `--closure`. The `.wasm`'s code section is most of it.
+
+`wasm_zip` (`node --test tests/wasm/node/zip.test.mjs`, given the zip, `CMAKE_COMMAND`, and the client copy) unpacks the zip with `cmake -E tar xf` and checks:
+- it holds exactly those six files;
+- the manifest's release is the client's `ENGINE_RELEASE` and the zip's name, and its protocol is `PROTOCOL_VERSION`;
+- its commit is a full hash, its tag is non-empty, and it lists every file but itself;
+- every sha256 is its file's;
+- the three files fit the budget, using `zlib` at level 9.
+
 ## CI
 
 Two jobs in `ci.yml`, on `ubuntu-24.04` with Ninja and `emscripten-core/setup-emsdk` pinned to Emscripten 7.0.0, with emsdk and the system libraries it builds on first use cached under `emsdk-cache`, keyed by job:
 
-- **Emscripten Release**: invariant checks at their default, so off, as shipped. It also type-checks `engine-client.js` against `engine-client.d.ts` with `tsc --noEmit --allowJs --checkJs --strict`, TypeScript pinned to 6.0.3 and fetched by `npx`, since the repo has no `package.json`.
+- **Emscripten Release**: invariant checks at their default, so off, as shipped. It also type-checks `engine-client.js` against `engine-client.d.ts` with `tsc --noEmit --allowJs --checkJs --strict`, TypeScript pinned to 6.0.3 and fetched by `npx`, since the repo has no `package.json`, and it uploads the zip, which `wasm_zip` has checked, as the `order_book_wasm` artifact (`if-no-files-found: error`).
 - **Emscripten ASan+UBSan Debug**: invariant checks on.
 
 Both build with warnings as errors, run every registered test (not only `-L threaded`, a label that keeps meaning the ThreadSanitizer and Arm jobs) and the CLI step under `node`, within the 30-minute job limit.
