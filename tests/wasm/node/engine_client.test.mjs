@@ -56,6 +56,11 @@ test("support is checked first, and createEngine rejects with what is missing", 
     }
 });
 
+test("the client refuses a worker that speaks another protocol", async () => {
+    const fake = {...urls, worker: new URL("./fake-worker.mjs", import.meta.url)};
+    await assert.rejects(client.createEngine(fake), /speaks protocol 2, not 1/);
+});
+
 test("the terminal, the sandbox, and start and stop through run", async () => {
     const engine = await running();
     const lines = [];
@@ -168,16 +173,19 @@ test("a page that stops consuming pushes back: the worker forwards no more than 
         for (let i = 0; i < 5; ++i) {
             await page.request("status");
         }
+        // Every answer here is one 36-byte OrderAccepted, so the window holds a whole number of
+        // them: as many as fit in W, and no more.
         const given = replies.reduce((sum, reply) => sum + reply.frameBytes, 0);
         assert.ok(replies.length < count, "some answers wait");
-        assert.ok(given <= 65536 + 36, `the worker forwarded at most W and one answer, not ${given}`);
+        assert.ok(given <= 65536, `the worker forwarded at most W, not ${given}`);
+        assert.ok(given > 65536 - 36, `and filled it, at ${given}`);
 
         // Consuming lets the rest through.
         let consumed = 0;
         while (replies.length < count) {
             const owed = replies.reduce((sum, reply) => sum + reply.frameBytes, 0) - consumed;
             consumed += owed;
-            page.worker.postMessage({type: "consumed", bytes: owed});
+            page.worker.postMessage({type: "consumed", connection: "sandbox", bytes: owed});
             await page.request("status");
         }
         await Promise.all(asked);

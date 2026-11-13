@@ -23,19 +23,20 @@
 // room. Not public API.
 namespace order_book::wasm {
 
-    // An order as the page gives it: AddCommand without its ID, in the replay format's words.
-    // What is left empty takes the terminal's defaults: LIMIT with a price and MARKET without, or
-    // STOP_LIMIT and STOP with a stop price; GTC with a price and IOC without; and CANCEL_RESTING
-    // for an owner with no mode.
+    // An order as the page gives it: AddCommand without its ID, each field the text its replay
+    // column takes, so the parser judges a number exactly as it judges a row's (a fraction, a
+    // negative, or zero refused with its own message). What is left empty takes the terminal's
+    // defaults: LIMIT with a price and MARKET without, or STOP_LIMIT and STOP with a stop price;
+    // GTC with a price and IOC without; and CANCEL_RESTING for an owner with no mode.
     struct OrderInput {
         std::string side;  // BUY or SELL
-        std::uint64_t quantity = 0;
-        std::optional<std::uint64_t> price;
+        std::string quantity;
+        std::string price;
         std::string type;  // LIMIT, MARKET, STOP, or STOP_LIMIT
-        std::optional<std::uint64_t> stopPrice;
+        std::string stopPrice;
         std::string timeInForce;  // GTC, IOC, or FOK
         bool postOnly = false;
-        std::optional<std::uint64_t> owner;
+        std::string owner;
         std::string selfTradePrevention;  // CANCEL_RESTING, CANCEL_INCOMING, or CANCEL_BOTH
     };
 
@@ -68,9 +69,9 @@ namespace order_book::wasm {
         // Each checked as a replay row and refused with the parser's text, a symbol off the
         // instrument list, or "the engine isn't running"; otherwise sent, its answer to come.
         std::variant<SandboxSent, std::string> submit(std::string_view symbol, const OrderInput& order);
-        std::variant<SandboxSent, std::string> cancel(std::string_view symbol, std::uint64_t orderId);
-        std::variant<SandboxSent, std::string> replace(std::string_view symbol, std::uint64_t orderId, std::uint64_t price,
-                                                       std::uint64_t quantity);
+        std::variant<SandboxSent, std::string> cancel(std::string_view symbol, std::string_view orderId);
+        std::variant<SandboxSent, std::string> replace(std::string_view symbol, std::string_view orderId, std::string_view price,
+                                                       std::string_view quantity);
 
         // On each wake: sends what waits, reads what came while the window has room, and gives
         // each command whose answer is now whole, in the order the commands went, or each
@@ -78,9 +79,10 @@ namespace order_book::wasm {
         std::vector<SandboxAnswer> pump();
         // The page has consumed this many of the frame bytes it was given.
         void consumed(std::size_t bytes) noexcept;
-        // What the window lets the next pump read: W, less the frame bytes given and not yet
-        // consumed. A pump may finish a frame past it, so the page may hold up to W plus one
-        // answer.
+        // What the window lets the next pump read: W, less the bytes read and not yet consumed,
+        // whether given or still part of an answer under way. When everything given has been
+        // consumed and the window is still full, an answer larger than W is under way, and the
+        // next pump reads another W of it, the one way the page can hold more than W.
         std::size_t room() const noexcept;
 
     private:
@@ -92,7 +94,8 @@ namespace order_book::wasm {
         std::optional<PageConnection> standing;
         std::size_t commands = 0;  // sent on this connection, its correlations 1 to commands
         std::map<network::Correlation, std::optional<OrderId>> waiting;
-        std::size_t given = 0;         // the frames of answers given on this connection
+        std::size_t read = 0;          // bytes read on this connection, the Welcome first
+        std::size_t given = 0;         // of those, the frames of answers given
         std::size_t acknowledged = 0;  // of those, what the page has consumed
     };
 

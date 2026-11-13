@@ -14,16 +14,13 @@ namespace order_book::wasm {
 
         constexpr const char* notRunning = "the engine isn't running";
 
-        std::string number(std::uint64_t value) { return std::to_string(value); }
-
-        std::string number(const std::optional<std::uint64_t>& value) { return value ? std::to_string(*value) : std::string(); }
-
     }  // namespace
 
     void Sandbox::connect(std::shared_ptr<network::PageSocketSet> sockets) {
         standing.reset();
         waiting.clear();
         commands = 0;
+        read = 0;
         given = 0;
         acknowledged = 0;
         if (std::optional<PageConnection> opened = PageConnection::open(std::move(sockets))) {
@@ -42,33 +39,33 @@ namespace order_book::wasm {
         row[COMMAND] = "ADD";
         row[ORDER_ID] = "1";  // a stand-in for the check: the ID is assigned once the row passes
         row[SIDE] = order.side;
-        row[PRICE] = number(order.price);
-        row[QUANTITY] = number(order.quantity);
+        row[PRICE] = order.price;
+        row[QUANTITY] = order.quantity;
         row[ORDER_TYPE] = order.type;
         row[TIME_IN_FORCE] = order.timeInForce;
-        row[STOP_PRICE] = number(order.stopPrice);
+        row[STOP_PRICE] = order.stopPrice;
         row[POST_ONLY] = order.postOnly ? "Y" : "";
-        row[OWNER] = number(order.owner);
+        row[OWNER] = order.owner;
         row[STP] = order.selfTradePrevention;
         row[SYMBOL] = std::string(symbol);
         return send(std::move(row));
     }
 
-    std::variant<SandboxSent, std::string> Sandbox::cancel(std::string_view symbol, std::uint64_t orderId) {
+    std::variant<SandboxSent, std::string> Sandbox::cancel(std::string_view symbol, std::string_view orderId) {
         std::vector<std::string> row(COLUMNS);
         row[COMMAND] = "CANCEL";
-        row[ORDER_ID] = number(orderId);
+        row[ORDER_ID] = std::string(orderId);
         row[SYMBOL] = std::string(symbol);
         return send(std::move(row));
     }
 
-    std::variant<SandboxSent, std::string> Sandbox::replace(std::string_view symbol, std::uint64_t orderId, std::uint64_t price,
-                                                            std::uint64_t quantity) {
+    std::variant<SandboxSent, std::string> Sandbox::replace(std::string_view symbol, std::string_view orderId, std::string_view price,
+                                                            std::string_view quantity) {
         std::vector<std::string> row(COLUMNS);
         row[COMMAND] = "REPLACE";
-        row[ORDER_ID] = number(orderId);
-        row[PRICE] = number(price);
-        row[QUANTITY] = number(quantity);
+        row[ORDER_ID] = std::string(orderId);
+        row[PRICE] = std::string(price);
+        row[QUANTITY] = std::string(quantity);
         row[SYMBOL] = std::string(symbol);
         return send(std::move(row));
     }
@@ -111,6 +108,7 @@ namespace order_book::wasm {
         for (;;) {
             const std::size_t limit = room();
             const std::size_t got = standing->pump(limit);
+            read += got;
             for (auto next = waiting.begin(); next != waiting.end();) {
                 if (!stream.answered(next->first)) {
                     ++next;
@@ -141,11 +139,16 @@ namespace order_book::wasm {
         return answers;
     }
 
-    void Sandbox::consumed(std::size_t bytes) noexcept { acknowledged = std::min(given, acknowledged + bytes); }
+    void Sandbox::consumed(std::size_t bytes) noexcept { acknowledged += std::min(bytes, given - acknowledged); }
 
     std::size_t Sandbox::room() const noexcept {
-        const std::size_t unconsumed = given - acknowledged;
-        return unconsumed >= windowBytes ? 0 : windowBytes - unconsumed;
+        // The engine's Welcome, the first frame on a connection, answers no command.
+        const std::size_t answering = read - std::min(read, network::helloFrameBytes);
+        const std::size_t unconsumed = answering - acknowledged;
+        if (unconsumed < windowBytes) {
+            return windowBytes - unconsumed;
+        }
+        return given == acknowledged ? windowBytes : 0;
     }
 
     std::vector<SandboxAnswer> Sandbox::loseAll(const std::string& why) {

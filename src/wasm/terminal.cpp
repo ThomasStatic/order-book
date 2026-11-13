@@ -317,9 +317,7 @@ namespace order_book::wasm {
             return failed(verb, *problem);
         }
         replay::ReplayRecord& record = std::get<replay::ReplayRecord>(checked);
-        if (standing) {
-            standing->pump();
-        }
+        pumpStanding();
         if (!standing || standing->done()) {
             standing.reset();
             return failed(verb, "the engine isn't running", cli::inputError);  // as send with no connection
@@ -342,7 +340,7 @@ namespace order_book::wasm {
         const auto correlation = static_cast<network::Correlation>(record.lineNumber);
         standing->add(network::ClientCommand{correlation, record.symbol, record.command});
         waiting = Waiting{std::string(verb), correlation, std::move(assigned)};
-        standing->pump();
+        pumpStanding();
         return answer();
     }
 
@@ -350,9 +348,7 @@ namespace order_book::wasm {
         if (sending) {
             return sent();
         }
-        if (standing) {
-            standing->pump();
-        }
+        pumpStanding();
         return answer();
     }
 
@@ -397,8 +393,49 @@ namespace order_book::wasm {
         return sent();
     }
 
+    // Reads while the window has room; a read that took all the room may have stopped inside a
+    // frame, so it reads again until a read comes up short or the window is full. What then waits
+    // in the set comes once the page has consumed.
+    void Terminal::pumpStanding() {
+        if (!standing) {
+            return;
+        }
+        for (;;) {
+            const std::size_t limit = room();
+            const std::size_t before = standing->received();
+            standing->pump(limit);
+            const std::size_t got = standing->received() - before;
+            read += got;
+            if (got < limit || limit == 0 || room() == 0) {
+                return;
+            }
+        }
+    }
+
+    std::optional<cli::CommandResult> Terminal::pumpSending() {
+        for (;;) {
+            const std::size_t limit = room();
+            const std::size_t before = sending->received();
+            std::optional<cli::CommandResult> result = sending->pump(limit);
+            const std::size_t got = sending->received() - before;
+            read += got;
+            if (result || got < limit || limit == 0 || room() == 0) {
+                return result;
+            }
+        }
+    }
+
+    std::size_t Terminal::progress() noexcept { return read - std::exchange(announced, read); }
+
+    void Terminal::consumed(std::size_t bytes) noexcept { acknowledged += std::min(bytes, read - acknowledged); }
+
+    std::size_t Terminal::room() const noexcept {
+        const std::size_t unconsumed = read - acknowledged;
+        return unconsumed < windowBytes ? windowBytes - unconsumed : 0;
+    }
+
     std::optional<cli::CommandResult> Terminal::sent() {
-        std::optional<cli::CommandResult> result = sending->pump();
+        std::optional<cli::CommandResult> result = pumpSending();
         if (result) {
             sending.reset();
         }

@@ -84,7 +84,12 @@ std::string play(Terminal& terminal, Page& page, const std::vector<std::string>&
     for (const std::string& line : typed) {
         transcript += "> " + line + "\n";
         std::optional<cli::CommandResult> now = terminal.run(line);
-        const cli::CommandResult result = now ? *now : pumpUntilDone(page, [&] { return terminal.pump(); });
+        // The page acknowledges what was read as it goes, as the engine client does.
+        const cli::CommandResult result = now ? *now : pumpUntilDone(page, [&] {
+            terminal.consumed(terminal.progress());
+            return terminal.pump();
+        });
+        terminal.consumed(terminal.progress());
         transcript += result.out;
         for (const std::string& error : linesOf(result.err)) {
             transcript += "! " + error + "\n";
@@ -187,6 +192,35 @@ void testARestart(const Paths& paths) {
     expect(again.cleanStop() == network::EngineExit::CLEAN_STOP, "the restart stops cleanly");
 }
 
+// The terminal's window: a page that acknowledges nothing stops the reading once W bytes are
+// read, and the send goes on, to the same bytes, as it acknowledges.
+void testTheWindow(const Paths& paths) {
+    Seeded run(paths);
+    Terminal terminal(run.engine.shadows(), run.engine.store(), 100);
+    terminal.connect(run.engine.sockets());
+    expect(!terminal.run("send valid/v3_two_instruments.csv"), "the send waits for its answers");
+    while (terminal.room() != 0) {
+        const std::size_t seen = run.page.wakesSoFar();
+        expect(!terminal.pump(), "a send whose answers are more than the window can't end inside it");
+        if (terminal.room() != 0) {
+            static_cast<void>(run.page.waitPast(seen));
+        }
+    }
+    const std::size_t read = terminal.progress();
+    expect(read >= 100, "the window filled");
+    for (int pumps = 0; pumps < 100; ++pumps) {
+        expect(!terminal.pump() && terminal.progress() == 0, "nothing more is read until the page acknowledges");
+    }
+    terminal.consumed(read);
+    const cli::CommandResult result = pumpUntilDone(run.page, [&] {
+        terminal.consumed(terminal.progress());
+        return terminal.pump();
+    });
+    const std::vector<Typed> session = commandsOf(readFile(paths.sessions / "send.expected"));
+    expect(result.out == session.at(0).out && result.exit == session.at(0).exit, "the same bytes as with no window:\n" + result.out);
+    expect(run.running.cleanStop() == network::EngineExit::CLEAN_STOP, "a clean stop");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -209,7 +243,9 @@ int main(int argc, char** argv) {
     }
     std::filesystem::current_path(samples);
 
-    if (which == "restart") {
+    if (which == "window") {
+        testTheWindow(paths);
+    } else if (which == "restart") {
         testARestart(paths);
     } else {
         testASession(paths, std::string(which));

@@ -1379,7 +1379,7 @@ if(BUILD_TESTING)
             LABELS threaded RESOURCE_LOCK threads TIMEOUT 600)
     endif()
 
-    foreach(session basic options errors files send restart)
+    foreach(session basic options errors files send restart window)
         add_test(NAME wasm_terminal_${session}
             COMMAND wasm_terminal_tests ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/wasm-terminal ${session})
         set_tests_properties(wasm_terminal_${session} PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)

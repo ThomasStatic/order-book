@@ -115,7 +115,8 @@ namespace order_book::wasm {
             return "UNKNOWN";
         }
 
-        double number(std::uint64_t value) { return static_cast<double>(value); }
+        // A count as the page's number; every field fits in 2^53.
+        double jsNumber(std::uint64_t value) { return static_cast<double>(value); }
 
         // One answer frame as the page's AnswerEvent: its type, its fields, and its text.
         val eventOf(const network::ClientStream::Answer& frame) {
@@ -123,7 +124,7 @@ namespace order_book::wasm {
             posted.set("text", frame.text);
             if (const auto* refusal = std::get_if<network::RefusedFrame>(&frame.decoded)) {
                 posted.set("type", std::string("Refused"));
-                posted.set("orderId", number(refusal->orderId));
+                posted.set("orderId", jsNumber(refusal->orderId));
                 posted.set("code", network::refusedCodeName(refusal->code));
                 return posted;
             }
@@ -132,50 +133,50 @@ namespace order_book::wasm {
                     using Event = std::decay_t<decltype(event)>;
                     if constexpr (std::is_same_v<Event, OrderAccepted>) {
                         posted.set("type", std::string("OrderAccepted"));
-                        posted.set("orderId", number(event.orderId));
+                        posted.set("orderId", jsNumber(event.orderId));
                         posted.set("side", std::string(sideName(event.side)));
-                        posted.set("price", number(event.price));
-                        posted.set("quantity", number(event.quantity));
+                        posted.set("price", jsNumber(event.price));
+                        posted.set("quantity", jsNumber(event.quantity));
                     } else if constexpr (std::is_same_v<Event, OrderRejected> || std::is_same_v<Event, CancelRejected> ||
                                          std::is_same_v<Event, ReplaceRejected>) {
                         posted.set("type", std::string(std::is_same_v<Event, OrderRejected>    ? "OrderRejected"
                                                        : std::is_same_v<Event, CancelRejected> ? "CancelRejected"
                                                                                                 : "ReplaceRejected"));
-                        posted.set("orderId", number(event.orderId));
+                        posted.set("orderId", jsNumber(event.orderId));
                         posted.set("reason", std::string(rejectionReasonName(event.reason)));
                     } else if constexpr (std::is_same_v<Event, TradeExecuted>) {
                         posted.set("type", std::string("TradeExecuted"));
-                        posted.set("incomingOrderId", number(event.incomingOrderId));
-                        posted.set("restingOrderId", number(event.restingOrderId));
-                        posted.set("price", number(event.executionPrice));
-                        posted.set("quantity", number(event.executionQuantity));
+                        posted.set("incomingOrderId", jsNumber(event.incomingOrderId));
+                        posted.set("restingOrderId", jsNumber(event.restingOrderId));
+                        posted.set("price", jsNumber(event.executionPrice));
+                        posted.set("quantity", jsNumber(event.executionQuantity));
                     } else if constexpr (std::is_same_v<Event, OrderCancelled>) {
                         posted.set("type", std::string("OrderCancelled"));
-                        posted.set("orderId", number(event.orderId));
-                        posted.set("quantity", number(event.cancelledQuantity));
+                        posted.set("orderId", jsNumber(event.orderId));
+                        posted.set("quantity", jsNumber(event.cancelledQuantity));
                     } else if constexpr (std::is_same_v<Event, OrderExpired>) {
                         posted.set("type", std::string("OrderExpired"));
-                        posted.set("orderId", number(event.orderId));
-                        posted.set("quantity", number(event.expiredQuantity));
+                        posted.set("orderId", jsNumber(event.orderId));
+                        posted.set("quantity", jsNumber(event.expiredQuantity));
                     } else if constexpr (std::is_same_v<Event, SelfTradePrevented>) {
                         posted.set("type", std::string("SelfTradePrevented"));
-                        posted.set("incomingOrderId", number(event.incomingOrderId));
-                        posted.set("restingOrderId", number(event.restingOrderId));
-                        posted.set("price", number(event.price));
-                        posted.set("quantity", number(event.cancelledQuantity));
+                        posted.set("incomingOrderId", jsNumber(event.incomingOrderId));
+                        posted.set("restingOrderId", jsNumber(event.restingOrderId));
+                        posted.set("price", jsNumber(event.price));
+                        posted.set("quantity", jsNumber(event.cancelledQuantity));
                     } else if constexpr (std::is_same_v<Event, StopTriggered>) {
                         posted.set("type", std::string("StopTriggered"));
-                        posted.set("orderId", number(event.orderId));
-                        posted.set("stopPrice", number(event.stopPrice));
-                        posted.set("tradePrice", number(event.tradePrice));
+                        posted.set("orderId", jsNumber(event.orderId));
+                        posted.set("stopPrice", jsNumber(event.stopPrice));
+                        posted.set("tradePrice", jsNumber(event.tradePrice));
                     } else {
                         static_assert(std::is_same_v<Event, OrderReplaced>, "every BookEvent alternative is an AnswerEvent");
                         posted.set("type", std::string("OrderReplaced"));
-                        posted.set("orderId", number(event.orderId));
+                        posted.set("orderId", jsNumber(event.orderId));
                         posted.set("side", std::string(sideName(event.side)));
-                        posted.set("price", number(event.price));
-                        posted.set("quantity", number(event.quantity));
-                        posted.set("openQuantity", number(event.openQuantity));
+                        posted.set("price", jsNumber(event.price));
+                        posted.set("quantity", jsNumber(event.quantity));
+                        posted.set("openQuantity", jsNumber(event.openQuantity));
                         posted.set("priorityKept", event.priorityKept);
                     }
                 },
@@ -189,7 +190,7 @@ namespace order_book::wasm {
             posted.set("type", std::string("sandboxAnswer"));
             posted.set("correlation", static_cast<double>(answer.correlation));
             if (answer.orderId) {
-                posted.set("orderId", number(*answer.orderId));
+                posted.set("orderId", jsNumber(*answer.orderId));
             }
             val events = val::array();
             for (const network::ClientStream::Answer& frame : answer.events) {
@@ -204,40 +205,40 @@ namespace order_book::wasm {
             return posted;
         }
 
+        // A field as the text its replay column takes, as JavaScript's String() writes it, so the
+        // parser judges it exactly as it would a row's: 100.7, -5, NaN, or "ten" each refused with
+        // the parser's own message, never rounded. Nothing for a field left out.
+        std::string textOf(const val& field) {
+            if (field.isUndefined() || field.isNull()) {
+                return {};
+            }
+            return val::global("String")(field).as<std::string>();
+        }
+
         // What the sandbox sends, as the page's OrderInput gives it.
         OrderInput orderOf(const val& order) {
             OrderInput input;
-            const auto text = [&order](const char* key) {
-                const val field = order[key];
-                return field.isUndefined() || field.isNull() ? std::string() : field.as<std::string>();
-            };
-            const auto count = [&order](const char* key) -> std::optional<std::uint64_t> {
-                const val field = order[key];
-                if (field.isUndefined() || field.isNull()) {
-                    return std::nullopt;
-                }
-                const double value = field.as<double>();
-                if (!(value >= 0) || value > 9007199254740991.0) {
-                    return std::uint64_t{0};  // what the parser then refuses as zero
-                }
-                return static_cast<std::uint64_t>(value);
-            };
-            input.side = text("side");
-            input.quantity = count("quantity").value_or(0);
-            input.price = count("price");
-            input.type = text("type");
-            input.stopPrice = count("stopPrice");
-            input.timeInForce = text("timeInForce");
-            const val postOnly = order["postOnly"];
-            input.postOnly = !postOnly.isUndefined() && !postOnly.isNull() && postOnly.as<bool>();
-            input.owner = count("owner");
-            input.selfTradePrevention = text("selfTradePrevention");
+            if (order.isUndefined() || order.isNull()) {
+                return input;
+            }
+            input.side = textOf(order["side"]);
+            input.quantity = textOf(order["quantity"]);
+            input.price = textOf(order["price"]);
+            input.type = textOf(order["type"]);
+            input.stopPrice = textOf(order["stopPrice"]);
+            input.timeInForce = textOf(order["timeInForce"]);
+            input.postOnly = order["postOnly"].isTrue();
+            input.owner = textOf(order["owner"]);
+            input.selfTradePrevention = textOf(order["selfTradePrevention"]);
             return input;
         }
 
-        std::uint64_t idOf(const val& value) {
-            const double number = value.isNumber() ? value.as<double>() : 0;
-            return number >= 0 && number <= 9007199254740991.0 ? static_cast<std::uint64_t>(number) : 0;
+        // Bytes the page says it consumed: a whole count, at most what any window could hold.
+        std::size_t bytesOf(double bytes) {
+            if (!(bytes > 0)) {
+                return 0;
+            }
+            return bytes >= 4294967295.0 ? static_cast<std::size_t>(4294967295U) : static_cast<std::size_t>(bytes);
         }
 
         // What the engine reported, in order, as the worker takes it.
@@ -333,21 +334,22 @@ namespace order_book::wasm {
 
         bool running() const { return isRunning; }
 
-        // One typed line: {done: true, stdout, stderr, exit}, or {done: false} while its answer
-        // is due, which then comes as an `answer` event. Either way `events` holds what was
-        // queued before it, which the worker posts first: an answer that came at once may have
-        // waited for a log write still in the queue.
         // The sandbox's typed commands: {ok: true, correlation, orderId?} once sent, its answer
         // to come as a `sandboxAnswer` event, or {ok: false, error}; with `events`, as run's.
         val submit(const std::string& symbol, const val& order) { return sent(sandbox.submit(symbol, orderOf(order))); }
-        val cancel(const std::string& symbol, const val& orderId) { return sent(sandbox.cancel(symbol, idOf(orderId))); }
+        val cancel(const std::string& symbol, const val& orderId) { return sent(sandbox.cancel(symbol, textOf(orderId))); }
         val replace(const std::string& symbol, const val& orderId, const val& price, const val& quantity) {
-            return sent(sandbox.replace(symbol, idOf(orderId), idOf(price), idOf(quantity)));
+            return sent(sandbox.replace(symbol, textOf(orderId), textOf(price), textOf(quantity)));
         }
 
-        // The page has consumed this many of the sandbox's frame bytes: what that lets through.
-        val consumed(double bytes) {
-            sandbox.consumed(bytes > 0 ? static_cast<std::size_t>(bytes) : 0);
+        // The page has consumed this many bytes of the sandbox's answers or the terminal's
+        // reading: what that lets through.
+        val consumed(const std::string& connection, double bytes) {
+            if (connection == "terminal") {
+                terminal.consumed(bytesOf(bytes));
+            } else {
+                sandbox.consumed(bytesOf(bytes));
+            }
             return takeEvents();
         }
 
@@ -363,16 +365,16 @@ namespace order_book::wasm {
                 val out = val::array();
                 for (const LevelView& level : levels) {
                     val posted = val::object();
-                    posted.set("price", number(level.price));
-                    posted.set("quantity", number(level.quantity));
+                    posted.set("price", jsNumber(level.price));
+                    posted.set("quantity", jsNumber(level.quantity));
                     val orders = val::array();
                     for (const RestingOrderView& order : level.orders) {
                         val resting = val::object();
-                        resting.set("orderId", number(order.orderId));
-                        resting.set("quantity", number(order.remainingQuantity));
-                        resting.set("initialQuantity", number(order.initialQuantity));
+                        resting.set("orderId", jsNumber(order.orderId));
+                        resting.set("quantity", jsNumber(order.remainingQuantity));
+                        resting.set("initialQuantity", jsNumber(order.initialQuantity));
                         if (order.owner != 0) {
-                            resting.set("owner", number(order.owner));
+                            resting.set("owner", jsNumber(order.owner));
                         }
                         orders.call<void>("push", resting);
                     }
@@ -388,24 +390,24 @@ namespace order_book::wasm {
             val stops = val::array();
             for (const PendingStopView& stop : view.stops) {
                 val pending = val::object();
-                pending.set("orderId", number(stop.orderId));
+                pending.set("orderId", jsNumber(stop.orderId));
                 pending.set("side", std::string(sideName(stop.side)));
                 pending.set("type", std::string(orderTypeName(stop.orderType)));
-                pending.set("stopPrice", number(stop.stopPrice));
+                pending.set("stopPrice", jsNumber(stop.stopPrice));
                 if (stop.orderType == OrderType::STOP_LIMIT) {
-                    pending.set("price", number(stop.limitPrice));
+                    pending.set("price", jsNumber(stop.limitPrice));
                 }
-                pending.set("quantity", number(stop.quantity));
+                pending.set("quantity", jsNumber(stop.quantity));
                 pending.set("timeInForce", std::string(timeInForceName(stop.timeInForce)));
                 if (stop.owner != 0) {
-                    pending.set("owner", number(stop.owner));
+                    pending.set("owner", jsNumber(stop.owner));
                     pending.set("selfTradePrevention", std::string(modeName(stop.selfTradePrevention)));
                 }
                 pending.set("postOnly", stop.postOnly);
                 stops.call<void>("push", pending);
             }
             posted.set("stops", stops);
-            posted.set("lastTradePrice", view.lastTradePrice ? val(number(*view.lastTradePrice)) : val::null());
+            posted.set("lastTradePrice", view.lastTradePrice ? val(jsNumber(*view.lastTradePrice)) : val::null());
             return posted;
         }
 
@@ -421,12 +423,16 @@ namespace order_book::wasm {
                 }
                 posted.set("shard", static_cast<double>(shard));
                 posted.set("instruments", instruments);
-                posted.set("records", number(engine.shadows().records(shard)));
+                posted.set("records", jsNumber(engine.shadows().records(shard)));
                 shards.call<void>("push", posted);
             }
             return shards;
         }
 
+        // One typed line: {done: true, stdout, stderr, exit}, or {done: false} while its answer
+        // is due, which then comes as an `answer` event. Either way `events` holds what was
+        // queued before it, which the worker posts first: an answer that came at once may have
+        // waited for a log write still in the queue.
         val run(const std::string& line) {
             std::optional<cli::CommandResult> result;
             try {
@@ -635,6 +641,18 @@ namespace order_book::wasm {
             for (const SandboxAnswer& answered : sandbox.pump()) {
                 out.call<void>("push", sandboxAnswerOf(answered));
             }
+            announce(out);
+        }
+
+        // What the terminal read since it last said, for the page to acknowledge.
+        void announce(val& out) {
+            if (const std::size_t bytes = terminal.progress(); bytes != 0) {
+                val posted = val::object();
+                posted.set("type", std::string("progress"));
+                posted.set("connection", std::string("terminal"));
+                posted.set("bytes", static_cast<double>(bytes));
+                out.call<void>("push", posted);
+            }
         }
 
         val sent(const std::variant<SandboxSent, std::string>& result) {
@@ -647,7 +665,7 @@ namespace order_book::wasm {
                 reply.set("ok", true);
                 reply.set("correlation", static_cast<double>(command.correlation));
                 if (command.orderId) {
-                    reply.set("orderId", number(*command.orderId));
+                    reply.set("orderId", jsNumber(*command.orderId));
                 }
             }
             reply.set("events", takeEvents());

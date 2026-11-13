@@ -163,11 +163,15 @@ class BrowserEngine {
         this.nextId = 1;
         /** @type {{[K in keyof EngineEvents]: Set<(value: EngineEvents[K]) => void>}} */
         this.listeners = {state: new Set(), line: new Set(), aborted: new Set(), exited: new Set()};
-        // The sandbox's command frames posted and not yet acknowledged by their answers, and
-        // those waiting for the window.
+        // The sandbox's command frames posted and not yet acknowledged by their answers, and the
+        // commands waiting for the window, first come first served: a freed slot passes straight
+        // to the first of them, so commands go in the order they were made.
         this.inFlight = 0;
         /** @type {Array<() => void>} */
         this.waitingForWindow = [];
+        // One crash path at a time, in order.
+        /** @type {Promise<void>} */
+        this.ending = Promise.resolve();
         // Lines one at a time, in order, as the terminal types them.
         /** @type {Promise<unknown>} */
         this.lines = Promise.resolve();
@@ -212,12 +216,17 @@ class BrowserEngine {
                                                : "the engine worker refused to start: " + initialized.error);
             }
         })();
-        this.opening = opened.finally(() => {
-            if (this.opening === guarded) {
+        // Requests wait on it; a failure is opened's to report, so this copy never rejects.
+        const settled = opened.then(
+            () => undefined,
+            () => undefined,
+        );
+        this.opening = settled;
+        settled.then(() => {
+            if (this.opening === settled) {
                 this.opening = null;
             }
         });
-        const guarded = this.opening;
         await opened;
     }
 
@@ -226,7 +235,14 @@ class BrowserEngine {
      * page store. Everything waiting on the old one is reported reset with why.
      * @param {string} why
      */
-    async endWorker(why) {
+    endWorker(why) {
+        const next = this.ending.then(() => this.replaceWorker(why));
+        this.ending = next.catch(() => undefined);
+        return next;
+    }
+
+    /** @param {string} why */
+    async replaceWorker(why) {
         const ended = this.worker;
         this.worker = null;
         if (ended) {
@@ -246,7 +262,12 @@ class BrowserEngine {
             this.stopped = null;
         }
         this.setState("down");
-        await this.open();
+        try {
+            await this.open();
+        } catch (error) {
+            this.emit("aborted", "the engine worker couldn't start again: " + String(error instanceof Error ? error.message : error));
+            throw error;
+        }
     }
 
     /** @returns {Promise<void>} */
@@ -304,7 +325,7 @@ class BrowserEngine {
      */
     async request(type, fields = {}) {
         if (this.opening) {
-            await this.opening.catch(() => undefined);
+            await this.opening;
         }
         if (!this.worker) {
             return {ok: false, error: "the engine worker has ended"};
@@ -365,17 +386,22 @@ class BrowserEngine {
                 // A forced stop leaves the engine's threads behind, which a module can't start
                 // again: the crash path, with nothing waiting.
                 if (exit.code === 8) {
-                    void this.endWorker("the engine was forced to stop before it answered: what ran is unknown");
+                    this.endWorker("the engine was forced to stop before it answered: what ran is unknown").catch(() => undefined);
                 }
                 break;
             }
+            case "progress":
+                if (this.worker) {
+                    this.worker.postMessage({type: "consumed", connection: message.connection, bytes: message.bytes});
+                }
+                break;
             case "aborted": {
                 const said = String(message.message);
                 const why = OUT_OF_MEMORY.test(said)
                     ? "the engine ran out of memory, and recovery would too: reset starts it again from the seed (" + said + ")"
                     : "the engine aborted: " + said;
                 this.emit("aborted", why);
-                void this.endWorker(why);
+                this.endWorker(why).catch(() => undefined);
                 break;
             }
             default:
@@ -405,12 +431,17 @@ class BrowserEngine {
         if (!reply.ok) {
             this.started = null;
             this.collecting = null;
-            this.setState("down");
-            return {stdout: "", stderr: "start: " + reply.error + "\n", exit: 1};
+            if (!reply.reset) {
+                this.setState("down");
+            }
+            return {stdout: "", stderr: "start: " + reply.error + "\n", exit: reply.reset ? 3 : 1};
         }
         const exit = await ready;
         const said = this.collecting || {report: "", diagnostics: ""};
         this.collecting = null;
+        if (exit && exit.name === "CRASHED") {
+            return {stdout: said.report, stderr: said.diagnostics + "start: the engine crashed before it was ready\n", exit: 3};
+        }
         return {stdout: said.report, stderr: said.diagnostics, exit: exit ? exit.code : 0};
     }
 
@@ -434,6 +465,9 @@ class BrowserEngine {
         const exit = await exited;
         const said = this.collecting || {report: "", diagnostics: ""};
         this.collecting = null;
+        if (exit.name === "CRASHED") {
+            return {stdout: said.report, stderr: said.diagnostics + "stop: the engine crashed before it stopped\n", exit: 3};
+        }
         return {stdout: said.report, stderr: said.diagnostics, exit: exit.code};
     }
 
@@ -490,18 +524,22 @@ class BrowserEngine {
         if (this.current !== "running") {
             throw new Error("the engine isn't running");
         }
-        while (this.inFlight + COMMAND_FRAME_BYTES > CREDIT_WINDOW) {
+        if (this.waitingForWindow.length > 0 || this.inFlight + COMMAND_FRAME_BYTES > CREDIT_WINDOW) {
+            // Waits its turn; the slot it is woken with is already counted.
             await new Promise((resolve) => this.waitingForWindow.push(() => resolve(undefined)));
+        } else {
+            this.inFlight += COMMAND_FRAME_BYTES;
         }
-        this.inFlight += COMMAND_FRAME_BYTES;
+        const worker = this.worker;
         let reply;
         try {
-            reply = await this.request(type, fields);
+            reply = this.current === "running" ? await this.request(type, fields) : {ok: false, error: "the engine isn't running"};
         } finally {
-            this.inFlight -= COMMAND_FRAME_BYTES;
             const next = this.waitingForWindow.shift();
             if (next) {
-                next();
+                next();  // the slot passes on
+            } else {
+                this.inFlight -= COMMAND_FRAME_BYTES;
             }
         }
         if (!reply.ok) {
@@ -512,8 +550,9 @@ class BrowserEngine {
         if (reply.orderId !== undefined) {
             answer.orderId = reply.orderId;
         }
-        if (this.worker) {
-            this.worker.postMessage({type: "consumed", bytes: reply.frameBytes});
+        // To the worker that answered: a crash since has given the page a fresh one.
+        if (worker && worker === this.worker) {
+            worker.postMessage({type: "consumed", connection: "sandbox", bytes: reply.frameBytes});
         }
         return answer;
     }
@@ -565,3 +604,14 @@ class BrowserEngine {
         return reply.shards;
     }
 }
+
+// The exports, held to their declarations in engine-client.d.ts.
+/** @type {{
+ *   ENGINE_RELEASE: typeof import("./engine-client").ENGINE_RELEASE,
+ *   PROTOCOL_VERSION: typeof import("./engine-client").PROTOCOL_VERSION,
+ *   checkSupport: typeof import("./engine-client").checkSupport,
+ *   createEngine: typeof import("./engine-client").createEngine,
+ *   EngineSupportError: typeof import("./engine-client").EngineSupportError,
+ * }} */
+const declared = {ENGINE_RELEASE, PROTOCOL_VERSION, checkSupport, createEngine, EngineSupportError};
+void declared;

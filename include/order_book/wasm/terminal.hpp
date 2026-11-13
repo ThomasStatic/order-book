@@ -13,6 +13,7 @@
 #include "order_book/network/wire_codec.hpp"
 #include "order_book/runtime/log_storage.hpp"
 #include "order_book/wasm/page_connection.hpp"
+#include "order_book/wasm/settings.hpp"
 #include "order_book/wasm/shadow_books.hpp"
 
 // The browser terminal's grammar and printing behind run(line) (spec #127, "order_book_wasm";
@@ -65,7 +66,8 @@ namespace order_book::wasm {
     // (`order_book_cli replay valid/stops.csv`). Anything else prints `<word>: ...` and exits 2.
     class Terminal {
     public:
-        Terminal(ShadowBooks& books, runtime::LogStorage& pageStore) : shadows(books), store(pageStore) {}
+        Terminal(ShadowBooks& books, runtime::LogStorage& pageStore, std::size_t window = creditWindow)
+            : shadows(books), store(pageStore), windowBytes(window) {}
 
         // The engine is ready: the standing connection opens on this run's set, in place of any
         // earlier one, and send connects there. Nothing opens if the set takes no connection.
@@ -79,6 +81,16 @@ namespace order_book::wasm {
         // each wake gives the result once the answer has come. A line while one waits is refused.
         std::optional<cli::CommandResult> run(std::string_view line);
         std::optional<cli::CommandResult> pump();
+
+        // The terminal's credit window, over its standing connection and its sends: it reads only
+        // while the bytes read and not yet consumed are under W. progress gives the bytes read
+        // since it last asked, which the engine worker posts for the page to acknowledge with
+        // consumed, so a page too busy to take its messages stops the reading, and the gateway
+        // then holds the rest, as a slow reader of a TCP connection would. send's output is whole
+        // only at the end, sorted by symbol, so the window counts bytes, not lines.
+        std::size_t progress() noexcept;
+        void consumed(std::size_t bytes) noexcept;
+        std::size_t room() const noexcept;
 
         // The session's client commands so far, as a v3 CSV: the header, then a row each.
         std::string collected() const { return std::string(replayHeader) + '\n' + rows; }
@@ -99,12 +111,18 @@ namespace order_book::wasm {
         cli::CommandResult status() const;
         cli::CommandResult verify(std::span<const std::string_view> args);
         cli::CommandResult help() const;
+        void pumpStanding();
+        std::optional<cli::CommandResult> pumpSending();
 
         ShadowBooks& shadows;
         runtime::LogStorage& store;
         std::shared_ptr<network::PageSocketSet> sockets;  // this run's, while it runs
         std::optional<PageConnection> standing;
         std::optional<PageSend> sending;
+        std::size_t windowBytes;
+        std::size_t read = 0;          // bytes read on every connection the terminal has had
+        std::size_t announced = 0;     // of those, what progress has given
+        std::size_t acknowledged = 0;  // of those, what the page has consumed
         std::size_t commands = 0;  // client commands sent so far
         std::string rows;
         std::optional<Waiting> waiting;

@@ -16,6 +16,7 @@ export declare function checkSupport(): Support;
 
 /** What createEngine rejects with when checkSupport fails. */
 export declare class EngineSupportError extends Error {
+    constructor(missing: MissingSupport);
     readonly missing: MissingSupport;
 }
 

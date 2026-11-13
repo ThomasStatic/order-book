@@ -137,10 +137,13 @@ test("a recovery that stops leaves the worker idle, with its message", async () 
     await engine.crash();
 
     const started = await engine.run("start");
-    assert.ok([1, 4, 5].includes(started.exit), `the start refuses or stops, not ${started.exit}:\n${started.stderr}`);
-    assert.notEqual(started.stderr, "", "with its message");
+    assert.equal(started.exit, 5, `recovery stops on the damaged header:\n${started.stderr}`);
+    assert.match(started.stderr, /order_book_engine: /, "with its message");
     assert.equal(engine.state, "down");
     assert.notEqual((await engine.run("verify")).exit, 0, "verify sees it too");
+    assert.equal((await engine.run("reset")).exit, 0, "and a reset starts again from the seed");
+    assert.equal(engine.state, "running");
+    await engine.run("stop");
 });
 
 test("reset discards the store and starts again from the seed", async () => {

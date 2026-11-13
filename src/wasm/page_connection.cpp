@@ -28,7 +28,8 @@ namespace order_book::wasm {
           client(std::move(other.client)),
           finishing(other.finishing),
           halfClosed(other.halfClosed),
-          released(other.released) {
+          released(other.released),
+          receivedBytes(other.receivedBytes) {
         other.released = true;
     }
 
@@ -64,6 +65,7 @@ namespace order_book::wasm {
                 break;
             }
             received += bytes.size();
+            receivedBytes += bytes.size();
             client.received(bytes);
         }
         // Ended only once nothing is left to take, so a limited pump never ends it early.
@@ -85,8 +87,8 @@ namespace order_book::wasm {
 
     PageSend::PageSend(cli::PreparedSend prepared, PageConnection opened) : session(std::move(prepared)), connection(std::move(opened)) {}
 
-    std::optional<cli::CommandResult> PageSend::pump() {
-        connection.pump();
+    std::optional<cli::CommandResult> PageSend::pump(std::size_t mostToReceive) {
+        connection.pump(mostToReceive);
         if (!connection.done()) {
             return std::nullopt;
         }

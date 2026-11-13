@@ -14,12 +14,14 @@
 //                                           answered, or {ok: false, error}, its loss included
 //   book {symbol}, status                   the shadows' book and each shard's records, at once
 // and one notification, with no id and no reply:
-//   consumed {bytes}                        the page has consumed this many of the sandbox's frame
-//                                           bytes, which its credit window lets through again
+//   consumed {connection, bytes}            the page has consumed this many bytes of the
+//                                           "sandbox"'s answers or the "terminal"'s reading, which
+//                                           that connection's credit window lets through again
 // Worker to page, in one ordered channel with the replies:
 //   create, write {offset, bytes}, extend {size}, cut {size}, rename {to}, replace {to}, remove,
 //     each {name}: one page-store change each
 //   line {stream: "report" | "diagnostics", text}
+//   progress {connection: "terminal", bytes}   what the terminal read, for the page to acknowledge
 //   seeded {stdout, stderr, exit}, ready {instruments, placement}, exited {code, name}
 //   aborted {message}
 // No JavaScript exception crosses postMessage: one escaping here, or the module aborting on any
@@ -177,7 +179,7 @@ async function handle(request) {
     if (request && request.type === "consumed" && request.id === undefined) {
         if (engine) {
             try {
-                postEvents(call(() => engine.consumed(Number(request.bytes) || 0)));
+                postEvents(call(() => engine.consumed(String(request.connection), Number(request.bytes) || 0)));
             } catch (error) {
                 aborted(error);
             }
