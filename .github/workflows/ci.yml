@@ -151,3 +151,34 @@ jobs:
           fi
           "${cli[@]}" demo
           "${cli[@]}" replay tests/replay/valid/price_time_priority.csv --trades --book
+
+  # A tag push makes a draft GitHub Release holding that run's zip, once every job above is green.
+  # Publishing the draft is a deliberate step, by hand.
+  draft-release:
+    name: Draft release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-and-test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download the order_book_wasm zip
+        uses: actions/download-artifact@v4
+        with:
+          name: order_book_wasm
+          path: zip
+
+      # The zip is named for the CMake project version, so a tag that doesn't match it is refused.
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          zip="zip/order_book_wasm-${TAG}.zip"
+          if [ ! -f "$zip" ]; then
+            echo "no $zip: the tag doesn't match the project version" >&2
+            ls zip >&2
+            exit 1
+          fi
+          gh release create "$TAG" "$zip" --repo "${{ github.repository }}" --draft --verify-tag --title "$TAG" --notes "order_book $TAG. The browser build's zip, built and checked by this tag's CI run."

@@ -615,6 +615,12 @@ All figures come from one machine (Ryzen 5 5600G, Windows 11, MSVC Release) and 
 - **Performance evidence.** Throughput and latency from one Windows machine and one compiler, on synthetic workloads, with no scaling claim past its 6 physical cores. No Linux numbers are recorded: Linux is built and tested in CI only.
 - **Packaging.** There are no CMake install or package-config rules. Consume the library with `add_subdirectory`.
 
+**Browser build**
+
+- **A reload loses every book.** The engine keeps its log in the tab's memory, so a reload starts again from the seed.
+- **Isolated browsers only.** The module needs `SharedArrayBuffer`, so a page must be cross-origin isolated. Android WebView and in-app browsers never are, and there is no single-threaded fallback build.
+- **Devices.** It was run on desktop Chrome and on an iPhone in Safari. Firefox, desktop Safari, Android, 32-bit Android Chrome (accepted on the size margin: its 128 MiB memory is a sixteenth of that browser's 2 GiB cap), and in-app browsers were not checked on a device.
+
 ## Potential extensions
 
 Roughly in order of how much of the existing design they reuse:
@@ -629,6 +635,7 @@ Roughly in order of how much of the existing design they reuse:
 - **Packaging**: CMake install rules and a package config, so the library can be consumed with `find_package`.
 - **Replay**: a skip-and-continue policy for invalid fields, which the format already classifies as recoverable in principle.
 - **Replication and high availability**, from the command log, which already makes a replay reconstruct each book's exact state.
+- **Books that survive a reload** in the browser build, by keeping the page store's log files in the origin private file system (OPFS) instead of the tab's memory.
 
 ## Further documentation
 
