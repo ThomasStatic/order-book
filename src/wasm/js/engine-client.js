@@ -78,6 +78,74 @@ export async function createEngine(urls) {
     return engine;
 }
 
+// An abort that says memory ran out: recovery would run out again, so only a reset helps.
+const OUT_OF_MEMORY = /\bOOM\b|out of memory|Cannot enlarge memory/i;
+
+/**
+ * The page store: every file the engine's log and checkpoints are, kept from the worker's change
+ * messages, so a crash loses nothing answered, and each new worker is given a copy.
+ */
+class PageStore {
+    constructor() {
+        /** @type {Map<string, Uint8Array>} */
+        this.files = new Map();
+    }
+
+    /**
+     * One change message; false for a message that isn't one.
+     * @param {any} change
+     */
+    apply(change) {
+        const name = String(change.name);
+        /** @param {Uint8Array | undefined} bytes @param {number} size */
+        const sized = (bytes, size) => {
+            const next = new Uint8Array(size);
+            if (bytes) {
+                next.set(bytes.subarray(0, Math.min(bytes.length, size)));
+            }
+            return next;
+        };
+        switch (change.type) {
+            case "create":
+                this.files.set(name, new Uint8Array(0));
+                return true;
+            case "write": {
+                /** @type {Uint8Array} */
+                const written = change.bytes;
+                let bytes = this.files.get(name) || new Uint8Array(0);
+                const end = change.offset + written.length;
+                if (bytes.length < end) {
+                    bytes = sized(bytes, end);
+                }
+                bytes.set(written, change.offset);
+                this.files.set(name, bytes);
+                return true;
+            }
+            case "extend":
+            case "cut":
+                this.files.set(name, sized(this.files.get(name), change.size));
+                return true;
+            case "rename":
+            case "replace": {
+                const bytes = this.files.get(name);
+                this.files.delete(name);
+                this.files.set(String(change.to), bytes || new Uint8Array(0));
+                return true;
+            }
+            case "remove":
+                this.files.delete(name);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /** What init takes; postMessage clones it, so the page keeps its own. */
+    snapshot() {
+        return [...this.files].map(([name, bytes]) => ({name, bytes}));
+    }
+}
+
 /** @param {string} text */
 function linesOf(text) {
     return text === "" ? "" : text + "\n";
@@ -110,8 +178,87 @@ class BrowserEngine {
         this.started = null;
         /** @type {((exit: import("./engine-client").EngineExit) => void) | null} */
         this.stopped = null;
-        this.worker = new Worker(urls.worker, {type: "module"});
-        this.worker.onmessage = (event) => this.receive(event.data);
+        this.store = new PageStore();
+        /** @type {Worker | null} */
+        this.worker = null;
+        // A new worker being made and given the store, which requests wait for.
+        /** @type {Promise<void> | null} */
+        this.opening = null;
+    }
+
+    // A new worker, given a copy of the page store, idle until a start. A message from any worker
+    // but the current one is ignored, so an ended worker's late messages touch nothing.
+    async open() {
+        const worker = new Worker(this.urls.worker, {type: "module"});
+        this.worker = worker;
+        worker.onmessage = (event) => {
+            if (worker === this.worker) {
+                this.receive(event.data);
+            }
+        };
+        const opened = (async () => {
+            const initialized = await this.post(worker, "init", {
+                protocol: PROTOCOL_VERSION,
+                module: String(this.urls.module),
+                wasm: String(this.urls.wasm),
+                store: this.store.snapshot(),
+            });
+            if (!initialized.ok || initialized.protocol !== PROTOCOL_VERSION) {
+                if (this.worker === worker) {
+                    this.worker = null;
+                }
+                worker.terminate();
+                throw new Error(initialized.ok ? "the engine worker speaks protocol " + initialized.protocol + ", not " + PROTOCOL_VERSION
+                                               : "the engine worker refused to start: " + initialized.error);
+            }
+        })();
+        this.opening = opened.finally(() => {
+            if (this.opening === guarded) {
+                this.opening = null;
+            }
+        });
+        const guarded = this.opening;
+        await opened;
+    }
+
+    /**
+     * Ends the worker without warning, as a crash does, then makes a fresh idle one holding the
+     * page store. Everything waiting on the old one is reported reset with why.
+     * @param {string} why
+     */
+    async endWorker(why) {
+        const ended = this.worker;
+        this.worker = null;
+        if (ended) {
+            ended.terminate();
+        }
+        for (const [, waiting] of this.replies) {
+            waiting({ok: false, error: why, reset: true});
+        }
+        this.replies.clear();
+        const crashed = {code: 3, name: "CRASHED"};
+        if (this.started) {
+            this.started(crashed);
+            this.started = null;
+        }
+        if (this.stopped) {
+            this.stopped(crashed);
+            this.stopped = null;
+        }
+        this.setState("down");
+        await this.open();
+    }
+
+    /** @returns {Promise<void>} */
+    async crash() {
+        await this.endWorker("the engine crashed before it answered: what ran is unknown");
+    }
+
+    /** @returns {Promise<void>} */
+    async reset() {
+        this.store = new PageStore();
+        await this.endWorker("the engine was reset before it answered: what ran is unknown");
+        await this.start();
     }
 
     get state() {
@@ -155,11 +302,27 @@ class BrowserEngine {
      * @param {Record<string, unknown>} [fields]
      * @returns {Promise<any>}
      */
-    request(type, fields = {}) {
+    async request(type, fields = {}) {
+        if (this.opening) {
+            await this.opening.catch(() => undefined);
+        }
+        if (!this.worker) {
+            return {ok: false, error: "the engine worker has ended"};
+        }
+        return this.post(this.worker, type, fields);
+    }
+
+    /**
+     * @param {Worker} worker
+     * @param {string} type
+     * @param {Record<string, unknown>} fields
+     * @returns {Promise<any>}
+     */
+    post(worker, type, fields) {
         const id = this.nextId++;
         return new Promise((resolve) => {
             this.replies.set(id, resolve);
-            this.worker.postMessage({id, type, ...fields});
+            worker.postMessage({id, type, ...fields});
         });
     }
 
@@ -199,33 +362,31 @@ class BrowserEngine {
                     this.stopped = null;
                 }
                 this.emit("exited", exit);
+                // A forced stop leaves the engine's threads behind, which a module can't start
+                // again: the crash path, with nothing waiting.
+                if (exit.code === 8) {
+                    void this.endWorker("the engine was forced to stop before it answered: what ran is unknown");
+                }
                 break;
             }
-            case "aborted":
-                this.emit("aborted", message.message);
+            case "aborted": {
+                const said = String(message.message);
+                const why = OUT_OF_MEMORY.test(said)
+                    ? "the engine ran out of memory, and recovery would too: reset starts it again from the seed (" + said + ")"
+                    : "the engine aborted: " + said;
+                this.emit("aborted", why);
+                void this.endWorker(why);
                 break;
+            }
             default:
-                // The page store's changes and seeded: kept by the page store, which comes next.
+                // The page store's changes; seeded needs nothing.
+                this.store.apply(message);
                 break;
         }
     }
 
     async begin() {
-        const urls = this.urls;
-        const initialized = await this.request("init", {
-            protocol: PROTOCOL_VERSION,
-            module: String(urls.module),
-            wasm: String(urls.wasm),
-            store: [],
-        });
-        if (!initialized.ok) {
-            this.worker.terminate();
-            throw new Error("the engine worker refused to start: " + initialized.error);
-        }
-        if (initialized.protocol !== PROTOCOL_VERSION) {
-            this.worker.terminate();
-            throw new Error("the engine worker speaks protocol " + initialized.protocol + ", not " + PROTOCOL_VERSION);
-        }
+        await this.open();
         void this.start();
     }
 
@@ -282,17 +443,26 @@ class BrowserEngine {
      */
     run(line) {
         const words = line.trim().split(/\s+/);
-        if (words[0] === "start" || words[0] === "stop") {
+        const lifecycle = ["start", "stop", "crash", "reset"];
+        if (lifecycle.includes(words[0])) {
+            const verb = words[0];
             if (words.length > 1) {
-                return Promise.resolve({stdout: "", stderr: words[0] + ": usage: " + words[0] + "\n", exit: 2});
+                return Promise.resolve({stdout: "", stderr: verb + ": usage: " + verb + "\n", exit: 2});
             }
-            // A second stop must not wait behind the first.
-            return words[0] === "start" ? this.inTurn(() => this.start()) : this.stop();
+            if (verb === "start") {
+                return this.inTurn(() => this.start());
+            }
+            if (verb === "stop") {
+                return this.stop();  // a second stop must not wait behind the first
+            }
+            // A crash or a reset doesn't wait behind a line either: it ends what that line waits on.
+            const done = verb === "crash" ? this.crash() : this.reset();
+            return done.then(() => ({stdout: "", stderr: "", exit: 0}));
         }
         return this.inTurn(async () => {
             const reply = await this.request("run", {line});
             if (!reply.ok) {
-                return {stdout: "", stderr: reply.error + "\n", exit: 1};
+                return {stdout: "", stderr: words[0] + ": " + reply.error + "\n", exit: reply.reset ? 3 : 1};
             }
             return {stdout: reply.stdout, stderr: reply.stderr, exit: reply.exit};
         });
@@ -342,7 +512,9 @@ class BrowserEngine {
         if (reply.orderId !== undefined) {
             answer.orderId = reply.orderId;
         }
-        this.worker.postMessage({type: "consumed", bytes: reply.frameBytes});
+        if (this.worker) {
+            this.worker.postMessage({type: "consumed", bytes: reply.frameBytes});
+        }
         return answer;
     }
 

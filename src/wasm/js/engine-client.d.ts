@@ -27,7 +27,7 @@ export interface EngineUrls {
 }
 
 /** Checks support, rejecting with an EngineSupportError, then starts the engine worker on an
- * empty page store and starts the engine, which seeds it. Resolves once the worker is ready, with
+ * empty page store, which the client keeps from then on, and starts the engine, which seeds it. Resolves once the worker is ready, with
  * the engine starting; its state becomes "running" at the engine's ready. */
 export declare function createEngine(urls: EngineUrls): Promise<Engine>;
 
@@ -157,8 +157,9 @@ export interface EngineEvents {
 
 export interface Engine {
     readonly state: EngineState;
-    /** A terminal line. start and stop run here: one engine at a time, a first stop clean with its
-     * report and a second forcing it. Lines run one at a time, in order. */
+    /** A terminal line. start, stop, crash, and reset run here: one engine at a time, a first stop
+     * clean with its report and a second forcing it. Lines run one at a time, in order; a crash
+     * or a reset doesn't wait behind them, and a line it cuts off exits 3. */
     run(line: string): Promise<RunResult>;
     /** The sandbox's commands, rejecting with what refused them, or when the engine isn't running. */
     submit(symbol: string, order: OrderInput): Promise<Answer>;
@@ -166,6 +167,12 @@ export interface Engine {
     replace(symbol: string, orderId: number, price: number, quantity: number): Promise<Answer>;
     book(symbol: string): Promise<Book>;
     status(): Promise<ShardStatus[]>;
+    /** Ends the engine worker without warning, as a crash does, then gives a fresh idle worker
+     * the page store, so verify and replay run there and start recovers. Everything waiting is
+     * reported reset. An aborted engine and a forced stop take the same path. */
+    crash(): Promise<void>;
+    /** Ends the engine worker, discards the page store, and starts again from the seed. */
+    reset(): Promise<void>;
     /** Listens until the returned function is called. */
     on<K extends keyof EngineEvents>(event: K, listener: (value: EngineEvents[K]) => void): () => void;
 }

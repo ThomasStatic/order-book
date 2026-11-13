@@ -1367,6 +1367,11 @@ if(BUILD_TESTING)
         set_tests_properties(wasm_engine_client PROPERTIES
             ENVIRONMENT "ORDER_BOOK_WASM_MODULE=$<TARGET_FILE:order_book_wasm_module>;ORDER_BOOK_ENGINE_CLIENT=${CMAKE_CURRENT_BINARY_DIR}/engine-client/engine-client.js"
             LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
+        add_test(NAME wasm_engine_client_crash
+            COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} --test ${CMAKE_CURRENT_SOURCE_DIR}/tests/wasm/node/engine_client_crash.test.mjs)
+        set_tests_properties(wasm_engine_client_crash PROPERTIES
+            ENVIRONMENT "ORDER_BOOK_WASM_MODULE=$<TARGET_FILE:order_book_wasm_module>;ORDER_BOOK_ENGINE_CLIENT=${CMAKE_CURRENT_BINARY_DIR}/engine-client/engine-client.js"
+            LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
         add_test(NAME wasm_module_worst_case
             COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} --test ${CMAKE_CURRENT_SOURCE_DIR}/tests/wasm/node/worst_case.test.mjs)
         set_tests_properties(wasm_module_worst_case PROPERTIES
