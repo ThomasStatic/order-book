@@ -6,6 +6,9 @@ namespace order_book::wasm {
 
     std::optional<PageConnection> PageConnection::open(std::shared_ptr<network::PageSocketSet> sockets,
                                                        std::vector<network::ClientCommand> commands) {
+        if (!sockets) {
+            return std::nullopt;
+        }
         const std::optional<network::SocketId> socket = sockets->clientConnect();
         if (!socket) {
             return std::nullopt;

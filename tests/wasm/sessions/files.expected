@@ -1,0 +1,182 @@
+> help
+commands, all run in this tab:
+  buy|sell SYMBOL QUANTITY [PRICE] [stop=PRICE] [tif=gtc|ioc|fok] [post-only] [owner=N] [stp=MODE]
+                     an order, LIMIT with a price and MARKET without, a stop with stop=; prints its ID
+  cancel SYMBOL ID
+  replace SYMBOL ID PRICE QUANTITY [post-only] [owner=N] [stp=MODE]
+  book SYMBOL        the book, as replay --book prints it
+  status             each shard's instruments, and how many records its log holds
+  send FILE [--symbol SYMBOL]
+                     order_book_cli send: a sample's commands to the running engine
+  replay FILE... [--trades] [--events] [--book] [--symbol SYMBOL] [--no-statistics]
+                     order_book_cli replay: a sample on fresh books, not the running engine
+  verify [--validate final|per-command]
+                     order_book_cli verify: what a start would recover from the log; not while it runs
+  ls [DIRECTORY]     the sample files, in valid/ and malformed/
+  cat FILE           a sample file
+  start              start the engine, recovering what its log holds
+  stop               stop it cleanly; a second stop forces it
+  crash              kill it without warning; it stays down until start
+  reset              wipe its log and start again from the seed
+  clear | help       clear the screen, or print this
+MODE is cancel-resting, cancel-incoming, or cancel-both.
+instruments: AAPL MSFT NVDA TSLA
+> ls
+malformed/
+valid/
+> ls valid
+basic.csv
+book_rejections.csv
+crlf_line_endings.csv
+header_only.csv
+ioc_fok.csv
+leading_zeros.csv
+limits.csv
+market_orders.csv
+no_final_newline.csv
+post_only.csv
+price_time_priority.csv
+replace.csv
+self_trade_prevention.csv
+sequence_gaps.csv
+stops.csv
+sweep_and_rest.csv
+v2_header_only.csv
+v3_header_only.csv
+v3_one_instrument.csv
+v3_two_instruments.csv
+> ls valid/basic.csv
+! ls: no such sample directory: valid/basic.csv
+[exit 1]
+> ls nowhere
+! ls: no such sample directory: nowhere
+[exit 1]
+> ls ../valid
+! ls: no such sample directory: ../valid
+[exit 1]
+> ls valid malformed
+! ls: usage: ls [DIRECTORY]
+[exit 2]
+> cat valid/basic.csv
+sequence,command,order_id,side,price,quantity
+1,ADD,1001,BUY,100,50
+2,ADD,1002,SELL,105,30
+3,ADD,1003,BUY,105,20
+4,CANCEL,1001,,,
+> cat valid
+! cat: no such sample file: valid
+[exit 1]
+> cat /etc/hosts
+! cat: no such sample file: /etc/hosts
+[exit 1]
+> cat ../../CMakeLists.txt
+! cat: no such sample file: ../../CMakeLists.txt
+[exit 1]
+> cat
+! cat: usage: cat FILE
+[exit 2]
+> replay valid/stops.csv --trades
+line 3: TradeExecuted incoming=2 resting=1 price=100 qty=1
+line 12: TradeExecuted incoming=5 resting=3 price=102 qty=1
+line 12: TradeExecuted incoming=20 resting=4 price=103 qty=1
+line 13: TradeExecuted incoming=20 resting=21 price=103 qty=2
+
+commands processed: 12
+add commands: 11
+adds accepted: 10
+adds rejected: 1
+cancel commands: 1
+cancels accepted: 1
+cancels rejected: 0
+replace commands: 0
+replaces accepted: 0
+replaces rejected: 0
+trades executed: 4
+volume traded: 5
+self-trades prevented: 0
+orders expired: 2
+stops triggered: 2
+resting orders: 0
+pending stops: 0
+> order_book_cli replay malformed/price_zero.csv --events --book
+line 2: OrderAccepted id=1001 side=BUY price=100 qty=50
+line 3: OrderAccepted id=1002 side=SELL price=105 qty=30
+
+commands processed: 2
+add commands: 2
+adds accepted: 2
+adds rejected: 0
+cancel commands: 0
+cancels accepted: 0
+cancels rejected: 0
+replace commands: 0
+replaces accepted: 0
+replaces rejected: 0
+trades executed: 0
+volume traded: 0
+self-trades prevented: 0
+orders expired: 0
+stops triggered: 0
+resting orders: 2
+pending stops: 0
+bids:
+  price=100 qty=50 orders=1
+asks:
+  price=105 qty=30 orders=1
+last trade price: none
+! malformed/price_zero.csv:4: price: price must be positive, not '0'
+[exit 1]
+> replay valid/basic.csv --symbol AAPL --no-statistics --events
+symbol AAPL
+line 2: OrderAccepted id=1001 side=BUY price=100 qty=50
+line 3: OrderAccepted id=1002 side=SELL price=105 qty=30
+line 4: OrderAccepted id=1003 side=BUY price=105 qty=20
+line 4: TradeExecuted incoming=1003 resting=1002 price=105 qty=20
+line 5: OrderCancelled id=1001 qty=50
+> replay valid/nothing.csv
+commands processed: 0
+add commands: 0
+adds accepted: 0
+adds rejected: 0
+cancel commands: 0
+cancels accepted: 0
+cancels rejected: 0
+replace commands: 0
+replaces accepted: 0
+replaces rejected: 0
+trades executed: 0
+volume traded: 0
+self-trades prevented: 0
+orders expired: 0
+stops triggered: 0
+resting orders: 0
+pending stops: 0
+! valid/nothing.csv: cannot open replay file
+[exit 1]
+> verify
+! order_book_cli: verify: the page store is locked: the engine is using it
+[exit 1]
+> verify --validate per-command
+! order_book_cli: verify: the page store is locked: the engine is using it
+[exit 1]
+> verify --validate sometimes
+! verify: unknown --validate mode 'sometimes'; expected final or per-command
+[exit 2]
+> verify --validate
+! verify: --validate needs a mode: final or per-command
+[exit 2]
+> verify --log-dir logs
+! verify: unexpected --log-dir; usage: verify [--validate final|per-command]
+[exit 2]
+> help me
+! help: usage: help
+[exit 2]
+> order_book_cli
+! order_book_cli: unknown command; help lists them
+[exit 2]
+> order_book_cli demo
+! order_book_cli: unknown command; help lists them
+[exit 2]
+> frobnicate
+! frobnicate: unknown command; help lists them
+[exit 2]

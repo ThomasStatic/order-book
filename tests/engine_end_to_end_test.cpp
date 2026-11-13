@@ -721,11 +721,38 @@ void testTheBrowserSessions() {
         const std::vector<std::string> seed{"send", (source / "src/wasm/seed.csv").string(), "--connect", running.address};
         const Run seeded = run(seed);
         expect(!seeded.status.killed && seeded.status.code == 0 && seeded.err.empty(), "the seed is answered whole: " + describe(seed, seeded));
-        const std::vector<std::string> arguments{"send", collected.string(), "--connect", running.address};
-        const Run sent = run(arguments);
         fs::path transcript = collected;
         transcript.replace_extension(".expected");
-        const wasm_testing::ClientAnswers expected = wasm_testing::clientAnswersOf(plain(readFile(transcript)));
+        const std::string said = plain(readFile(transcript));
+
+        // The session's own sends first, each sample named under tests/replay, the terminal's root.
+        const wasm_testing::Sends sends = wasm_testing::sendsOf(said);
+        expect(sends.allBeforeClientCommands, session + ": every send comes before the first client command");
+        for (const wasm_testing::Typed& typed : sends.sends) {
+            std::vector<std::string> again{"send"};
+            bool valueNext = false;
+            for (auto word = typed.words.begin() + 1; word != typed.words.end(); ++word) {
+                const bool isFile = !valueNext && !word->starts_with("--");
+                again.push_back(isFile ? (replaySamples / *word).string() : *word);
+                valueNext = *word == "--symbol";
+                expect(*word != "--connect", session + ": a session's send names no address");
+            }
+            again.insert(again.end(), {"--connect", running.address});
+            const Run resent = run(again);
+            // Its stderr names the file as given here, under tests/replay, where the terminal's
+            // named it from that root.
+            std::string err = plain(resent.err);
+            const std::string root = (replaySamples / "x").string();
+            for (std::size_t at; (at = err.find(root.substr(0, root.size() - 1))) != std::string::npos;) {
+                err.erase(at, root.size() - 1);
+            }
+            expect(!resent.status.killed && resent.status.code == typed.exit && plain(resent.out) == typed.out && err == typed.err,
+                   session + ": send prints what the terminal printed: " + describe(again, resent));
+        }
+
+        const std::vector<std::string> arguments{"send", collected.string(), "--connect", running.address};
+        const Run sent = run(arguments);
+        const wasm_testing::ClientAnswers expected = wasm_testing::clientAnswersOf(said);
         expect(!sent.status.killed && sent.status.code == (expected.refused ? 4 : 0),
                session + ": send exits as the transcript's refusals say: " + describe(arguments, sent));
         expect(wasm_testing::answersByLine(plain(sent.out)) == expected.byLine,

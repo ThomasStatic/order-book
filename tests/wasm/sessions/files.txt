@@ -1,0 +1,25 @@
+help
+ls
+ls valid
+ls valid/basic.csv
+ls nowhere
+ls ../valid
+ls valid malformed
+cat valid/basic.csv
+cat valid
+cat /etc/hosts
+cat ../../CMakeLists.txt
+cat
+replay valid/stops.csv --trades
+order_book_cli replay malformed/price_zero.csv --events --book
+replay valid/basic.csv --symbol AAPL --no-statistics --events
+replay valid/nothing.csv
+verify
+verify --validate per-command
+verify --validate sometimes
+verify --validate
+verify --log-dir logs
+help me
+order_book_cli
+order_book_cli demo
+frobnicate

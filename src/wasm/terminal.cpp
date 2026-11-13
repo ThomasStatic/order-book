@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -10,6 +13,7 @@
 #include "order_book/command_log.hpp"
 #include "order_book/replay_parser.hpp"
 #include "order_book/replay_summary.hpp"
+#include "order_book/wasm/settings.hpp"
 
 namespace order_book::wasm {
 
@@ -95,6 +99,87 @@ namespace order_book::wasm {
 
         const char* const orderUsage = "usage: buy|sell SYMBOL QUANTITY [PRICE] [stop=PRICE] [tif=gtc|ioc|fok] [post-only] [owner=N] [stp=MODE]";
         const char* const replaceUsage = "usage: replace SYMBOL ID PRICE QUANTITY [post-only] [owner=N] [stp=MODE]";
+        const char* const verifyUsage = "usage: verify [--validate final|per-command]";
+
+        constexpr std::string_view helpText =
+            "commands, all run in this tab:\n"
+            "  buy|sell SYMBOL QUANTITY [PRICE] [stop=PRICE] [tif=gtc|ioc|fok] [post-only] [owner=N] [stp=MODE]\n"
+            "                     an order, LIMIT with a price and MARKET without, a stop with stop=; prints its ID\n"
+            "  cancel SYMBOL ID\n"
+            "  replace SYMBOL ID PRICE QUANTITY [post-only] [owner=N] [stp=MODE]\n"
+            "  book SYMBOL        the book, as replay --book prints it\n"
+            "  status             each shard's instruments, and how many records its log holds\n"
+            "  send FILE [--symbol SYMBOL]\n"
+            "                     order_book_cli send: a sample's commands to the running engine\n"
+            "  replay FILE... [--trades] [--events] [--book] [--symbol SYMBOL] [--no-statistics]\n"
+            "                     order_book_cli replay: a sample on fresh books, not the running engine\n"
+            "  verify [--validate final|per-command]\n"
+            "                     order_book_cli verify: what a start would recover from the log; not while it runs\n"
+            "  ls [DIRECTORY]     the sample files, in valid/ and malformed/\n"
+            "  cat FILE           a sample file\n"
+            "  start              start the engine, recovering what its log holds\n"
+            "  stop               stop it cleanly; a second stop forces it\n"
+            "  crash              kill it without warning; it stays down until start\n"
+            "  reset              wipe its log and start again from the seed\n"
+            "  clear | help       clear the screen, or print this\n"
+            "MODE is cancel-resting, cancel-incoming, or cancel-both.\n";
+
+        bool isCliCommand(std::string_view word) { return word == "send" || word == "replay" || word == "verify"; }
+
+        bool isClientCommand(std::string_view word) { return word == "buy" || word == "sell" || word == "cancel" || word == "replace"; }
+
+        // A path under the samples' root, which is the working directory: relative, with no ..
+        bool isSamplePath(const std::filesystem::path& path) {
+            if (path.empty() || path.has_root_name() || path.has_root_directory()) {
+                return false;
+            }
+            return std::none_of(path.begin(), path.end(), [](const std::filesystem::path& part) { return part == ".."; });
+        }
+
+        cli::CommandResult listSamples(std::span<const std::string_view> args) {
+            if (args.size() > 1) {
+                return failed("ls", "usage: ls [DIRECTORY]");
+            }
+            const std::string typed = args.empty() ? std::string(".") : std::string(args.front());
+            const cli::CommandResult missing = failed("ls", "no such sample directory: " + typed, cli::inputError);
+            const std::filesystem::path directory(typed);
+            std::error_code error;
+            if (!isSamplePath(directory) || !std::filesystem::is_directory(directory, error)) {
+                return missing;
+            }
+            std::vector<std::string> names;
+            for (std::filesystem::directory_iterator entry(directory, error), end; !error && entry != end; entry.increment(error)) {
+                std::error_code kind;
+                names.push_back(entry->path().filename().string() + (entry->is_directory(kind) ? "/" : ""));
+            }
+            if (error) {
+                return missing;
+            }
+            std::sort(names.begin(), names.end());
+            std::string text;
+            for (const std::string& name : names) {
+                text += name + "\n";
+            }
+            return cli::CommandResult{text, "", 0};
+        }
+
+        cli::CommandResult showSample(std::span<const std::string_view> args) {
+            if (args.size() != 1) {
+                return failed("cat", "usage: cat FILE");
+            }
+            const cli::CommandResult missing = failed("cat", "no such sample file: " + std::string(args.front()), cli::inputError);
+            const std::filesystem::path file(args.front());
+            std::error_code error;
+            if (!isSamplePath(file) || !std::filesystem::is_regular_file(file, error)) {
+                return missing;
+            }
+            std::ifstream in(file, std::ios::binary);
+            std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            if (in.bad()) {
+                return missing;
+            }
+            return cli::CommandResult{std::move(bytes), "", 0};
+        }
 
     }  // namespace
 
@@ -104,6 +189,9 @@ namespace order_book::wasm {
             return std::move(*refused);
         }
         cli::PreparedSend& session = std::get<cli::PreparedSend>(prepared);
+        if (session.address != browserListen) {
+            return cli::cannotConnect(session, "Connection refused");  // nothing else is listening in the tab
+        }
         const cli::PreparedSend kept = session;
         if (std::optional<PageSend> started = PageSend::start(std::move(sockets), std::move(session))) {
             return std::move(*started);
@@ -111,17 +199,22 @@ namespace order_book::wasm {
         return cli::cannotConnect(kept, "Connection refused");
     }
 
-    void Terminal::connect(std::shared_ptr<network::PageSocketSet> sockets) {
-        if (waiting) {
+    void Terminal::connect(std::shared_ptr<network::PageSocketSet> set) {
+        if (waiting || sending) {
             throw std::logic_error("the terminal connects again while a command waits");
         }
+        sockets = set;
         standing.reset();
-        if (std::optional<PageConnection> opened = PageConnection::open(std::move(sockets))) {
+        if (std::optional<PageConnection> opened = PageConnection::open(std::move(set))) {
             standing.emplace(std::move(*opened));
         }
     }
 
     void Terminal::disconnect() {
+        sockets.reset();
+        if (sending) {
+            sending->abandon();
+        }
         if (!waiting) {
             standing.reset();
         }
@@ -132,27 +225,53 @@ namespace order_book::wasm {
     }
 
     std::optional<cli::CommandResult> Terminal::run(std::string_view line) {
-        const std::vector<std::string_view> words = wordsOf(line);
+        std::vector<std::string_view> words = wordsOf(line);
         if (words.empty()) {
             return cli::CommandResult{};
         }
+        // As a recorded session types it, with the program's name.
+        if (words.size() > 1 && words.front() == "order_book_cli" && isCliCommand(words[1])) {
+            words.erase(words.begin());
+        }
         const std::string_view verb = words.front();
-        if (waiting) {
+        if (waiting || sending) {
             return failed(verb, "the last command is still waiting for its answer");
         }
+        const std::span<const std::string_view> args = std::span<const std::string_view>(words).subspan(1);
         if (verb == "book") {
-            if (words.size() != 2) {
+            if (args.size() != 1) {
                 return failed(verb, "usage: book SYMBOL");
             }
-            return book(words[1]);
+            return book(args.front());
         }
-        if (verb == "status") {
-            if (words.size() != 1) {
-                return failed(verb, "usage: status");
+        if (verb == "status" || verb == "help") {
+            if (!args.empty()) {
+                return failed(verb, "usage: " + std::string(verb));
             }
-            return status();
+            return verb == "status" ? status() : help();
         }
+        if (verb == "send") {
+            return sendFile(args);
+        }
+        if (verb == "replay") {
+            return cli::replay(args);
+        }
+        if (verb == "verify") {
+            return verify(args);
+        }
+        if (verb == "ls") {
+            return listSamples(args);
+        }
+        if (verb == "cat") {
+            return showSample(args);
+        }
+        if (isClientCommand(verb)) {
+            return clientCommand(verb, words);
+        }
+        return failed(verb, "unknown command; help lists them");
+    }
 
+    std::optional<cli::CommandResult> Terminal::clientCommand(std::string_view verb, std::span<const std::string_view> words) {
         std::vector<std::string> row(COLUMNS);
         const std::size_t sequence = commands + 1;
         row[SEQUENCE] = std::to_string(sequence);
@@ -171,7 +290,7 @@ namespace order_book::wasm {
                 row[PRICE] = std::string(words[3]);
                 options = 4;
             }
-            if (const std::optional<std::string> problem = takeOptions(std::span(words).subspan(options), row, stop)) {
+            if (const std::optional<std::string> problem = takeOptions(words.subspan(options), row, stop)) {
                 return failed(verb, *problem);
             }
             const bool priced = !row[PRICE].empty();
@@ -195,11 +314,11 @@ namespace order_book::wasm {
             row[ORDER_ID] = std::string(words[2]);
             row[PRICE] = std::string(words[3]);
             row[QUANTITY] = std::string(words[4]);
-            if (const std::optional<std::string> problem = takeOptions(std::span(words).subspan(5), row, stop)) {
+            if (const std::optional<std::string> problem = takeOptions(words.subspan(5), row, stop)) {
                 return failed(verb, *problem);
             }
         } else {
-            return failed(verb, "unknown command");
+            throw std::logic_error("not a client command: " + std::string(verb));
         }
         if (!row[OWNER].empty() && row[STP].empty()) {
             row[STP] = "CANCEL_RESTING";
@@ -246,6 +365,9 @@ namespace order_book::wasm {
     }
 
     std::optional<cli::CommandResult> Terminal::pump() {
+        if (sending) {
+            return sent();
+        }
         if (standing) {
             standing->pump();
         }
@@ -275,6 +397,63 @@ namespace order_book::wasm {
         }
         waiting.reset();
         return result;
+    }
+
+    std::optional<cli::CommandResult> Terminal::sendFile(std::span<const std::string_view> args) {
+        std::vector<std::string_view> given(args.begin(), args.end());
+        // send needs --connect, and the only address in the tab is the engine's.
+        const std::string nominal = runtime::formatListenAddress(browserListen);
+        if (std::find(given.begin(), given.end(), "--connect") == given.end()) {
+            given.push_back("--connect");
+            given.push_back(nominal);
+        }
+        std::variant<PageSend, cli::CommandResult> started = startSend(sockets, given);
+        if (auto* result = std::get_if<cli::CommandResult>(&started)) {
+            return std::move(*result);
+        }
+        sending.emplace(std::move(std::get<PageSend>(started)));
+        return sent();
+    }
+
+    std::optional<cli::CommandResult> Terminal::sent() {
+        std::optional<cli::CommandResult> result = sending->pump();
+        if (result) {
+            sending.reset();
+        }
+        return result;
+    }
+
+    cli::CommandResult Terminal::verify(std::span<const std::string_view> args) {
+        std::optional<std::string_view> mode;
+        for (std::size_t i = 0; i < args.size(); ++i) {
+            if (args[i] != "--validate") {
+                return failed("verify", "unexpected " + std::string(args[i]) + "; " + verifyUsage);
+            }
+            if (mode) {
+                return failed("verify", "--validate is given twice");
+            }
+            if (i + 1 == args.size()) {
+                return failed("verify", "--validate needs a mode: final or per-command");
+            }
+            mode = args[++i];
+        }
+        if (mode && *mode != "final" && *mode != "per-command") {
+            return failed("verify", "unknown --validate mode '" + std::string(*mode) + "'; expected final or per-command");
+        }
+        // The engine, while it runs, holds the store's lock, so this is refused as `... is locked`.
+        return cli::verifyStores(store, store, mode == "per-command");
+    }
+
+    cli::CommandResult Terminal::help() const {
+        std::string text(helpText);
+        text += "instruments:";
+        const runtime::InstrumentDirectory& directory = shadows.instruments();
+        for (std::uint32_t shard = 0; shard < directory.shardCount(); ++shard) {
+            for (const runtime::Instrument& instrument : directory.onShard(shard)) {
+                text += " " + instrument.symbol.text();
+            }
+        }
+        return cli::CommandResult{text + "\n", "", 0};
     }
 
     cli::CommandResult Terminal::book(std::string_view text) const {

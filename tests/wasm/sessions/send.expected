@@ -1,0 +1,79 @@
+> send valid/v3_two_instruments.csv
+symbol AAPL
+line 3: OrderRejected id=1 reason=DUPLICATE_ORDER_ID
+line 5: OrderCancelled id=1 qty=10
+
+symbol BRK.B
+line 6: Refused symbol=BRK.B id=3 code=UNKNOWN_INSTRUMENT
+
+symbol MSFT
+line 2: OrderRejected id=1 reason=DUPLICATE_ORDER_ID
+line 4: OrderRejected id=2 reason=DUPLICATE_ORDER_ID
+
+symbol ZZZ
+line 7: Refused symbol=ZZZ id=9 code=UNKNOWN_INSTRUMENT
+[exit 4]
+> order_book_cli send valid/basic.csv --symbol NVDA
+symbol NVDA
+line 2: OrderAccepted id=1001 side=BUY price=100 qty=50
+line 2: TradeExecuted incoming=1001 resting=4 price=51 qty=10
+line 2: TradeExecuted incoming=1001 resting=5 price=52 qty=20
+line 2: TradeExecuted incoming=1001 resting=6 price=53 qty=20
+line 3: OrderAccepted id=1002 side=SELL price=105 qty=30
+line 4: OrderAccepted id=1003 side=BUY price=105 qty=20
+line 4: TradeExecuted incoming=1003 resting=6 price=53 qty=10
+line 4: TradeExecuted incoming=1003 resting=1002 price=105 qty=10
+line 5: CancelRejected id=1001 reason=ORDER_NOT_FOUND
+> send valid/basic.csv
+! order_book_cli: 'valid/basic.csv' names no symbol, so it needs --symbol
+! usage: order_book_cli replay <path>... [--trades] [--events] [--book] [--validate none|final|per-command]
+!                                        [--symbol SYM] [--no-statistics]
+!        order_book_cli convert <path>... --out <path> [--symbol SYM]
+!        order_book_cli send <file> --connect ADDR:PORT [--symbol SYM]
+!        order_book_cli checkpoint describe|verify <file>
+!        order_book_cli checkpoint roll --log-dir DIR [--checkpoint-dir DIR]
+!        order_book_cli verify --log-dir DIR [--checkpoint-dir DIR] [--validate final|per-command]
+!        order_book_cli cut-log --log-dir DIR --shard S --position P [--checkpoint-dir DIR]
+!        order_book_cli demo
+!        order_book_cli --help
+[exit 2]
+> send malformed/price_zero.csv --symbol TSLA
+symbol TSLA
+line 2: OrderAccepted id=1001 side=BUY price=100 qty=50
+line 3: OrderAccepted id=1002 side=SELL price=105 qty=30
+line 3: TradeExecuted incoming=1002 resting=1 price=149 qty=10
+line 3: TradeExecuted incoming=1002 resting=2 price=148 qty=20
+! malformed/price_zero.csv:4: price: price must be positive, not '0'
+[exit 1]
+> send valid/nothing.csv --symbol AAPL
+! valid/nothing.csv: cannot open replay file
+[exit 1]
+> book MSFT
+bids:
+  price=199 qty=10 orders=1
+  price=198 qty=20 orders=1
+  price=197 qty=30 orders=1
+asks:
+  price=201 qty=10 orders=1
+  price=202 qty=20 orders=1
+  price=203 qty=30 orders=1
+last trade price: none
+> book NVDA
+bids:
+  price=49 qty=10 orders=1
+  price=48 qty=20 orders=1
+  price=47 qty=30 orders=1
+asks:
+  price=105 qty=20 orders=1
+last trade price: 105
+> status
+shard 0: AAPL MSFT records=16
+shard 1: NVDA TSLA records=18
+> buy MSFT 3 102
+assigned id=7
+line 2: OrderAccepted id=7 side=BUY price=102 qty=3
+> sell NVDA 10 50
+assigned id=1004
+line 3: OrderAccepted id=1004 side=SELL price=50 qty=10
+> cancel NVDA 1001
+line 4: CancelRejected id=1001 reason=ORDER_NOT_FOUND

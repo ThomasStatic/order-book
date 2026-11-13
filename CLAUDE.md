@@ -17,7 +17,7 @@ Read the matching note in `docs/internals/` before changing that area, and updat
 - `latency.md`: the latency harness: clock, histogram, drivers, run record, report.
 - `runtime.md`: `order_book_runtime`, and `EngineSettings`: the instrument list, placement, `InstrumentDirectory`, `BookSet`, `Shard`, the rings, `MatchingLoop`, `LogStorage`, log files and `Housekeeping`, `LogWriter`, the durable position, the directory lock, and recovery.
 - `network.md`: `order_book_network`: `FrameReader`, the frame encoders, `checkEntry`, `SocketSet`, `GatewayThread` and the hold, `TcpSocket`, `PollSocketSet`, `runEngine`, `StopSource`.
-- `wasm.md`: the Emscripten build: the toolchain, the CMake branch and test link settings, the `__EMSCRIPTEN__` portability branches, `order_book_wasm` (the browser settings, `ShadowBooks`, book-image views, ID assignment, `BrowserEngine`, `PageConnection`, the terminal and its sessions, seeding), the suites not built there, and the two wasm CI jobs.
+- `wasm.md`: the Emscripten build: the toolchain, the CMake branch and test link settings, the `__EMSCRIPTEN__` portability branches, `order_book_wasm` (the browser settings, `ShadowBooks`, book-image views, ID assignment, `BrowserEngine`, `PageConnection`, the terminal and its sessions, seeding), `order_book_wasm_module` and `engine-worker.js` (the module's link settings, the ordered event queue, the worker's messages, the Node test), the suites not built there, and the two wasm CI jobs.
 
 ## Build and test
 
@@ -48,5 +48,5 @@ CI (`.github/workflows/ci.yml`) runs on every push and pull request with `ORDER_
 ## Writing tests
 
 - No test framework: each `tests/*.cpp` is its own executable with a `main()` using local `expect(cond, msg)` / `expectThrows(fn, msg)` helpers that print `FAILED:` and `exit(EXIT_FAILURE)`.
-- Each test file needs its own `add_executable` + `order_book_enable_warnings` + `order_book_enable_sanitizers` + `add_test` block in `CMakeLists.txt`. New `.cpp` files of the `order_book` library must be added to its target source list (the replay parser and engine are deliberately in their own library, `order_book_replay`).
+- Each test file needs its own `add_executable` + `order_book_enable_warnings` + `order_book_enable_sanitizers` + `add_test` block in `CMakeLists.txt`. The exception is the module's JavaScript side, tested under Emscripten with `node --test` (`tests/wasm/node/`, `docs/internals/wasm.md`). New `.cpp` files of the `order_book` library must be added to its target source list (the replay parser and engine are deliberately in their own library, `order_book_replay`).
 - Tests reach private members only through the `OrderBookTestAccess` friend (declared in `OrderBook`, `PriceLevel`, and `Order`, and defined separately in each test executable that needs it), so keep those definitions in mind when renaming private members. Don't `#define private public`: redefining a keyword around standard headers is undefined behavior, Clang rejects it under `-Werror` (`-Wkeyword-macro`), and on MSVC it fails to link for member functions, since access level is part of the mangled name.
