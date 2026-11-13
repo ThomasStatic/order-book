@@ -14,7 +14,7 @@ namespace order_book::wasm {
             return std::nullopt;
         }
         std::optional<PageConnection> connection(PageConnection(std::move(sockets), *socket, std::move(commands)));
-        connection->pump();
+        connection->pump(0);  // writes only: what comes is read by the caller's pumps, which a window may limit
         return connection;
     }
 
@@ -81,7 +81,7 @@ namespace order_book::wasm {
             return std::nullopt;
         }
         connection->finish();
-        connection->pump();
+        connection->pump(0);
         return PageSend(std::move(prepared), std::move(*connection));
     }
 

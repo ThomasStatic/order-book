@@ -15,7 +15,8 @@ namespace order_book::wasm {
 
     class PageConnection {
     public:
-        // Connects, writing Hello and these commands as room allows. Nothing if there is no set,
+        // Connects, writing Hello and these commands as room allows, and reading nothing, so every
+        // byte read goes through a pump a window can limit. Nothing if there is no set,
         // with no engine running, or the set takes no connection, as once its listener has closed.
         static std::optional<PageConnection> open(std::shared_ptr<network::PageSocketSet> sockets,
                                                    std::vector<network::ClientCommand> commands = {});

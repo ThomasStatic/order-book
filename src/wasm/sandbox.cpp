@@ -108,7 +108,7 @@ namespace order_book::wasm {
         for (;;) {
             const std::size_t limit = room();
             const std::size_t got = standing->pump(limit);
-            read += got;
+            read = standing->received();
             for (auto next = waiting.begin(); next != waiting.end();) {
                 if (!stream.answered(next->first)) {
                     ++next;
