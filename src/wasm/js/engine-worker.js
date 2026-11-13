@@ -69,13 +69,37 @@ function postEvents(events) {
     }
 }
 
+// Calls into the module under way on this thread. While this thread waits on a lock, Emscripten
+// runs the calls queued for it, the module's request to look among them, so a look could start
+// inside any call into the module, its embind wrapper included: inside a pump that a nested pump
+// would end, or before `run` has made its request the one waiting for the answer. So a look
+// asked for during a call waits for a task of its own.
+let calling = 0;
+let lookWanted = false;
+
+function call(enter) {
+    ++calling;
+    try {
+        return enter();
+    } finally {
+        if (--calling === 0 && lookWanted) {
+            lookWanted = false;
+            setTimeout(takeEvents, 0);
+        }
+    }
+}
+
 // The module's call, on this thread, whenever its queue has something.
 function takeEvents() {
     if (!engine) {
         return;
     }
+    if (calling !== 0) {
+        lookWanted = true;
+        return;
+    }
     try {
-        postEvents(engine.takeEvents());
+        postEvents(call(() => engine.takeEvents()));
     } catch (error) {
         aborted(error);
     }
@@ -104,7 +128,7 @@ async function init(request) {
         if (loaded.enterSamples() !== 0) {
             return {ok: false, error: "the module's samples are missing"};
         }
-        const made = new loaded.Engine(request.store || []);
+        const made = call(() => new loaded.Engine(request.store || []));
         loaded.onEngineEvents = takeEvents;
         engine = made;
         return {ok: true, protocol: PROTOCOL_VERSION, release: loaded.release()};
@@ -130,17 +154,17 @@ async function handle(request) {
             return;
         }
         if (type === "start") {
-            const started = engine.start();
+            const started = call(() => engine.start());
             reply(id, {ok: started.ok, ...(started.ok ? {} : {error: started.error})});
         } else if (type === "stop") {
-            engine.stop();
+            call(() => engine.stop());
             reply(id, {ok: true});
         } else if (type === "run") {
             if (pendingRun !== null) {
                 reply(id, {ok: false, error: "the last line is still running"});
                 return;
             }
-            const result = engine.run(String(request.line));
+            const result = call(() => engine.run(String(request.line)));
             if (!result.done) {
                 pendingRun = id;  // its answer may be among the events
             }
