@@ -2,7 +2,7 @@
 
 A correctness-first limit order book and matching engine in C++20. It matches orders by price-time priority and cancels orders in O(1). Beyond limit orders it takes market orders, IOC and FOK, post-only limits, self-trade prevention, stop and stop-limit orders with cascades, and cancel-replace. Every command returns the lifecycle events it produced. A whole-book invariant checker can run after every command. Around the engine are a CSV replay format and CLI, seeded randomized testing against an independent model, and a benchmark and profiling harness.
 
-Version 2.1.0, which adds the engine to v2.0.0's order behaviors: instruments in shards, TCP gateway threads, a command log with recovery, and checkpoints rolled forward from it. Each book is one instrument and single-threaded; `order_book_engine` runs many, each shard's books on a matching thread of its own, behind TCP gateway threads and a command log (see [Limitations](#limitations)).
+Version 2.2.0, which builds v2.1.0's engine for the browser (see [Browser build](#browser-build)); v2.1.0 added the engine to v2.0.0's order behaviors: instruments in shards, TCP gateway threads, a command log with recovery, and checkpoints rolled forward from it. Each book is one instrument and single-threaded; `order_book_engine` runs many, each shard's books on a matching thread of its own, behind TCP gateway threads and a command log (see [Limitations](#limitations)).
 
 ## Contents
 
@@ -259,7 +259,7 @@ With automatic invariant checks on, which is the default in Debug, every mutatin
 
 Everything is in namespace `order_book`, with headers in `include/order_book/`. Changes to the headers listed below are breaking changes; `include/order_book/runtime/` and `network/` hold the headers of libraries that are not public API.
 
-In v2.1.0 the public API is the `order_book` library and the replay headers below, in `order_book_replay`. `order_book_runtime`, `order_book_network`, and `order_book_latency` are not public API, and neither are the browser build's `order_book_cli_commands`, `order_book_wasm`, and `order_book_wasm_module`: their contracts with the outside are the formats ([command log](docs/command-log-format.md), [checkpoint](docs/checkpoint-format.md), [wire protocol](docs/wire-protocol.md)) and the programs' flags and output. Promoting one of them later is an addition, and taking one back would be a break.
+In v2.2.0 the public API is the `order_book` library and the replay headers below, in `order_book_replay`. `order_book_runtime`, `order_book_network`, and `order_book_latency` are not public API, and neither are the browser build's `order_book_cli_commands`, `order_book_wasm`, and `order_book_wasm_module`: their contracts with the outside are the formats ([command log](docs/command-log-format.md), [checkpoint](docs/checkpoint-format.md), [wire protocol](docs/wire-protocol.md)) and the programs' flags and output. Promoting one of them later is an addition, and taking one back would be a break.
 
 - **`order_book.hpp`**: `OrderBook`.
   - Commands: `submitOrder` (match, then rest any remainder), `addOrder` (rest without matching), `cancelOrder`, `replaceOrder` (a resting order's price, total, and instructions, under the same ID). `submitOrder` takes either an `Order` or an `OrderRequest`; the two give identical results for the same ID, side, price, and quantity. `submitOrder(OrderRequest, SubmissionResult& out)` and `replaceOrder(const ReplaceRequest&, ReplaceResult& out)` overwrite one reused result and keep its heap blocks, and give results equal to the other overloads. If one throws, `out` stays valid with unspecified contents.
@@ -615,6 +615,12 @@ All figures come from one machine (Ryzen 5 5600G, Windows 11, MSVC Release) and 
 - **Performance evidence.** Throughput and latency from one Windows machine and one compiler, on synthetic workloads, with no scaling claim past its 6 physical cores. No Linux numbers are recorded: Linux is built and tested in CI only.
 - **Packaging.** There are no CMake install or package-config rules. Consume the library with `add_subdirectory`.
 
+**Browser build**
+
+- **A reload loses every book.** The engine keeps its log in the tab's memory, so a reload starts again from the seed.
+- **Isolated browsers only.** The module needs `SharedArrayBuffer`, so a page must be cross-origin isolated. Android WebView and in-app browsers never are, and there is no single-threaded fallback build.
+- **Devices.** It was run on desktop Chrome and on an iPhone in Safari. Firefox, desktop Safari, Android, 32-bit Android Chrome (accepted on the size margin: its 128 MiB memory is a sixteenth of that browser's 2 GiB cap), and in-app browsers were not checked on a device.
+
 ## Potential extensions
 
 Roughly in order of how much of the existing design they reuse:
@@ -629,6 +635,7 @@ Roughly in order of how much of the existing design they reuse:
 - **Packaging**: CMake install rules and a package config, so the library can be consumed with `find_package`.
 - **Replay**: a skip-and-continue policy for invalid fields, which the format already classifies as recoverable in principle.
 - **Replication and high availability**, from the command log, which already makes a replay reconstruct each book's exact state.
+- **Books that survive a reload** in the browser build, by keeping the page store's log files in the origin private file system (OPFS) instead of the tab's memory.
 
 ## Further documentation
 
