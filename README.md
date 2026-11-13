@@ -259,7 +259,7 @@ With automatic invariant checks on, which is the default in Debug, every mutatin
 
 Everything is in namespace `order_book`, with headers in `include/order_book/`. Changes to the headers listed below are breaking changes; `include/order_book/runtime/` and `network/` hold the headers of libraries that are not public API.
 
-In v2.1.0 the public API is the `order_book` library and the replay headers below, in `order_book_replay`. `order_book_runtime`, `order_book_network`, and `order_book_latency` are not public API: their contracts with the outside are the formats ([command log](docs/command-log-format.md), [checkpoint](docs/checkpoint-format.md), [wire protocol](docs/wire-protocol.md)) and the programs' flags and output. Promoting one of them later is an addition, and taking one back would be a break.
+In v2.1.0 the public API is the `order_book` library and the replay headers below, in `order_book_replay`. `order_book_runtime`, `order_book_network`, and `order_book_latency` are not public API, and neither are the browser build's `order_book_cli_commands`, `order_book_wasm`, and `order_book_wasm_module`: their contracts with the outside are the formats ([command log](docs/command-log-format.md), [checkpoint](docs/checkpoint-format.md), [wire protocol](docs/wire-protocol.md)) and the programs' flags and output. Promoting one of them later is an addition, and taking one back would be a break.
 
 - **`order_book.hpp`**: `OrderBook`.
   - Commands: `submitOrder` (match, then rest any remainder), `addOrder` (rest without matching), `cancelOrder`, `replaceOrder` (a resting order's price, total, and instructions, under the same ID). `submitOrder` takes either an `Order` or an `OrderRequest`; the two give identical results for the same ID, side, price, and quantity. `submitOrder(OrderRequest, SubmissionResult& out)` and `replaceOrder(const ReplaceRequest&, ReplaceResult& out)` overwrite one reused result and keep its heap blocks, and give results equal to the other overloads. If one throws, `out` stays valid with unspecified contents.
@@ -316,6 +316,18 @@ ctest --test-dir build -C Release --output-on-failure
 ```
 
 Executables are then under `build/Release/` or `build/Debug/`.
+
+### Browser build
+
+The whole engine also builds for the browser with [Emscripten](https://emscripten.org) 7.0.0: the core, the replay library, the runtime's shards on real pthreads, and the gateway, over an in-page connection that carries the wire protocol, in a tab of its own with nothing sent anywhere. The toolchain is the switch, so there is no option of its own:
+
+```bash
+emcmake cmake -S . -B build-wasm -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-wasm
+ctest --test-dir build-wasm --output-on-failure   # every suite under node
+```
+
+A Release build also writes `build-wasm/order_book_wasm-v<version>.zip`, the release asset a site serves from its own origin under cross-origin isolation. It holds `order_book_wasm.js` and `order_book_wasm.wasm` (the module), `engine-worker.js`, `engine-client.js` with its types `engine-client.d.ts`, the only file a page imports, and `manifest.json` with the tag, the commit, the protocol version, and each file's sha256. The module, its `.js`, and the worker come to at most 400 KB at gzip -9, which a test holds. CI builds and checks it on every run, and keeps it as the `order_book_wasm` artifact. [`docs/internals/wasm.md`](docs/internals/wasm.md) describes the build, the module and its worker, the engine client, and their tests.
 
 ### CMake options
 

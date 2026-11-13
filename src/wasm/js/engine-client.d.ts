@@ -174,6 +174,9 @@ export interface Engine {
     crash(): Promise<void>;
     /** Ends the engine worker, discards the page store, and starts again from the seed. */
     reset(): Promise<void>;
+    /** Ends the engine for good, as leaving the page does: the worker, without warning, and the page
+     * store. Everything waiting is reported ended, and every later call refuses. */
+    end(): void;
     /** Listens until the returned function is called. */
     on<K extends keyof EngineEvents>(event: K, listener: (value: EngineEvents[K]) => void): () => void;
 }

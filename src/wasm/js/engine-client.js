@@ -172,6 +172,8 @@ class BrowserEngine {
         // One crash path at a time, in order.
         /** @type {Promise<void>} */
         this.ending = Promise.resolve();
+        // Set by end(): the engine is gone for good, with its worker and its store.
+        this.ended = false;
         // Lines one at a time, in order, as the terminal types them.
         /** @type {Promise<unknown>} */
         this.lines = Promise.resolve();
@@ -193,6 +195,9 @@ class BrowserEngine {
     // A new worker, given a copy of the page store, idle until a start. A message from any worker
     // but the current one is ignored, so an ended worker's late messages touch nothing.
     async open() {
+        if (this.ended) {
+            throw new Error("the engine has ended");
+        }
         const worker = new Worker(this.urls.worker, {type: "module"});
         this.worker = worker;
         worker.onmessage = (event) => {
@@ -243,6 +248,9 @@ class BrowserEngine {
 
     /** @param {string} why */
     async replaceWorker(why) {
+        if (this.ended) {
+            return;
+        }
         const ended = this.worker;
         this.worker = null;
         if (ended) {
@@ -268,6 +276,34 @@ class BrowserEngine {
             this.emit("aborted", "the engine worker couldn't start again: " + String(error instanceof Error ? error.message : error));
             throw error;
         }
+    }
+
+    /** Ends the engine for good: the worker, without warning, and the page store. */
+    end() {
+        if (this.ended) {
+            return;
+        }
+        this.ended = true;
+        const worker = this.worker;
+        this.worker = null;
+        if (worker) {
+            worker.terminate();
+        }
+        for (const [, waiting] of this.replies) {
+            waiting({ok: false, error: "the engine has ended", reset: true});
+        }
+        this.replies.clear();
+        const gone = {code: 3, name: "CRASHED"};
+        if (this.started) {
+            this.started(gone);
+            this.started = null;
+        }
+        if (this.stopped) {
+            this.stopped(gone);
+            this.stopped = null;
+        }
+        this.store = new PageStore();
+        this.setState("down");
     }
 
     /** @returns {Promise<void>} */
@@ -324,6 +360,9 @@ class BrowserEngine {
      * @returns {Promise<any>}
      */
     async request(type, fields = {}) {
+        if (this.ended) {
+            return {ok: false, error: "the engine has ended"};
+        }
         if (this.opening) {
             await this.opening;
         }
