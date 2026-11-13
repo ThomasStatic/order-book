@@ -15,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -28,6 +29,7 @@
 #include "order_book/wasm/browser_engine.hpp"
 #include "order_book/wasm/page_connection.hpp"
 #include "order_book/wasm/settings.hpp"
+#include "order_book/wasm/sandbox.hpp"
 #include "order_book/wasm/terminal.hpp"
 
 // order_book_wasm_module (spec #127, "The module and the engine worker"; docs/internals/wasm.md):
@@ -83,6 +85,161 @@ namespace order_book::wasm {
             return out;
         }
 
+        const char* sideName(Side side) { return side == Side::BUY ? "BUY" : "SELL"; }
+
+        const char* orderTypeName(OrderType type) {
+            switch (type) {
+                case OrderType::LIMIT: return "LIMIT";
+                case OrderType::MARKET: return "MARKET";
+                case OrderType::STOP: return "STOP";
+                case OrderType::STOP_LIMIT: return "STOP_LIMIT";
+            }
+            return "UNKNOWN";
+        }
+
+        const char* timeInForceName(TimeInForce timeInForce) {
+            switch (timeInForce) {
+                case TimeInForce::GTC: return "GTC";
+                case TimeInForce::IOC: return "IOC";
+                case TimeInForce::FOK: return "FOK";
+            }
+            return "UNKNOWN";
+        }
+
+        const char* modeName(SelfTradePrevention mode) {
+            switch (mode) {
+                case SelfTradePrevention::CANCEL_RESTING: return "CANCEL_RESTING";
+                case SelfTradePrevention::CANCEL_INCOMING: return "CANCEL_INCOMING";
+                case SelfTradePrevention::CANCEL_BOTH: return "CANCEL_BOTH";
+            }
+            return "UNKNOWN";
+        }
+
+        double number(std::uint64_t value) { return static_cast<double>(value); }
+
+        // One answer frame as the page's AnswerEvent: its type, its fields, and its text.
+        val eventOf(const network::ClientStream::Answer& frame) {
+            val posted = val::object();
+            posted.set("text", frame.text);
+            if (const auto* refusal = std::get_if<network::RefusedFrame>(&frame.decoded)) {
+                posted.set("type", std::string("Refused"));
+                posted.set("orderId", number(refusal->orderId));
+                posted.set("code", network::refusedCodeName(refusal->code));
+                return posted;
+            }
+            std::visit(
+                [&posted](const auto& event) {
+                    using Event = std::decay_t<decltype(event)>;
+                    if constexpr (std::is_same_v<Event, OrderAccepted>) {
+                        posted.set("type", std::string("OrderAccepted"));
+                        posted.set("orderId", number(event.orderId));
+                        posted.set("side", std::string(sideName(event.side)));
+                        posted.set("price", number(event.price));
+                        posted.set("quantity", number(event.quantity));
+                    } else if constexpr (std::is_same_v<Event, OrderRejected> || std::is_same_v<Event, CancelRejected> ||
+                                         std::is_same_v<Event, ReplaceRejected>) {
+                        posted.set("type", std::string(std::is_same_v<Event, OrderRejected>    ? "OrderRejected"
+                                                       : std::is_same_v<Event, CancelRejected> ? "CancelRejected"
+                                                                                                : "ReplaceRejected"));
+                        posted.set("orderId", number(event.orderId));
+                        posted.set("reason", std::string(rejectionReasonName(event.reason)));
+                    } else if constexpr (std::is_same_v<Event, TradeExecuted>) {
+                        posted.set("type", std::string("TradeExecuted"));
+                        posted.set("incomingOrderId", number(event.incomingOrderId));
+                        posted.set("restingOrderId", number(event.restingOrderId));
+                        posted.set("price", number(event.executionPrice));
+                        posted.set("quantity", number(event.executionQuantity));
+                    } else if constexpr (std::is_same_v<Event, OrderCancelled>) {
+                        posted.set("type", std::string("OrderCancelled"));
+                        posted.set("orderId", number(event.orderId));
+                        posted.set("quantity", number(event.cancelledQuantity));
+                    } else if constexpr (std::is_same_v<Event, OrderExpired>) {
+                        posted.set("type", std::string("OrderExpired"));
+                        posted.set("orderId", number(event.orderId));
+                        posted.set("quantity", number(event.expiredQuantity));
+                    } else if constexpr (std::is_same_v<Event, SelfTradePrevented>) {
+                        posted.set("type", std::string("SelfTradePrevented"));
+                        posted.set("incomingOrderId", number(event.incomingOrderId));
+                        posted.set("restingOrderId", number(event.restingOrderId));
+                        posted.set("price", number(event.price));
+                        posted.set("quantity", number(event.cancelledQuantity));
+                    } else if constexpr (std::is_same_v<Event, StopTriggered>) {
+                        posted.set("type", std::string("StopTriggered"));
+                        posted.set("orderId", number(event.orderId));
+                        posted.set("stopPrice", number(event.stopPrice));
+                        posted.set("tradePrice", number(event.tradePrice));
+                    } else {
+                        static_assert(std::is_same_v<Event, OrderReplaced>, "every BookEvent alternative is an AnswerEvent");
+                        posted.set("type", std::string("OrderReplaced"));
+                        posted.set("orderId", number(event.orderId));
+                        posted.set("side", std::string(sideName(event.side)));
+                        posted.set("price", number(event.price));
+                        posted.set("quantity", number(event.quantity));
+                        posted.set("openQuantity", number(event.openQuantity));
+                        posted.set("priorityKept", event.priorityKept);
+                    }
+                },
+                std::get<BookEvent>(frame.decoded));
+            return posted;
+        }
+
+        // A sandbox command's answer, or its loss, as the worker matches it to its request.
+        val sandboxAnswerOf(const SandboxAnswer& answer) {
+            val posted = val::object();
+            posted.set("type", std::string("sandboxAnswer"));
+            posted.set("correlation", static_cast<double>(answer.correlation));
+            if (answer.orderId) {
+                posted.set("orderId", number(*answer.orderId));
+            }
+            val events = val::array();
+            for (const network::ClientStream::Answer& frame : answer.events) {
+                events.call<void>("push", eventOf(frame));
+            }
+            posted.set("events", events);
+            posted.set("text", answer.text);
+            posted.set("frameBytes", static_cast<double>(answer.frameBytes));
+            if (!answer.lost.empty()) {
+                posted.set("lost", answer.lost);
+            }
+            return posted;
+        }
+
+        // What the sandbox sends, as the page's OrderInput gives it.
+        OrderInput orderOf(const val& order) {
+            OrderInput input;
+            const auto text = [&order](const char* key) {
+                const val field = order[key];
+                return field.isUndefined() || field.isNull() ? std::string() : field.as<std::string>();
+            };
+            const auto count = [&order](const char* key) -> std::optional<std::uint64_t> {
+                const val field = order[key];
+                if (field.isUndefined() || field.isNull()) {
+                    return std::nullopt;
+                }
+                const double value = field.as<double>();
+                if (!(value >= 0) || value > 9007199254740991.0) {
+                    return std::uint64_t{0};  // what the parser then refuses as zero
+                }
+                return static_cast<std::uint64_t>(value);
+            };
+            input.side = text("side");
+            input.quantity = count("quantity").value_or(0);
+            input.price = count("price");
+            input.type = text("type");
+            input.stopPrice = count("stopPrice");
+            input.timeInForce = text("timeInForce");
+            const val postOnly = order["postOnly"];
+            input.postOnly = !postOnly.isUndefined() && !postOnly.isNull() && postOnly.as<bool>();
+            input.owner = count("owner");
+            input.selfTradePrevention = text("selfTradePrevention");
+            return input;
+        }
+
+        std::uint64_t idOf(const val& value) {
+            const double number = value.isNumber() ? value.as<double>() : 0;
+            return number >= 0 && number <= 9007199254740991.0 ? static_cast<std::uint64_t>(number) : 0;
+        }
+
         // What the engine reported, in order, as the worker takes it.
         struct StoreChange {
             PageLogStorage::Change::Kind kind;
@@ -120,7 +277,7 @@ namespace order_book::wasm {
     public:
         // The page store as the page holds it: [{name, bytes: Uint8Array}].
         explicit ModuleEngine(const val& store)
-            : engine(instrumentListPath, storeOf(store), callbacks()), terminal(engine.shadows(), engine.store()) {}
+            : engine(instrumentListPath, storeOf(store), callbacks()), terminal(engine.shadows(), engine.store()), sandbox(engine.shadows()) {}
 
         ModuleEngine(const ModuleEngine&) = delete;
         ModuleEngine& operator=(const ModuleEngine&) = delete;
@@ -180,6 +337,96 @@ namespace order_book::wasm {
         // is due, which then comes as an `answer` event. Either way `events` holds what was
         // queued before it, which the worker posts first: an answer that came at once may have
         // waited for a log write still in the queue.
+        // The sandbox's typed commands: {ok: true, correlation, orderId?} once sent, its answer
+        // to come as a `sandboxAnswer` event, or {ok: false, error}; with `events`, as run's.
+        val submit(const std::string& symbol, const val& order) { return sent(sandbox.submit(symbol, orderOf(order))); }
+        val cancel(const std::string& symbol, const val& orderId) { return sent(sandbox.cancel(symbol, idOf(orderId))); }
+        val replace(const std::string& symbol, const val& orderId, const val& price, const val& quantity) {
+            return sent(sandbox.replace(symbol, idOf(orderId), idOf(price), idOf(quantity)));
+        }
+
+        // The page has consumed this many of the sandbox's frame bytes: what that lets through.
+        val consumed(double bytes) {
+            sandbox.consumed(bytes > 0 ? static_cast<std::size_t>(bytes) : 0);
+            return takeEvents();
+        }
+
+        // The shadow's book: levels with their orders and owners, pending stops, and the last
+        // trade price; null for a symbol off the list.
+        val book(const std::string& text) const {
+            const std::optional<replay::Symbol> symbol = replay::Symbol::parse(text);
+            if (!symbol || !engine.shadows().shardOf(*symbol)) {
+                return val::null();
+            }
+            const BookView view = engine.shadows().book(*symbol);
+            const auto side = [](const std::vector<LevelView>& levels) {
+                val out = val::array();
+                for (const LevelView& level : levels) {
+                    val posted = val::object();
+                    posted.set("price", number(level.price));
+                    posted.set("quantity", number(level.quantity));
+                    val orders = val::array();
+                    for (const RestingOrderView& order : level.orders) {
+                        val resting = val::object();
+                        resting.set("orderId", number(order.orderId));
+                        resting.set("quantity", number(order.remainingQuantity));
+                        resting.set("initialQuantity", number(order.initialQuantity));
+                        if (order.owner != 0) {
+                            resting.set("owner", number(order.owner));
+                        }
+                        orders.call<void>("push", resting);
+                    }
+                    posted.set("orders", orders);
+                    out.call<void>("push", posted);
+                }
+                return out;
+            };
+            val posted = val::object();
+            posted.set("symbol", text);
+            posted.set("bids", side(view.bids));
+            posted.set("asks", side(view.asks));
+            val stops = val::array();
+            for (const PendingStopView& stop : view.stops) {
+                val pending = val::object();
+                pending.set("orderId", number(stop.orderId));
+                pending.set("side", std::string(sideName(stop.side)));
+                pending.set("type", std::string(orderTypeName(stop.orderType)));
+                pending.set("stopPrice", number(stop.stopPrice));
+                if (stop.orderType == OrderType::STOP_LIMIT) {
+                    pending.set("price", number(stop.limitPrice));
+                }
+                pending.set("quantity", number(stop.quantity));
+                pending.set("timeInForce", std::string(timeInForceName(stop.timeInForce)));
+                if (stop.owner != 0) {
+                    pending.set("owner", number(stop.owner));
+                    pending.set("selfTradePrevention", std::string(modeName(stop.selfTradePrevention)));
+                }
+                pending.set("postOnly", stop.postOnly);
+                stops.call<void>("push", pending);
+            }
+            posted.set("stops", stops);
+            posted.set("lastTradePrice", view.lastTradePrice ? val(number(*view.lastTradePrice)) : val::null());
+            return posted;
+        }
+
+        // Each shard's instruments and the records its log holds.
+        val status() const {
+            val shards = val::array();
+            const runtime::InstrumentDirectory& directory = engine.shadows().instruments();
+            for (std::uint32_t shard = 0; shard < directory.shardCount(); ++shard) {
+                val posted = val::object();
+                val instruments = val::array();
+                for (const runtime::Instrument& instrument : directory.onShard(shard)) {
+                    instruments.call<void>("push", instrument.symbol.text());
+                }
+                posted.set("shard", static_cast<double>(shard));
+                posted.set("instruments", instruments);
+                posted.set("records", number(engine.shadows().records(shard)));
+                shards.call<void>("push", posted);
+            }
+            return shards;
+        }
+
         val run(const std::string& line) {
             std::optional<cli::CommandResult> result;
             try {
@@ -380,10 +627,31 @@ namespace order_book::wasm {
                     }
                     announced = true;
                     terminal.connect(engine.sockets());
+                    sandbox.connect(engine.sockets());
                     out.call<void>("push", readyEvent());
                 }
             }
             answer(out, terminal.pump());
+            for (const SandboxAnswer& answered : sandbox.pump()) {
+                out.call<void>("push", sandboxAnswerOf(answered));
+            }
+        }
+
+        val sent(const std::variant<SandboxSent, std::string>& result) {
+            val reply = val::object();
+            if (const auto* problem = std::get_if<std::string>(&result)) {
+                reply.set("ok", false);
+                reply.set("error", *problem);
+            } else {
+                const SandboxSent& command = std::get<SandboxSent>(result);
+                reply.set("ok", true);
+                reply.set("correlation", static_cast<double>(command.correlation));
+                if (command.orderId) {
+                    reply.set("orderId", number(*command.orderId));
+                }
+            }
+            reply.set("events", takeEvents());
+            return reply;
         }
 
         void answer(val& out, const std::optional<cli::CommandResult>& result) {
@@ -401,6 +669,9 @@ namespace order_book::wasm {
             announced = true;
             terminal.disconnect();
             answer(out, terminal.pump());
+            for (const SandboxAnswer& lost : sandbox.disconnect()) {
+                out.call<void>("push", sandboxAnswerOf(lost));
+            }
             isRunning = false;
             val posted = val::object();
             posted.set("type", std::string("exited"));
@@ -467,6 +738,7 @@ namespace order_book::wasm {
 
         BrowserEngine engine;
         Terminal terminal;
+        Sandbox sandbox;
         std::unique_ptr<network::StopSource> stopping;
         std::thread runner;
         std::atomic<bool> isRunning{false};
@@ -496,7 +768,13 @@ namespace order_book::wasm {
             .function("stop", &ModuleEngine::stop)
             .function("running", &ModuleEngine::running)
             .function("run", &ModuleEngine::run)
-            .function("takeEvents", &ModuleEngine::takeEvents);
+            .function("takeEvents", &ModuleEngine::takeEvents)
+            .function("submit", &ModuleEngine::submit)
+            .function("cancel", &ModuleEngine::cancel)
+            .function("replace", &ModuleEngine::replace)
+            .function("consumed", &ModuleEngine::consumed)
+            .function("book", &ModuleEngine::book)
+            .function("status", &ModuleEngine::status);
         emscripten::function("enterSamples", &enterSamples);
         emscripten::function("release", &release);
     }

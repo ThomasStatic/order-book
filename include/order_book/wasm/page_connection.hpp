@@ -34,8 +34,9 @@ namespace order_book::wasm {
 
         // Moves what it can both ways: writes what fits, half-closes if finishing, reads what
         // came, and ends the stream once the connection has ended and nothing is left. Call it on
-        // every wake; it never waits.
-        void pump();
+        // every wake; it never waits. It reads at most mostToReceive bytes, which a credit window
+        // limits, and gives how many it read.
+        std::size_t pump(std::size_t mostToReceive = static_cast<std::size_t>(-1));
 
         const network::ClientStream& stream() const noexcept { return client; }
         network::ClientStream& stream() noexcept { return client; }

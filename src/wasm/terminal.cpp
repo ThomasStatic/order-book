@@ -14,13 +14,13 @@
 #include "order_book/replay_parser.hpp"
 #include "order_book/replay_summary.hpp"
 #include "order_book/wasm/settings.hpp"
+#include "client_rows.hpp"
 
 namespace order_book::wasm {
 
     namespace {
 
-        // The row's columns, in replayHeader's order.
-        enum Column : std::size_t { SEQUENCE, COMMAND, ORDER_ID, SIDE, PRICE, QUANTITY, ORDER_TYPE, TIME_IN_FORCE, STOP_PRICE, POST_ONLY, OWNER, STP, SYMBOL, COLUMNS };
+        using namespace rows;
 
         std::vector<std::string_view> wordsOf(std::string_view line) {
             std::vector<std::string_view> words;
@@ -57,7 +57,7 @@ namespace order_book::wasm {
 
         // The words from `from` on, as key=value options and the post-only flag, into the row.
         // What a key may hold is the replay parser's to judge. Returns what was wrong, if anything.
-        std::optional<std::string> takeOptions(std::span<const std::string_view> words, std::vector<std::string>& row, bool& stop) {
+        std::optional<std::string> takeOptions(std::span<const std::string_view> words, std::vector<std::string>& row) {
             for (const std::string_view word : words) {
                 std::size_t column = 0;
                 std::string value;
@@ -69,7 +69,6 @@ namespace order_book::wasm {
                     const std::string_view given = word.substr(equals + 1);
                     if (key == "stop") {
                         column = STOP_PRICE;
-                        stop = true;
                         value = std::string(given);
                     } else if (key == "tif") {
                         column = TIME_IN_FORCE;
@@ -273,9 +272,6 @@ namespace order_book::wasm {
 
     std::optional<cli::CommandResult> Terminal::clientCommand(std::string_view verb, std::span<const std::string_view> words) {
         std::vector<std::string> row(COLUMNS);
-        const std::size_t sequence = commands + 1;
-        row[SEQUENCE] = std::to_string(sequence);
-        bool stop = false;
         if (verb == "buy" || verb == "sell") {
             if (words.size() < 3) {
                 return failed(verb, orderUsage);
@@ -290,13 +286,8 @@ namespace order_book::wasm {
                 row[PRICE] = std::string(words[3]);
                 options = 4;
             }
-            if (const std::optional<std::string> problem = takeOptions(words.subspan(options), row, stop)) {
+            if (const std::optional<std::string> problem = takeOptions(words.subspan(options), row)) {
                 return failed(verb, *problem);
-            }
-            const bool priced = !row[PRICE].empty();
-            row[ORDER_TYPE] = stop ? (priced ? "STOP_LIMIT" : "STOP") : (priced ? "LIMIT" : "MARKET");
-            if (row[TIME_IN_FORCE].empty()) {
-                row[TIME_IN_FORCE] = priced ? "GTC" : "IOC";
             }
         } else if (verb == "cancel") {
             if (words.size() != 3) {
@@ -314,27 +305,18 @@ namespace order_book::wasm {
             row[ORDER_ID] = std::string(words[2]);
             row[PRICE] = std::string(words[3]);
             row[QUANTITY] = std::string(words[4]);
-            if (const std::optional<std::string> problem = takeOptions(words.subspan(5), row, stop)) {
+            if (const std::optional<std::string> problem = takeOptions(words.subspan(5), row)) {
                 return failed(verb, *problem);
             }
         } else {
             throw std::logic_error("not a client command: " + std::string(verb));
         }
-        if (!row[OWNER].empty() && row[STP].empty()) {
-            row[STP] = "CANCEL_RESTING";
+        fillDefaults(row);
+        std::variant<replay::ReplayRecord, std::string> checked = check(std::move(row), commands + 1, shadows);
+        if (const auto* problem = std::get_if<std::string>(&checked)) {
+            return failed(verb, *problem);
         }
-
-        const replay::ParseResult parsed = replay::parseRow(replay::CsvRow{sequence + 1, std::move(row)}, replay::ReplayFormat::V3,
-                                                            sequence > 1 ? std::optional<std::uint64_t>(sequence - 1) : std::nullopt);
-        if (const auto* error = std::get_if<replay::ParseError>(&parsed)) {
-            return failed(verb, (error->column.empty() ? std::string() : error->column + ": ") + error->message);
-        }
-        replay::ReplayRecord record = std::get<replay::ReplayRecord>(parsed);
-        // The list is fixed, so a symbol off it is refused here for every client command alike,
-        // and takes no line.
-        if (!shadows.shardOf(record.symbol)) {
-            return failed(verb, record.symbol.text() + " is not on the instrument list");
-        }
+        replay::ReplayRecord& record = std::get<replay::ReplayRecord>(checked);
         if (standing) {
             standing->pump();
         }

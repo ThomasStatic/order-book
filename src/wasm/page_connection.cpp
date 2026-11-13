@@ -42,9 +42,9 @@ namespace order_book::wasm {
         set->clientRelease(socket);
     }
 
-    void PageConnection::pump() {
+    std::size_t PageConnection::pump(std::size_t mostToReceive) {
         if (done()) {
-            return;
+            return 0;
         }
         for (std::span<const std::byte> out = client.outgoing(); !out.empty(); out = client.outgoing()) {
             const std::size_t taken = set->clientSend(socket, out);
@@ -57,16 +57,20 @@ namespace order_book::wasm {
             set->clientHalfClose(socket);
             halfClosed = true;
         }
-        for (;;) {
-            const std::vector<std::byte> bytes = set->clientReceive(socket);
+        std::size_t received = 0;
+        while (received < mostToReceive) {
+            const std::vector<std::byte> bytes = set->clientReceive(socket, mostToReceive - received);
             if (bytes.empty()) {
                 break;
             }
+            received += bytes.size();
             client.received(bytes);
         }
+        // Ended only once nothing is left to take, so a limited pump never ends it early.
         if (set->clientEnd(socket) != network::PageSocketSet::ClientEnd::OPEN) {
             client.ended();
         }
+        return received;
     }
 
     std::optional<PageSend> PageSend::start(std::shared_ptr<network::PageSocketSet> sockets, cli::PreparedSend prepared) {

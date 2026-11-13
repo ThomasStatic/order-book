@@ -280,6 +280,7 @@ order_book_enable_sanitizers(order_book_cli_commands)
 add_library(order_book_wasm STATIC
     src/wasm/browser_engine.cpp
     src/wasm/page_connection.cpp
+    src/wasm/sandbox.cpp
     src/wasm/shadow_books.cpp
     src/wasm/terminal.cpp
 )
@@ -344,6 +345,14 @@ if(EMSCRIPTEN)
     if(ORDER_BOOK_ENABLE_ASAN)
         target_link_options(order_book_wasm_module PRIVATE "SHELL:--pre-js ${CMAKE_CURRENT_SOURCE_DIR}/src/wasm/module/asan_options.js")
     endif()
+    # The engine client, with the release it ships with written in, beside the module, as the
+    # zip and the Node tests take it.
+    file(READ ${CMAKE_CURRENT_SOURCE_DIR}/src/wasm/js/engine-client.js order_book_engine_client)
+    string(REPLACE "__ORDER_BOOK_ENGINE_RELEASE__" "v${PROJECT_VERSION}" order_book_engine_client "${order_book_engine_client}")
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/engine-client/engine-client.js "${order_book_engine_client}")
+    configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/wasm/js/engine-client.d.ts ${CMAKE_CURRENT_BINARY_DIR}/engine-client/engine-client.d.ts COPYONLY)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/wasm/js/engine-client.js)
+
     set_property(TARGET order_book_wasm_module APPEND PROPERTY LINK_DEPENDS
                  ${CMAKE_CURRENT_SOURCE_DIR}/src/wasm/instruments.csv ${CMAKE_CURRENT_SOURCE_DIR}/src/wasm/seed.csv)
 endif()
@@ -1323,6 +1332,18 @@ if(BUILD_TESTING)
         COMMAND order_book_wasm_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay ${CMAKE_CURRENT_BINARY_DIR}/order-book-wasm)
     set_tests_properties(order_book_wasm_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
 
+    # The sandbox's standing connection: typed commands, decoded answers, and its credit window.
+    add_executable(wasm_sandbox_tests
+        tests/wasm_sandbox_test.cpp
+    )
+
+    target_compile_features(wasm_sandbox_tests PRIVATE cxx_std_20)
+    target_link_libraries(wasm_sandbox_tests PRIVATE order_book_wasm)
+    order_book_enable_warnings(wasm_sandbox_tests)
+    order_book_enable_sanitizers(wasm_sandbox_tests)
+    add_test(NAME wasm_sandbox_tests COMMAND wasm_sandbox_tests ${CMAKE_CURRENT_SOURCE_DIR})
+    set_tests_properties(wasm_sandbox_tests PROPERTIES LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
+
     # The browser terminal: each committed session through run(line), then its collected CSV
     # through send, after the shipped seed; and a restart.
     add_executable(wasm_terminal_tests
@@ -1340,6 +1361,11 @@ if(BUILD_TESTING)
             COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} --test ${CMAKE_CURRENT_SOURCE_DIR}/tests/wasm/node/terminal_sessions.test.mjs)
         set_tests_properties(wasm_module_sessions PROPERTIES
             ENVIRONMENT "ORDER_BOOK_WASM_MODULE=$<TARGET_FILE:order_book_wasm_module>"
+            LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
+        add_test(NAME wasm_engine_client
+            COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} --test ${CMAKE_CURRENT_SOURCE_DIR}/tests/wasm/node/engine_client.test.mjs)
+        set_tests_properties(wasm_engine_client PROPERTIES
+            ENVIRONMENT "ORDER_BOOK_WASM_MODULE=$<TARGET_FILE:order_book_wasm_module>;ORDER_BOOK_ENGINE_CLIENT=${CMAKE_CURRENT_BINARY_DIR}/engine-client/engine-client.js"
             LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
         add_test(NAME wasm_module_worst_case
             COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} --test ${CMAKE_CURRENT_SOURCE_DIR}/tests/wasm/node/worst_case.test.mjs)

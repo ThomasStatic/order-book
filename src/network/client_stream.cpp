@@ -128,15 +128,18 @@ namespace order_book::network {
         // Every answer echoes its command's symbol, so a section holds only its own book's.
         const Symbol& symbol = commands[command].symbol;
         std::string text;
+        std::variant<BookEvent, RefusedFrame> decoded;
         bool sameSymbol = true;
         if (frame.type == FrameType::REFUSED) {
             const RefusedFrame refusal = decodeRefused(frame);
             sameSymbol = refusal.symbol == symbol.bytes();
             text = "Refused symbol=" + symbol.text() + " id=" + std::to_string(refusal.orderId) + " code=" + refusedCodeName(refusal.code);
+            decoded = refusal;
             refused = true;
         } else if (const std::optional<EventFrame> event = decodeEvent(frame)) {
             sameSymbol = event->symbol == symbol;
             text = formatEvent(event->event);
+            decoded = event->event;
         } else {
             broke("the engine sent a frame this client can't read at line " + std::to_string(frame.correlation));
             return;
@@ -145,7 +148,7 @@ namespace order_book::network {
             broke("the engine answered line " + std::to_string(frame.correlation) + " under another symbol than " + symbol.text());
             return;
         }
-        answers.push_back(Answer{frame.correlation, command, std::move(text)});
+        answers.push_back(Answer{frame.correlation, command, std::move(text), std::move(decoded), frameHeaderBytes + frame.body.size()});
         if (frame.last) {
             isAnswered[command] = true;
             --unanswered;
@@ -221,6 +224,20 @@ namespace order_book::network {
     bool ClientStream::answered(Correlation correlation) const {
         const std::optional<std::size_t> found = commandOf(correlation);
         return found && isAnswered[*found];
+    }
+
+    std::vector<ClientStream::Answer> ClientStream::answersOf(Correlation correlation) const {
+        std::vector<Answer> found;
+        for (const Answer& answer : answers) {
+            if (answer.correlation == correlation) {
+                found.push_back(answer);
+            }
+        }
+        return found;
+    }
+
+    void ClientStream::forget(Correlation correlation) {
+        std::erase_if(answers, [correlation](const Answer& answer) { return answer.correlation == correlation; });
     }
 
     std::string ClientStream::answerLines(Correlation correlation) const {
