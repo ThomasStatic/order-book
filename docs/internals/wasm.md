@@ -91,6 +91,7 @@ The worker's sandbox requests, `submit`, `cancel`, and `replace`, wait under the
   - an `exited` with code 8, a forced stop, which leaves the engine's threads behind in a module whose strict pool then can't start them again.
 - **Ended workers are ignored**: each worker's `onmessage` passes a message on only while that worker is the current one, so an ended worker's late writes and lines touch nothing.
 - `reset()` (or `run('reset')`) discards the page store, ends the worker, and starts a fresh one, which seeds it.
+- `end()` ends the engine for good, as a page does when it is left: the worker, without warning, and the page store. Everything waiting is reported ended, and every later request refuses with `the engine has ended`; a crash path after it makes no worker.
 - Requests made while a fresh worker is being given the store wait for it.
 - `on('state' | 'line' | 'aborted' | 'exited', listener)` returns a function that stops listening. Lines are heard as they come, and a start or stop also collects them for its result.
 

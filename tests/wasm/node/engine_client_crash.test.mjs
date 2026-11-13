@@ -146,6 +146,26 @@ test("a recovery that stops leaves the worker idle, with its message", async () 
     await engine.run("stop");
 });
 
+test("end ends the worker and the store for good", async () => {
+    const engine = await running();
+    const worker = current();
+    let terminated = false;
+    const terminate = worker.terminate.bind(worker);
+    worker.terminate = () => {
+        terminated = true;
+        return terminate();
+    };
+    const waiting = engine.submit("AAPL", {side: "BUY", quantity: 1, price: 90}).then(() => null, (error) => error);
+    engine.end();
+    assert.ok(terminated, "the worker is ended");
+    assert.match(String(await waiting), /the engine has ended/);
+    assert.equal(engine.state, "down");
+    assert.deepEqual(await engine.run("status"), {stdout: "", stderr: "status: the engine has ended\n", exit: 1});
+    const workersNow = workers.length;
+    await engine.crash();
+    assert.equal(workers.length, workersNow, "a crash after the end makes no new worker");
+});
+
 test("reset discards the store and starts again from the seed", async () => {
     const engine = await running();
     assert.equal((await engine.submit("TSLA", {side: "BUY", quantity: 1, price: 140})).orderId, 7);
