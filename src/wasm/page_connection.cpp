@@ -14,7 +14,7 @@ namespace order_book::wasm {
             return std::nullopt;
         }
         std::optional<PageConnection> connection(PageConnection(std::move(sockets), *socket, std::move(commands)));
-        connection->pump();
+        connection->pump(0);  // writes only: what comes is read by the caller's pumps, which a window may limit
         return connection;
     }
 
@@ -28,7 +28,8 @@ namespace order_book::wasm {
           client(std::move(other.client)),
           finishing(other.finishing),
           halfClosed(other.halfClosed),
-          released(other.released) {
+          released(other.released),
+          receivedBytes(other.receivedBytes) {
         other.released = true;
     }
 
@@ -42,9 +43,9 @@ namespace order_book::wasm {
         set->clientRelease(socket);
     }
 
-    void PageConnection::pump() {
+    std::size_t PageConnection::pump(std::size_t mostToReceive) {
         if (done()) {
-            return;
+            return 0;
         }
         for (std::span<const std::byte> out = client.outgoing(); !out.empty(); out = client.outgoing()) {
             const std::size_t taken = set->clientSend(socket, out);
@@ -57,16 +58,21 @@ namespace order_book::wasm {
             set->clientHalfClose(socket);
             halfClosed = true;
         }
-        for (;;) {
-            const std::vector<std::byte> bytes = set->clientReceive(socket);
+        std::size_t received = 0;
+        while (received < mostToReceive) {
+            const std::vector<std::byte> bytes = set->clientReceive(socket, mostToReceive - received);
             if (bytes.empty()) {
                 break;
             }
+            received += bytes.size();
+            receivedBytes += bytes.size();
             client.received(bytes);
         }
+        // Ended only once nothing is left to take, so a limited pump never ends it early.
         if (set->clientEnd(socket) != network::PageSocketSet::ClientEnd::OPEN) {
             client.ended();
         }
+        return received;
     }
 
     std::optional<PageSend> PageSend::start(std::shared_ptr<network::PageSocketSet> sockets, cli::PreparedSend prepared) {
@@ -75,14 +81,14 @@ namespace order_book::wasm {
             return std::nullopt;
         }
         connection->finish();
-        connection->pump();
+        connection->pump(0);
         return PageSend(std::move(prepared), std::move(*connection));
     }
 
     PageSend::PageSend(cli::PreparedSend prepared, PageConnection opened) : session(std::move(prepared)), connection(std::move(opened)) {}
 
-    std::optional<cli::CommandResult> PageSend::pump() {
-        connection.pump();
+    std::optional<cli::CommandResult> PageSend::pump(std::size_t mostToReceive) {
+        connection.pump(mostToReceive);
         if (!connection.done()) {
             return std::nullopt;
         }

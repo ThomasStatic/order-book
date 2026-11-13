@@ -63,6 +63,10 @@ test("nothing is accepted before init, and a protocol mismatch is refused", asyn
         assert.equal(initialized.ok, true);
         const again = await page.init();
         assert.deepEqual([again.ok, again.error], [false, "already initialized"]);
+        await page.start();
+        const twice = await page.request("start");
+        assert.deepEqual([twice.ok, twice.error], [false, "the engine is already running"], "the worker refuses misuse too");
+        await page.stop();
     } finally {
         await page.end();
     }

@@ -103,6 +103,10 @@ export class Page {
             return;
         }
         this.store.apply(message);
+        if (message.type === "progress") {
+            // Acknowledged at once, as the engine client does, so the terminal's window stays open.
+            this.worker.postMessage({type: "consumed", connection: message.connection, bytes: message.bytes});
+        }
         // A write's bytes live in the store; the log of what came keeps where they went.
         this.posted.push(message.type === "write" ? {type: "write", name: message.name, offset: message.offset, length: message.bytes.length} : message);
         if (message.type === "aborted") {

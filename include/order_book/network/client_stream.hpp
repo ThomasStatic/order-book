@@ -3,10 +3,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <variant>
 #include <span>
 #include <string>
 #include <vector>
 
+#include "order_book/book_event.hpp"
 #include "order_book/command.hpp"
 #include "order_book/network/wire_codec.hpp"
 #include "order_book/symbol.hpp"
@@ -70,12 +72,23 @@ namespace order_book::network {
         // What went wrong, one line each, without a program's prefix.
         const std::vector<std::string>& diagnostics() const noexcept { return problems; }
 
-    private:
+        // One frame answering a command: its event or refusal, decoded, as text, and how many
+        // bytes its frame took, which the browser's credit windows count.
         struct Answer {
             Correlation correlation;
             std::size_t command;  // its index in commands
             std::string text;     // formatEvent's, or the refusal's
+            std::variant<BookEvent, RefusedFrame> decoded;
+            std::size_t frameBytes = 0;
         };
+
+        // That command's answers so far, in the order they came.
+        std::vector<Answer> answersOf(Correlation correlation) const;
+        // Drops that command's answers, for a connection that stays open, which would otherwise
+        // keep every answer it was ever sent; answered() still says it was answered.
+        void forget(Correlation correlation);
+
+    private:
 
         static std::string answerLine(const Answer& answer);
         void take(const Frame& frame);

@@ -9,10 +9,19 @@
 //   start                                   a run on the store; `ready` follows, or `exited`
 //   stop                                    a first starts the clean stop, a second forces it
 //   run {line}                              a terminal line: {stdout, stderr, exit} once answered
+//   submit {symbol, order}, cancel {symbol, orderId}, replace {symbol, orderId, price, quantity}
+//                                           the sandbox's: {orderId?, events, text, frameBytes} once
+//                                           answered, or {ok: false, error}, its loss included
+//   book {symbol}, status                   the shadows' book and each shard's records, at once
+// and one notification, with no id and no reply:
+//   consumed {connection, bytes}            the page has consumed this many bytes of the
+//                                           "sandbox"'s answers or the "terminal"'s reading, which
+//                                           that connection's credit window lets through again
 // Worker to page, in one ordered channel with the replies:
 //   create, write {offset, bytes}, extend {size}, cut {size}, rename {to}, replace {to}, remove,
 //     each {name}: one page-store change each
 //   line {stream: "report" | "diagnostics", text}
+//   progress {connection: "terminal", bytes}   what the terminal read, for the page to acknowledge
 //   seeded {stdout, stderr, exit}, ready {instruments, placement}, exited {code, name}
 //   aborted {message}
 // No JavaScript exception crosses postMessage: one escaping here, or the module aborting on any
@@ -24,6 +33,7 @@ let module = null;
 let engine = null;
 let initializing = false;
 let pendingRun = null;  // the id of the run waiting for its answer
+const pendingSandbox = new Map();  // the sandbox's correlation -> the id of the request waiting
 
 function post(message, transfer = []) {
     self.postMessage(message, transfer);
@@ -61,12 +71,38 @@ function postEvents(events) {
                 pendingRun = null;
                 reply(id, {ok: true, stdout: event.stdout, stderr: event.stderr, exit: event.exit});
             }
+        } else if (event.type === "sandboxAnswer") {
+            const id = pendingSandbox.get(event.correlation);
+            pendingSandbox.delete(event.correlation);
+            if (id === undefined) {
+                continue;
+            }
+            if (event.lost) {
+                reply(id, {ok: false, error: event.lost});
+            } else {
+                const answer = {ok: true, events: event.events, text: event.text, frameBytes: event.frameBytes};
+                if (event.orderId !== undefined) {
+                    answer.orderId = event.orderId;
+                }
+                reply(id, answer);
+            }
         } else if (event.type === "write") {
             post(event, [event.bytes.buffer]);
         } else {
             post(event);
         }
     }
+}
+
+// A sandbox command: refused at once, or waiting, under its correlation, for its answer, which
+// may already be among the events.
+function sandbox(id, result) {
+    if (!result.ok) {
+        reply(id, {ok: false, error: result.error});
+    } else {
+        pendingSandbox.set(result.correlation, id);
+    }
+    postEvents(result.events);
 }
 
 // Calls into the module under way on this thread. While this thread waits on a lock, Emscripten
@@ -140,6 +176,16 @@ async function init(request) {
 }
 
 async function handle(request) {
+    if (request && request.type === "consumed" && request.id === undefined) {
+        if (engine) {
+            try {
+                postEvents(call(() => engine.consumed(String(request.connection), Number(request.bytes) || 0)));
+            } catch (error) {
+                aborted(error);
+            }
+        }
+        return;
+    }
     if (!request || typeof request.id !== "number") {
         return;
     }
@@ -172,6 +218,17 @@ async function handle(request) {
             if (result.done) {
                 reply(id, {ok: true, stdout: result.stdout, stderr: result.stderr, exit: result.exit});
             }
+        } else if (type === "submit") {
+            sandbox(id, call(() => engine.submit(String(request.symbol), request.order || {})));
+        } else if (type === "cancel") {
+            sandbox(id, call(() => engine.cancel(String(request.symbol), request.orderId)));
+        } else if (type === "replace") {
+            sandbox(id, call(() => engine.replace(String(request.symbol), request.orderId, request.price, request.quantity)));
+        } else if (type === "book") {
+            const book = call(() => engine.book(String(request.symbol)));
+            reply(id, book === null ? {ok: false, error: String(request.symbol) + " is not on the instrument list"} : {ok: true, book});
+        } else if (type === "status") {
+            reply(id, {ok: true, shards: call(() => engine.status())});
         } else {
             reply(id, {ok: false, error: "unknown request " + String(type)});
         }

@@ -15,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -28,6 +29,7 @@
 #include "order_book/wasm/browser_engine.hpp"
 #include "order_book/wasm/page_connection.hpp"
 #include "order_book/wasm/settings.hpp"
+#include "order_book/wasm/sandbox.hpp"
 #include "order_book/wasm/terminal.hpp"
 
 // order_book_wasm_module (spec #127, "The module and the engine worker"; docs/internals/wasm.md):
@@ -83,6 +85,162 @@ namespace order_book::wasm {
             return out;
         }
 
+        const char* sideName(Side side) { return side == Side::BUY ? "BUY" : "SELL"; }
+
+        const char* orderTypeName(OrderType type) {
+            switch (type) {
+                case OrderType::LIMIT: return "LIMIT";
+                case OrderType::MARKET: return "MARKET";
+                case OrderType::STOP: return "STOP";
+                case OrderType::STOP_LIMIT: return "STOP_LIMIT";
+            }
+            return "UNKNOWN";
+        }
+
+        const char* timeInForceName(TimeInForce timeInForce) {
+            switch (timeInForce) {
+                case TimeInForce::GTC: return "GTC";
+                case TimeInForce::IOC: return "IOC";
+                case TimeInForce::FOK: return "FOK";
+            }
+            return "UNKNOWN";
+        }
+
+        const char* modeName(SelfTradePrevention mode) {
+            switch (mode) {
+                case SelfTradePrevention::CANCEL_RESTING: return "CANCEL_RESTING";
+                case SelfTradePrevention::CANCEL_INCOMING: return "CANCEL_INCOMING";
+                case SelfTradePrevention::CANCEL_BOTH: return "CANCEL_BOTH";
+            }
+            return "UNKNOWN";
+        }
+
+        // A count as the page's number; every field fits in 2^53.
+        double jsNumber(std::uint64_t value) { return static_cast<double>(value); }
+
+        // One answer frame as the page's AnswerEvent: its type, its fields, and its text.
+        val eventOf(const network::ClientStream::Answer& frame) {
+            val posted = val::object();
+            posted.set("text", frame.text);
+            if (const auto* refusal = std::get_if<network::RefusedFrame>(&frame.decoded)) {
+                posted.set("type", std::string("Refused"));
+                posted.set("orderId", jsNumber(refusal->orderId));
+                posted.set("code", network::refusedCodeName(refusal->code));
+                return posted;
+            }
+            std::visit(
+                [&posted](const auto& event) {
+                    using Event = std::decay_t<decltype(event)>;
+                    if constexpr (std::is_same_v<Event, OrderAccepted>) {
+                        posted.set("type", std::string("OrderAccepted"));
+                        posted.set("orderId", jsNumber(event.orderId));
+                        posted.set("side", std::string(sideName(event.side)));
+                        posted.set("price", jsNumber(event.price));
+                        posted.set("quantity", jsNumber(event.quantity));
+                    } else if constexpr (std::is_same_v<Event, OrderRejected> || std::is_same_v<Event, CancelRejected> ||
+                                         std::is_same_v<Event, ReplaceRejected>) {
+                        posted.set("type", std::string(std::is_same_v<Event, OrderRejected>    ? "OrderRejected"
+                                                       : std::is_same_v<Event, CancelRejected> ? "CancelRejected"
+                                                                                                : "ReplaceRejected"));
+                        posted.set("orderId", jsNumber(event.orderId));
+                        posted.set("reason", std::string(rejectionReasonName(event.reason)));
+                    } else if constexpr (std::is_same_v<Event, TradeExecuted>) {
+                        posted.set("type", std::string("TradeExecuted"));
+                        posted.set("incomingOrderId", jsNumber(event.incomingOrderId));
+                        posted.set("restingOrderId", jsNumber(event.restingOrderId));
+                        posted.set("price", jsNumber(event.executionPrice));
+                        posted.set("quantity", jsNumber(event.executionQuantity));
+                    } else if constexpr (std::is_same_v<Event, OrderCancelled>) {
+                        posted.set("type", std::string("OrderCancelled"));
+                        posted.set("orderId", jsNumber(event.orderId));
+                        posted.set("quantity", jsNumber(event.cancelledQuantity));
+                    } else if constexpr (std::is_same_v<Event, OrderExpired>) {
+                        posted.set("type", std::string("OrderExpired"));
+                        posted.set("orderId", jsNumber(event.orderId));
+                        posted.set("quantity", jsNumber(event.expiredQuantity));
+                    } else if constexpr (std::is_same_v<Event, SelfTradePrevented>) {
+                        posted.set("type", std::string("SelfTradePrevented"));
+                        posted.set("incomingOrderId", jsNumber(event.incomingOrderId));
+                        posted.set("restingOrderId", jsNumber(event.restingOrderId));
+                        posted.set("price", jsNumber(event.price));
+                        posted.set("quantity", jsNumber(event.cancelledQuantity));
+                    } else if constexpr (std::is_same_v<Event, StopTriggered>) {
+                        posted.set("type", std::string("StopTriggered"));
+                        posted.set("orderId", jsNumber(event.orderId));
+                        posted.set("stopPrice", jsNumber(event.stopPrice));
+                        posted.set("tradePrice", jsNumber(event.tradePrice));
+                    } else {
+                        static_assert(std::is_same_v<Event, OrderReplaced>, "every BookEvent alternative is an AnswerEvent");
+                        posted.set("type", std::string("OrderReplaced"));
+                        posted.set("orderId", jsNumber(event.orderId));
+                        posted.set("side", std::string(sideName(event.side)));
+                        posted.set("price", jsNumber(event.price));
+                        posted.set("quantity", jsNumber(event.quantity));
+                        posted.set("openQuantity", jsNumber(event.openQuantity));
+                        posted.set("priorityKept", event.priorityKept);
+                    }
+                },
+                std::get<BookEvent>(frame.decoded));
+            return posted;
+        }
+
+        // A sandbox command's answer, or its loss, as the worker matches it to its request.
+        val sandboxAnswerOf(const SandboxAnswer& answer) {
+            val posted = val::object();
+            posted.set("type", std::string("sandboxAnswer"));
+            posted.set("correlation", static_cast<double>(answer.correlation));
+            if (answer.orderId) {
+                posted.set("orderId", jsNumber(*answer.orderId));
+            }
+            val events = val::array();
+            for (const network::ClientStream::Answer& frame : answer.events) {
+                events.call<void>("push", eventOf(frame));
+            }
+            posted.set("events", events);
+            posted.set("text", answer.text);
+            posted.set("frameBytes", static_cast<double>(answer.frameBytes));
+            if (!answer.lost.empty()) {
+                posted.set("lost", answer.lost);
+            }
+            return posted;
+        }
+
+        // A field as the text its replay column takes, as JavaScript's String() writes it, so the
+        // parser judges it exactly as it would a row's: 100.7, -5, NaN, or "ten" each refused with
+        // the parser's own message, never rounded. Nothing for a field left out.
+        std::string textOf(const val& field) {
+            if (field.isUndefined() || field.isNull()) {
+                return {};
+            }
+            return val::global("String")(field).as<std::string>();
+        }
+
+        // What the sandbox sends, as the page's OrderInput gives it.
+        OrderInput orderOf(const val& order) {
+            OrderInput input;
+            if (order.isUndefined() || order.isNull()) {
+                return input;
+            }
+            input.side = textOf(order["side"]);
+            input.quantity = textOf(order["quantity"]);
+            input.price = textOf(order["price"]);
+            input.type = textOf(order["type"]);
+            input.stopPrice = textOf(order["stopPrice"]);
+            input.timeInForce = textOf(order["timeInForce"]);
+            input.postOnly = order["postOnly"].isTrue();
+            input.owner = textOf(order["owner"]);
+            input.selfTradePrevention = textOf(order["selfTradePrevention"]);
+            return input;
+        }
+
+        // Bytes the page says it consumed: a whole count, at most what any window could hold.
+        std::size_t bytesOf(double bytes) {
+            if (!(bytes > 0)) {
+                return 0;
+            }
+            return bytes >= 4294967295.0 ? static_cast<std::size_t>(4294967295U) : static_cast<std::size_t>(bytes);
+        }
+
         // What the engine reported, in order, as the worker takes it.
         struct StoreChange {
             PageLogStorage::Change::Kind kind;
@@ -120,7 +278,7 @@ namespace order_book::wasm {
     public:
         // The page store as the page holds it: [{name, bytes: Uint8Array}].
         explicit ModuleEngine(const val& store)
-            : engine(instrumentListPath, storeOf(store), callbacks()), terminal(engine.shadows(), engine.store()) {}
+            : engine(instrumentListPath, storeOf(store), callbacks()), terminal(engine.shadows(), engine.store()), sandbox(engine.shadows()) {}
 
         ModuleEngine(const ModuleEngine&) = delete;
         ModuleEngine& operator=(const ModuleEngine&) = delete;
@@ -175,6 +333,101 @@ namespace order_book::wasm {
         }
 
         bool running() const { return isRunning; }
+
+        // The sandbox's typed commands: {ok: true, correlation, orderId?} once sent, its answer
+        // to come as a `sandboxAnswer` event, or {ok: false, error}; with `events`, as run's.
+        val submit(const std::string& symbol, const val& order) { return sent(sandbox.submit(symbol, orderOf(order))); }
+        val cancel(const std::string& symbol, const val& orderId) { return sent(sandbox.cancel(symbol, textOf(orderId))); }
+        val replace(const std::string& symbol, const val& orderId, const val& price, const val& quantity) {
+            return sent(sandbox.replace(symbol, textOf(orderId), textOf(price), textOf(quantity)));
+        }
+
+        // The page has consumed this many bytes of the sandbox's answers or the terminal's
+        // reading: what that lets through.
+        val consumed(const std::string& connection, double bytes) {
+            if (connection == "terminal") {
+                terminal.consumed(bytesOf(bytes));
+            } else {
+                sandbox.consumed(bytesOf(bytes));
+            }
+            return takeEvents();
+        }
+
+        // The shadow's book: levels with their orders and owners, pending stops, and the last
+        // trade price; null for a symbol off the list.
+        val book(const std::string& text) const {
+            const std::optional<replay::Symbol> symbol = replay::Symbol::parse(text);
+            if (!symbol || !engine.shadows().shardOf(*symbol)) {
+                return val::null();
+            }
+            const BookView view = engine.shadows().book(*symbol);
+            const auto side = [](const std::vector<LevelView>& levels) {
+                val out = val::array();
+                for (const LevelView& level : levels) {
+                    val posted = val::object();
+                    posted.set("price", jsNumber(level.price));
+                    posted.set("quantity", jsNumber(level.quantity));
+                    val orders = val::array();
+                    for (const RestingOrderView& order : level.orders) {
+                        val resting = val::object();
+                        resting.set("orderId", jsNumber(order.orderId));
+                        resting.set("quantity", jsNumber(order.remainingQuantity));
+                        resting.set("initialQuantity", jsNumber(order.initialQuantity));
+                        if (order.owner != 0) {
+                            resting.set("owner", jsNumber(order.owner));
+                        }
+                        orders.call<void>("push", resting);
+                    }
+                    posted.set("orders", orders);
+                    out.call<void>("push", posted);
+                }
+                return out;
+            };
+            val posted = val::object();
+            posted.set("symbol", text);
+            posted.set("bids", side(view.bids));
+            posted.set("asks", side(view.asks));
+            val stops = val::array();
+            for (const PendingStopView& stop : view.stops) {
+                val pending = val::object();
+                pending.set("orderId", jsNumber(stop.orderId));
+                pending.set("side", std::string(sideName(stop.side)));
+                pending.set("type", std::string(orderTypeName(stop.orderType)));
+                pending.set("stopPrice", jsNumber(stop.stopPrice));
+                if (stop.orderType == OrderType::STOP_LIMIT) {
+                    pending.set("price", jsNumber(stop.limitPrice));
+                }
+                pending.set("quantity", jsNumber(stop.quantity));
+                pending.set("timeInForce", std::string(timeInForceName(stop.timeInForce)));
+                if (stop.owner != 0) {
+                    pending.set("owner", jsNumber(stop.owner));
+                    pending.set("selfTradePrevention", std::string(modeName(stop.selfTradePrevention)));
+                }
+                pending.set("postOnly", stop.postOnly);
+                stops.call<void>("push", pending);
+            }
+            posted.set("stops", stops);
+            posted.set("lastTradePrice", view.lastTradePrice ? val(jsNumber(*view.lastTradePrice)) : val::null());
+            return posted;
+        }
+
+        // Each shard's instruments and the records its log holds.
+        val status() const {
+            val shards = val::array();
+            const runtime::InstrumentDirectory& directory = engine.shadows().instruments();
+            for (std::uint32_t shard = 0; shard < directory.shardCount(); ++shard) {
+                val posted = val::object();
+                val instruments = val::array();
+                for (const runtime::Instrument& instrument : directory.onShard(shard)) {
+                    instruments.call<void>("push", instrument.symbol.text());
+                }
+                posted.set("shard", static_cast<double>(shard));
+                posted.set("instruments", instruments);
+                posted.set("records", jsNumber(engine.shadows().records(shard)));
+                shards.call<void>("push", posted);
+            }
+            return shards;
+        }
 
         // One typed line: {done: true, stdout, stderr, exit}, or {done: false} while its answer
         // is due, which then comes as an `answer` event. Either way `events` holds what was
@@ -380,10 +633,43 @@ namespace order_book::wasm {
                     }
                     announced = true;
                     terminal.connect(engine.sockets());
+                    sandbox.connect(engine.sockets());
                     out.call<void>("push", readyEvent());
                 }
             }
             answer(out, terminal.pump());
+            for (const SandboxAnswer& answered : sandbox.pump()) {
+                out.call<void>("push", sandboxAnswerOf(answered));
+            }
+            announce(out);
+        }
+
+        // What the terminal read since it last said, for the page to acknowledge.
+        void announce(val& out) {
+            if (const std::size_t bytes = terminal.progress(); bytes != 0) {
+                val posted = val::object();
+                posted.set("type", std::string("progress"));
+                posted.set("connection", std::string("terminal"));
+                posted.set("bytes", static_cast<double>(bytes));
+                out.call<void>("push", posted);
+            }
+        }
+
+        val sent(const std::variant<SandboxSent, std::string>& result) {
+            val reply = val::object();
+            if (const auto* problem = std::get_if<std::string>(&result)) {
+                reply.set("ok", false);
+                reply.set("error", *problem);
+            } else {
+                const SandboxSent& command = std::get<SandboxSent>(result);
+                reply.set("ok", true);
+                reply.set("correlation", static_cast<double>(command.correlation));
+                if (command.orderId) {
+                    reply.set("orderId", jsNumber(*command.orderId));
+                }
+            }
+            reply.set("events", takeEvents());
+            return reply;
         }
 
         void answer(val& out, const std::optional<cli::CommandResult>& result) {
@@ -401,6 +687,9 @@ namespace order_book::wasm {
             announced = true;
             terminal.disconnect();
             answer(out, terminal.pump());
+            for (const SandboxAnswer& lost : sandbox.disconnect()) {
+                out.call<void>("push", sandboxAnswerOf(lost));
+            }
             isRunning = false;
             val posted = val::object();
             posted.set("type", std::string("exited"));
@@ -467,6 +756,7 @@ namespace order_book::wasm {
 
         BrowserEngine engine;
         Terminal terminal;
+        Sandbox sandbox;
         std::unique_ptr<network::StopSource> stopping;
         std::thread runner;
         std::atomic<bool> isRunning{false};
@@ -496,7 +786,13 @@ namespace order_book::wasm {
             .function("stop", &ModuleEngine::stop)
             .function("running", &ModuleEngine::running)
             .function("run", &ModuleEngine::run)
-            .function("takeEvents", &ModuleEngine::takeEvents);
+            .function("takeEvents", &ModuleEngine::takeEvents)
+            .function("submit", &ModuleEngine::submit)
+            .function("cancel", &ModuleEngine::cancel)
+            .function("replace", &ModuleEngine::replace)
+            .function("consumed", &ModuleEngine::consumed)
+            .function("book", &ModuleEngine::book)
+            .function("status", &ModuleEngine::status);
         emscripten::function("enterSamples", &enterSamples);
         emscripten::function("release", &release);
     }

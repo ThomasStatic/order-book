@@ -121,6 +121,15 @@ jobs:
       - name: Test
         run: ctest --test-dir build -C ${{ matrix.config }} --output-on-failure --parallel 4 ${{ matrix.threaded && '-L threaded' || '' }}
 
+      # The engine client's JSDoc against its hand-written engine-client.d.ts, with a pinned
+      # TypeScript fetched by npx: the repo has no package.json.
+      - name: Type-check the engine client
+        if: matrix.emscripten && matrix.config == 'Release'
+        run: >-
+          npx --yes --package typescript@6.0.3 -- tsc --noEmit --allowJs --checkJs --strict
+          --target es2022 --module es2022 --moduleResolution bundler --lib es2022,dom
+          src/wasm/js/engine-client.js src/wasm/js/engine-client.d.ts
+
       - name: Run the CLI
         if: ${{ !matrix.threaded }}
         run: |

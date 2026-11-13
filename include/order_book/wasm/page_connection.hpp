@@ -15,7 +15,8 @@ namespace order_book::wasm {
 
     class PageConnection {
     public:
-        // Connects, writing Hello and these commands as room allows. Nothing if there is no set,
+        // Connects, writing Hello and these commands as room allows, and reading nothing, so every
+        // byte read goes through a pump a window can limit. Nothing if there is no set,
         // with no engine running, or the set takes no connection, as once its listener has closed.
         static std::optional<PageConnection> open(std::shared_ptr<network::PageSocketSet> sockets,
                                                    std::vector<network::ClientCommand> commands = {});
@@ -34,10 +35,13 @@ namespace order_book::wasm {
 
         // Moves what it can both ways: writes what fits, half-closes if finishing, reads what
         // came, and ends the stream once the connection has ended and nothing is left. Call it on
-        // every wake; it never waits.
-        void pump();
+        // every wake; it never waits. It reads at most mostToReceive bytes, which a credit window
+        // limits, and gives how many it read.
+        std::size_t pump(std::size_t mostToReceive = static_cast<std::size_t>(-1));
 
         const network::ClientStream& stream() const noexcept { return client; }
+        // Every byte read on this connection so far.
+        std::size_t received() const noexcept { return receivedBytes; }
         network::ClientStream& stream() noexcept { return client; }
         // The stream ended or broke: nothing more will come.
         bool done() const noexcept { return !client.reading(); }
@@ -51,6 +55,7 @@ namespace order_book::wasm {
         bool finishing = false;
         bool halfClosed = false;
         bool released = false;
+        std::size_t receivedBytes = 0;
     };
 
     // `order_book_cli send` of a prepared file over the in-page set, as the terminal's `send` and
@@ -61,7 +66,8 @@ namespace order_book::wasm {
         static std::optional<PageSend> start(std::shared_ptr<network::PageSocketSet> sockets, cli::PreparedSend prepared);
 
         // On each wake: send's result once the stream has ended, otherwise nothing yet.
-        std::optional<cli::CommandResult> pump();
+        std::optional<cli::CommandResult> pump(std::size_t mostToReceive = static_cast<std::size_t>(-1));
+        std::size_t received() const noexcept { return connection.received(); }
         // The run has ended: what hasn't come never will, so the next pump gives the result.
         void abandon() { connection.stream().ended(); }
 
