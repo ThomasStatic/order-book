@@ -137,7 +137,7 @@ The release asset, `order_book_wasm-v<version>.zip`, comes from `order_book_wasm
 - `engine-worker.js`;
 - the configured `engine-client.js` and `engine-client.d.ts`.
 
-It writes `manifest.json` beside them: `release` (`v` and the project version, which the zip's name and `ENGINE_RELEASE` carry), `tag` (`git describe --tags --always --dirty`, so only the tag's own run names the tag), `commit` (`git rev-parse HEAD`), `protocol` (1), and `files`, each file's sha256 (`file(SHA256)`). It then zips the six flat with `cmake -E tar --format=zip`.
+It writes `manifest.json` beside them: `release` (`v` and the project version, which the zip's name and `ENGINE_RELEASE` carry), `tag` (`git describe --tags --always --dirty`, so only the tag's own run names the tag), `commit` (`git rev-parse HEAD`), `protocol` (1), and `files`, each file's sha256 (`file(SHA256)`). It then zips the six flat with `cmake -E tar --format=zip`. `src/wasm/js/.gitattributes` keeps the worker and the client LF on any checkout, so a zip built on Windows holds the same bytes as CI's.
 
 **The budget**: at most 400 KB (400,000 bytes) at gzip -9 for the module's `.wasm` and `.js` and `engine-worker.js` together.
 - At `-O3` they came to 417,152.
@@ -147,7 +147,7 @@ It writes `manifest.json` beside them: `release` (`v` and the project version, w
 `wasm_zip` (`node --test tests/wasm/node/zip.test.mjs`, given the zip, `CMAKE_COMMAND`, and the client copy) unpacks the zip with `cmake -E tar xf` and checks:
 - it holds exactly those six files;
 - the manifest's release is the client's `ENGINE_RELEASE` and the zip's name, and its protocol is `PROTOCOL_VERSION`;
-- its commit is a full hash, its tag is non-empty, and it lists every file but itself;
+- its commit is a full hash (or `unknown`, built without git), its tag is non-empty, and it lists every file but itself;
 - every sha256 is its file's;
 - the three files fit the budget, using `zlib` at level 9.
 

@@ -322,7 +322,6 @@ if(EMSCRIPTEN)
     # The pool's size goes in too, where a static_assert holds it to browserEngineThreads.
     target_compile_definitions(order_book_wasm_module PRIVATE ORDER_BOOK_WASM_RELEASE="${PROJECT_VERSION}"
                                ORDER_BOOK_WASM_POOL=${order_book_wasm_pool})
-    target_compile_options(order_book_wasm_module PRIVATE -Oz)
     target_link_libraries(order_book_wasm_module PRIVATE order_book_wasm)
     order_book_enable_warnings(order_book_wasm_module)
     order_book_enable_sanitizers(order_book_wasm_module)
