@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-A correctness-first C++20 limit-order-book and matching-engine library: the static library `order_book`, the non-interactive CLI `order_book_cli` (`replay`, `convert`, `demo`; see `--help`), the engine executable `order_book_engine`, and optional benchmarks. Released as `v2.1.0`. README's "Public API" section lists which headers are the API, and a change to those is breaking.
+A correctness-first C++20 limit-order-book and matching-engine library: the static library `order_book`, the non-interactive CLI `order_book_cli` (`replay`, `convert`, `demo`; see `--help`), the engine executable `order_book_engine`, and optional benchmarks. Released as `v2.2.0`. README's "Public API" section lists which headers are the API, and a change to those is breaking.
 
 All code is in namespace `order_book`, with headers in `include/order_book/` and implementations in `src/`. Domain terms are in `GLOSSARY.md` and decisions in `docs/adr/`.
 
