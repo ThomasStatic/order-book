@@ -329,6 +329,10 @@ if(EMSCRIPTEN)
         -sENVIRONMENT=worker,node
         -sINITIAL_MEMORY=128MB
         -sALLOW_MEMORY_GROWTH=0
+        # Said outright, since a sanitizer build turns it on to check for leaks at exit: the module
+        # has no main, and with it on, the runtime exited under the engine's threads the first time
+        # nothing was keeping it alive.
+        -sEXIT_RUNTIME=0
         -sPTHREAD_POOL_SIZE=${order_book_wasm_pool}
         -sPTHREAD_POOL_SIZE_STRICT=2
         -sDEFAULT_PTHREAD_STACK_SIZE=256KB
@@ -338,7 +342,7 @@ if(EMSCRIPTEN)
         "SHELL:--embed-file ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay/valid@/samples/valid"
         "SHELL:--embed-file ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay/malformed@/samples/malformed")
     if(ORDER_BOOK_ENABLE_ASAN)
-        target_link_options(order_book_wasm_module PRIVATE "SHELL:--pre-js ${CMAKE_CURRENT_SOURCE_DIR}/tests/wasm_asan_options.js")
+        target_link_options(order_book_wasm_module PRIVATE "SHELL:--pre-js ${CMAKE_CURRENT_SOURCE_DIR}/src/wasm/module/asan_options.js")
     endif()
     set_property(TARGET order_book_wasm_module APPEND PROPERTY LINK_DEPENDS
                  ${CMAKE_CURRENT_SOURCE_DIR}/src/wasm/instruments.csv ${CMAKE_CURRENT_SOURCE_DIR}/src/wasm/seed.csv)
@@ -1337,6 +1341,11 @@ if(BUILD_TESTING)
         set_tests_properties(wasm_module_sessions PROPERTIES
             ENVIRONMENT "ORDER_BOOK_WASM_MODULE=$<TARGET_FILE:order_book_wasm_module>"
             LABELS threaded RESOURCE_LOCK threads TIMEOUT 300)
+        add_test(NAME wasm_module_worst_case
+            COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} --test ${CMAKE_CURRENT_SOURCE_DIR}/tests/wasm/node/worst_case.test.mjs)
+        set_tests_properties(wasm_module_worst_case PROPERTIES
+            ENVIRONMENT "ORDER_BOOK_WASM_MODULE=$<TARGET_FILE:order_book_wasm_module>"
+            LABELS threaded RESOURCE_LOCK threads TIMEOUT 600)
     endif()
 
     foreach(session basic options errors files send restart)

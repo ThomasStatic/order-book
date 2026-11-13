@@ -27,19 +27,73 @@ export function linesOf(text) {
     return lines;
 }
 
+// The page store: every file the worker's changes made, as the page keeps them, so a fresh
+// worker can be given them after a crash.
+export class PageStore {
+    constructor(files = []) {
+        this.files = new Map(files.map((file) => [file.name, file.bytes.slice()]));
+    }
+
+    // One posted change; false for a message that isn't one.
+    apply(message) {
+        const {type, name} = message;
+        const grown = (bytes, size) => {
+            const next = new Uint8Array(size);
+            next.set(bytes.subarray(0, Math.min(bytes.length, size)));
+            return next;
+        };
+        if (type === "create") {
+            this.files.set(name, new Uint8Array(0));
+        } else if (type === "write") {
+            let bytes = this.files.get(name);
+            const end = message.offset + message.bytes.length;
+            if (bytes.length < end) {
+                bytes = grown(bytes, end);
+            }
+            bytes.set(message.bytes, message.offset);
+            this.files.set(name, bytes);
+        } else if (type === "extend" || type === "cut") {
+            this.files.set(name, grown(this.files.get(name), message.size));
+        } else if (type === "rename" || type === "replace") {
+            this.files.set(message.to, this.files.get(name));
+            this.files.delete(name);
+        } else if (type === "remove") {
+            this.files.delete(name);
+        } else {
+            return false;
+        }
+        return true;
+    }
+
+    names() {
+        return [...this.files.keys()].sort();
+    }
+
+    // As init takes them: each a copy, so the page keeps its own.
+    snapshot() {
+        return this.names().map((name) => ({name, bytes: this.files.get(name).slice()}));
+    }
+}
+
 export class Page {
-    constructor() {
+    // A new worker, given this store's files at init.
+    constructor(store = new PageStore()) {
         this.worker = new Worker(shimUrl, {workerData: {worker: workerUrl.href}});
+        this.store = store;
         this.nextId = 1;
         this.replies = new Map();
         this.posted = [];   // every unsolicited message, in order
         this.waiters = [];
         this.failure = null;
+        this.ended = false;
         this.worker.on("message", (message) => this.receive(message));
         this.worker.on("error", (error) => this.fail(error));
     }
 
     receive(message) {
+        if (this.ended) {
+            return;  // a worker the page has ended touches nothing
+        }
         if (typeof message.id === "number") {
             const waiting = this.replies.get(message.id);
             this.replies.delete(message.id);
@@ -48,7 +102,9 @@ export class Page {
             }
             return;
         }
-        this.posted.push(message);
+        this.store.apply(message);
+        // A write's bytes live in the store; the log of what came keeps where they went.
+        this.posted.push(message.type === "write" ? {type: "write", name: message.name, offset: message.offset, length: message.bytes.length} : message);
         if (message.type === "aborted") {
             this.fail(new Error("the module aborted: " + message.message));
         }
@@ -96,8 +152,33 @@ export class Page {
         });
     }
 
-    async init(store = []) {
-        return this.request("init", {protocol: PROTOCOL_VERSION, ...moduleUrls(), store});
+    async init() {
+        return this.request("init", {protocol: PROTOCOL_VERSION, ...moduleUrls(), store: this.store.snapshot()});
+    }
+
+    // Resolves once the predicate holds, checked now and after every posted message.
+    until(predicate) {
+        return new Promise((resolve, reject) => {
+            if (predicate()) {
+                resolve();
+                return;
+            }
+            if (this.failure) {
+                reject(this.failure);
+                return;
+            }
+            this.waiters.push((message, error) => {
+                if (error) {
+                    reject(error);
+                    return true;
+                }
+                if (predicate()) {
+                    resolve();
+                    return true;
+                }
+                return false;
+            });
+        });
     }
 
     // A start, to its ready.
@@ -137,7 +218,9 @@ export class Page {
         return transcript;
     }
 
+    // Ends the worker without warning, as a crash does: what it posted after this is ignored.
     async end() {
+        this.ended = true;
         await this.worker.terminate();
     }
 }
